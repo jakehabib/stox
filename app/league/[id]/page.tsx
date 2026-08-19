@@ -9,6 +9,14 @@ import { shortResult } from '@/lib/sim/recap';
 import { teamNeeds } from '@/lib/ai/gm';
 import { TeamLogo } from '@/components/TeamLogo';
 import { buildFrontOfficeBrief } from '@/lib/frontOffice';
+import { SeasonAnnouncement, AwardLine } from '@/components/SeasonAnnouncement';
+
+const AWARD_TYPES: { type: string; code: string; label: string }[] = [
+  { type: 'AWARD_MVP', code: 'MVP', label: 'MVP' },
+  { type: 'AWARD_OPOY', code: 'OPOY', label: 'Offensive Player of the Year' },
+  { type: 'AWARD_DPOY', code: 'DPOY', label: 'Defensive Player of the Year' },
+  { type: 'AWARD_ROTY', code: 'ROTY', label: 'Rookie of the Year' },
+];
 
 export default async function TeamDashboard({ params }: { params: { id: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -22,6 +30,38 @@ export default async function TeamDashboard({ params }: { params: { id: string }
     prisma.transaction.findMany({ where: { leagueId: league.id, OR: [{ teamId: team.id }, { teamId: null }] }, orderBy: { createdAt: 'desc' }, take: 6 }),
   ]);
 
+  // Proactive "you just won the league" moment — the season's CHAMPION/AWARD
+  // transactions and the seasonYear increment happen in different offseason
+  // steps, so this naturally shows for the first step or two of OFFSEASON
+  // and disappears once seasonYear rolls over, with no extra state to track.
+  let seasonAnnouncement: { championName: string; championTeamId: string; championAbbr: string; awards: AwardLine[] } | null = null;
+  if (league.phase === 'OFFSEASON') {
+    const [championTx, awardTxs] = await Promise.all([
+      prisma.transaction.findFirst({ where: { leagueId: league.id, seasonYear: league.seasonYear, type: 'CHAMPION' } }),
+      prisma.transaction.findMany({ where: { leagueId: league.id, seasonYear: league.seasonYear, type: { in: AWARD_TYPES.map((a) => a.type) } } }),
+    ]);
+    if (championTx?.teamId) {
+      const awardTeamIds = Array.from(new Set(awardTxs.map((t) => t.teamId).filter(Boolean))) as string[];
+      const [champTeam, awardTeams] = await Promise.all([
+        prisma.team.findUnique({ where: { id: championTx.teamId } }),
+        prisma.team.findMany({ where: { id: { in: awardTeamIds } } }),
+      ]);
+      const teamById = new Map(awardTeams.map((t) => [t.id, t]));
+      if (champTeam) {
+        seasonAnnouncement = {
+          championName: `${champTeam.city} ${champTeam.nickname}`,
+          championTeamId: champTeam.id,
+          championAbbr: champTeam.abbr,
+          awards: awardTxs.map((t) => {
+            const meta = AWARD_TYPES.find((a) => a.type === t.type)!;
+            return { code: meta.code, label: meta.label, name: t.headline.replace(/\s*\([^)]+\)\s*$/, ''), teamAbbr: t.teamId ? (teamById.get(t.teamId)?.abbr ?? 'FA') : 'FA', detail: t.detail };
+          }),
+        };
+      }
+    }
+  }
+  const userSeasonRecord = seasonAnnouncement ? await prisma.teamSeasonRecord.findUnique({ where: { teamId_year: { teamId: team.id, year: league.seasonYear } } }) : null;
+
   const cap = settings.capMode === 'OFF' ? null : await teamCapSummary(team.id, league.seasonYear, settings.capMode);
   const brief = await buildFrontOfficeBrief(league.id, team.id, league.seasonYear, settings.capMode);
   const overall = Math.round(roster.reduce((s, p) => s + p.trueOvr, 0) / Math.max(1, roster.length));
@@ -32,6 +72,21 @@ export default async function TeamDashboard({ params }: { params: { id: string }
 
   return (
     <div className="space-y-8">
+      {seasonAnnouncement && (
+        <SeasonAnnouncement
+          leagueId={league.id}
+          seasonYear={league.seasonYear}
+          championName={seasonAnnouncement.championName}
+          championTeamId={seasonAnnouncement.championTeamId}
+          championAbbr={seasonAnnouncement.championAbbr}
+          isUserChampion={seasonAnnouncement.championTeamId === team.id}
+          userTeamId={team.id}
+          userTeamName={`${team.city} ${team.nickname}`}
+          userRecord={`${userSeasonRecord?.wins ?? team.wins}-${userSeasonRecord?.losses ?? team.losses}${(userSeasonRecord?.ties ?? team.ties) ? `-${userSeasonRecord?.ties ?? team.ties}` : ''}`}
+          userResult={userSeasonRecord?.playoffResult ?? 'MISSED'}
+          awards={seasonAnnouncement.awards}
+        />
+      )}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">
           <TeamLogo seed={team.id} abbr={team.abbr} size={64} />

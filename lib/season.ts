@@ -367,6 +367,7 @@ async function simulatePlayoffRound(leagueId: string, settings: ReturnType<typeo
   }
   if (kindsPlayed.has('FINAL')) {
     await snapshotSeasonHistory(leagueId, league.seasonYear);
+    await recordSeasonAwards(leagueId, league.seasonYear, league.week);
     await fireStrugglingCoordinators(leagueId, league.seasonYear, rng);
     await prisma.league.update({ where: { id: leagueId }, data: { phase: 'OFFSEASON', week: 1 } });
     return { summary: 'The championship game is complete! Welcome to the offseason.' };
@@ -408,9 +409,39 @@ async function snapshotSeasonHistory(leagueId: string, seasonYear: number) {
   if (champ) {
     await prisma.transaction.create({
       data: {
-        leagueId, seasonYear, week: 4, type: 'CHAMPION',
+        leagueId, seasonYear, week: 4, type: 'CHAMPION', teamId: champ.id,
         headline: `The ${champ.city} ${champ.nickname} are your ${seasonYear} champions!`,
         detail: `Finished ${champ.wins}-${champ.losses}${champ.ties ? `-${champ.ties}` : ''}, ${champ.pointsFor} points for.`,
+      },
+    });
+  }
+}
+
+/**
+ * League awards, computed from this season's final stat lines and recorded
+ * as Transaction rows (type AWARD) so they persist in the news feed and can
+ * drive the end-of-season dashboard announcement — same durability pattern
+ * as the CHAMPION transaction right above this call.
+ */
+async function recordSeasonAwards(leagueId: string, seasonYear: number, week: number) {
+  const { computeSeasonAwards } = await import('./awards');
+  const awards = await computeSeasonAwards(leagueId);
+  const entries: [string, typeof awards.mvp][] = [
+    ['AWARD_MVP', awards.mvp],
+    ['AWARD_OPOY', awards.opoy],
+    ['AWARD_DPOY', awards.dpoy],
+    ['AWARD_ROTY', awards.roty],
+  ];
+  for (const [type, winner] of entries) {
+    if (!winner) continue;
+    // headline/detail carry only the player's own info (not the award name —
+    // that's derived from `type` by every reader) so nothing here needs
+    // parsing back apart later.
+    await prisma.transaction.create({
+      data: {
+        leagueId, seasonYear, week, type, teamId: winner.teamId,
+        headline: `${winner.name} (${winner.position})`,
+        detail: winner.statLine,
       },
     });
   }

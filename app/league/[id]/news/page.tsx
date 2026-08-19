@@ -5,6 +5,7 @@ import { TeamLogo } from '@/components/TeamLogo';
 const TYPE_LABELS: Record<string, string> = {
   ALL: 'All', NEWS: 'Performances', TRADE: 'Trades', SIGN: 'Signings', CUT: 'Releases',
   DRAFT: 'Draft', INJURY: 'Injuries', RESIGN: 'Re-signs', TAG: 'Tags', CHAMPION: 'Championships', FIRE: 'Firings',
+  AWARD_MVP: 'MVP', AWARD_OPOY: 'OPOY', AWARD_DPOY: 'DPOY', AWARD_ROTY: 'ROTY',
 };
 const FILTERS = ['ALL', 'NEWS', 'TRADE', 'SIGN', 'CUT', 'DRAFT', 'INJURY', 'CHAMPION', 'FIRE'];
 
@@ -19,6 +20,10 @@ const TYPE_STYLE: Record<string, string> = {
   FIRE: 'border-bad/30 text-bad bg-bad/10',
   RESIGN: 'border-accent/30 text-accent bg-accent/10',
   TAG: 'border-accent/30 text-accent bg-accent/10',
+  AWARD_MVP: 'border-gold/40 text-gold bg-gold/10',
+  AWARD_OPOY: 'border-gold/40 text-gold bg-gold/10',
+  AWARD_DPOY: 'border-gold/40 text-gold bg-gold/10',
+  AWARD_ROTY: 'border-gold/40 text-gold bg-gold/10',
 };
 
 export default async function NewsPage({ params, searchParams }: { params: { id: string }; searchParams: { type?: string } }) {
