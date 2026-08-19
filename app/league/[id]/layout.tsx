@@ -17,6 +17,7 @@ const NAV = [
   { href: '/draft', label: 'Draft' },
   { href: '/cap', label: 'Cap' },
   { href: '/standings', label: 'Standings' },
+  { href: '/stats', label: 'Stats' },
   { href: '/schedule', label: 'Schedule' },
   { href: '/news', label: 'News' },
   { href: '/history', label: 'History' },
