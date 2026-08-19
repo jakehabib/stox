@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db';
 import { Rng } from './rng';
-import { LEAGUE } from './tuning';
-import { parseSettings } from './settings';
+import { LEAGUE, Position } from './tuning';
+import { parseSettings, LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { simulateGame, SimTeamInput } from './sim/engine';
 import { generateRecap } from './sim/recap';
@@ -60,10 +60,13 @@ export async function advanceWeek(leagueId: string) {
     case 'OFFSEASON':
       return runOffseasonStep(leagueId, rng);
 
-    case 'RESIGN':
-      // User handles re-signs via the UI; advancing just moves to FA.
+    case 'RESIGN': {
+      // Whoever the user (or an AI team) didn't extend by now walks.
+      const releasedBefore = await prisma.contract.count({ where: { yearsRemaining: 0, player: { leagueId, status: 'ACTIVE' } } });
+      await releaseUnresignedExpiringContracts(leagueId);
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'FREE_AGENCY', week: 1 } });
-      return { summary: 'Free agency is open.' };
+      return { summary: releasedBefore > 0 ? `${releasedBefore} unsigned player(s) hit free agency. Free agency is open.` : 'Free agency is open.' };
+    }
 
     case 'FREE_AGENCY': {
       const { signings } = await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings, rng);
@@ -520,7 +523,7 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
     case 'AGE_CONTRACTS': {
       await agePlayersAndContracts(leagueId);
       await prisma.league.update({ where: { id: leagueId }, data: { week: league.week + 1 } });
-      return { summary: 'Contracts advanced a year; expired deals hit free agency.' };
+      return { summary: 'Contracts advanced a year — expiring deals are up for renegotiation.' };
     }
     case 'ADD_DRAFT_CLASS': {
       // This year's class was already added back at week 1 of the season
@@ -532,8 +535,12 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
     }
     case 'RESIGN':
     default: {
+      // AI teams make their own keep-or-let-walk calls before the user
+      // lands on the re-sign screen, same as a real front office already
+      // having a plan by the time the window opens.
+      await runAiResignWave(leagueId, league.seasonYear, league.week, settings.capMode, rng);
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'RESIGN', week: 1 } });
-      return { summary: 'Re-sign your own free agents, then advance to open free agency.' };
+      return { summary: 'Re-sign your own expiring players, then advance to open free agency.' };
     }
   }
 }
@@ -613,20 +620,71 @@ async function progressAllPlayers(leagueId: string, rng: Rng, speed: number, ret
   }
 }
 
+/**
+ * Decrement every contract a year. A deal that hits 0 remaining years is
+ * NOT released here — that used to happen automatically, which meant
+ * every "expiring" player vanished to free agency before the RESIGN phase
+ * (where the user is supposed to get a chance to extend them) ever ran.
+ * They now sit at 0 years remaining — still rostered, flagged as pending
+ * free agents — until releaseUnresignedExpiringContracts() actually lets
+ * whichever ones weren't re-signed go, once RESIGN is over.
+ */
 async function agePlayersAndContracts(leagueId: string) {
   const contracts = await prisma.contract.findMany({ where: { player: { leagueId, status: 'ACTIVE' } } });
   for (const c of contracts) {
-    const remaining = c.yearsRemaining - 1;
-    if (remaining <= 0) {
-      await prisma.contract.delete({ where: { id: c.id } });
-      await prisma.player.update({ where: { id: c.playerId }, data: { status: 'FREE_AGENT', teamId: null } });
-    } else {
-      await prisma.contract.update({ where: { id: c.id }, data: { yearsRemaining: remaining } });
-    }
+    const remaining = Math.max(0, c.yearsRemaining - 1);
+    await prisma.contract.update({ where: { id: c.id }, data: { yearsRemaining: remaining } });
   }
   // Dead money charges only apply to the year they were incurred.
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   await prisma.capCharge.deleteMany({ where: { year: { lt: league.seasonYear }, teamId: { in: (await prisma.team.findMany({ where: { leagueId }, select: { id: true } })).map((t) => t.id) } } });
+}
+
+/** Free agents that walk: anyone still sitting at 0 years remaining once RESIGN is over — the user (or AI) had their chance to extend and didn't. */
+async function releaseUnresignedExpiringContracts(leagueId: string) {
+  const expired = await prisma.contract.findMany({ where: { yearsRemaining: 0, player: { leagueId, status: 'ACTIVE' } } });
+  for (const c of expired) {
+    await prisma.contract.delete({ where: { id: c.id } });
+    await prisma.player.update({ where: { id: c.playerId }, data: { status: 'FREE_AGENT', teamId: null } });
+  }
+}
+
+/**
+ * AI-only pass: each AI team decides whether to extend its own expiring
+ * (0-years-remaining) players before they'd otherwise walk — the same
+ * need/profile-driven logic the rest of the AI GM uses, just applied to
+ * "keep your own guy" instead of "sign someone else's."
+ */
+async function runAiResignWave(leagueId: string, seasonYear: number, week: number, capMode: LeagueSettings['capMode'], rng: Rng) {
+  const { parseGmProfile, teamNeeds } = await import('./ai/gm');
+  const { marketValue, suggestedYears } = await import('./cap');
+  const { extendContract } = await import('./freeagency');
+
+  const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
+  for (const team of teams) {
+    const roster = await prisma.player.findMany({ where: { teamId: team.id, status: 'ACTIVE' }, include: { contract: true } });
+    const expiring = roster.filter((p) => p.contract && p.contract.yearsRemaining === 0);
+    if (expiring.length === 0) continue;
+
+    const needs = teamNeeds(roster.map((p) => ({ id: p.id, position: p.position, trueOvr: p.trueOvr, age: p.age, potential: p.potential })));
+    const profile = parseGmProfile(team.gmProfile, rng);
+    const { teamCapSummary } = await import('./cap-summary');
+
+    for (const p of expiring) {
+      const summary = await teamCapSummary(team.id, seasonYear, capMode);
+      // [TUNE] Keep him if he's still good enough to matter and the team
+      // has real room; better players and needier positions get priority.
+      const worthKeeping = p.trueOvr >= 62 && (p.trueOvr >= 74 || (needs[p.position] ?? 0) > 0.3);
+      const willingness = 0.35 + profile.winNow * 0.3 + (needs[p.position] ?? 0) * 0.35;
+      if (!worthKeeping || !rng.bool(willingness)) continue;
+
+      const apy = Math.round(marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential }) * (0.95 + rng.float(0, 0.15)));
+      const years = suggestedYears(p.trueOvr, p.age);
+      const usable = summary.capSpace - 3_000_000;
+      if (usable < apy) continue;
+      await extendContract({ leagueId, playerId: p.id, apy, years, seasonYear, capMode, week }).catch(() => { /* cap edge case — let him walk */ });
+    }
+  }
 }
 
 async function addDraftClass(leagueId: string, seasonYear: number, rng: Rng) {

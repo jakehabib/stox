@@ -12,6 +12,7 @@ const NAV = [
   { href: '', label: 'Dashboard' },
   { href: '/roster', label: 'Roster' },
   { href: '/depth-chart', label: 'Depth Chart' },
+  { href: '/resign', label: 'Re-sign' },
   { href: '/free-agency', label: 'Free Agency' },
   { href: '/trade', label: 'Trade' },
   { href: '/draft', label: 'Draft' },

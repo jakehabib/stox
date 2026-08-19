@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { cutPlayer as cutPlayerLib, signFreeAgent, evaluateOffer, extendContract, restructureContract } from '@/lib/freeagency';
+import { cutPlayer as cutPlayerLib, signFreeAgentWithCompetition, evaluateOffer, extendContract, restructureContract, leadingCompetingBid } from '@/lib/freeagency';
 import { parseSettings } from '@/lib/settings';
 import { autoDepthChart } from '@/lib/gen/league';
 
@@ -25,12 +25,19 @@ export async function offerContractAction(leagueId: string, playerId: string, te
   // Action uncaught: an unhandled throw here blanks the whole page instead
   // of showing a message.
   try {
-    await signFreeAgent({ leagueId, playerId, teamId, apy, years, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week });
+    await signFreeAgentWithCompetition({ leagueId, playerId, teamId, apy, years, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week });
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : 'Signing failed.' };
   }
   revalidatePath(`/league/${leagueId}`, 'layout');
   return { ok: true, message: 'Deal signed.' };
+}
+
+/** Live "who else is bidding" check for the frenzy UI — what the leading AI offer actually is right now, if any. */
+export async function checkCompetingBidAction(leagueId: string, playerId: string, teamId: string) {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  return leadingCompetingBid(leagueId, playerId, teamId, league.seasonYear, settings.capMode);
 }
 
 export async function extendContractAction(

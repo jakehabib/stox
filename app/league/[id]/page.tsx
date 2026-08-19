@@ -62,6 +62,10 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   }
   const userSeasonRecord = seasonAnnouncement ? await prisma.teamSeasonRecord.findUnique({ where: { teamId_year: { teamId: team.id, year: league.seasonYear } } }) : null;
 
+  const expiringCount = league.phase === 'RESIGN'
+    ? await prisma.player.count({ where: { teamId: team.id, status: 'ACTIVE', contract: { yearsRemaining: 0 } } })
+    : 0;
+
   const cap = settings.capMode === 'OFF' ? null : await teamCapSummary(team.id, league.seasonYear, settings.capMode);
   const brief = await buildFrontOfficeBrief(league.id, team.id, league.seasonYear, settings.capMode);
   const overall = Math.round(roster.reduce((s, p) => s + p.trueOvr, 0) / Math.max(1, roster.length));
@@ -86,6 +90,17 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           userResult={userSeasonRecord?.playoffResult ?? 'MISSED'}
           awards={seasonAnnouncement.awards}
         />
+      )}
+      {league.phase === 'RESIGN' && (
+        <Link href={`/league/${league.id}/resign`} className="card card-pad flex items-center justify-between gap-4 border-warn/40 hover:bg-raised transition-colors">
+          <div>
+            <div className="text-xs text-warn uppercase tracking-wider mb-1">Re-sign Window Open</div>
+            <div className="font-semibold">
+              {expiringCount > 0 ? `${expiringCount} player${expiringCount === 1 ? '' : 's'} on your roster ${expiringCount === 1 ? 'is' : 'are'} about to hit free agency.` : 'No expiring contracts this offseason.'}
+            </div>
+          </div>
+          <span className="text-xs text-accent2">Go to Re-sign →</span>
+        </Link>
       )}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div className="flex items-center gap-4">

@@ -29,6 +29,39 @@ export async function evaluateOffer(playerId: string, teamId: string, apy: numbe
   return { accepted: false, ratio, market, counterApy: Math.round(market * 0.97) };
 }
 
+export interface CompetingBid { teamId: string; teamName: string; teamAbbr: string; apy: number }
+
+/**
+ * The "auction" side of free agency: what's the single best offer an AI
+ * team would actually put on this player RIGHT NOW, using the exact same
+ * need/cap-space/aggression logic that decides their real sealed-bid wave —
+ * so what the user sees here is a real threat, not flavor text. Seeded off
+ * (player, team) rather than the clock, so re-checking the same matchup
+ * mid-negotiation returns a stable number instead of re-rolling every call.
+ */
+export async function leadingCompetingBid(
+  leagueId: string, playerId: string, excludeTeamId: string, seasonYear: number, capMode: LeagueSettings['capMode'],
+): Promise<CompetingBid | null> {
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId } });
+  const teams = await prisma.team.findMany({ where: { leagueId, isUser: false, id: { not: excludeTeamId } } });
+
+  let best: CompetingBid | null = null;
+  for (const team of teams) {
+    const roster = await prisma.player.findMany({ where: { teamId: team.id }, select: { id: true, position: true, trueOvr: true, age: true, potential: true } });
+    const needs = teamNeeds(roster as RosterPlayer[]);
+    if ((needs[player.position] ?? 0) < 0.15) continue; // no real interest — wouldn't actually bid
+
+    const summary = await teamCapSummary(team.id, seasonYear, capMode);
+    const rng = new Rng(`fa-bid-${playerId}-${team.id}`);
+    const profile = parseGmProfile(team.gmProfile, rng);
+    const offer = maxOffer(player as unknown as RosterPlayer, { profile, needs, capSpace: Math.max(0, summary.capSpace - 4_000_000), rng });
+    if (offer >= CAP.MIN_SALARY && (!best || offer > best.apy)) {
+      best = { teamId: team.id, teamName: `${team.city} ${team.nickname}`, teamAbbr: team.abbr, apy: Math.round(offer) };
+    }
+  }
+  return best;
+}
+
 export async function signFreeAgent(opts: {
   leagueId: string;
   playerId: string;
@@ -191,6 +224,30 @@ export async function restructureContract(opts: {
   });
 
   return { newCapHit: capHit({ ...next, baseSalaries: writeJson(next.baseSalaries) }, opts.capMode) };
+}
+
+/**
+ * The user's side of the "frenzy": before locking in a signing, check
+ * whether an AI team would actually beat this exact offer. If so, that
+ * rival team signs him right now (using their own real max offer) instead
+ * of the user — a real loss with real stakes, not just a UI warning — and
+ * the user finds out immediately rather than discovering it days later.
+ */
+export async function signFreeAgentWithCompetition(opts: {
+  leagueId: string; playerId: string; teamId: string; apy: number; years: number;
+  seasonYear: number; capMode: LeagueSettings['capMode']; week: number;
+}) {
+  const competing = await leadingCompetingBid(opts.leagueId, opts.playerId, opts.teamId, opts.seasonYear, opts.capMode);
+  if (competing && competing.apy > opts.apy) {
+    const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId } });
+    await signFreeAgent({
+      leagueId: opts.leagueId, playerId: opts.playerId, teamId: competing.teamId,
+      apy: competing.apy, years: suggestedYears(player.trueOvr, player.age),
+      seasonYear: opts.seasonYear, capMode: opts.capMode, week: opts.week,
+    }).catch(() => { /* rival couldn't actually close it either — player just stays in free agency */ });
+    throw new Error(`Outbid — the ${competing.teamName} swooped in at ~$${(competing.apy / 1_000_000).toFixed(1)}M/yr before you closed the deal.`);
+  }
+  return signFreeAgent(opts);
 }
 
 export async function cutPlayer(opts: {
