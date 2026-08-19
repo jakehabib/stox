@@ -43,7 +43,7 @@ export function ExtendContractForm({ leagueId, playerId, ovr, position, age, ava
     });
   };
 
-  const setApyPct = (pct: number) => setApy(Math.round((suggested * pct) / 100_000) * 100_000);
+  const setApyPct = (pct: number) => setApy(Math.round((suggested * pct) / 100 / 100_000) * 100_000);
   const structureLabel = structure < 0.95 ? 'Front-loaded' : structure > 1.05 ? 'Back-loaded' : 'Balanced';
 
   return (

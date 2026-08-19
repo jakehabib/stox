@@ -38,7 +38,7 @@ export function SignOfferForm({ leagueId, teamId, playerId, ovr, position, age, 
     });
   };
 
-  const setApyPct = (pct: number) => setApy(Math.round((suggested * pct) / 100_000) * 100_000);
+  const setApyPct = (pct: number) => setApy(Math.round((suggested * pct) / 100 / 100_000) * 100_000);
 
   return (
     <div className="space-y-4">
