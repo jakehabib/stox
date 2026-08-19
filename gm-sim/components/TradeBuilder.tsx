@@ -1,16 +1,18 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { evaluateTradeAction, executeTradeAction } from '@/app/actions/trade';
+import { evaluateTradeAction, executeTradeAction, rankTradePartnersAction } from '@/app/actions/trade';
 import { ratingColor } from '@/lib/ratings';
 import { PlayerAvatar } from './PlayerAvatar';
 import { TeamLogo } from './TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import type { PhilosophySummary } from '@/lib/ai/gm';
+import type { TradePartnerSuggestion } from '@/lib/trade';
 
 interface RosterP { id: string; name: string; position: string; ovr: number; age: number }
 interface Pick { id: string; year: number; round: number; slot: number }
-interface Team { id: string; name: string; abbr: string }
+interface Team { id: string; name: string; abbr: string; philosophy?: PhilosophySummary }
 
 export function TradeBuilder({
   leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks,
@@ -22,7 +24,11 @@ export function TradeBuilder({
   const [give, setGive] = useState<Set<string>>(new Set());
   const [get, setGet] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
-  const [result, setResult] = useState<{ accepted: boolean; message: string; ratio: number } | null>(null);
+  const [result, setResult] = useState<{
+    accepted: boolean; message: string; ratio: number;
+    explanation?: { give: string[]; receive: string[] };
+  } | null>(null);
+  const [partnerSuggestions, setPartnerSuggestions] = useState<TradePartnerSuggestion[] | null>(null);
 
   const toggle = (set: Set<string>, setFn: (s: Set<string>) => void, id: string) => {
     const next = new Set(set);
@@ -34,6 +40,24 @@ export function TradeBuilder({
   const giveAssets = useMemo(() => assetList(give, myRoster, myPicks), [give, myRoster, myPicks]);
   const getAssets = useMemo(() => assetList(get, partnerRoster, partnerPicks), [get, partnerRoster, partnerPicks]);
 
+  // "Best trade partners" — when exactly one player is selected to shop,
+  // surface which other teams actually need that position instead of making
+  // the user open all 31 rosters by hand.
+  const shoppedPosition = useMemo(() => {
+    const playerIds = [...give].filter((id) => myRoster.find((r) => r.id === id));
+    if (playerIds.length !== 1) return null;
+    return myRoster.find((r) => r.id === playerIds[0])?.position ?? null;
+  }, [give, myRoster]);
+
+  useEffect(() => {
+    if (!shoppedPosition) { setPartnerSuggestions(null); return; }
+    let cancelled = false;
+    rankTradePartnersAction(leagueId, shoppedPosition, myTeam.id).then((res) => {
+      if (!cancelled) setPartnerSuggestions(res);
+    });
+    return () => { cancelled = true; };
+  }, [shoppedPosition, leagueId, myTeam.id]);
+
   const propose = () => {
     startTransition(async () => {
       const evaluation = await evaluateTradeAction(leagueId, partnerId, giveAssets, getAssets);
@@ -43,6 +67,7 @@ export function TradeBuilder({
         message: evaluation.accepted
           ? 'Deal accepted! Click confirm to execute the trade.'
           : evaluation.counter?.message ?? 'Rejected.',
+        explanation: evaluation.explanation,
       });
     });
   };
@@ -55,9 +80,11 @@ export function TradeBuilder({
     });
   };
 
+  const currentPartner = partners.find((p) => p.id === partnerId);
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <span className="label-sm">Trading with</span>
         <select
           className="input"
@@ -66,11 +93,37 @@ export function TradeBuilder({
         >
           {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
+        {currentPartner?.philosophy && <PhilosophyBadges p={currentPartner.philosophy} />}
       </div>
+
+      {shoppedPosition && (
+        <div className="card card-pad">
+          <h3 className="font-semibold text-sm mb-2">Best trade partners for a {shoppedPosition}</h3>
+          {partnerSuggestions === null ? (
+            <p className="text-xs text-muted">Checking around the league…</p>
+          ) : partnerSuggestions.length === 0 ? (
+            <p className="text-xs text-muted">No team is showing significant need at {shoppedPosition} right now.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {partnerSuggestions.map((s) => (
+                <button
+                  key={s.teamId}
+                  onClick={() => { window.location.href = `?with=${s.teamId}`; }}
+                  className={`pill flex items-center gap-1.5 ${s.teamId === partnerId ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}
+                >
+                  <TeamLogo seed={s.teamId} abbr={s.teamAbbr} size={16} />
+                  {s.teamAbbr}
+                  <span className={needColor(s.needLabel)}>{s.needLabel} need</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid md:grid-cols-2 gap-4">
         <TeamPanel title="You send" teamId={myTeam.id} teamAbbr={myTeam.abbr} teamName={myTeam.name} roster={myRoster} picks={myPicks} selected={give} onToggle={(id) => toggle(give, setGive, id)} />
-        <TeamPanel title="You receive" teamId={partnerId} teamAbbr={partners.find((p) => p.id === partnerId)?.abbr ?? ''} teamName={partners.find((p) => p.id === partnerId)?.name ?? ''} roster={partnerRoster} picks={partnerPicks} selected={get} onToggle={(id) => toggle(get, setGet, id)} />
+        <TeamPanel title="You receive" teamId={partnerId} teamAbbr={currentPartner?.abbr ?? ''} teamName={currentPartner?.name ?? ''} roster={partnerRoster} picks={partnerPicks} selected={get} onToggle={(id) => toggle(get, setGet, id)} />
       </div>
 
       <div className="card card-pad flex items-center justify-between flex-wrap gap-3">
@@ -86,12 +139,35 @@ export function TradeBuilder({
       </div>
 
       {result && (
-        <div className={`card card-pad text-sm ${result.accepted ? 'border-accent/40 text-accent' : 'border-bad/30 text-bad'}`}>
-          {result.message}
+        <div className={`card card-pad text-sm space-y-2 ${result.accepted ? 'border-accent/40' : 'border-bad/30'}`}>
+          <div className={result.accepted ? 'text-accent' : 'text-bad'}>{result.message}</div>
+          {(result.explanation?.give.length || result.explanation?.receive.length) ? (
+            <div className="text-xs text-muted space-y-1 pt-1 border-t border-line/60">
+              {result.explanation.receive.map((r, i) => <div key={`r${i}`}>• {r}</div>)}
+              {result.explanation.give.map((r, i) => <div key={`g${i}`}>• {r}</div>)}
+            </div>
+          ) : null}
         </div>
       )}
     </div>
   );
+}
+
+function PhilosophyBadges({ p }: { p: PhilosophySummary }) {
+  return (
+    <div className="flex gap-1.5 flex-wrap">
+      <span className="pill border-line text-muted">{p.windowLabel}</span>
+      <span className="pill border-line text-muted">{p.tradeTendency} trader</span>
+      <span className="pill border-line text-muted">{p.pickPreference}</span>
+    </div>
+  );
+}
+
+function needColor(label: TradePartnerSuggestion['needLabel']): string {
+  if (label === 'Severe') return 'text-bad';
+  if (label === 'High') return 'text-warn';
+  if (label === 'Moderate') return 'text-accent2';
+  return 'text-muted';
 }
 
 function assetList(selected: Set<string>, roster: RosterP[], picks: Pick[]) {

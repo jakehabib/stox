@@ -9,6 +9,11 @@ import { SimPlayer, SimStaff } from './sim/units';
 import { progressPlayer, retirementChance, growthMean } from './progression';
 import { AttrMap, computeOverall } from './ratings';
 import { runAiFreeAgencyWave } from './freeagency';
+import { maybeGenerateAiTradeOffer } from './trade';
+import { mergeStats } from './stats';
+import { SeasonStats } from './types';
+import { gameHeadlines } from './news';
+import { COACH_FIRST, COACH_LAST } from './gen/names';
 import { generateDraftClass, toPlayerCreate } from './gen/players';
 import { GENERATION } from './tuning';
 import { reseedDraftOrder, startRookieDraft } from './draft';
@@ -90,6 +95,7 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   // Recover fatigue league-wide between weeks.
   await prisma.player.updateMany({ where: { leagueId }, data: {} }); // no-op placeholder for future batch tuning hooks
   await recoverFatigueAndInjuries(leagueId);
+  await maybeMakeAiTradeOffer(leagueId, league.seasonYear, week, settings, rng);
 
   const nextWeek = week + 1;
   if (nextWeek > settings.seasonLength) {
@@ -98,6 +104,38 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   }
   await prisma.league.update({ where: { id: leagueId }, data: { week: nextWeek } });
   return { summary: `Week ${week} complete: ${played} games played.` };
+}
+
+const MAX_PENDING_OFFERS = 3;
+
+/**
+ * Unsolicited AI trade offers — the CPU approaching the user, not just the
+ * reverse. Capped so the user's inbox doesn't flood; expires stale ones so
+ * the list stays current.
+ */
+async function maybeMakeAiTradeOffer(leagueId: string, seasonYear: number, week: number, settings: ReturnType<typeof parseSettings>, rng: Rng) {
+  if (!settings.tradesEnabled) return;
+  const userTeam = await prisma.team.findFirst({ where: { leagueId, isUser: true } });
+  if (!userTeam) return;
+
+  await prisma.tradeOffer.updateMany({
+    where: { leagueId, toTeamId: userTeam.id, status: 'PENDING', week: { lt: week - 2 } },
+    data: { status: 'EXPIRED' },
+  });
+
+  const pendingCount = await prisma.tradeOffer.count({ where: { leagueId, toTeamId: userTeam.id, status: 'PENDING' } });
+  if (pendingCount >= MAX_PENDING_OFFERS) return;
+
+  const offer = await maybeGenerateAiTradeOffer(leagueId, userTeam.id, rng, settings.aiTradeFrequency);
+  if (!offer) return;
+
+  await prisma.tradeOffer.create({
+    data: {
+      leagueId, fromTeamId: offer.fromTeamId, toTeamId: userTeam.id,
+      give: writeJson(offer.offer.give), request: writeJson(offer.offer.get),
+      blurb: offer.blurb, seasonYear, week,
+    },
+  });
 }
 
 export async function simulateAndSaveGame(leagueId: string, gameId: string, settings: ReturnType<typeof parseSettings>, rng: Rng) {
@@ -132,6 +170,20 @@ export async function simulateAndSaveGame(leagueId: string, gameId: string, sett
           detail: result.boxScore.injuries.map((i) => `${i.name} (${i.weeks}w)`).join(', '),
         },
       });
+    }
+
+    for (const item of gameHeadlines(result.boxScore, game.homeTeamId, game.awayTeamId)) {
+      await tx.transaction.create({
+        data: { leagueId, seasonYear: game.seasonYear, week: game.week, type: 'NEWS', teamId: item.teamId, headline: item.headline, detail: item.detail },
+      });
+    }
+
+    const allLines = [...result.boxScore.lines.home, ...result.boxScore.lines.away];
+    const existing = await tx.player.findMany({ where: { id: { in: allLines.map((l) => l.playerId) } }, select: { id: true, seasonStats: true } });
+    const existingById = new Map(existing.map((p) => [p.id, p.seasonStats]));
+    for (const line of allLines) {
+      const current = readJson<SeasonStats>(existingById.get(line.playerId), {});
+      await tx.player.update({ where: { id: line.playerId }, data: { seasonStats: writeJson(mergeStats(current, line.stats)) } }).catch(() => {});
     }
   });
 
@@ -284,10 +336,54 @@ async function simulatePlayoffRound(leagueId: string, settings: ReturnType<typeo
     return { summary: 'Conference championships complete. The final is set.' };
   }
   if (kindsPlayed.has('FINAL')) {
+    await snapshotSeasonHistory(leagueId, league.seasonYear);
+    await fireStrugglingCoordinators(leagueId, league.seasonYear, rng);
     await prisma.league.update({ where: { id: leagueId }, data: { phase: 'OFFSEASON', week: 1 } });
     return { summary: 'The championship game is complete! Welcome to the offseason.' };
   }
   return { summary: 'Playoffs advanced.' };
+}
+
+/**
+ * Freeze this year's final standings + playoff result into TeamSeasonRecord.
+ * Team.wins/losses/etc. get wiped by RESET_STANDINGS a few offseason steps
+ * from now — this snapshot is the only place that history survives.
+ */
+async function snapshotSeasonHistory(leagueId: string, seasonYear: number) {
+  const teams = await prisma.team.findMany({ where: { leagueId } });
+  const playoffGames = await prisma.game.findMany({ where: { leagueId, seasonYear, kind: { not: 'REGULAR' }, played: true } });
+
+  const ROUND_EXIT: Record<string, string> = { WILDCARD: 'WILDCARD', DIVISIONAL: 'DIVISIONAL', CONFERENCE: 'CONFERENCE', FINAL: 'RUNNER_UP' };
+  const resultByTeam = new Map<string, string>();
+  for (const g of playoffGames) {
+    const loserId = g.homeScore >= g.awayScore ? g.awayTeamId : g.homeTeamId;
+    resultByTeam.set(loserId, ROUND_EXIT[g.kind] ?? g.kind);
+    if (g.kind === 'FINAL') {
+      const winnerId = g.homeScore >= g.awayScore ? g.homeTeamId : g.awayTeamId;
+      resultByTeam.set(winnerId, 'CHAMPION');
+    }
+  }
+
+  for (const t of teams) {
+    const playoffResult = resultByTeam.get(t.id) ?? 'MISSED';
+    await prisma.teamSeasonRecord.upsert({
+      where: { teamId_year: { teamId: t.id, year: seasonYear } },
+      create: { leagueId, teamId: t.id, year: seasonYear, wins: t.wins, losses: t.losses, ties: t.ties, pointsFor: t.pointsFor, pointsAgnst: t.pointsAgnst, playoffResult },
+      update: { wins: t.wins, losses: t.losses, ties: t.ties, pointsFor: t.pointsFor, pointsAgnst: t.pointsAgnst, playoffResult },
+    });
+  }
+
+  const championId = [...resultByTeam.entries()].find(([, r]) => r === 'CHAMPION')?.[0];
+  const champ = teams.find((t) => t.id === championId);
+  if (champ) {
+    await prisma.transaction.create({
+      data: {
+        leagueId, seasonYear, week: 4, type: 'CHAMPION',
+        headline: `The ${champ.city} ${champ.nickname} are your ${seasonYear} champions!`,
+        detail: `Finished ${champ.wins}-${champ.losses}${champ.ties ? `-${champ.ties}` : ''}, ${champ.pointsFor} points for.`,
+      },
+    });
+  }
 }
 
 async function createNextPlayoffRound(leagueId: string, seasonYear: number, fromKind: string, toKind: string) {
@@ -343,6 +439,7 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
       return { summary: 'Offseason development complete — players have progressed or declined.' };
     }
     case 'RESET_STANDINGS': {
+      await rollSeasonStatsIntoCareer(leagueId);
       await prisma.team.updateMany({
         where: { leagueId },
         data: { wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgnst: 0, divWins: 0, divLosses: 0, confWins: 0, confLosses: 0, playoffSeed: null, eliminated: false },
@@ -366,6 +463,62 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'RESIGN', week: 1 } });
       return { summary: 'Re-sign your own free agents, then advance to open free agency.' };
     }
+  }
+}
+
+const FIRE_WIN_PCT_THRESHOLD = 0.3; // [TUNE] roughly 5 wins or fewer in a 17-game season
+
+/**
+ * AI-only: a bad enough season gets a coordinator fired, replaced with a
+ * freshly generated coach — the same generation used at league creation.
+ * User teams are never auto-fired; coaching is the user's call.
+ */
+async function fireStrugglingCoordinators(leagueId: string, seasonYear: number, rng: Rng) {
+  const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
+  for (const t of teams) {
+    const gp = t.wins + t.losses + t.ties;
+    if (gp === 0 || t.wins / gp >= FIRE_WIN_PCT_THRESHOLD) continue;
+
+    const coords = await prisma.staff.findMany({ where: { teamId: t.id, role: { in: ['OC', 'DC'] } } });
+    if (coords.length === 0) continue;
+    const fired = coords.sort((a, b) => a.rating - b.rating)[0];
+
+    const rating = rng.normalClamped(55, 12, 25, 95);
+    await prisma.staff.update({
+      where: { id: fired.id },
+      data: {
+        name: `${rng.pick(COACH_FIRST)} ${rng.pick(COACH_LAST)}`,
+        rating,
+        playCalling: rng.normalClamped(rating, 8, 20, 99),
+        development: rng.normalClamped(rating, 10, 20, 99),
+        contractYears: rng.int(2, 5),
+      },
+    });
+    await prisma.transaction.create({
+      data: {
+        leagueId, seasonYear, week: 4, type: 'FIRE', teamId: t.id,
+        headline: `${t.city} fires ${fired.role} after a ${t.wins}-${t.losses}${t.ties ? `-${t.ties}` : ''} season`,
+        detail: `${fired.name} is out. The team has promoted a replacement from within.`,
+      },
+    });
+  }
+}
+
+/**
+ * Fold this year's accumulated seasonStats into careerStats, then clear
+ * seasonStats for the new year. Runs for every player who's ever had a stat
+ * line, active or not, so a player cut mid-season still keeps what he earned.
+ */
+async function rollSeasonStatsIntoCareer(leagueId: string) {
+  const players = await prisma.player.findMany({
+    where: { leagueId, NOT: { seasonStats: '{}' } },
+    select: { id: true, seasonStats: true, careerStats: true },
+  });
+  for (const p of players) {
+    const season = readJson<SeasonStats>(p.seasonStats, {});
+    if (Object.keys(season).length === 0) continue;
+    const career = mergeStats(readJson<SeasonStats>(p.careerStats, {}), season);
+    await prisma.player.update({ where: { id: p.id }, data: { careerStats: writeJson(career), seasonStats: '{}' } });
   }
 }
 

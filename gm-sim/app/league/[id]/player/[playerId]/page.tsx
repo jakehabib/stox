@@ -28,6 +28,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
   });
 
   const seasonStats = readJson<Record<string, number>>(player.seasonStats, {});
+  const careerStats = readJson<Record<string, number>>(player.careerStats, {});
   const hit = capHit(player.contract, settings.capMode);
   const remaining = player.contract ? remainingValue(player.contract, settings.capMode) : 0;
 
@@ -91,7 +92,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-6">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
         <div className="card card-pad">
           <h2 className="font-semibold mb-3">Season Stats</h2>
           {Object.keys(seasonStats).length === 0 ? (
@@ -99,6 +100,21 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           ) : (
             <div className="grid grid-cols-2 gap-2 text-sm">
               {Object.entries(seasonStats).map(([k, v]) => (
+                <div key={k} className="flex justify-between border-b border-line/50 py-1">
+                  <span className="text-muted">{k}</span><span className="font-mono">{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="card card-pad">
+          <h2 className="font-semibold mb-3">Career Stats</h2>
+          {Object.keys(careerStats).length === 0 ? (
+            <p className="text-sm text-muted">No career stats on file yet — these accumulate as full seasons complete.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              {Object.entries(careerStats).map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-line/50 py-1">
                   <span className="text-muted">{k}</span><span className="font-mono">{v}</span>
                 </div>

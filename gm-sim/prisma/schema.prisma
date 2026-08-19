@@ -44,6 +44,8 @@ model League {
   picks        DraftPick[]
   transactions Transaction[]
   draftState   DraftState?
+  tradeOffers  TradeOffer[]
+  seasonRecords TeamSeasonRecord[]
 }
 
 model DraftState {
@@ -105,6 +107,8 @@ model Team {
   originalPicks DraftPick[] @relation("PickOrigin")
   reports      ScoutingReport[]
   depthChart   DepthChartSlot[]
+  tradeOffersFrom TradeOffer[]
+  seasonRecords   TeamSeasonRecord[]
 
   @@index([leagueId])
 }
@@ -339,11 +343,68 @@ model Transaction {
 
   seasonYear Int
   week       Int
-  type       String   // SIGN | CUT | TRADE | DRAFT | INJURY | RESIGN | TAG | PROGRESS
+  // SIGN | CUT | TRADE | DRAFT | INJURY | RESIGN | TAG | PROGRESS | NEWS
+  // | CHAMPION | FIRE (coordinator fired for a poor record)
+  type       String
   teamId     String?
   headline   String
   detail     String   @default("")
   createdAt  DateTime @default(now())
 
   @@index([leagueId, seasonYear, week])
+}
+
+// ---------------------------------------------------------------------------
+// Unsolicited AI trade offers — the CPU approaching the user, not the other
+// way around. Persisted (rather than generated fresh per page load) so an
+// offer survives a refresh and the user can act on it whenever they get to
+// the Trade screen, not just the instant it was generated.
+// ---------------------------------------------------------------------------
+
+model TradeOffer {
+  id         String @id @default(cuid())
+  leagueId   String
+  league     League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  fromTeamId String
+  fromTeam   Team   @relation(fields: [fromTeamId], references: [id], onDelete: Cascade)
+  toTeamId   String // always the user's team for now — AI-to-AI offers aren't surfaced
+
+  give       String @default("[]") // JSON TradeAsset[] — what fromTeam is offering
+  request    String @default("[]") // JSON TradeAsset[] — what fromTeam wants back
+  blurb      String
+
+  status     String @default("PENDING") // PENDING | ACCEPTED | DECLINED | EXPIRED
+  seasonYear Int
+  week       Int
+  createdAt  DateTime @default(now())
+
+  @@index([leagueId, toTeamId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Franchise history. Team.wins/losses etc. reset every offseason (see
+// lib/season.ts RESET_STANDINGS), so this is the only place a season's
+// result survives past the year it happened — captured the moment the
+// championship game completes, right before that reset runs.
+// ---------------------------------------------------------------------------
+
+model TeamSeasonRecord {
+  id         String @id @default(cuid())
+  leagueId   String
+  league     League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  teamId     String
+  team       Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  year       Int
+  wins       Int
+  losses     Int
+  ties       Int
+  pointsFor  Int
+  pointsAgnst Int
+  // MISSED | WILDCARD | DIVISIONAL | CONFERENCE | RUNNER_UP | CHAMPION
+  playoffResult String @default("MISSED")
+
+  @@unique([teamId, year])
+  @@index([leagueId, year])
 }

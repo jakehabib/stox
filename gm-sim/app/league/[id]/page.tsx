@@ -8,6 +8,7 @@ import { readJson } from '@/lib/json';
 import { shortResult } from '@/lib/sim/recap';
 import { teamNeeds } from '@/lib/ai/gm';
 import { TeamLogo } from '@/components/TeamLogo';
+import { buildFrontOfficeBrief } from '@/lib/frontOffice';
 
 export default async function TeamDashboard({ params }: { params: { id: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -22,6 +23,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   ]);
 
   const cap = settings.capMode === 'OFF' ? null : await teamCapSummary(team.id, league.seasonYear, settings.capMode);
+  const brief = await buildFrontOfficeBrief(league.id, team.id, league.seasonYear, settings.capMode);
   const overall = Math.round(roster.reduce((s, p) => s + p.trueOvr, 0) / Math.max(1, roster.length));
   const needs = teamNeeds(roster.map((p) => ({ id: p.id, position: p.position, trueOvr: p.trueOvr, age: p.age, potential: p.potential })));
   const topNeeds = Object.entries(needs).sort((a, b) => b[1] - a[1]).slice(0, 5).filter(([, v]) => v > 0.1);
@@ -80,6 +82,24 @@ export default async function TeamDashboard({ params }: { params: { id: string }
         </div>
       </div>
 
+      {brief.length > 0 && (
+        <div className="card card-pad">
+          <h2 className="font-semibold mb-3">Front Office Brief — Week {league.week}</h2>
+          <div className="space-y-2.5">
+            {brief.map((item, i) => (
+              <Link
+                key={i}
+                href={item.href ? `/league/${league.id}${item.href}` : '#'}
+                className="flex items-start gap-3 text-sm px-3 py-2 -mx-3 rounded-lg hover:bg-raised transition-colors"
+              >
+                <span className="label-sm w-24 shrink-0 pt-0.5">{item.category}</span>
+                <span className="flex-1 text-chalk/90">{item.text}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <div className="card card-pad">
@@ -130,7 +150,10 @@ export default async function TeamDashboard({ params }: { params: { id: string }
         </div>
 
         <div className="card card-pad">
-          <h2 className="font-semibold mb-3">League Wire</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">League Wire</h2>
+            <Link href={`/league/${league.id}/news`} className="text-xs text-accent2 hover:underline">View all →</Link>
+          </div>
           <div className="space-y-3">
             {transactions.map((t) => (
               <div key={t.id} className="text-sm border-b border-line/60 pb-2 last:border-0">

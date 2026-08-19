@@ -18,6 +18,8 @@ const NAV = [
   { href: '/cap', label: 'Cap' },
   { href: '/standings', label: 'Standings' },
   { href: '/schedule', label: 'Schedule' },
+  { href: '/news', label: 'News' },
+  { href: '/history', label: 'History' },
   { href: '/settings', label: 'Settings' },
 ];
 

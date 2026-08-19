@@ -73,11 +73,25 @@ export function teamNeeds(players: RosterPlayer[]): Record<string, number> {
   return needs;
 }
 
+export interface ValueBreakdown {
+  base: number;
+  upside: number;
+  ageMult: number;
+  needMult: number;
+  noiseMult: number;
+  total: number;
+  /** Human-readable notes explaining the multipliers above — for trade UI. */
+  reasons: string[];
+}
+
 /**
  * What a player is worth to THIS team, in abstract "value points" comparable
- * to draft pick chart value. Used by trades and FA alike.
+ * to draft pick chart value. Used by trades and FA alike. This is the
+ * detailed form — it returns WHY, not just a number, so the trade screen can
+ * say something like "Chicago values your 31-year-old WR less because
+ * they're rebuilding" instead of just accepting or rejecting silently.
  */
-export function playerValue(
+export function playerValueDetailed(
   p: RosterPlayer,
   opts: {
     profile: GmProfile;
@@ -86,9 +100,10 @@ export function playerValue(
     sharpness?: number;
     rng?: Rng;
   },
-): number {
+): ValueBreakdown {
   const { profile, needs } = opts;
   const sharpness = opts.sharpness ?? 1;
+  const reasons: string[] = [];
 
   // Base: exponential in overall so stars are worth far more than starters.
   // [FRAGILE PLACEHOLDER] tuned so a 90 OVR ~= a mid-first-round pick.
@@ -98,6 +113,13 @@ export function playerValue(
   const potentialWeight =
     AI.REBUILD_POTENTIAL_WEIGHT * (1 - profile.winNow) + AI.CONTENDER_POTENTIAL_WEIGHT * profile.winNow;
   const upside = Math.max(0, p.potential - p.trueOvr) * potentialWeight * 4;
+  if (upside > base * 0.15) {
+    reasons.push(
+      profile.winNow < 0.4
+        ? "We're rebuilding — his upside matters more to us than his current level."
+        : "There's real untapped ceiling here.",
+    );
+  }
 
   // Age curve: a 32-year-old at the same rating is worth much less.
   // [TUNE] value falls ~8%/yr past 28, rises slightly for under-25s.
@@ -105,16 +127,35 @@ export function playerValue(
   if (p.age > 28) ageMult -= (p.age - 28) * 0.09;
   else if (p.age < 25) ageMult += (25 - p.age) * 0.04;
   ageMult = clamp(ageMult, 0.25, 1.3);
+  if (ageMult < 0.85) {
+    reasons.push(
+      profile.winNow < 0.4
+        ? `We're rebuilding, so a ${p.age}-year-old holds less value for us than the league average.`
+        : `At ${p.age}, there isn't much term left on this — we discount it.`,
+    );
+  } else if (ageMult > 1.1) {
+    reasons.push("He's young and still ascending — that's worth a premium to us.");
+  }
 
-  const needMult = needs ? 1 + (needs[p.position] ?? 0) * (AI.NEED_MULT - 1) : 1;
+  const needVal = needs?.[p.position] ?? 0;
+  const needMult = needs ? 1 + needVal * (AI.NEED_MULT - 1) : 1;
+  if (needVal > 0.5) reasons.push(`This fills a real hole for us at ${p.position}.`);
+  else if (needs && needVal < 0.1) reasons.push(`We're already deep at ${p.position}, so this doesn't move the needle much.`);
 
-  let value = (base + upside) * ageMult * needMult;
+  let total = (base + upside) * ageMult * needMult;
 
   // Imperfect evaluation. Lower sharpness (easier difficulty) = noisier AI.
+  let noiseMult = 1;
   if (opts.rng) {
-    value *= 1 + opts.rng.normal(0, 0.09 * (2 - sharpness));
+    noiseMult = 1 + opts.rng.normal(0, 0.09 * (2 - sharpness));
+    total *= noiseMult;
   }
-  return Math.max(1, value);
+  return { base, upside, ageMult, needMult, noiseMult, total: Math.max(1, total), reasons };
+}
+
+/** Convenience wrapper for callers that only need the number. */
+export function playerValue(p: RosterPlayer, opts: Parameters<typeof playerValueDetailed>[1]): number {
+  return playerValueDetailed(p, opts).total;
 }
 
 /** Value of a draft pick to this team, in the same units as playerValue. */
@@ -144,6 +185,25 @@ export function recomputeWinNow(wins: number, losses: number, avgStarterAge: num
   const fromRecord = clamp((winPct - 0.4) / 0.4, 0, 1);
   const fromAge = clamp((avgStarterAge - 25) / 5, 0, 1);
   return clamp(fromRecord * 0.7 + fromAge * 0.3, 0.05, 0.95);
+}
+
+export interface PhilosophySummary {
+  windowLabel: 'Rebuilding' | 'Retooling' | 'Win-Now Contender';
+  tradeTendency: 'Conservative' | 'Measured' | 'Aggressive';
+  pickPreference: 'Hoards picks' | 'Balanced on picks' | 'Trades picks for now';
+}
+
+/**
+ * Human-readable team identity derived from the same gmProfile numbers that
+ * drive every valuation. Surfaced in the trade UI so AI teams read as
+ * distinct front offices instead of an invisible math function — per the
+ * brief's complaint that "eventually every CPU franchise feels identical."
+ */
+export function philosophySummary(profile: GmProfile): PhilosophySummary {
+  const windowLabel = profile.winNow >= 0.62 ? 'Win-Now Contender' : profile.winNow <= 0.38 ? 'Rebuilding' : 'Retooling';
+  const tradeTendency = profile.aggression >= 0.62 ? 'Aggressive' : profile.aggression <= 0.38 ? 'Conservative' : 'Measured';
+  const pickPreference = profile.valuePicks >= 0.62 ? 'Hoards picks' : profile.valuePicks <= 0.38 ? 'Trades picks for now' : 'Balanced on picks';
+  return { windowLabel, tradeTendency, pickPreference };
 }
 
 /** Max APY the AI will offer a free agent. */
