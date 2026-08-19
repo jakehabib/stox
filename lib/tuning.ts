@@ -267,6 +267,10 @@ export const SCOUTING = {
   ROOKIE_BASE_CONFIDENCE: 8,
   /** Confidence decay per offseason on players you stop watching. */
   DECAY_PER_SEASON: 0,
+  /** How hard potential specifically is to project — higher than any single physical attribute, since it's a projection of a whole career, not a measurement. */
+  POTENTIAL_DIFFICULTY: 0.95,
+  /** Unscouted default center for potential — a blurred league-average read, same idea as the 62 default used for individual attributes. */
+  POTENTIAL_DEFAULT_CENTER: 75,
 };
 
 // ---------------------------------------------------------------------------

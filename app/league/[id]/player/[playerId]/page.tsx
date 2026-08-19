@@ -24,7 +24,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
 
   const isOwnRoster = player.teamId === userTeam?.id;
   const view = buildScoutedView({
-    position: player.position as any, trueAttrs: readJson(player.trueAttrs, {}), trueOvr: player.trueOvr,
+    position: player.position as any, trueAttrs: readJson(player.trueAttrs, {}), trueOvr: player.trueOvr, potential: player.potential,
     report, settings, isOwnRoster, isUserView: true,
   });
 
@@ -71,7 +71,12 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
             <div className="text-sm font-medium">Scouting confidence: {Math.round(view.confidence)}%</div>
             <p className="text-xs text-muted mt-1 max-w-lg">{view.notes}</p>
           </div>
-          {userTeam && <ScoutButton leagueId={league.id} teamId={userTeam.id} playerId={player.id} />}
+          {userTeam && (
+            <ScoutButton
+              leagueId={league.id} teamId={userTeam.id} playerId={player.id}
+              alreadyScoutedThisWeek={report?.lastWeek === league.seasonYear * 100 + league.week}
+            />
+          )}
         </div>
       )}
 

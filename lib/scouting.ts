@@ -41,6 +41,9 @@ export interface ScoutedPlayerView {
   scoutedOvr: number;
   ovrLow: number;
   ovrHigh: number;
+  /** Potential is the hardest thing to scout — this is always a range, never a raw "?", even fully unscouted. */
+  potLow: number;
+  potHigh: number;
   confidence: number;
   attrs: ScoutedAttr[];
   /** True when the numbers shown ARE the true values. */
@@ -72,6 +75,9 @@ export function observationSd(confidence: number, difficulty: number): number {
  * level. Called when a report is created and every time confidence increases,
  * so a scouted player's numbers visibly drift toward truth as you invest.
  */
+/** Synthetic AttrMap key holding the observed center for potential — not a real attribute, never rendered in the attribute list. */
+const POTENTIAL_OBS_KEY = '_POTENTIAL';
+
 export function observe(
   rng: Rng,
   position: Position,
@@ -79,6 +85,7 @@ export function observe(
   confidence: number,
   scoutAccuracy = 50,
   specialtyBonus = 0,
+  truePotential?: number,
 ): AttrMap {
   const out: AttrMap = {};
   // A better scout effectively raises confidence for observation purposes.
@@ -87,6 +94,10 @@ export function observe(
     const def = ATTRIBUTE_BY_KEY[key];
     const sd = observationSd(effective, def?.scoutDifficulty ?? 0.5);
     out[key] = clamp(Math.round(rng.normal(trueAttrs[key] ?? 50, sd)), 20, 99);
+  }
+  if (truePotential !== undefined) {
+    const sd = observationSd(effective, SCOUTING.POTENTIAL_DIFFICULTY);
+    out[POTENTIAL_OBS_KEY] = clamp(Math.round(rng.normal(truePotential, sd)), 40, 99);
   }
   return out;
 }
@@ -99,6 +110,8 @@ export function buildScoutedView(args: {
   position: Position;
   trueAttrs: AttrMap;
   trueOvr: number;
+  /** True potential ceiling. Never returned directly when fogged — only feeds the scouted range's center via the report's stored observation. */
+  potential: number;
   report?: { confidence: number; observed: string; notes?: string } | null;
   settings: LeagueSettings;
   /** True for players on the viewing team (they get a confidence floor). */
@@ -117,6 +130,8 @@ export function buildScoutedView(args: {
       scoutedOvr: trueOvr,
       ovrLow: trueOvr,
       ovrHigh: trueOvr,
+      potLow: args.potential,
+      potHigh: args.potential,
       confidence: 100,
       revealed: true,
       notes: 'Full ratings visible (scouting fog disabled for this player).',
@@ -157,10 +172,18 @@ export function buildScoutedView(args: {
   const lowMap: AttrMap = Object.fromEntries(attrs.map((a) => [a.key, a.low]));
   const highMap: AttrMap = Object.fromEntries(attrs.map((a) => [a.key, a.high]));
 
+  // Potential is always a range, never a bare "?" — it just starts very wide
+  // (potential is inherently the hardest thing to project) and narrows the
+  // same way every other scouted number does as confidence rises.
+  const potBand = errorBand(confidence, SCOUTING.POTENTIAL_DIFFICULTY, penalty);
+  const potCenter = observed[POTENTIAL_OBS_KEY] ?? SCOUTING.POTENTIAL_DEFAULT_CENTER;
+
   return {
     scoutedOvr: computeOverall(position, centerMap),
     ovrLow: computeOverall(position, lowMap),
     ovrHigh: computeOverall(position, highMap),
+    potLow: clamp(Math.round(potCenter - potBand), 40, 99),
+    potHigh: clamp(Math.round(potCenter + potBand), 40, 99),
     confidence,
     revealed: false,
     attrs,

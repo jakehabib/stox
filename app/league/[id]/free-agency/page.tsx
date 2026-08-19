@@ -41,7 +41,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
           <tbody>
             {freeAgents.map((p) => {
               const view = buildScoutedView({
-                position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr,
+                position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
                 report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true,
               });
               const market = marketValue({ ovr: view.scoutedOvr, position: p.position as any, age: p.age });

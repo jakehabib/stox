@@ -33,7 +33,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
 
   const rows = players.map((p) => {
     const view = buildScoutedView({
-      position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr,
+      position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
       report: reportMap.get(p.id), settings, isOwnRoster: true, isUserView: true,
     });
     return { p, view, hit: capHit(p.contract, settings.capMode) };
@@ -47,7 +47,11 @@ export default async function RosterPage({ params, searchParams }: { params: { i
     switch (sortKey) {
       case 'ovr': return (a.view.scoutedOvr - b.view.scoutedOvr) * dir;
       case 'age': return (a.p.age - b.p.age) * dir;
-      case 'potential': return (a.p.potential - b.p.potential) * dir;
+      case 'potential': {
+        const av = a.view.revealed ? a.p.potential : (a.view.potLow + a.view.potHigh) / 2;
+        const bv = b.view.revealed ? b.p.potential : (b.view.potLow + b.view.potHigh) / 2;
+        return (av - bv) * dir;
+      }
       case 'cap': return (a.hit - b.hit) * dir;
       case 'years': return ((a.p.contract?.yearsRemaining ?? 0) - (b.p.contract?.yearsRemaining ?? 0)) * dir;
       default: return (positionSortKey(a.p.position) - positionSortKey(b.p.position)) * dir || b.p.trueOvr - a.p.trueOvr;
@@ -102,7 +106,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
                   <td className={`font-mono font-semibold ${ratingColor(view.scoutedOvr)}`}>
                     {view.revealed || view.confidence >= 90 ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}
                   </td>
-                  <td className="text-muted font-mono">{settings.scoutingEnabled && !view.revealed ? '?' : p.potential}</td>
+                  <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
                   <td>
                     {p.injuryWeeks > 0 ? <span className="pill border-bad/30 text-bad bg-bad/10">Injured · {p.injuryWeeks}w</span> :
                       <span className="pill border-accent/30 text-accent bg-accent/10">Active</span>}
