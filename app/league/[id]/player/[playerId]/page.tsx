@@ -153,7 +153,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
                       baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
                       guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
                     }}
-                    availableSpaceForExtension={capSpace + hit} capMode={settings.capMode}
+                    availableSpaceForExtension={capSpace + hit} capSpace={capSpace} capMode={settings.capMode}
                   />
                   <CutButton leagueId={league.id} playerId={player.id} />
                 </div>

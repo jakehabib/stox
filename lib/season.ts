@@ -120,8 +120,10 @@ async function maybeMakeAiTradeOffer(leagueId: string, seasonYear: number, week:
   const userTeam = await prisma.team.findFirst({ where: { leagueId, isUser: true } });
   if (!userTeam) return;
 
+  // Offers expire after 1 week unanswered — visible the week they arrive
+  // and the week after, then gone.
   await prisma.tradeOffer.updateMany({
-    where: { leagueId, toTeamId: userTeam.id, status: 'PENDING', week: { lt: week - 2 } },
+    where: { leagueId, toTeamId: userTeam.id, status: 'PENDING', week: { lt: week - 1 } },
     data: { status: 'EXPIRED' },
   });
 

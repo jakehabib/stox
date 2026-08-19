@@ -2,6 +2,7 @@
 
 import { useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { respondToTradeOfferAction } from '@/app/actions/trade';
 import { TeamLogo } from './TeamLogo';
 
@@ -43,6 +44,7 @@ export function PendingTradeOffers({ leagueId, offers }: { leagueId: string; off
           <div key={o.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-raised">
             <TeamLogo seed={o.fromTeamId} abbr={o.fromTeamAbbr} size={30} />
             <p className="text-sm flex-1">{o.blurb}</p>
+            <Link href={`/league/${leagueId}/trade?with=${o.fromTeamId}&reviewOffer=${o.id}`} className="btn-secondary text-xs px-2.5 py-1">Review</Link>
             <button disabled={pending} onClick={() => respond(o.id, false)} className="btn-secondary text-xs px-2.5 py-1">Decline</button>
             <button disabled={pending} onClick={() => respond(o.id, true)} className="btn-primary text-xs px-2.5 py-1">Accept</button>
           </div>

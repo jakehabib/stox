@@ -16,8 +16,8 @@ interface ContractShape {
  * explicitly: lower this-year hit, higher future hits, more dead money if
  * cut later, since that's exactly the tension that makes it a real decision.
  */
-export function RestructureForm({ leagueId, playerId, contract, onDone }: {
-  leagueId: string; playerId: string; contract: ContractShape; onDone?: () => void;
+export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone }: {
+  leagueId: string; playerId: string; contract: ContractShape; capSpace: number; onDone?: () => void;
 }) {
   const bases: number[] = JSON.parse(contract.baseSalaries);
   const yearIdx = Math.max(0, contract.years - contract.yearsRemaining);
@@ -78,7 +78,8 @@ export function RestructureForm({ leagueId, playerId, contract, onDone }: {
       <div className="card-pad !p-3 rounded-lg bg-raised space-y-1.5 text-sm">
         <div className="flex justify-between"><span className="text-muted">This year's cap hit</span><span className="font-mono">{formatMoney(preview.oldHit)} → <span className="text-accent font-semibold">{formatMoney(preview.newHit)}</span></span></div>
         <div className="flex justify-between"><span className="text-muted">Cap space freed up</span><span className={`font-mono font-semibold ${preview.capFreed >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(preview.capFreed)}</span></div>
-        <div className="flex justify-between pt-1 border-t border-line/60"><span className="text-muted">Dead money if cut</span><span className="font-mono">{formatMoney(preview.oldDead)} → <span className="text-bad font-semibold">{formatMoney(preview.newDead)}</span></span></div>
+        <div className="flex justify-between pt-1 border-t border-line/60"><span className="text-muted">Your cap space after</span><span className="font-mono font-semibold text-accent">{formatMoney(capSpace + preview.capFreed)}</span></div>
+        <div className="flex justify-between"><span className="text-muted">Dead money if cut</span><span className="font-mono">{formatMoney(preview.oldDead)} → <span className="text-bad font-semibold">{formatMoney(preview.newDead)}</span></span></div>
       </div>
 
       <p className="text-xs text-muted">Future years absorb the rest — this only moves WHEN the money hits the cap, not how much you owe overall.</p>

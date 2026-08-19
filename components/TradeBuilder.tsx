@@ -16,14 +16,18 @@ interface Pick { id: string; year: number; round: number; slot: number }
 interface Team { id: string; name: string; abbr: string; philosophy?: PhilosophySummary }
 
 export function TradeBuilder({
-  leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks,
+  leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks, initialGive, initialGet, capSpace, capMode,
 }: {
   leagueId: string; myTeam: Team; partners: Team[]; partnerId: string;
   myRoster: RosterP[]; myPicks: Pick[]; partnerRoster: RosterP[]; partnerPicks: Pick[];
+  /** Pre-select assets when arriving to review a specific incoming AI offer. */
+  initialGive?: string[]; initialGet?: string[];
+  /** Current cap space, so the impact of this exact trade is visible before accepting it. */
+  capSpace: number; capMode: string;
 }) {
   const router = useRouter();
-  const [give, setGive] = useState<Set<string>>(new Set());
-  const [get, setGet] = useState<Set<string>>(new Set());
+  const [give, setGive] = useState<Set<string>>(new Set(initialGive));
+  const [get, setGet] = useState<Set<string>>(new Set(initialGet));
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<{
     accepted: boolean; message: string; ratio: number; requiredRatio: number;
@@ -41,6 +45,15 @@ export function TradeBuilder({
 
   const giveAssets = useMemo(() => assetList(give, myRoster, myPicks), [give, myRoster, myPicks]);
   const getAssets = useMemo(() => assetList(get, partnerRoster, partnerPicks), [get, partnerRoster, partnerPicks]);
+
+  // Cap impact of exactly what's selected right now — updates live as
+  // players are picked, not just after proposing, so the space you'd be
+  // left with is visible before you ever hit accept.
+  const capAfter = useMemo(() => {
+    const freed = [...give].reduce((sum, id) => sum + (myRoster.find((r) => r.id === id)?.capHit ?? 0), 0);
+    const added = [...get].reduce((sum, id) => sum + (partnerRoster.find((r) => r.id === id)?.capHit ?? 0), 0);
+    return capSpace + freed - added;
+  }, [give, get, myRoster, partnerRoster, capSpace]);
 
   // "Best trade partners" — when exactly one player is selected to shop,
   // surface which other teams actually need that position instead of making
@@ -76,6 +89,16 @@ export function TradeBuilder({
       });
     });
   };
+
+  // Arriving via a "Review" link on an incoming offer — surface the trade
+  // meter immediately instead of making the user click Propose to see what
+  // was actually offered.
+  useEffect(() => {
+    if ((initialGive?.length || initialGet?.length) && (giveAssets.length > 0 || getAssets.length > 0)) {
+      propose();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const execute = () => {
     startTransition(async () => {
@@ -132,7 +155,14 @@ export function TradeBuilder({
       </div>
 
       <div className="card card-pad flex items-center justify-between flex-wrap gap-3">
-        <div className="text-sm text-muted">{giveAssets.length} asset(s) out · {getAssets.length} asset(s) in</div>
+        <div className="text-sm text-muted flex items-center gap-3 flex-wrap">
+          <span>{giveAssets.length} asset(s) out · {getAssets.length} asset(s) in</span>
+          {capMode !== 'OFF' && (
+            <span>
+              Your cap space after: <span className={`font-mono font-semibold ${capAfter < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(capAfter)}</span>
+            </span>
+          )}
+        </div>
         <div className="flex gap-2">
           <button className="btn-secondary" disabled={pending || (giveAssets.length === 0 && getAssets.length === 0)} onClick={propose}>
             {pending ? 'Evaluating…' : 'Propose Trade'}

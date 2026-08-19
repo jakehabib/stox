@@ -10,9 +10,9 @@ interface ContractShape {
   baseSalaries: string; signingBonus: number; guaranteed: number; voidYears: number;
 }
 
-export function ContractActions({ leagueId, playerId, ovr, position, age, contract, availableSpaceForExtension, capMode }: {
+export function ContractActions({ leagueId, playerId, ovr, position, age, contract, availableSpaceForExtension, capSpace, capMode }: {
   leagueId: string; playerId: string; ovr: number; position: string; age: number;
-  contract: ContractShape; availableSpaceForExtension: number; capMode: CapMode;
+  contract: ContractShape; availableSpaceForExtension: number; capSpace: number; capMode: CapMode;
 }) {
   const [mode, setMode] = useState<'none' | 'extend' | 'restructure'>('none');
 
@@ -32,7 +32,7 @@ export function ContractActions({ leagueId, playerId, ovr, position, age, contra
     return (
       <div className="space-y-3">
         <button onClick={() => setMode('none')} className="text-xs text-muted hover:text-chalk">← Back</button>
-        <RestructureForm leagueId={leagueId} playerId={playerId} contract={contract} onDone={() => setMode('none')} />
+        <RestructureForm leagueId={leagueId} playerId={playerId} contract={contract} capSpace={capSpace} onDone={() => setMode('none')} />
       </div>
     );
   }

@@ -94,16 +94,22 @@ export function ExtendContractForm({ leagueId, playerId, ovr, position, age, ava
         <div className="flex justify-between"><span className="text-muted">Total value</span><span className="font-mono">{formatMoney(preview.total)}</span></div>
         <div className="flex justify-between"><span className="text-muted">Guaranteed (est.)</span><span className="font-mono">{formatMoney(preview.guaranteed)}</span></div>
         {capMode !== 'OFF' && (
-          <div className="pt-2 border-t border-line/60">
-            <div className="text-xs text-muted mb-1">Cap hit by year</div>
-            <div className="flex flex-wrap gap-2">
-              {preview.schedule.map((hit, i) => (
-                <div key={i} className={`pill ${i === 0 && overCap ? 'border-bad/40 text-bad' : 'border-line text-chalk'}`}>
-                  Yr{i + 1}: {formatMoney(hit)}
-                </div>
-              ))}
+          <>
+            <div className="flex justify-between pt-2 border-t border-line/60">
+              <span className="text-muted">Cap space after signing</span>
+              <span className={`font-mono font-semibold ${availableSpace - year1 < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(availableSpace - year1)}</span>
             </div>
-          </div>
+            <div>
+              <div className="text-xs text-muted mb-1">Cap hit by year</div>
+              <div className="flex flex-wrap gap-2">
+                {preview.schedule.map((hit, i) => (
+                  <div key={i} className={`pill ${i === 0 && overCap ? 'border-bad/40 text-bad' : 'border-line text-chalk'}`}>
+                    Yr{i + 1}: {formatMoney(hit)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
         )}
       </div>
 
