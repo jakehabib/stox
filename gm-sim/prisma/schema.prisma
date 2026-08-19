@@ -1,0 +1,345 @@
+// ---------------------------------------------------------------------------
+// Gridiron GM — data model
+// SQLite via Prisma. Anything stored as a JSON string is noted; SQLite has no
+// native JSON column type in Prisma, so structured blobs are String fields
+// serialized with the helpers in lib/json.ts.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// League / season state
+// ---------------------------------------------------------------------------
+
+model League {
+  id         String @id @default(cuid())
+  name       String
+  createdAt  DateTime @default(now())
+
+  seasonYear Int    @default(2025)
+  week       Int    @default(1)     // 1..REGULAR_SEASON_WEEKS during the season
+  // Phase machine (see lib/season.ts): PRESEASON | REGULAR | PLAYOFFS | OFFSEASON
+  // | RESIGN | FREE_AGENCY | DRAFT | FANTASY_DRAFT
+  phase      String @default("PRESEASON")
+
+  userTeamId String?
+
+  // Full settings blob (see lib/settings.ts -> LeagueSettings). JSON string.
+  settings   String
+
+  teams        Team[]
+  players      Player[]
+  games        Game[]
+  picks        DraftPick[]
+  transactions Transaction[]
+  draftState   DraftState?
+}
+
+model DraftState {
+  id        String @id @default(cuid())
+  leagueId  String @unique
+  league    League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  // "ROOKIE" (annual rookie draft) or "FANTASY" (league-start blank-roster draft)
+  kind      String @default("ROOKIE")
+  round     Int    @default(1)
+  pickIndex Int    @default(0)   // 0-based index into the full serialized pick order
+  // Serialized array of teamIds in pick order. JSON string.
+  order     String @default("[]")
+  complete  Boolean @default(false)
+}
+
+// ---------------------------------------------------------------------------
+// Teams & staff
+// ---------------------------------------------------------------------------
+
+model Team {
+  id         String @id @default(cuid())
+  leagueId   String
+  league     League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  city       String
+  nickname   String
+  abbr       String
+  conference String  // "AFC" | "NFC" (generic: "EAST CONF" style names are fine)
+  division   String  // "East" | "North" | "South" | "West"
+  isUser     Boolean @default(false)
+
+  // Team identity / AI personality --------------------------------------------
+  prestige     Int    @default(50)   // 0-100, drives FA attraction. PLACEHOLDER weight.
+  offScheme    String @default("Balanced")   // see lib/tuning.ts SCHEMES
+  defScheme    String @default("4-3 Base")
+  // AI GM personality knobs, JSON string: { aggression, winNow, valueDraftPicks, ... }
+  gmProfile    String @default("{}")
+
+  // Season record --------------------------------------------------------------
+  wins       Int @default(0)
+  losses     Int @default(0)
+  ties       Int @default(0)
+  pointsFor  Int @default(0)
+  pointsAgnst Int @default(0)
+  divWins    Int @default(0)
+  divLosses  Int @default(0)
+  confWins   Int @default(0)
+  confLosses Int @default(0)
+  playoffSeed Int?
+  eliminated Boolean @default(false)
+
+  players      Player[]
+  staff        Staff[]
+  scouts       Scout[]
+  homeGames    Game[]  @relation("HomeTeam")
+  awayGames    Game[]  @relation("AwayTeam")
+  ownedPicks   DraftPick[] @relation("PickOwner")
+  originalPicks DraftPick[] @relation("PickOrigin")
+  reports      ScoutingReport[]
+  depthChart   DepthChartSlot[]
+
+  @@index([leagueId])
+}
+
+model Staff {
+  id       String @id @default(cuid())
+  teamId   String
+  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  role     String // "HC" | "OC" | "DC" | "ST"
+  name     String
+  // 0-100 ratings. PLACEHOLDER: exact impact curves live in lib/tuning.ts
+  rating       Int @default(50)
+  playCalling  Int @default(50)   // in-game boost to unit score
+  development  Int @default(50)   // offseason progression boost
+  scheme       String @default("Balanced")
+  contractYears Int @default(3)
+  salary       Int @default(3000000)
+
+  @@index([teamId])
+}
+
+model Scout {
+  id       String @id @default(cuid())
+  teamId   String
+  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  name      String
+  // 0-100. Higher accuracy => narrower scouted ranges, faster confidence gain.
+  accuracy  Int    @default(50)
+  speed     Int    @default(50)  // scouting points generated per week
+  // Position group this scout is best at: "OL" | "SKILL" | "FRONT7" | "SECONDARY" | "ALL"
+  specialty String @default("ALL")
+  salary    Int    @default(500000)
+
+  @@index([teamId])
+}
+
+// ---------------------------------------------------------------------------
+// Players
+// ---------------------------------------------------------------------------
+
+model Player {
+  id        String @id @default(cuid())
+  leagueId  String
+  league    League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  teamId    String?
+  team      Team?  @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  firstName String
+  lastName  String
+  position  String   // QB RB WR TE LT LG C RG RT EDGE DT LB CB S K P
+  age       Int
+  experience Int     @default(0)   // completed pro seasons
+  heightIn  Int      @default(73)
+  weightLb  Int      @default(220)
+  college   String   @default("State")
+
+  // TRUE ratings — never shown directly unless settings.revealTrueRatings ------
+  // JSON string map of attributeKey -> 0..99 (see lib/ratings.ts ATTRIBUTES)
+  trueAttrs String
+  trueOvr   Int      // cached overall from trueAttrs at current position
+  potential Int      // 0..99 ceiling
+  devTrait  String   @default("Normal")  // Slow | Normal | Star | Superstar
+
+  // Draft / status -------------------------------------------------------------
+  status      String  @default("ACTIVE")   // ACTIVE | INJURED | FREE_AGENT | RETIRED | ROOKIE_POOL
+  isDraftee   Boolean @default(false)      // in the current rookie/fantasy pool
+  draftYear   Int?
+  draftRound  Int?
+  draftPickNo Int?
+
+  injuryWeeks Int    @default(0)
+  fatigue     Int    @default(0)   // 0-100, restores between weeks
+  morale      Int    @default(70)  // 0-100. PLACEHOLDER effect on re-sign odds.
+
+  // Season stat accumulators, JSON string (see lib/types.ts SeasonStats)
+  seasonStats String @default("{}")
+  careerStats String @default("{}")
+
+  contract  Contract?
+  reports   ScoutingReport[]
+  depthSlots DepthChartSlot[]
+  draftPick DraftPick?
+
+  @@index([leagueId])
+  @@index([teamId])
+  @@index([position])
+}
+
+// ---------------------------------------------------------------------------
+// Scouting fog-of-war
+// ---------------------------------------------------------------------------
+
+model ScoutingReport {
+  id       String @id @default(cuid())
+  playerId String
+  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  teamId   String
+  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  // 0..100. Drives how tight the displayed range is around the true value.
+  confidence Int   @default(0)
+  // Per-attribute noisy observations, JSON string: { attrKey: observedValue }
+  // The displayed range is observed +/- error(confidence). Observations are
+  // resampled (and re-centered) as confidence rises. See lib/scouting.ts
+  observed   String @default("{}")
+  // Cached scouted overall + range for list views
+  scoutedOvr Int    @default(0)
+  ovrLow     Int    @default(0)
+  ovrHigh    Int    @default(99)
+  notes      String @default("")
+  lastWeek   Int    @default(0)
+
+  @@unique([playerId, teamId])
+  @@index([teamId])
+}
+
+// ---------------------------------------------------------------------------
+// Contracts & cap
+// ---------------------------------------------------------------------------
+
+model Contract {
+  id        String @id @default(cuid())
+  playerId  String @unique
+  player    Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  teamId    String?
+
+  years         Int
+  yearsRemaining Int
+  signedYear    Int
+  // Per-year base salaries, JSON string number[] (index 0 = current year)
+  baseSalaries  String
+  signingBonus  Int @default(0)   // fully prorated across min(years, 5)
+  guaranteed    Int @default(0)
+  isRookieDeal  Boolean @default(false)
+  isFranchiseTag Boolean @default(false)
+}
+
+// Dead money left behind by cuts/trades, tracked per team-year.
+model CapCharge {
+  id       String @id @default(cuid())
+  teamId   String
+  year     Int
+  amount   Int
+  label    String
+
+  @@index([teamId, year])
+}
+
+// ---------------------------------------------------------------------------
+// Draft
+// ---------------------------------------------------------------------------
+
+model DraftPick {
+  id             String @id @default(cuid())
+  leagueId       String
+  league         League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  year           Int
+  round          Int
+  slot           Int    // 1..32 within the round; assigned by reverse standings
+  originalTeamId String
+  originalTeam   Team   @relation("PickOrigin", fields: [originalTeamId], references: [id], onDelete: Cascade)
+  ownerTeamId    String
+  ownerTeam      Team   @relation("PickOwner", fields: [ownerTeamId], references: [id], onDelete: Cascade)
+
+  used           Boolean @default(false)
+  playerId       String? @unique
+  player         Player? @relation(fields: [playerId], references: [id], onDelete: SetNull)
+
+  @@index([leagueId, year, round, slot])
+  @@index([ownerTeamId])
+}
+
+// ---------------------------------------------------------------------------
+// Depth chart
+// ---------------------------------------------------------------------------
+
+model DepthChartSlot {
+  id       String @id @default(cuid())
+  teamId   String
+  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  playerId String
+  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  position String  // depth chart position bucket (QB, RB, WR1..., etc.)
+  rank     Int     // 0 = starter
+
+  @@unique([teamId, position, rank])
+  @@index([teamId])
+}
+
+// ---------------------------------------------------------------------------
+// Games
+// ---------------------------------------------------------------------------
+
+model Game {
+  id         String @id @default(cuid())
+  leagueId   String
+  league     League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  seasonYear Int
+  week       Int
+  // REGULAR | WILDCARD | DIVISIONAL | CONFERENCE | FINAL
+  kind       String @default("REGULAR")
+
+  homeTeamId String
+  homeTeam   Team   @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Cascade)
+  awayTeamId String
+  awayTeam   Team   @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
+
+  played     Boolean @default(false)
+  homeScore  Int @default(0)
+  awayScore  Int @default(0)
+
+  // JSON string (see lib/types.ts BoxScore)
+  boxScore   String @default("{}")
+  recap      String @default("")
+
+  @@index([leagueId, seasonYear, week])
+}
+
+// ---------------------------------------------------------------------------
+// League transaction ledger (signings, cuts, trades, draft picks, injuries)
+// ---------------------------------------------------------------------------
+
+model Transaction {
+  id        String @id @default(cuid())
+  leagueId  String
+  league    League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  seasonYear Int
+  week       Int
+  type       String   // SIGN | CUT | TRADE | DRAFT | INJURY | RESIGN | TAG | PROGRESS
+  teamId     String?
+  headline   String
+  detail     String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([leagueId, seasonYear, week])
+}
