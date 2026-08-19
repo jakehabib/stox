@@ -10,6 +10,8 @@ export interface ContractLike {
   baseSalaries: string; // JSON number[]
   signingBonus: number;
   guaranteed: number;
+  /** Cap-only trailing years (see schema comment) — optional so older call sites without it still work. */
+  voidYears?: number;
 }
 
 /** Salary cap for a given season. Grows each year. */
@@ -18,9 +20,9 @@ export function capForYear(seasonYear: number, leagueStartYear: number): number 
   return Math.round(CAP.BASE_CAP * Math.pow(1 + CAP.CAP_GROWTH_PER_YEAR, elapsed));
 }
 
-/** Annual proration of a signing bonus (realistic mode only). */
+/** Annual proration of a signing bonus (realistic mode only). Void years extend the divisor, up to the real-world 5-year cap. */
 export function proration(c: ContractLike): number {
-  const yrs = Math.min(c.years, CAP.MAX_PRORATION_YEARS);
+  const yrs = Math.min(c.years + (c.voidYears ?? 0), CAP.MAX_PRORATION_YEARS);
   return yrs > 0 ? Math.round(c.signingBonus / yrs) : 0;
 }
 
@@ -55,12 +57,63 @@ export function remainingValue(c: ContractLike, mode: CapMode): number {
 
 /**
  * Dead money left behind by cutting a player right now.
- * REALISTIC: all remaining bonus proration accelerates onto this year's cap.
+ * REALISTIC: all remaining bonus proration accelerates onto this year's cap
+ * — including any void years, since those were never real roster years to
+ * begin with and always accelerate the moment the real deal ends.
  * SIMPLIFIED / OFF: nothing.
  */
 export function deadMoneyOnCut(c: ContractLike | null | undefined, mode: CapMode): number {
   if (!c || mode !== 'REALISTIC') return 0;
-  return proration(c) * c.yearsRemaining;
+  return proration(c) * (c.yearsRemaining + (c.voidYears ?? 0));
+}
+
+/**
+ * Cap hit for every remaining real year of the deal (index 0 = this year),
+ * so a negotiation UI can show the whole schedule a front-loaded or
+ * back-loaded structure actually produces instead of just year 1.
+ */
+export function capHitSchedule(c: ContractLike, mode: CapMode): number[] {
+  const bases = readJson<number[]>(c.baseSalaries, []);
+  if (mode === 'OFF') return bases.map(() => 0);
+  if (mode === 'SIMPLIFIED') {
+    const total = bases.reduce((a, b) => a + b, 0) + c.signingBonus;
+    const flat = Math.round(total / Math.max(1, c.years));
+    return bases.map(() => flat);
+  }
+  const p = proration(c);
+  return bases.map((b) => b + p);
+}
+
+/**
+ * Restructure a contract: convert part of the CURRENT year's base salary
+ * into signing bonus, which lowers this year's cap hit but raises every
+ * future year's (via a bigger prorated bonus) — the classic real-NFL move.
+ * Rebases the deal as if freshly re-signed for exactly the years left, so
+ * the combined (old + newly converted) bonus reprorates cleanly over what
+ * actually remains, optionally stretched further with fresh void years.
+ */
+export function restructureContract(
+  c: ContractLike,
+  convertAmount: number,
+  opts: { addVoidYears?: number; nowYear: number },
+): { years: number; yearsRemaining: number; signedYear: number; baseSalaries: number[]; signingBonus: number; voidYears: number; guaranteed: number } {
+  const bases = readJson<number[]>(c.baseSalaries, []);
+  const yearIdx = Math.max(0, c.years - c.yearsRemaining);
+  const currentBase = bases[yearIdx] ?? 0;
+  const converted = clamp(Math.round(convertAmount), 0, Math.max(0, currentBase - CAP.MIN_SALARY));
+
+  const remainingBases = bases.slice(yearIdx);
+  remainingBases[0] = currentBase - converted;
+
+  return {
+    years: c.yearsRemaining,
+    yearsRemaining: c.yearsRemaining,
+    signedYear: opts.nowYear,
+    baseSalaries: remainingBases,
+    signingBonus: c.signingBonus + converted,
+    voidYears: Math.max(0, opts.addVoidYears ?? 0),
+    guaranteed: c.guaranteed,
+  };
 }
 
 /** Net cap saved by cutting: this year's hit minus the dead money incurred. */

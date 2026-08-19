@@ -242,10 +242,15 @@ model Contract {
   signedYear    Int
   // Per-year base salaries, JSON string number[] (index 0 = current year)
   baseSalaries  String
-  signingBonus  Int @default(0)   // fully prorated across min(years, 5)
+  signingBonus  Int @default(0)   // fully prorated across min(years + voidYears, 5)
   guaranteed    Int @default(0)
   isRookieDeal  Boolean @default(false)
   isFranchiseTag Boolean @default(false)
+  // Cap-only trailing years tacked on (usually via a restructure) purely to
+  // spread signing-bonus proration further — the player is never actually
+  // on the roster for these. All remaining proration accelerates as dead
+  // money the moment the real contract ends or the player is cut.
+  voidYears     Int @default(0)
 }
 
 // Dead money left behind by cuts/trades, tracked per team-year.

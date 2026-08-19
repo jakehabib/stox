@@ -7,6 +7,7 @@ import { ratingColor, ratingTier } from '@/lib/ratings';
 import { formatMoney, capHit, remainingValue } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { CutButton } from '@/components/CutButton';
+import { ContractActions } from '@/components/ContractActions';
 import { ScoutButton } from '@/components/ScoutButton';
 import { SignOfferForm } from '@/components/SignOfferForm';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
@@ -140,8 +141,20 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
               <div className="flex justify-between"><span className="text-muted">Years remaining</span><span className="font-mono">{player.contract.yearsRemaining}</span></div>
               <div className="flex justify-between"><span className="text-muted">Remaining value</span><span className="font-mono">{formatMoney(remaining)}</span></div>
               <div className="flex justify-between"><span className="text-muted">Guaranteed</span><span className="font-mono">{formatMoney(player.contract.guaranteed)}</span></div>
+              {player.contract.voidYears > 0 && (
+                <div className="flex justify-between"><span className="text-muted">Void years</span><span className="font-mono text-warn">+{player.contract.voidYears}</span></div>
+              )}
               {isOwnRoster && userTeam && (
-                <div className="pt-3">
+                <div className="pt-3 space-y-3">
+                  <ContractActions
+                    leagueId={league.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age}
+                    contract={{
+                      years: player.contract.years, yearsRemaining: player.contract.yearsRemaining, signedYear: player.contract.signedYear,
+                      baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
+                      guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
+                    }}
+                    availableSpaceForExtension={capSpace + hit} capMode={settings.capMode}
+                  />
                   <CutButton leagueId={league.id} playerId={player.id} />
                 </div>
               )}

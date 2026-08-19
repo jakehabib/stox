@@ -79,6 +79,120 @@ export async function signFreeAgent(opts: {
   });
 }
 
+/**
+ * Re-negotiate an existing rostered player's deal — a full replacement
+ * contract, same idea as signFreeAgent but for a player who's already on
+ * the roster (extension, not a new signing). The cap check compares the
+ * NEW hit against space with the OLD contract's hit added back, since the
+ * old deal is going away the instant this one is signed.
+ */
+export async function extendContract(opts: {
+  leagueId: string;
+  playerId: string;
+  apy: number;
+  years: number;
+  seasonYear: number;
+  capMode: LeagueSettings['capMode'];
+  week: number;
+  escalation?: number; // <1 front-loaded, >1 back-loaded
+  voidYears?: number;
+  bonusPct?: number;
+}) {
+  const { playerId, apy, years, seasonYear, capMode, week } = opts;
+  const { capHit } = await import('./cap');
+
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
+  if (!player.teamId) throw new Error('Player is not on a roster.');
+  const teamId = player.teamId;
+
+  const summary = await teamCapSummary(teamId, seasonYear, capMode);
+  const oldHit = player.contract ? capHit(player.contract, capMode) : 0;
+  const availableSpace = summary.capSpace + oldHit;
+
+  const contract = buildContract({ apy, years, signedYear: seasonYear, escalation: opts.escalation, bonusPct: opts.bonusPct });
+  const newHit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries) }, capMode);
+  if (capMode !== 'OFF' && newHit > availableSpace + 1) {
+    throw new Error(`Extension would exceed the cap by ${Math.round((newHit - availableSpace) / 1000)}K.`);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.contract.deleteMany({ where: { playerId } });
+    await tx.contract.create({
+      data: {
+        playerId,
+        teamId,
+        years: contract.years,
+        yearsRemaining: contract.yearsRemaining,
+        signedYear: contract.signedYear,
+        baseSalaries: writeJson(contract.baseSalaries),
+        signingBonus: contract.signingBonus,
+        guaranteed: contract.guaranteed,
+        isRookieDeal: false,
+        voidYears: Math.max(0, opts.voidYears ?? 0),
+      },
+    });
+    await tx.transaction.create({
+      data: {
+        leagueId: opts.leagueId, seasonYear, week, type: 'SIGN', teamId,
+        headline: `Extended ${player.firstName} ${player.lastName}`,
+        detail: `${years}-yr extension, ~$${(apy / 1_000_000).toFixed(1)}M/yr`,
+      },
+    });
+  });
+}
+
+/**
+ * Restructure the CURRENT contract in place — converts base salary into
+ * signing bonus for immediate cap relief, at the cost of higher future cap
+ * hits (and more dead money if cut later). Unlike extendContract this
+ * doesn't change the player's total real years or pay — it only reshapes
+ * WHEN the money hits the cap.
+ */
+export async function restructureContract(opts: {
+  leagueId: string;
+  playerId: string;
+  convertAmount: number;
+  addVoidYears?: number;
+  seasonYear: number;
+  capMode: LeagueSettings['capMode'];
+  week: number;
+}) {
+  const { restructureContract: computeRestructure, capHit } = await import('./cap');
+
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId }, include: { contract: true } });
+  if (!player.contract) throw new Error('Player has no contract to restructure.');
+  if (opts.capMode !== 'REALISTIC') throw new Error('Restructuring only applies in Realistic cap mode.');
+  if (player.contract.yearsRemaining < 1) throw new Error('Nothing left on this deal to restructure.');
+
+  const next = computeRestructure(player.contract, opts.convertAmount, { addVoidYears: opts.addVoidYears, nowYear: opts.seasonYear });
+  if (next.signingBonus === player.contract.signingBonus) {
+    throw new Error('That conversion amount is too small to change anything — the base salary floor was already hit.');
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.contract.update({
+      where: { playerId: opts.playerId },
+      data: {
+        years: next.years,
+        yearsRemaining: next.yearsRemaining,
+        signedYear: next.signedYear,
+        baseSalaries: writeJson(next.baseSalaries),
+        signingBonus: next.signingBonus,
+        voidYears: next.voidYears,
+      },
+    });
+    await tx.transaction.create({
+      data: {
+        leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week, type: 'SIGN', teamId: player.teamId,
+        headline: `Restructured ${player.firstName} ${player.lastName}'s contract`,
+        detail: `Converted $${(opts.convertAmount / 1_000_000).toFixed(1)}M of base salary to bonus for cap relief.`,
+      },
+    });
+  });
+
+  return { newCapHit: capHit({ ...next, baseSalaries: writeJson(next.baseSalaries) }, opts.capMode) };
+}
+
 export async function cutPlayer(opts: {
   leagueId: string; playerId: string; capMode: LeagueSettings['capMode']; seasonYear: number; week: number;
 }) {

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { cutPlayer as cutPlayerLib, signFreeAgent, evaluateOffer } from '@/lib/freeagency';
+import { cutPlayer as cutPlayerLib, signFreeAgent, evaluateOffer, extendContract, restructureContract } from '@/lib/freeagency';
 import { parseSettings } from '@/lib/settings';
 import { autoDepthChart } from '@/lib/gen/league';
 
@@ -31,6 +31,37 @@ export async function offerContractAction(leagueId: string, playerId: string, te
   }
   revalidatePath(`/league/${leagueId}`, 'layout');
   return { ok: true, message: 'Deal signed.' };
+}
+
+export async function extendContractAction(
+  leagueId: string, playerId: string, apy: number, years: number, escalation: number, voidYears: number,
+) {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  try {
+    await extendContract({
+      leagueId, playerId, apy, years, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week,
+      escalation, voidYears,
+    });
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'Extension failed.' };
+  }
+  revalidatePath(`/league/${leagueId}`, 'layout');
+  return { ok: true, message: 'Extension signed.' };
+}
+
+export async function restructureContractAction(leagueId: string, playerId: string, convertAmount: number, addVoidYears: number) {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  try {
+    const result = await restructureContract({
+      leagueId, playerId, convertAmount, addVoidYears, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week,
+    });
+    revalidatePath(`/league/${leagueId}`, 'layout');
+    return { ok: true, message: `Restructured — new cap hit this year: $${(result.newCapHit / 1_000_000).toFixed(2)}M.` };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'Restructure failed.' };
+  }
 }
 
 export async function setDepthChartAction(teamId: string, position: string, orderedPlayerIds: string[]) {
