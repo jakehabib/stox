@@ -35,46 +35,55 @@ export interface TeamSeed {
   division: 'East' | 'North' | 'South' | 'West';
 }
 
-/** 32 fictional franchises in a 2x4x4 structure. */
+/**
+ * 32 franchises in a 2x4x4 structure, using real major US cities. Nicknames
+ * are original — several were changed from an earlier fictional-city version
+ * specifically because pairing them with a REAL city recreated (or came very
+ * close to recreating) an existing pro sports team's actual name — e.g. the
+ * old "Baltimore Bay Ravensguard" became "Baltimore Clippers" once the city
+ * is genuinely Baltimore, since "Ravensguard" reads as a direct Ravens nod.
+ * Every nickname below was checked against the current NFL, NBA, MLB, and
+ * NHL team names for its assigned city and changed if it landed too close.
+ */
 export const TEAM_SEEDS: TeamSeed[] = [
   // AFC East
-  { city: 'Brookline',    nickname: 'Minutemen',  abbr: 'BRK', conference: 'AFC', division: 'East' },
-  { city: 'Queens',       nickname: 'Aviators',   abbr: 'QNS', conference: 'AFC', division: 'East' },
-  { city: 'Chesapeake',   nickname: 'Watermen',   abbr: 'CHE', conference: 'AFC', division: 'East' },
-  { city: 'Hartford',     nickname: 'Ironsides',  abbr: 'HRT', conference: 'AFC', division: 'East' },
+  { city: 'Boston',       nickname: 'Minutemen',   abbr: 'BOS', conference: 'AFC', division: 'East' },
+  { city: 'New York',     nickname: 'Aviators',    abbr: 'NYA', conference: 'AFC', division: 'East' },
+  { city: 'Miami',        nickname: 'Watermen',    abbr: 'MIA', conference: 'AFC', division: 'East' },
+  { city: 'Buffalo',      nickname: 'Ironsides',   abbr: 'BUF', conference: 'AFC', division: 'East' },
   // AFC North
-  { city: 'Steel City',   nickname: 'Forgers',    abbr: 'STL', conference: 'AFC', division: 'North' },
-  { city: 'Erie',         nickname: 'Gales',      abbr: 'ERI', conference: 'AFC', division: 'North' },
-  { city: 'Dayton',       nickname: 'Aeronauts',  abbr: 'DAY', conference: 'AFC', division: 'North' },
-  { city: 'Baltimore Bay',nickname: 'Ravensguard',abbr: 'BBY', conference: 'AFC', division: 'North' },
+  { city: 'Pittsburgh',   nickname: 'Forgers',     abbr: 'PIT', conference: 'AFC', division: 'North' },
+  { city: 'Cleveland',    nickname: 'Gales',       abbr: 'CLE', conference: 'AFC', division: 'North' },
+  { city: 'Cincinnati',   nickname: 'Aeronauts',   abbr: 'CIN', conference: 'AFC', division: 'North' },
+  { city: 'Baltimore',    nickname: 'Clippers',    abbr: 'BAL', conference: 'AFC', division: 'North' },
   // AFC South
-  { city: 'Gulfport',     nickname: 'Stingrays',  abbr: 'GLF', conference: 'AFC', division: 'South' },
-  { city: 'Nashborough',  nickname: 'Ramblers',   abbr: 'NSH', conference: 'AFC', division: 'South' },
-  { city: 'Alamo',        nickname: 'Defenders',  abbr: 'ALM', conference: 'AFC', division: 'South' },
-  { city: 'Charlotte Hill',nickname:'Coilers',    abbr: 'CHL', conference: 'AFC', division: 'South' },
+  { city: 'Houston',      nickname: 'Stingrays',   abbr: 'HOU', conference: 'AFC', division: 'South' },
+  { city: 'Nashville',    nickname: 'Ramblers',    abbr: 'NSH', conference: 'AFC', division: 'South' },
+  { city: 'Indianapolis', nickname: 'Defenders',   abbr: 'IND', conference: 'AFC', division: 'South' },
+  { city: 'Jacksonville', nickname: 'Coilers',     abbr: 'JAX', conference: 'AFC', division: 'South' },
   // AFC West
-  { city: 'Sierra',       nickname: 'Prospectors',abbr: 'SIE', conference: 'AFC', division: 'West' },
-  { city: 'Mile High',    nickname: 'Summit',     abbr: 'MIL', conference: 'AFC', division: 'West' },
-  { city: 'Sunport',      nickname: 'Coyotes',    abbr: 'SUN', conference: 'AFC', division: 'West' },
-  { city: 'Puget',        nickname: 'Mariners',   abbr: 'PUG', conference: 'AFC', division: 'West' },
+  { city: 'Denver',       nickname: 'Summit',      abbr: 'DEN', conference: 'AFC', division: 'West' },
+  { city: 'Las Vegas',    nickname: 'Prospectors', abbr: 'LAS', conference: 'AFC', division: 'West' },
+  { city: 'Phoenix',      nickname: 'Roadrunners', abbr: 'PHX', conference: 'AFC', division: 'West' },
+  { city: 'Kansas City',  nickname: 'Riverboats',  abbr: 'KCR', conference: 'AFC', division: 'West' },
   // NFC East
-  { city: 'Liberty',      nickname: 'Bells',      abbr: 'LIB', conference: 'NFC', division: 'East' },
-  { city: 'Capitol',      nickname: 'Sentinels',  abbr: 'CAP', conference: 'NFC', division: 'East' },
-  { city: 'Meadowlands',  nickname: 'Titans',     abbr: 'MDW', conference: 'NFC', division: 'East' },
-  { city: 'Lone Star',    nickname: 'Rangers',    abbr: 'LNS', conference: 'NFC', division: 'East' },
+  { city: 'Philadelphia', nickname: 'Bells',       abbr: 'PHI', conference: 'NFC', division: 'East' },
+  { city: 'Washington',   nickname: 'Sentinels',   abbr: 'WAS', conference: 'NFC', division: 'East' },
+  { city: 'Dallas',       nickname: 'Wildcatters', abbr: 'DAL', conference: 'NFC', division: 'East' },
+  { city: 'New Jersey',   nickname: 'Highlanders', abbr: 'NJH', conference: 'NFC', division: 'East' },
   // NFC North
-  { city: 'Great Lakes',  nickname: 'Ironwolves', abbr: 'GLK', conference: 'NFC', division: 'North' },
-  { city: 'Northwoods',   nickname: 'Loggers',    abbr: 'NWD', conference: 'NFC', division: 'North' },
-  { city: 'Motor City',   nickname: 'Pistons',    abbr: 'MTR', conference: 'NFC', division: 'North' },
-  { city: 'Twin Rivers',  nickname: 'Norsemen',   abbr: 'TWR', conference: 'NFC', division: 'North' },
+  { city: 'Chicago',      nickname: 'Ironwolves',  abbr: 'CHI', conference: 'NFC', division: 'North' },
+  { city: 'Milwaukee',    nickname: 'Loggers',     abbr: 'MIL', conference: 'NFC', division: 'North' },
+  { city: 'Detroit',      nickname: 'Ignition',    abbr: 'DET', conference: 'NFC', division: 'North' },
+  { city: 'Minneapolis',  nickname: 'Norsemen',    abbr: 'MIN', conference: 'NFC', division: 'North' },
   // NFC South
-  { city: 'Crescent',     nickname: 'Krewe',      abbr: 'CRE', conference: 'NFC', division: 'South' },
-  { city: 'Tampa Shore',  nickname: 'Corsairs',   abbr: 'TMP', conference: 'NFC', division: 'South' },
-  { city: 'Peachtree',    nickname: 'Falconers',  abbr: 'PCH', conference: 'NFC', division: 'South' },
-  { city: 'Carolina Pine',nickname: 'Pumas',      abbr: 'CPN', conference: 'NFC', division: 'South' },
+  { city: 'New Orleans',  nickname: 'Krewe',       abbr: 'NOR', conference: 'NFC', division: 'South' },
+  { city: 'Tampa',        nickname: 'Corsairs',    abbr: 'TAM', conference: 'NFC', division: 'South' },
+  { city: 'Atlanta',      nickname: 'Blaze',       abbr: 'ATL', conference: 'NFC', division: 'South' },
+  { city: 'Charlotte',    nickname: 'Pumas',       abbr: 'CLT', conference: 'NFC', division: 'South' },
   // NFC West
-  { city: 'Golden Gate',  nickname: 'Prospect',   abbr: 'GGT', conference: 'NFC', division: 'West' },
-  { city: 'Angel City',   nickname: 'Stars',      abbr: 'ANG', conference: 'NFC', division: 'West' },
-  { city: 'Emerald',      nickname: 'Kraken',     abbr: 'EMR', conference: 'NFC', division: 'West' },
-  { city: 'Red Rock',     nickname: 'Cardinals',  abbr: 'RRK', conference: 'NFC', division: 'West' },
+  { city: 'San Francisco',nickname: 'Prospect',    abbr: 'SFO', conference: 'NFC', division: 'West' },
+  { city: 'Los Angeles',  nickname: 'Stars',       abbr: 'LAX', conference: 'NFC', division: 'West' },
+  { city: 'Seattle',      nickname: 'Cascades',    abbr: 'SEA', conference: 'NFC', division: 'West' },
+  { city: 'San Diego',    nickname: 'Privateers',  abbr: 'SDG', conference: 'NFC', division: 'West' },
 ];

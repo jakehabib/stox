@@ -75,6 +75,24 @@ function HairTop({ style, color }: { style: HairStyle; color: string }) {
       return <path d="M50 38 Q46 10 60 6 Q74 10 70 38 Q60 30 50 38 Z" fill={color} />;
     case 'long':
       return <path d="M24 58 Q16 4 60 6 Q104 4 96 58 Q94 20 60 18 Q26 20 24 58 Z" fill={color} />;
+    case 'ponytail':
+      return (
+        <>
+          <path d="M28 32 Q60 4 92 32 Q92 16 60 10 Q28 16 28 32 Z" fill={color} />
+          <path d="M84 22 Q100 26 98 48 Q97 62 90 70 L85 64 Q91 54 90 42 Q89 30 82 24 Z" fill={color} />
+        </>
+      );
+    case 'flattop':
+      return <path d="M28 32 L28 14 Q60 4 92 14 L92 32 Q60 24 28 32 Z" fill={color} />;
+    case 'dreads':
+      return (
+        <g fill={color}>
+          <path d="M26 34 Q60 2 94 34 Q94 20 60 14 Q26 20 26 34 Z" />
+          {[30, 40, 50, 60, 70, 80, 90].map((x) => (
+            <rect key={x} x={x - 3} y={26} width={6} height={30} rx={3} />
+          ))}
+        </g>
+      );
     default:
       return null;
   }

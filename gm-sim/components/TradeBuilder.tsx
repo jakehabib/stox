@@ -6,6 +6,7 @@ import { evaluateTradeAction, executeTradeAction } from '@/app/actions/trade';
 import { ratingColor } from '@/lib/ratings';
 import { PlayerAvatar } from './PlayerAvatar';
 import { TeamLogo } from './TeamLogo';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 interface RosterP { id: string; name: string; position: string; ovr: number; age: number }
 interface Pick { id: string; year: number; round: number; slot: number }
@@ -105,6 +106,7 @@ function assetList(selected: Set<string>, roster: RosterP[], picks: Pick[]) {
 function TeamPanel({ title, teamId, teamAbbr, teamName, roster, picks, selected, onToggle }: {
   title: string; teamId: string; teamAbbr: string; teamName: string; roster: RosterP[]; picks: Pick[]; selected: Set<string>; onToggle: (id: string) => void;
 }) {
+  const teamColor = generateTeamLogoParams(teamId).primary;
   return (
     <div className="card card-pad">
       <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
@@ -132,7 +134,7 @@ function TeamPanel({ title, teamId, teamAbbr, teamName, roster, picks, selected,
             onClick={() => onToggle(p.id)}
             className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm ${selected.has(p.id) ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised border border-transparent'}`}
           >
-            <PlayerAvatar seed={p.id} age={p.age} size={22} />
+            <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} />
             <span className="text-xs font-mono text-muted w-8">{p.position}</span>
             <span className={`text-xs font-mono font-semibold w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
             <span className="flex-1 truncate">{p.name}</span>

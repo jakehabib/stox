@@ -15,8 +15,8 @@ import { Rng } from '../rng';
  * ===========================================================================
  */
 
-export type LogoShape = 'shield' | 'circle' | 'hexagon';
-export type LogoPattern = 'plain' | 'stripe' | 'chevron' | 'split';
+export type LogoShape = 'shield' | 'circle' | 'hexagon' | 'diamond';
+export type LogoPattern = 'plain' | 'stripe' | 'chevron' | 'split' | 'ring';
 
 export interface TeamLogoParams {
   primary: string;
@@ -38,10 +38,18 @@ const COLOR_PAIRS: [string, string][] = [
   ['#28331f', '#c7ced9'], // olive drab / silver
   ['#1e3a3a', '#e0763a'], // slate teal / burnt orange
   ['#3a1e5f', '#4cc9c7'], // violet / cyan
+  ['#0d3b24', '#f2c14e'], // pine / mustard
+  ['#5c0f1a', '#c7ced9'], // oxblood / silver
+  ['#0f2e5f', '#f28c28'], // cobalt / tangerine
+  ['#3a3a1e', '#e8e2c7'], // olive / cream
+  ['#4f0f2e', '#e07a9e'], // wine / rose
+  ['#123b3b', '#a8d8d8'], // deep teal / ice
+  ['#5f3a0f', '#c7ced9'], // saddle brown / silver
+  ['#1e1e2e', '#4cc9c7'], // midnight / cyan
 ];
 
-const SHAPES: LogoShape[] = ['shield', 'circle', 'hexagon'];
-const PATTERNS: LogoPattern[] = ['plain', 'stripe', 'chevron', 'split'];
+const SHAPES: LogoShape[] = ['shield', 'circle', 'hexagon', 'diamond'];
+const PATTERNS: LogoPattern[] = ['plain', 'stripe', 'chevron', 'split', 'ring'];
 
 export function generateTeamLogoParams(seed: string): TeamLogoParams {
   const rng = new Rng(`logo-${seed}`);

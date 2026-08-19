@@ -3,11 +3,14 @@
 import { useState, useTransition } from 'react';
 import { setDepthChartAction } from '@/app/actions/roster';
 import { ratingColor } from '@/lib/ratings';
+import { PlayerAvatar } from './PlayerAvatar';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
-interface P { id: string; name: string; ovr: number; injured: boolean }
+interface P { id: string; name: string; ovr: number; age: number; injured: boolean }
 
 export function DepthChartGroup({ teamId, position, players, order }: { teamId: string; position: string; players: P[]; order: string[] }) {
   const byId = new Map(players.map((p) => [p.id, p]));
+  const teamColor = generateTeamLogoParams(teamId).primary;
   const [localOrder, setLocalOrder] = useState(order);
   const [pending, startTransition] = useTransition();
 
@@ -33,6 +36,7 @@ export function DepthChartGroup({ teamId, position, players, order }: { teamId: 
           return (
             <div key={id} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${idx === 0 ? 'bg-raised' : ''}`}>
               <span className="text-xs text-muted w-4">{idx + 1}</span>
+              <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} />
               <span className={`text-xs font-mono font-semibold w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
               <span className="text-sm flex-1 truncate">{p.name}</span>
               {p.injured && <span className="text-[10px] text-bad">INJ</span>}

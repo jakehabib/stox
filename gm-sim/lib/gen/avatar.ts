@@ -14,7 +14,9 @@ import { Rng } from '../rng';
  * ===========================================================================
  */
 
-export type HairStyle = 'bald' | 'buzz' | 'short' | 'part' | 'medium' | 'curly' | 'mohawk' | 'long';
+export type HairStyle =
+  | 'bald' | 'buzz' | 'short' | 'part' | 'medium' | 'curly' | 'mohawk' | 'long'
+  | 'ponytail' | 'flattop' | 'dreads';
 export type EyeStyle = 'round' | 'narrow' | 'wide' | 'sleepy';
 export type EyebrowStyle = 'straight' | 'angled' | 'raised';
 export type NoseStyle = 'small' | 'medium' | 'wide';
@@ -35,11 +37,14 @@ export interface AvatarParams {
 }
 
 /** [PLACEHOLDER palette] Flat, mid-saturation tones — reads clean at small sizes. */
-const SKIN_TONES = ['#ffe0bd', '#ffcd94', '#eeb382', '#c68642', '#8d5524', '#5c3a2e'];
+const SKIN_TONES = ['#ffe0bd', '#ffcd94', '#f1b58a', '#eeb382', '#c68642', '#a86b3c', '#8d5524', '#5c3a2e'];
 const HAIR_COLORS_YOUNG = ['#1c1815', '#3a2a1a', '#5b3a21', '#7a4a25', '#a8621f', '#c99a3e', '#8a2e1f'];
 const HAIR_COLORS_OLD = ['#6b6b6b', '#9a9a9a', '#c7c7c7', '#e8e8e8', '#3a2a1a', '#1c1815'];
 
-const HAIR_STYLES: HairStyle[] = ['bald', 'buzz', 'short', 'part', 'medium', 'curly', 'mohawk', 'long'];
+const HAIR_STYLES: HairStyle[] = [
+  'bald', 'buzz', 'short', 'part', 'medium', 'curly', 'mohawk', 'long',
+  'ponytail', 'flattop', 'dreads',
+];
 const EYE_STYLES: EyeStyle[] = ['round', 'narrow', 'wide', 'sleepy'];
 const EYEBROW_STYLES: EyebrowStyle[] = ['straight', 'angled', 'raised'];
 const NOSE_STYLES: NoseStyle[] = ['small', 'medium', 'wide'];

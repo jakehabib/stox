@@ -11,6 +11,7 @@ const SHAPE_PATH: Record<LogoShape, string> = {
   shield: 'M50 4 L90 16 L90 48 Q90 82 50 96 Q10 82 10 48 L10 16 Z',
   circle: 'M50 4 A46 46 0 1 1 49.99 4 Z',
   hexagon: 'M50 3 L92 26 L92 74 L50 97 L8 74 L8 26 Z',
+  diamond: 'M50 2 L96 50 L50 98 L4 50 Z',
 };
 
 export function TeamLogo({ seed, abbr, size = 40, className }: Props) {
@@ -48,6 +49,8 @@ function PatternOverlay({ pattern, color }: { pattern: LogoPattern; color: strin
       return <path d="M0 70 L50 50 L100 70 L100 90 L50 70 L0 90 Z" fill={color} opacity={0.85} />;
     case 'split':
       return <path d="M50 0 L100 0 L100 100 L50 100 Z" fill={color} opacity={0.28} />;
+    case 'ring':
+      return <circle cx={50} cy={50} r={30} fill="none" stroke={color} strokeWidth={7} opacity={0.8} />;
     default:
       return null;
   }

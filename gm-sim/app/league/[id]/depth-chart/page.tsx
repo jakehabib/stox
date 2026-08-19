@@ -40,7 +40,7 @@ export default async function DepthChartPage({ params }: { params: { id: string 
             key={pos}
             teamId={team.id}
             position={pos}
-            players={byPosition[pos].map((p) => ({ id: p.id, name: `${p.firstName} ${p.lastName}`, ovr: p.trueOvr, injured: p.injuryWeeks > 0 }))}
+            players={byPosition[pos].map((p) => ({ id: p.id, name: `${p.firstName} ${p.lastName}`, ovr: p.trueOvr, age: p.age, injured: p.injuryWeeks > 0 }))}
             order={orderByPosition[pos]}
           />
         ))}
