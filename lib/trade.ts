@@ -24,6 +24,8 @@ export interface TradeEvaluation {
   sendValue: number;
   receiveValue: number;
   ratio: number;
+  /** The ratio the offer needed to clear to be accepted — lets the UI render a score bar, not just accept/reject text. */
+  requiredRatio: number;
   counter?: { message: string };
   /** Why the AI valued things this way — the strongest 1-3 notes across all assets on each side. */
   explanation: { give: string[]; receive: string[] };
@@ -99,16 +101,16 @@ export async function evaluateTrade(opts: {
   const ratio = sendValue === 0 ? Infinity : receiveValue / sendValue;
 
   if (ratio >= requiredRatio) {
-    return { accepted: true, sendValue, receiveValue, ratio, explanation, philosophy };
+    return { accepted: true, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy };
   }
   if (ratio >= requiredRatio - AI.TRADE_COUNTER_WINDOW) {
     return {
-      accepted: false, sendValue, receiveValue, ratio, explanation, philosophy,
+      accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy,
       counter: { message: `Close, but we need a bit more. Try sweetening the offer — we're about ${Math.round((requiredRatio - ratio) * 100)}% short on value.` },
     };
   }
   return {
-    accepted: false, sendValue, receiveValue, ratio, explanation, philosophy,
+    accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy,
     counter: { message: `Not enough here for us to consider it.` },
   };
 }

@@ -26,7 +26,8 @@ export function TradeBuilder({
   const [get, setGet] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<{
-    accepted: boolean; message: string; ratio: number;
+    accepted: boolean; message: string; ratio: number; requiredRatio: number;
+    sendValue: number; receiveValue: number;
     explanation?: { give: string[]; receive: string[] };
   } | null>(null);
   const [partnerSuggestions, setPartnerSuggestions] = useState<TradePartnerSuggestion[] | null>(null);
@@ -65,6 +66,9 @@ export function TradeBuilder({
       setResult({
         accepted: evaluation.accepted,
         ratio: evaluation.ratio,
+        requiredRatio: evaluation.requiredRatio,
+        sendValue: evaluation.sendValue,
+        receiveValue: evaluation.receiveValue,
         message: evaluation.accepted
           ? 'Deal accepted! Click confirm to execute the trade.'
           : evaluation.counter?.message ?? 'Rejected.',
@@ -140,8 +144,9 @@ export function TradeBuilder({
       </div>
 
       {result && (
-        <div className={`card card-pad text-sm space-y-2 ${result.accepted ? 'border-accent/40' : 'border-bad/30'}`}>
+        <div className={`card card-pad text-sm space-y-3 ${result.accepted ? 'border-accent/40' : 'border-bad/30'}`}>
           <div className={result.accepted ? 'text-accent' : 'text-bad'}>{result.message}</div>
+          <TradeScoreBar ratio={result.ratio} requiredRatio={result.requiredRatio} accepted={result.accepted} />
           {(result.explanation?.give.length || result.explanation?.receive.length) ? (
             <div className="text-xs text-muted space-y-1 pt-1 border-t border-line/60">
               {result.explanation.receive.map((r, i) => <div key={`r${i}`}>• {r}</div>)}
@@ -150,6 +155,32 @@ export function TradeBuilder({
           ) : null}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The AI accepts once (value you're offering) / (value it gives up) clears
+ * `requiredRatio`. Normalizing to that threshold ("100" = exactly clears the
+ * bar the AI actually applies) is what makes this readable — the raw value
+ * points are meaningless to a player with nothing to compare them against.
+ */
+function TradeScoreBar({ ratio, requiredRatio, accepted }: { ratio: number; requiredRatio: number; accepted: boolean }) {
+  const pct = Number.isFinite(ratio) ? (ratio / requiredRatio) * 100 : 150;
+  const fillPct = Math.max(2, Math.min(150, pct));
+  const barColor = accepted ? 'bg-accent' : pct >= 80 ? 'bg-warn' : 'bg-bad';
+  const thresholdLeft = (100 / 150) * 100; // requiredRatio always sits at the 100-of-150 mark on this scale
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="label-sm">Trade Score</span>
+        <span className={`text-xs font-mono ${accepted ? 'text-accent' : 'text-muted'}`}>{Math.round(pct)}% of what they need</span>
+      </div>
+      <div className="relative h-2.5 rounded-full bg-raised overflow-hidden">
+        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${(fillPct / 150) * 100}%` }} />
+        <div className="absolute top-0 bottom-0 w-px bg-line" style={{ left: `${thresholdLeft}%` }} title="Acceptance threshold" />
+      </div>
     </div>
   );
 }
