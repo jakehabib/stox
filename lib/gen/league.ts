@@ -57,6 +57,14 @@ export async function createLeague(opts: {
   await prisma.team.createMany({ data: teamRows });
   const teams = await prisma.team.findMany({ where: { leagueId: league.id }, orderBy: { abbr: 'asc' } });
   const userTeam = teams.find((t) => t.isUser) ?? teams[0];
+  // If userTeamAbbr didn't match any generated team, the fallback above
+  // still needs its row actually flagged — otherwise league.userTeamId
+  // points at a team that isUser:false, and anything that queries "the
+  // other 31 teams" via isUser:false (the trade screen's partner list,
+  // for one) ends up including the user's own team as a valid partner.
+  if (!userTeam.isUser) {
+    await prisma.team.update({ where: { id: userTeam.id }, data: { isUser: true } });
+  }
   await prisma.league.update({ where: { id: league.id }, data: { userTeamId: userTeam.id } });
 
   // --- Staff & scouts -------------------------------------------------------
