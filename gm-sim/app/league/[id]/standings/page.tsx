@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
+import { TeamLogo } from '@/components/TeamLogo';
 
 export default async function StandingsPage({ params }: { params: { id: string } }) {
   const { league } = await getLeagueContext(params.id);
@@ -35,7 +36,8 @@ export default async function StandingsPage({ params }: { params: { id: string }
                 {teamList.map((t) => (
                   <tr key={t.id} className={t.isUser ? 'bg-accent/5' : ''}>
                     <td>
-                      <Link href={`/league/${league.id}/roster`} className="hover:text-accent2">
+                      <Link href={`/league/${league.id}/roster`} className="hover:text-accent2 flex items-center gap-2">
+                        <TeamLogo seed={t.id} abbr={t.abbr} size={22} />
                         {t.city} {t.nickname} {t.isUser && <span className="text-accent text-xs">(You)</span>}
                         {t.playoffSeed ? <span className="text-xs text-gold ml-1">#{t.playoffSeed}</span> : null}
                       </Link>

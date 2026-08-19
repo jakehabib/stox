@@ -4,6 +4,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { AdvanceWeekButton } from '@/components/AdvanceWeekButton';
 import { formatMoney } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
+import { TeamLogo } from '@/components/TeamLogo';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,9 +37,12 @@ export default async function LeagueLayout({ children, params }: { children: Rea
             <span className="font-semibold text-sm hidden sm:inline">Dynasty GM Football</span>
           </Link>
           <div className="flex items-center gap-3 shrink-0">
-            <div className="text-right hidden md:block">
-              <div className="text-sm font-semibold leading-tight">{userTeam.city} {userTeam.nickname}</div>
-              <div className="text-xs text-muted leading-tight">{userTeam.wins}-{userTeam.losses}{userTeam.ties ? `-${userTeam.ties}` : ''} · {userTeam.conference} {userTeam.division}</div>
+            <div className="flex items-center gap-2">
+              <TeamLogo seed={userTeam.id} abbr={userTeam.abbr} size={32} className="hidden sm:block" />
+              <div className="text-right hidden md:block">
+                <div className="text-sm font-semibold leading-tight">{userTeam.city} {userTeam.nickname}</div>
+                <div className="text-xs text-muted leading-tight">{userTeam.wins}-{userTeam.losses}{userTeam.ties ? `-${userTeam.ties}` : ''} · {userTeam.conference} {userTeam.division}</div>
+              </div>
             </div>
             {cap && (
               <div className="stat-tile hidden lg:block text-right">

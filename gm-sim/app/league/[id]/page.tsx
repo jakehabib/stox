@@ -7,6 +7,7 @@ import { ratingTier } from '@/lib/ratings';
 import { readJson } from '@/lib/json';
 import { shortResult } from '@/lib/sim/recap';
 import { teamNeeds } from '@/lib/ai/gm';
+import { TeamLogo } from '@/components/TeamLogo';
 
 export default async function TeamDashboard({ params }: { params: { id: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -30,12 +31,15 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   return (
     <div className="space-y-8">
       <div className="flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{team.city} {team.nickname}</h1>
-          <p className="text-muted text-sm mt-1">
-            {team.conference} {team.division} · {team.wins}-{team.losses}{team.ties ? `-${team.ties}` : ''} ·
-            {' '}Overall <span className={ratingTier(overall).className}>{overall}</span> ({ratingTier(overall).label})
-          </p>
+        <div className="flex items-center gap-4">
+          <TeamLogo seed={team.id} abbr={team.abbr} size={64} />
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">{team.city} {team.nickname}</h1>
+            <p className="text-muted text-sm mt-1">
+              {team.conference} {team.division} · {team.wins}-{team.losses}{team.ties ? `-${team.ties}` : ''} ·
+              {' '}Overall <span className={ratingTier(overall).className}>{overall}</span> ({ratingTier(overall).label})
+            </p>
+          </div>
         </div>
         <div className="flex gap-2 text-sm text-muted">
           <span className="pill border-line">{team.offScheme}</span>
@@ -48,7 +52,11 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           <div className="label-sm mb-1">Next Game</div>
           {next ? (
             <>
-              <div className="font-semibold">{next.homeTeamId === team.id ? 'vs' : '@'} {next.homeTeamId === team.id ? next.awayTeam.abbr : next.homeTeam.abbr}</div>
+              <div className="font-semibold flex items-center gap-2">
+                {next.homeTeamId === team.id ? 'vs' : '@'}
+                <TeamLogo seed={next.homeTeamId === team.id ? next.awayTeam.id : next.homeTeam.id} abbr={next.homeTeamId === team.id ? next.awayTeam.abbr : next.homeTeam.abbr} size={22} />
+                {next.homeTeamId === team.id ? next.awayTeam.abbr : next.homeTeam.abbr}
+              </div>
               <div className="text-xs text-muted mt-1">Week {next.week} · {next.kind}</div>
             </>
           ) : <div className="text-sm text-muted">Season complete</div>}
@@ -107,7 +115,11 @@ export default async function TeamDashboard({ params }: { params: { id: string }
                   const won = (g.homeTeamId === team.id ? g.homeScore : g.awayScore) > (g.homeTeamId === team.id ? g.awayScore : g.homeScore);
                   return (
                     <Link key={g.id} href={`/league/${league.id}/game/${g.id}`} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-raised transition-colors">
-                      <span className="text-sm">Wk {g.week} · {g.homeTeamId === team.id ? 'vs' : '@'} {g.homeTeamId === team.id ? g.awayTeam.abbr : g.homeTeam.abbr}</span>
+                      <span className="text-sm flex items-center gap-2">
+                        Wk {g.week} · {g.homeTeamId === team.id ? 'vs' : '@'}
+                        <TeamLogo seed={g.homeTeamId === team.id ? g.awayTeam.id : g.homeTeam.id} abbr={g.homeTeamId === team.id ? g.awayTeam.abbr : g.homeTeam.abbr} size={20} />
+                        {g.homeTeamId === team.id ? g.awayTeam.abbr : g.homeTeam.abbr}
+                      </span>
                       <span className={`text-sm font-mono font-semibold ${won ? 'text-accent' : 'text-bad'}`}>{box ? shortResult(box) : `${g.homeScore}-${g.awayScore}`}</span>
                     </Link>
                   );

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { BoxScore } from '@/lib/types';
+import { TeamLogo } from '@/components/TeamLogo';
 
 export default async function GamePage({ params }: { params: { id: string; gameId: string } }) {
   const { league } = await getLeagueContext(params.id);
@@ -23,9 +24,9 @@ export default async function GamePage({ params }: { params: { id: string; gameI
     <div className="space-y-6 max-w-4xl">
       <div className="card card-pad">
         <div className="flex items-center justify-between">
-          <TeamScore name={`${game.awayTeam.city} ${game.awayTeam.nickname}`} abbr={game.awayTeam.abbr} score={game.awayScore} won={game.awayScore > game.homeScore} />
+          <TeamScore id={game.awayTeam.id} name={`${game.awayTeam.city} ${game.awayTeam.nickname}`} abbr={game.awayTeam.abbr} score={game.awayScore} won={game.awayScore > game.homeScore} />
           <div className="text-muted text-sm px-4">Week {game.week} · {game.kind}</div>
-          <TeamScore name={`${game.homeTeam.city} ${game.homeTeam.nickname}`} abbr={game.homeTeam.abbr} score={game.homeScore} won={game.homeScore > game.awayScore} align="right" />
+          <TeamScore id={game.homeTeam.id} name={`${game.homeTeam.city} ${game.homeTeam.nickname}`} abbr={game.homeTeam.abbr} score={game.homeScore} won={game.homeScore > game.awayScore} align="right" />
         </div>
       </div>
 
@@ -59,12 +60,15 @@ export default async function GamePage({ params }: { params: { id: string; gameI
   );
 }
 
-function TeamScore({ name, abbr, score, won, align = 'left' }: { name: string; abbr: string; score: number; won: boolean; align?: 'left' | 'right' }) {
+function TeamScore({ id, name, abbr, score, won, align = 'left' }: { id: string; name: string; abbr: string; score: number; won: boolean; align?: 'left' | 'right' }) {
   return (
-    <div className={align === 'right' ? 'text-right' : ''}>
-      <div className="text-xs text-muted">{abbr}</div>
-      <div className={`text-3xl font-mono font-bold ${won ? 'text-accent' : 'text-chalk'}`}>{score}</div>
-      <div className="text-xs text-muted">{name}</div>
+    <div className={`flex items-center gap-3 ${align === 'right' ? 'text-right flex-row-reverse' : ''}`}>
+      <TeamLogo seed={id} abbr={abbr} size={44} />
+      <div>
+        <div className="text-xs text-muted">{abbr}</div>
+        <div className={`text-3xl font-mono font-bold ${won ? 'text-accent' : 'text-chalk'}`}>{score}</div>
+        <div className="text-xs text-muted">{name}</div>
+      </div>
     </div>
   );
 }

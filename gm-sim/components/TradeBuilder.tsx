@@ -4,10 +4,12 @@ import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { evaluateTradeAction, executeTradeAction } from '@/app/actions/trade';
 import { ratingColor } from '@/lib/ratings';
+import { PlayerAvatar } from './PlayerAvatar';
+import { TeamLogo } from './TeamLogo';
 
 interface RosterP { id: string; name: string; position: string; ovr: number; age: number }
 interface Pick { id: string; year: number; round: number; slot: number }
-interface Team { id: string; name: string }
+interface Team { id: string; name: string; abbr: string }
 
 export function TradeBuilder({
   leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks,
@@ -66,8 +68,8 @@ export function TradeBuilder({
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">
-        <TeamPanel title={`You send (${myTeam.name})`} roster={myRoster} picks={myPicks} selected={give} onToggle={(id) => toggle(give, setGive, id)} />
-        <TeamPanel title={`You receive (${partners.find((p) => p.id === partnerId)?.name ?? ''})`} roster={partnerRoster} picks={partnerPicks} selected={get} onToggle={(id) => toggle(get, setGet, id)} />
+        <TeamPanel title="You send" teamId={myTeam.id} teamAbbr={myTeam.abbr} teamName={myTeam.name} roster={myRoster} picks={myPicks} selected={give} onToggle={(id) => toggle(give, setGive, id)} />
+        <TeamPanel title="You receive" teamId={partnerId} teamAbbr={partners.find((p) => p.id === partnerId)?.abbr ?? ''} teamName={partners.find((p) => p.id === partnerId)?.name ?? ''} roster={partnerRoster} picks={partnerPicks} selected={get} onToggle={(id) => toggle(get, setGet, id)} />
       </div>
 
       <div className="card card-pad flex items-center justify-between flex-wrap gap-3">
@@ -100,12 +102,15 @@ function assetList(selected: Set<string>, roster: RosterP[], picks: Pick[]) {
   return out;
 }
 
-function TeamPanel({ title, roster, picks, selected, onToggle }: {
-  title: string; roster: RosterP[]; picks: Pick[]; selected: Set<string>; onToggle: (id: string) => void;
+function TeamPanel({ title, teamId, teamAbbr, teamName, roster, picks, selected, onToggle }: {
+  title: string; teamId: string; teamAbbr: string; teamName: string; roster: RosterP[]; picks: Pick[]; selected: Set<string>; onToggle: (id: string) => void;
 }) {
   return (
     <div className="card card-pad">
-      <h3 className="font-semibold text-sm mb-3">{title}</h3>
+      <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+        <TeamLogo seed={teamId} abbr={teamAbbr} size={24} />
+        {title} <span className="text-muted font-normal">({teamName})</span>
+      </h3>
       <div className="label-sm mb-1.5">Draft Picks</div>
       <div className="flex flex-wrap gap-1.5 mb-4">
         {picks.map((p) => (
@@ -127,6 +132,7 @@ function TeamPanel({ title, roster, picks, selected, onToggle }: {
             onClick={() => onToggle(p.id)}
             className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm ${selected.has(p.id) ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised border border-transparent'}`}
           >
+            <PlayerAvatar seed={p.id} age={p.age} size={22} />
             <span className="text-xs font-mono text-muted w-8">{p.position}</span>
             <span className={`text-xs font-mono font-semibold w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
             <span className="flex-1 truncate">{p.name}</span>

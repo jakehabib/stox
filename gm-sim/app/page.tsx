@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { createLeagueAction, deleteLeagueAction } from './actions/league';
 import { TEAM_SEEDS } from '@/lib/gen/names';
 import { PHASE_LABELS } from '@/lib/season';
+import { TeamLogo } from '@/components/TeamLogo';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,9 +36,12 @@ export default async function HomePage() {
                 return (
                   <div key={l.id} className="card card-pad flex flex-col gap-3 animate-fadeUp">
                     <div className="flex items-start justify-between">
-                      <div>
-                        <div className="font-semibold">{l.name}</div>
-                        <div className="text-sm text-muted">{team ? `${team.city} ${team.nickname}` : 'No team'}</div>
+                      <div className="flex items-center gap-3">
+                        {team && <TeamLogo seed={team.id} abbr={team.abbr} size={40} />}
+                        <div>
+                          <div className="font-semibold">{l.name}</div>
+                          <div className="text-sm text-muted">{team ? `${team.city} ${team.nickname}` : 'No team'}</div>
+                        </div>
                       </div>
                       <span className="pill border-accent2/30 text-accent2 bg-accent2/10">{PHASE_LABELS[l.phase] ?? l.phase}</span>
                     </div>

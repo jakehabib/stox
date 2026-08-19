@@ -6,6 +6,8 @@ import { formatMoney, capHit } from '@/lib/cap';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { positionSortKey } from '@/lib/league-data';
+import { PlayerAvatar } from '@/components/PlayerAvatar';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 export default async function RosterPage({ params }: { params: { id: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -19,6 +21,7 @@ export default async function RosterPage({ params }: { params: { id: string } })
   const reportMap = new Map(reports.map((r) => [r.playerId, r]));
 
   const sorted = [...players].sort((a, b) => positionSortKey(a.position) - positionSortKey(b.position) || b.trueOvr - a.trueOvr);
+  const teamColor = generateTeamLogoParams(team.id).primary;
 
   return (
     <div className="space-y-5">
@@ -50,7 +53,8 @@ export default async function RosterPage({ params }: { params: { id: string } })
                   <tr key={p.id}>
                     <td className="font-mono text-xs text-muted">{p.position}</td>
                     <td>
-                      <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium">
+                      <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2">
+                        <PlayerAvatar seed={p.id} age={p.age} size={28} teamColor={teamColor} />
                         {p.firstName} {p.lastName}
                       </Link>
                     </td>

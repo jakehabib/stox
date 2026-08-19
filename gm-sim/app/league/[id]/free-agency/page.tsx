@@ -6,6 +6,7 @@ import { buildScoutedView } from '@/lib/scouting';
 import { ratingColor } from '@/lib/ratings';
 import { marketValue, formatMoney } from '@/lib/cap';
 import { positionSortKey } from '@/lib/league-data';
+import { PlayerAvatar } from '@/components/PlayerAvatar';
 
 export default async function FreeAgencyPage({ params, searchParams }: { params: { id: string }; searchParams: { pos?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -47,7 +48,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
               return (
                 <tr key={p.id}>
                   <td className="font-mono text-xs text-muted">{p.position}</td>
-                  <td><Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium">{p.firstName} {p.lastName}</Link></td>
+                  <td><Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName}</Link></td>
                   <td className="text-muted">{p.age}</td>
                   <td className={`font-mono font-semibold ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
                   <td className="font-mono text-muted">{formatMoney(market)}/yr</td>

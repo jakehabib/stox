@@ -8,6 +8,9 @@ import { formatMoney, capHit, remainingValue } from '@/lib/cap';
 import { CutButton } from '@/components/CutButton';
 import { ScoutButton } from '@/components/ScoutButton';
 import { SignOfferForm } from '@/components/SignOfferForm';
+import { PlayerAvatar } from '@/components/PlayerAvatar';
+import { TeamLogo } from '@/components/TeamLogo';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 export default async function PlayerPage({ params }: { params: { id: string; playerId: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -28,16 +31,26 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
   const hit = capHit(player.contract, settings.capMode);
   const remaining = player.contract ? remainingValue(player.contract, settings.capMode) : 0;
 
+  const jerseyColor = player.team ? generateTeamLogoParams(player.team.id).primary : undefined;
+
   return (
     <div className="space-y-6 max-w-4xl">
       <div className="flex items-start justify-between flex-wrap gap-4">
-        <div>
-          <div className="text-xs text-muted mb-1">{player.position} · {player.team ? `${player.team.city} ${player.team.nickname}` : player.status === 'FREE_AGENT' ? 'Free Agent' : player.status}</div>
-          <h1 className="text-2xl font-semibold tracking-tight">{player.firstName} {player.lastName}</h1>
-          <p className="text-muted text-sm mt-1">
-            Age {player.age} · {Math.floor(player.heightIn / 12)}'{player.heightIn % 12}" · {player.weightLb} lb · {player.college}
-            {player.experience > 0 ? ` · Yr ${player.experience}` : ' · Rookie'}
-          </p>
+        <div className="flex items-center gap-4">
+          <PlayerAvatar seed={player.id} age={player.age} size={88} teamColor={jerseyColor} />
+          <div>
+            <div className="text-xs text-muted mb-1 flex items-center gap-1.5">
+              {player.position} ·
+              {player.team ? (
+                <span className="flex items-center gap-1.5"><TeamLogo seed={player.team.id} abbr={player.team.abbr} size={16} /> {player.team.city} {player.team.nickname}</span>
+              ) : player.status === 'FREE_AGENT' ? 'Free Agent' : player.status}
+            </div>
+            <h1 className="text-2xl font-semibold tracking-tight">{player.firstName} {player.lastName}</h1>
+            <p className="text-muted text-sm mt-1">
+              Age {player.age} · {Math.floor(player.heightIn / 12)}'{player.heightIn % 12}" · {player.weightLb} lb · {player.college}
+              {player.experience > 0 ? ` · Yr ${player.experience}` : ' · Rookie'}
+            </p>
+          </div>
         </div>
         <div className="text-right">
           <div className={`text-4xl font-mono font-bold ${ratingColor(view.scoutedOvr)}`}>

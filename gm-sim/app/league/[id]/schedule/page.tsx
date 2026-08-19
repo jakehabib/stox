@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { shortResult } from '@/lib/sim/recap';
+import { TeamLogo } from '@/components/TeamLogo';
 
 export default async function SchedulePage({ params }: { params: { id: string } }) {
   const { league } = await getLeagueContext(params.id);
@@ -34,7 +35,11 @@ export default async function SchedulePage({ params }: { params: { id: string } 
                     href={g.played ? `/league/${league.id}/game/${g.id}` : '#'}
                     className={`card card-pad flex items-center justify-between text-sm ${g.played ? 'hover:border-accent2/40' : 'opacity-70'}`}
                   >
-                    <span>{g.awayTeam.abbr} @ {g.homeTeam.abbr}</span>
+                    <span className="flex items-center gap-1.5">
+                      <TeamLogo seed={g.awayTeam.id} abbr={g.awayTeam.abbr} size={20} /> {g.awayTeam.abbr}
+                      <span className="text-muted">@</span>
+                      <TeamLogo seed={g.homeTeam.id} abbr={g.homeTeam.abbr} size={20} /> {g.homeTeam.abbr}
+                    </span>
                     <span className="font-mono text-muted">{g.played && box ? shortResult(box) : g.played ? `${g.awayScore}-${g.homeScore}` : '—'}</span>
                   </Link>
                 );

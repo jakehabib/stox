@@ -25,8 +25,8 @@ export default async function TradePage({ params, searchParams }: { params: { id
 
       <TradeBuilder
         leagueId={league.id}
-        myTeam={{ id: team.id, name: `${team.city} ${team.nickname}` }}
-        partners={otherTeams.map((t) => ({ id: t.id, name: `${t.city} ${t.nickname}` }))}
+        myTeam={{ id: team.id, name: `${team.city} ${team.nickname}`, abbr: team.abbr }}
+        partners={otherTeams.map((t) => ({ id: t.id, name: `${t.city} ${t.nickname}`, abbr: t.abbr }))}
         partnerId={partnerId ?? ''}
         myRoster={myRoster.map((p) => ({ id: p.id, name: `${p.firstName} ${p.lastName}`, position: p.position, ovr: p.trueOvr, age: p.age }))}
         myPicks={myPicks.map((p) => ({ id: p.id, year: p.year, round: p.round, slot: p.slot }))}
