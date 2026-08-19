@@ -5,6 +5,7 @@ import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { ratingColor, ratingTier } from '@/lib/ratings';
 import { formatMoney, capHit, remainingValue } from '@/lib/cap';
+import { teamCapSummary } from '@/lib/cap-summary';
 import { CutButton } from '@/components/CutButton';
 import { ScoutButton } from '@/components/ScoutButton';
 import { SignOfferForm } from '@/components/SignOfferForm';
@@ -31,6 +32,9 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
   const careerStats = readJson<Record<string, number>>(player.careerStats, {});
   const hit = capHit(player.contract, settings.capMode);
   const remaining = player.contract ? remainingValue(player.contract, settings.capMode) : 0;
+  const capSpace = userTeam && settings.capMode !== 'OFF'
+    ? (await teamCapSummary(userTeam.id, league.seasonYear, settings.capMode)).capSpace
+    : Number.MAX_SAFE_INTEGER;
 
   const jerseyColor = player.team ? generateTeamLogoParams(player.team.id).primary : undefined;
 
@@ -138,7 +142,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
               )}
             </div>
           ) : player.status === 'FREE_AGENT' && userTeam ? (
-            <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} />
+            <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} />
           ) : (
             <p className="text-sm text-muted">No contract on file.</p>
           )}

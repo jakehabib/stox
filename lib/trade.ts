@@ -39,25 +39,34 @@ async function assetValues(
   rng: Rng,
 ): Promise<{ total: number; reasons: string[] }> {
   let total = 0;
-  const reasons: string[] = [];
+  const weighted: { text: string; weight: number }[] = [];
   for (const a of assets) {
     if (a.type === 'PLAYER') {
       const p = await prisma.player.findUniqueOrThrow({ where: { id: a.id } });
       const v = playerValueDetailed(p as unknown as RosterPlayer, { profile, needs, rng });
       total += v.total;
-      for (const r of v.reasons) reasons.push(`${p.firstName} ${p.lastName}: ${r}`);
+      for (const r of v.reasons) weighted.push({ text: `${p.firstName} ${p.lastName}: ${r.text}`, weight: r.weight });
     } else {
       const pick = await prisma.draftPick.findUniqueOrThrow({ where: { id: a.id } });
       total += pickValue(pick.round, pick.slot, profile, pick.year, currentYear);
     }
   }
+  // Sort ACROSS every asset on this side of the deal, not just within one —
+  // otherwise a minor note about asset #1 could outrank the actual dominant
+  // factor on asset #2 just by having been evaluated first.
+  const reasons = weighted.sort((a, b) => b.weight - a.weight).map((r) => r.text);
   return { total, reasons };
 }
 
 /**
- * Evaluate a proposed trade from the perspective of `aiTeamId` (the team
- * being asked to accept). `give` = what the AI team sends away, `get` = what
- * it receives.
+ * Evaluate a proposed trade. IMPORTANT — `give`/`get` are from the CALLER's
+ * (non-AI side's) perspective, matching how the Trade screen's "You send" /
+ * "You receive" panels populate them: `give` = assets the other side is
+ * sending to the AI (so the AI RECEIVES these), `get` = assets the other
+ * side would receive FROM the AI (so the AI SENDS these away). Getting this
+ * backwards silently inverts every accept/reject decision — which is exactly
+ * what happened here before this fix, so don't rename `give`/`get` without
+ * also re-deriving which one feeds `sendValue` vs `receiveValue` below.
  */
 export async function evaluateTrade(opts: {
   aiTeamId: string;
@@ -75,14 +84,16 @@ export async function evaluateTrade(opts: {
   });
   const needs = teamNeeds(roster as RosterPlayer[]);
 
-  const send = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, rng);
-  const receive = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, rng);
+  // opts.give flows TO the AI => that's what the AI receives.
+  // opts.get flows FROM the AI => that's what the AI sends away.
+  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, rng);
+  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, rng);
   const sendValue = send.total;
   const receiveValue = receive.total;
   const philosophy = philosophySummary(profile);
-  // The AI sends `give` away and receives `get` — so "give" reasons explain
-  // what it's letting go of, "receive" reasons explain what it's gaining.
-  const explanation = { give: send.reasons.slice(0, 3), receive: receive.reasons.slice(0, 3) };
+  // "give" reasons describe the assets flowing to the AI (why it wants/
+  // discounts them); "receive" reasons describe what the AI would give up.
+  const explanation = { give: receive.reasons.slice(0, 3), receive: send.reasons.slice(0, 3) };
 
   const requiredRatio = opts.settings.aiAcceptsLopsided ? 0.9 : AI.TRADE_ACCEPT_RATIO;
   const ratio = sendValue === 0 ? Infinity : receiveValue / sendValue;

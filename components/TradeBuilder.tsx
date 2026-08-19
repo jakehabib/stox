@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { evaluateTradeAction, executeTradeAction, rankTradePartnersAction } from '@/app/actions/trade';
 import { ratingColor } from '@/lib/ratings';
+import { formatMoney } from '@/lib/cap';
 import { PlayerAvatar } from './PlayerAvatar';
 import { TeamLogo } from './TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import type { PhilosophySummary } from '@/lib/ai/gm';
 import type { TradePartnerSuggestion } from '@/lib/trade';
 
-interface RosterP { id: string; name: string; position: string; ovr: number; age: number }
+interface RosterP { id: string; name: string; position: string; ovr: number; age: number; capHit: number; yearsRemaining: number }
 interface Pick { id: string; year: number; round: number; slot: number }
 interface Team { id: string; name: string; abbr: string; philosophy?: PhilosophySummary }
 
@@ -202,7 +203,15 @@ function TeamPanel({ title, teamId, teamAbbr, teamName, roster, picks, selected,
         ))}
         {picks.length === 0 && <span className="text-xs text-muted">No picks owned.</span>}
       </div>
-      <div className="label-sm mb-1.5">Roster</div>
+      <div className="label-sm mb-1.5 flex items-center gap-2">
+        <span className="w-[22px]" />
+        <span className="w-8">Pos</span>
+        <span className="w-8">Ovr</span>
+        <span className="flex-1">Player</span>
+        <span className="w-12 text-right">Age</span>
+        <span className="w-16 text-right">Cap Hit</span>
+        <span className="w-10 text-right">Yrs</span>
+      </div>
       <div className="max-h-64 overflow-y-auto space-y-1">
         {roster.map((p) => (
           <button
@@ -214,7 +223,9 @@ function TeamPanel({ title, teamId, teamAbbr, teamName, roster, picks, selected,
             <span className="text-xs font-mono text-muted w-8">{p.position}</span>
             <span className={`text-xs font-mono font-semibold w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
             <span className="flex-1 truncate">{p.name}</span>
-            <span className="text-xs text-muted">{p.age}</span>
+            <span className="w-12 text-right text-xs text-muted font-mono">{p.age}</span>
+            <span className="w-16 text-right text-xs text-muted font-mono">{p.capHit > 0 ? formatMoney(p.capHit) : '—'}</span>
+            <span className="w-10 text-right text-xs text-muted font-mono">{p.yearsRemaining > 0 ? `${p.yearsRemaining}yr` : '—'}</span>
           </button>
         ))}
       </div>

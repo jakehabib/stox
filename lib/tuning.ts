@@ -71,12 +71,18 @@ export const ROSTER_TARGETS: Record<Position, { min: number; ideal: number; max:
 // Player generation [TUNE]
 // ---------------------------------------------------------------------------
 export const GENERATION = {
-  /** Mean/stdev of a generated pro player's overall, before position curves. */
-  VETERAN_OVR_MEAN: 66,
-  VETERAN_OVR_SD: 9,
+  /**
+   * Mean/stdev of a generated pro player's overall, before position curves.
+   * Calibrated so <65 reads as "poor," 65-80 as "average" (the bulk of a
+   * pro roster), 80-90 as "good," 90-98 as "amazing," and 99 as essentially
+   * never — roughly a Madden-style ratings spread rather than a bell curve
+   * centered on mediocrity. [TUNE]
+   */
+  VETERAN_OVR_MEAN: 72,
+  VETERAN_OVR_SD: 8,
   /** Rookie class skews lower and much wider — that's the point of scouting. */
-  ROOKIE_OVR_MEAN: 60,
-  ROOKIE_OVR_SD: 11,
+  ROOKIE_OVR_MEAN: 65,
+  ROOKIE_OVR_SD: 10,
   /** Potential is overall + this roll, capped at 99. */
   POTENTIAL_BONUS_MEAN: 8,
   POTENTIAL_BONUS_SD: 7,
@@ -199,13 +205,30 @@ export const CAP = {
 
 /** [TUNE] Market value curve: $ APY a player of a given overall commands. */
 export const MARKET = {
-  /** value = exp((ovr - PIVOT) * STEEPNESS) * SCALE, floored at MIN_SALARY. */
-  PIVOT: 62,
-  STEEPNESS: 0.115,
-  SCALE: 2_400_000,
+  /**
+   * value = exp((ovr - PIVOT) * STEEPNESS) * SCALE, floored at MIN_SALARY.
+   * Anchored so a neutral-position player at PIVOT (the new average OVR,
+   * see GENERATION.VETERAN_OVR_MEAN) earns roughly market-rate-starter
+   * money, and even a 99 OVR neutral-position unicorn tops out well short
+   * of ten figures. [FRAGILE PLACEHOLDER] — previous values here produced
+   * a $101M/yr CB at merely "good" tier; this curve is much gentler.
+   */
+  PIVOT: 70,
+  /** Growth rate ABOVE pivot — kept gentle so stars stay bounded. */
+  STEEPNESS: 0.05,
+  /**
+   * Decay rate BELOW pivot — steeper than STEEPNESS. A single symmetric
+   * exponential can't compress the bottom of the roster toward minimum
+   * salary without also re-inflating the ceiling: a whole 53-man roster's
+   * worth of below-average depth players priced like fringe starters blows
+   * through the cap on its own, before a single above-average player is
+   * even signed. Below pivot, value falls off faster instead.
+   */
+  STEEPNESS_LOW: 0.097,
+  SCALE: 9_000_000,
   /** Positional value multipliers — the premium-position tax. */
   POSITION_MULT: {
-    QB: 2.35, RB: 0.62, FB: 0.35, WR: 1.15, TE: 0.85,
+    QB: 1.85, RB: 0.62, FB: 0.35, WR: 1.15, TE: 0.85,
     LT: 1.30, LG: 0.80, C: 0.85, RG: 0.80, RT: 1.05,
     EDGE: 1.45, DT: 1.05, LB: 0.82, CB: 1.25, S: 0.85,
     K: 0.30, P: 0.25,

@@ -20,7 +20,15 @@ export async function offerContractAction(leagueId: string, playerId: string, te
   if (!evaluation.accepted) {
     return { ok: false, message: `He's looking for closer to $${(evaluation.market / 1_000_000).toFixed(1)}M/yr. Try again around $${(evaluation.counterApy! / 1_000_000).toFixed(1)}M.` };
   }
-  await signFreeAgent({ leagueId, playerId, teamId, apy, years, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week });
+  // signFreeAgent throws when the deal would bust the cap — a foreseeable,
+  // user-recoverable outcome (not a bug), so it must never escape a Server
+  // Action uncaught: an unhandled throw here blanks the whole page instead
+  // of showing a message.
+  try {
+    await signFreeAgent({ leagueId, playerId, teamId, apy, years, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week });
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'Signing failed.' };
+  }
   revalidatePath(`/league/${leagueId}`, 'layout');
   return { ok: true, message: 'Deal signed.' };
 }

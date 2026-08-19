@@ -149,14 +149,42 @@ export async function createLeague(opts: {
   // in practice, and this avoids 1,700 individual inserts.
   if (!fantasy) {
     const rostered = players.filter((p) => p.teamId);
+
+    // A team's generated talent is pure RNG — occasionally a roster rolls
+    // several 90+ players at once, which is a fine, fun outcome on its own
+    // but is not something any fixed salary curve can make affordable at
+    // market rate: real rosters can't simultaneously employ that much
+    // top-end talent under a hard cap either, which is exactly why real
+    // teams don't. So: price every player at market rate first, then if a
+    // team's total exceeds a safe threshold, scale that team's contracts
+    // down uniformly to fit — a below-market "hometown discount" league-wide,
+    // rather than a promise this scaling should never need to trigger.
+    const nominalByTeam = new Map<string, number>();
+    const nominalByPlayer = new Map<string, number>();
+    for (const p of rostered) {
+      const apy = marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential });
+      nominalByPlayer.set(p.id, apy);
+      nominalByTeam.set(p.teamId!, (nominalByTeam.get(p.teamId!) ?? 0) + apy);
+    }
+    const CAP_TARGET_FRACTION = 0.88; // leave real headroom, not a knife's edge
+    const target = CAP.BASE_CAP * CAP_TARGET_FRACTION;
+    const scaleByTeam = new Map<string, number>();
+    for (const [teamId, total] of nominalByTeam) {
+      scaleByTeam.set(teamId, total > target ? target / total : 1);
+    }
+
     const contractRows = rostered.map((p) => {
-      const apy = marketValue({
-        ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential,
-      });
+      const scale = scaleByTeam.get(p.teamId!) ?? 1;
+      const apy = Math.max(CAP.MIN_SALARY, Math.round((nominalByPlayer.get(p.id)! * scale) / 100_000) * 100_000);
       const years = suggestedYears(p.trueOvr, p.age);
       // Stagger how far into each deal we are so contracts expire on a curve.
       const elapsed = rng.int(0, Math.max(0, years - 1));
-      const c = buildContract({ apy, years, signedYear: seasonYear - elapsed });
+      // Flat escalation + a smaller bonus share: these contracts are being
+      // dropped straight into a random mid-deal year, not signed fresh, so a
+      // backloaded structure would land players in their single most
+      // expensive year with none of the cap-friendly early years ever
+      // having applied — see buildContract's `escalation` doc comment.
+      const c = buildContract({ apy, years, signedYear: seasonYear - elapsed, escalation: 1.0, bonusPct: 0.15 });
       return {
         playerId: p.id,
         teamId: p.teamId,

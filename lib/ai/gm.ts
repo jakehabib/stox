@@ -64,9 +64,11 @@ export function teamNeeds(players: RosterPlayer[]): Record<string, number> {
     const starter = group[0]?.trueOvr ?? 40;
     const qualityNeed = clamp((72 - starter) / 30, 0, 1);
 
-    // Depth need: second body matters more at high-snap positions.
+    // Depth need: second body matters more at high-snap positions. Positions
+    // that only ever roster one player (K, P) never carry a "backup" — that's
+    // not a hole, it's the position, so skip this term entirely for them.
     const backup = group[1]?.trueOvr ?? 40;
-    const depthNeed = clamp((62 - backup) / 30, 0, 1) * 0.4;
+    const depthNeed = target.max > 1 ? clamp((62 - backup) / 30, 0, 1) * 0.4 : 0;
 
     needs[pos] = clamp(countNeed * 1.4 + qualityNeed * 0.75 + depthNeed, 0, 1);
   }
@@ -80,8 +82,15 @@ export interface ValueBreakdown {
   needMult: number;
   noiseMult: number;
   total: number;
-  /** Human-readable notes explaining the multipliers above — for trade UI. */
-  reasons: string[];
+  /**
+   * Human-readable notes explaining the number, strongest driver first — NOT
+   * insertion order. A trade screen showing "we're deep at WR" as if that
+   * were why a blockbuster offer got rejected, when really the real driver
+   * was a plain talent/value gap, is actively misleading. Every reason
+   * carries the actual value-point swing it represents so the caller (see
+   * assetValues in lib/trade.ts) can sort truth by magnitude.
+   */
+  reasons: { text: string; weight: number }[];
 }
 
 /**
@@ -103,22 +112,32 @@ export function playerValueDetailed(
 ): ValueBreakdown {
   const { profile, needs } = opts;
   const sharpness = opts.sharpness ?? 1;
-  const reasons: string[] = [];
+  const reasons: { text: string; weight: number }[] = [];
 
-  // Base: exponential in overall so stars are worth far more than starters.
+  // Base: exponential in overall so stars are worth far more than starters,
+  // but gently enough that a great player reads as "worth several good
+  // players," not 40-80x one — the previous curve made trade ratios feel
+  // arbitrary since one asset would either trivially dominate or be
+  // worthless regardless of everything else in the deal.
   // [FRAGILE PLACEHOLDER] tuned so a 90 OVR ~= a mid-first-round pick.
-  const base = Math.pow(1.13, p.trueOvr - 55) * 22;
+  const base = Math.pow(1.075, p.trueOvr - 55) * 22;
+  if (p.trueOvr >= 90) {
+    reasons.push({ text: 'He grades as one of the best players in the league — that alone drives a huge price.', weight: base * 0.6 });
+  } else if (p.trueOvr >= 82) {
+    reasons.push({ text: "He's a real difference-maker at his position.", weight: base * 0.3 });
+  }
 
   // Potential weighting depends on whether the team is contending.
   const potentialWeight =
     AI.REBUILD_POTENTIAL_WEIGHT * (1 - profile.winNow) + AI.CONTENDER_POTENTIAL_WEIGHT * profile.winNow;
   const upside = Math.max(0, p.potential - p.trueOvr) * potentialWeight * 4;
   if (upside > base * 0.15) {
-    reasons.push(
-      profile.winNow < 0.4
+    reasons.push({
+      text: profile.winNow < 0.4
         ? "We're rebuilding — his upside matters more to us than his current level."
-        : "There's real untapped ceiling here.",
-    );
+        : 'There\'s real untapped ceiling here.',
+      weight: upside,
+    });
   }
 
   // Age curve: a 32-year-old at the same rating is worth much less.
@@ -127,20 +146,30 @@ export function playerValueDetailed(
   if (p.age > 28) ageMult -= (p.age - 28) * 0.09;
   else if (p.age < 25) ageMult += (25 - p.age) * 0.04;
   ageMult = clamp(ageMult, 0.25, 1.3);
+  const ageSwing = base * Math.abs(ageMult - 1);
   if (ageMult < 0.85) {
-    reasons.push(
-      profile.winNow < 0.4
+    reasons.push({
+      text: profile.winNow < 0.4
         ? `We're rebuilding, so a ${p.age}-year-old holds less value for us than the league average.`
         : `At ${p.age}, there isn't much term left on this — we discount it.`,
-    );
+      weight: ageSwing,
+    });
   } else if (ageMult > 1.1) {
-    reasons.push("He's young and still ascending — that's worth a premium to us.");
+    reasons.push({ text: "He's young and still ascending — that's worth a premium to us.", weight: ageSwing });
   }
 
   const needVal = needs?.[p.position] ?? 0;
   const needMult = needs ? 1 + needVal * (AI.NEED_MULT - 1) : 1;
-  if (needVal > 0.5) reasons.push(`This fills a real hole for us at ${p.position}.`);
-  else if (needs && needVal < 0.1) reasons.push(`We're already deep at ${p.position}, so this doesn't move the needle much.`);
+  const needSwing = base * (needMult - 1);
+  if (needVal > 0.5) {
+    reasons.push({ text: `This fills a real hole for us at ${p.position}.`, weight: needSwing });
+  } else if (needs && needVal < 0.1) {
+    // Genuinely low-impact by construction (needMult never drops below 1 —
+    // lack of need can't devalue a player, only failing to bonus him), so
+    // this gets a token weight and will only surface when nothing else
+    // about the player is remarkable enough to say more.
+    reasons.push({ text: `We're already deep at ${p.position}, so this doesn't move the needle much.`, weight: 0.5 });
+  }
 
   let total = (base + upside) * ageMult * needMult;
 
@@ -150,6 +179,7 @@ export function playerValueDetailed(
     noiseMult = 1 + opts.rng.normal(0, 0.09 * (2 - sharpness));
     total *= noiseMult;
   }
+  reasons.sort((a, b) => b.weight - a.weight);
   return { base, upside, ageMult, needMult, noiseMult, total: Math.max(1, total), reasons };
 }
 

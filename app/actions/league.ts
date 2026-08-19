@@ -34,6 +34,49 @@ export async function advanceWeekAction(leagueId: string) {
   return result;
 }
 
+export type AdvanceMode = 'week' | '3weeks' | 'midseason' | 'playoffs' | 'offseason';
+
+/**
+ * Phases that need the user to actually do something before the sim should
+ * keep going — never blow past these no matter what multi-week target was
+ * requested.
+ */
+const GATE_PHASES = new Set(['RESIGN', 'DRAFT', 'FANTASY_DRAFT']);
+const MAX_ITERATIONS = 60; // safety backstop, not a real target
+
+export async function advanceMultipleAction(leagueId: string, mode: AdvanceMode) {
+  const league0 = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings: LeagueSettings = JSON.parse(league0.settings);
+  const startPhase = league0.phase;
+  const midseasonWeek = Math.ceil(settings.seasonLength / 2);
+
+  let summary = '';
+  let iterations = 0;
+
+  while (iterations < MAX_ITERATIONS) {
+    const before = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+    if (GATE_PHASES.has(before.phase)) break;
+    if (mode === 'midseason' && before.phase === 'REGULAR' && before.week >= midseasonWeek) break;
+    if (mode === 'playoffs' && before.phase === 'PLAYOFFS') break;
+    if (mode === 'offseason' && before.phase === 'OFFSEASON') break;
+
+    const result = await advanceWeek(leagueId);
+    summary = result.summary;
+    iterations++;
+    if (mode === 'week') break;
+
+    const after = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+    if (GATE_PHASES.has(after.phase)) break;
+    if (mode === '3weeks' && (iterations >= 3 || after.phase !== startPhase)) break;
+    if (mode === 'midseason' && (after.phase !== 'REGULAR' || after.week >= midseasonWeek)) break;
+    if (mode === 'playoffs' && after.phase !== 'REGULAR' && after.phase !== 'PRESEASON') break;
+    if (mode === 'offseason' && after.phase === 'OFFSEASON') break;
+  }
+
+  revalidatePath(`/league/${leagueId}`, 'layout');
+  return { summary, weeksAdvanced: iterations };
+}
+
 export async function updateSettingsAction(leagueId: string, formData: FormData) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const current: LeagueSettings = JSON.parse(league.settings);

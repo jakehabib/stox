@@ -75,9 +75,10 @@ export function capSavingsOnCut(c: ContractLike | null | undefined, mode: CapMod
 
 /**
  * What a player of this overall/position/age commands per year on the open
- * market. [FRAGILE PLACEHOLDER] — the exponential curve means the last few
- * overall points cost a fortune, which is the behavior we want, but the exact
- * PIVOT/STEEPNESS pair is a guess.
+ * market. [FRAGILE PLACEHOLDER] — piecewise exponential: gentle growth above
+ * PIVOT (a 99 OVR neutral-position unicorn still lands well under $40M/yr),
+ * steeper decay below it (so a 53-man roster's worth of below-average depth
+ * doesn't blow the cap before a single good player is even signed).
  */
 export function marketValue(opts: {
   ovr: number;
@@ -86,7 +87,8 @@ export function marketValue(opts: {
   potential?: number;
 }): number {
   const { ovr, position, age } = opts;
-  const base = Math.exp((ovr - MARKET.PIVOT) * MARKET.STEEPNESS) * MARKET.SCALE;
+  const steepness = ovr >= MARKET.PIVOT ? MARKET.STEEPNESS : MARKET.STEEPNESS_LOW;
+  const base = Math.exp((ovr - MARKET.PIVOT) * steepness) * MARKET.SCALE;
   const posMult = MARKET.POSITION_MULT[position] ?? 1;
 
   let ageMult = 1;
@@ -121,6 +123,15 @@ export function buildContract(opts: {
   bonusPct?: number; // share of total value paid as signing bonus
   guaranteedPct?: number;
   isRookieDeal?: boolean;
+  /**
+   * Year-over-year base salary growth multiplier. Default 1.12 makes a
+   * FRESH signing cap-friendly in year 1. Pass ~1.0 (flat) for contracts
+   * that get immediately "aged" into a random later year at league
+   * generation — otherwise staggering lands players in the single most
+   * expensive year of a backloaded deal, with none of the cheap early
+   * years ever having applied, wildly inflating that team's cap hit.
+   */
+  escalation?: number;
 }): {
   years: number;
   yearsRemaining: number;
@@ -137,8 +148,9 @@ export function buildContract(opts: {
   const baseTotal = total - signingBonus;
 
   // Escalate base salary ~12% per year so year 1 is cap-friendly. [TUNE]
+  const escalation = opts.escalation ?? 1.12;
   const weights: number[] = [];
-  for (let i = 0; i < years; i++) weights.push(Math.pow(1.12, i));
+  for (let i = 0; i < years; i++) weights.push(Math.pow(escalation, i));
   const wSum = weights.reduce((a, b) => a + b, 0);
   const baseSalaries = weights.map((w) =>
     Math.max(CAP.MIN_SALARY, Math.round((baseTotal * w) / wSum / 100_000) * 100_000),
