@@ -1,16 +1,20 @@
 // ---------------------------------------------------------------------------
 // Gridiron GM — data model
-// SQLite via Prisma. Anything stored as a JSON string is noted; SQLite has no
-// native JSON column type in Prisma, so structured blobs are String fields
-// serialized with the helpers in lib/json.ts.
+// Postgres via Prisma. Anything stored as a JSON string is noted — those are
+// modeled as plain String columns (not Postgres jsonb) so the shape matches
+// exactly what lib/json.ts's helpers read and write.
 // ---------------------------------------------------------------------------
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // rhel-openssl-3.0.x matches Vercel's serverless function runtime; without
+  // it the deployed app can fail at request time with an engine-not-found
+  // error even though local dev and the build both succeed.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
