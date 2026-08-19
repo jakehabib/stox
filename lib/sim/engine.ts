@@ -6,6 +6,17 @@ import { computeUnits, SimPlayer, SimStaff, UnitRatings, effectiveRating, isAvai
 import { readJson } from '../json';
 import { AttrMap } from '../ratings';
 
+/** Injury flavor text, bucketed by how long it actually keeps someone out. [PLACEHOLDER copy] */
+const INJURY_TYPES_SHORT = ['Bruised ribs', 'Ankle sprain', 'Concussion protocol', 'Shoulder stinger', 'Deep bruise'];
+const INJURY_TYPES_MEDIUM = ['Hamstring strain', 'Groin strain', 'High ankle sprain', 'Fractured hand', 'MCL sprain'];
+const INJURY_TYPES_LONG = ['Torn ACL', 'Achilles rupture', 'Fractured fibula', 'Torn labrum', 'Broken collarbone'];
+
+function injuryTypesForSeverity(weeks: number): string[] {
+  if (weeks <= 2) return INJURY_TYPES_SHORT;
+  if (weeks <= 5) return INJURY_TYPES_MEDIUM;
+  return INJURY_TYPES_LONG;
+}
+
 /**
  * ===========================================================================
  * GAME RESOLUTION (design doc section 9)
@@ -45,7 +56,7 @@ export interface GameResult {
   homeScore: number;
   awayScore: number;
   boxScore: BoxScore;
-  injuries: { playerId: string; weeks: number }[];
+  injuries: { playerId: string; weeks: number; type: string }[];
   /** Fatigue delta to apply per player id. */
   fatigue: Record<string, number>;
 }
@@ -204,8 +215,9 @@ export function simulateGame(
         const rate = SIM.INJURY_RATE_PER_GAME * (1 + (60 - durability) / 200);
         if (rng.bool(rate)) {
           const weeks = Math.max(1, Math.round(rng.normal(SIM.INJURY_WEEKS_MEAN, 1.8) * settings.injurySeverity));
-          injuries.push({ playerId: p.id, weeks });
-          injuryDetails.push({ playerId: p.id, name: `${p.firstName} ${p.lastName}`, teamId: team.id, weeks });
+          const type = rng.pick(injuryTypesForSeverity(weeks));
+          injuries.push({ playerId: p.id, weeks, type });
+          injuryDetails.push({ playerId: p.id, name: `${p.firstName} ${p.lastName}`, teamId: team.id, weeks, type });
         }
       }
     }

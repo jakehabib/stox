@@ -108,8 +108,11 @@ export default async function RosterPage({ params, searchParams }: { params: { i
                   </td>
                   <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
                   <td>
-                    {p.injuryWeeks > 0 ? <span className="pill border-bad/30 text-bad bg-bad/10">Injured · {p.injuryWeeks}w</span> :
-                      <span className="pill border-accent/30 text-accent bg-accent/10">Active</span>}
+                    {p.injuryWeeks > 0 ? (
+                      <span title={p.injuryType ?? 'Injured'} className="pill border-bad/30 text-bad bg-bad/10 cursor-help">Injured · {p.injuryWeeks}w</span>
+                    ) : (
+                      <span className="pill border-accent/30 text-accent bg-accent/10">Active</span>
+                    )}
                   </td>
                   <td className="font-mono text-muted">{settings.capMode === 'OFF' ? '—' : formatMoney(hit)}</td>
                   <td className="text-muted">{p.contract?.yearsRemaining ?? '—'}</td>

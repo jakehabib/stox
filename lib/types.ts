@@ -46,7 +46,7 @@ export interface BoxScore {
     home: { off: number; def: number };
     away: { off: number; def: number };
   };
-  injuries: { playerId: string; name: string; teamId: string; weeks: number }[];
+  injuries: { playerId: string; name: string; teamId: string; weeks: number; type: string }[];
 }
 
 export interface TeamGameStats {

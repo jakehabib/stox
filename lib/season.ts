@@ -165,6 +165,7 @@ export async function simulateAndSaveGame(leagueId: string, gameId: string, sett
     // trips per game, times 16 games a week. Collapse each into a single
     // bulk statement instead.
     await bulkSetInt(tx, 'injuryWeeks', Object.entries(fatigueMapToInjuries(result)));
+    await bulkSetText(tx, 'injuryType', result.injuries.map((i): [string, string] => [i.playerId, i.type]));
     await bulkIncrementInt(tx, 'fatigue', Object.entries(result.fatigue));
 
     const newsRows: { leagueId: string; seasonYear: number; week: number; type: string; teamId?: string; headline: string; detail: string }[] = [];
@@ -212,7 +213,7 @@ async function bulkIncrementInt(tx: Prisma.TransactionClient, column: 'fatigue',
   await tx.$executeRaw`UPDATE "Player" AS p SET "${Prisma.raw(column)}" = p."${Prisma.raw(column)}" + v.val FROM (VALUES ${values}) AS v(id, val) WHERE p.id = v.id`;
 }
 
-async function bulkSetText(tx: Prisma.TransactionClient, column: 'seasonStats' | 'careerStats', entries: [string, string][]) {
+async function bulkSetText(tx: Prisma.TransactionClient, column: 'seasonStats' | 'careerStats' | 'injuryType', entries: [string, string][]) {
   if (entries.length === 0) return;
   const values = Prisma.join(entries.map(([id, v]) => Prisma.sql`(${id}::text, ${v}::text)`));
   await tx.$executeRaw`UPDATE "Player" AS p SET "${Prisma.raw(column)}" = v.val FROM (VALUES ${values}) AS v(id, val) WHERE p.id = v.id`;
@@ -285,7 +286,8 @@ async function recoverFatigueAndInjuries(leagueId: string) {
   await prisma.$executeRaw`
     UPDATE "Player"
     SET "fatigue" = GREATEST("fatigue" - ${SIM.FATIGUE_RECOVERY}, 0),
-        "injuryWeeks" = GREATEST("injuryWeeks" - 1, 0)
+        "injuryWeeks" = GREATEST("injuryWeeks" - 1, 0),
+        "injuryType" = CASE WHEN GREATEST("injuryWeeks" - 1, 0) = 0 THEN NULL ELSE "injuryType" END
     WHERE "leagueId" = ${leagueId} AND "status" = 'ACTIVE' AND ("fatigue" > 0 OR "injuryWeeks" > 0)
   `;
 }

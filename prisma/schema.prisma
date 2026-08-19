@@ -182,6 +182,7 @@ model Player {
   draftPickNo Int?
 
   injuryWeeks Int    @default(0)
+  injuryType  String?  // human-readable description, e.g. "Hamstring strain" — set when injured, cleared on recovery
   fatigue     Int    @default(0)   // 0-100, restores between weeks
   morale      Int    @default(70)  // 0-100. PLACEHOLDER effect on re-sign odds.
 
