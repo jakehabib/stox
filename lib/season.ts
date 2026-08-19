@@ -40,9 +40,16 @@ export async function advanceWeek(leagueId: string) {
   const rng = new Rng(`${settings.simSeed || league.id}-${league.phase}-${league.week}`);
 
   switch (league.phase) {
-    case 'PRESEASON':
+    case 'PRESEASON': {
+      // Next draft class goes in at week 1, not buried in the offseason —
+      // so there's a full season to scout it before it's actually drafted.
+      // League creation already seeds year 1's class; guard so a re-run of
+      // this step (or that initial seed) never doubles it up.
+      const alreadySeeded = await prisma.player.count({ where: { leagueId, isDraftee: true, draftYear: league.seasonYear } });
+      if (alreadySeeded === 0) await addDraftClass(leagueId, league.seasonYear, rng);
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'REGULAR', week: 1 } });
-      return { summary: 'Preseason complete. Week 1 is set.' };
+      return { summary: 'Preseason complete. Week 1 is set — next year\'s draft class is on the board.' };
+    }
 
     case 'REGULAR':
       return simulateWeek(leagueId, league.week, settings, rng);
@@ -516,10 +523,12 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
       return { summary: 'Contracts advanced a year; expired deals hit free agency.' };
     }
     case 'ADD_DRAFT_CLASS': {
-      await addDraftClass(leagueId, league.seasonYear, rng);
+      // This year's class was already added back at week 1 of the season
+      // that just ended, so it could be scouted all year — this step now
+      // only extends the rolling future-picks horizon for pick trading.
       await addFutureDraftPicks(leagueId, league.seasonYear);
       await prisma.league.update({ where: { id: leagueId }, data: { week: league.week + 1 } });
-      return { summary: 'This year\'s rookie draft class has entered the pool.' };
+      return { summary: 'Future draft pick slots extended.' };
     }
     case 'RESIGN':
     default: {

@@ -295,6 +295,20 @@ export const AI = {
   /** Chance the AI reaches (drafts off-board) on a given pick — adds variance. */
   DRAFT_REACH_CHANCE: 0.18,
   DRAFT_REACH_DEPTH: 6, // picks from the top of its board it may reach into
+  /**
+   * Positional premium for draft value specifically — separate from trade/FA
+   * value, which is about what a team pays for a KNOWN quantity. The draft
+   * is about betting on unknowns, and real front offices bet much bigger on
+   * premium positions (QB, the pass rush, the left tackle's blindside, the
+   * corners who have to man up against WR1) than on a punter, no matter how
+   * good that punter's ceiling looks on paper. [TUNE]
+   */
+  DRAFT_POSITION_VALUE: {
+    QB: 1.5, EDGE: 1.25, LT: 1.2, WR: 1.15, CB: 1.15,
+    DT: 1.05, S: 1.0, LB: 1.0, TE: 1.0, RB: 0.9,
+    RT: 0.9, RG: 0.85, LG: 0.85, C: 0.8, FB: 0.55,
+    K: 0.35, P: 0.3,
+  } as Record<Position, number>,
 };
 
 /** [TUNE] Jimmy Johnson-style draft pick value chart, by overall pick number. */

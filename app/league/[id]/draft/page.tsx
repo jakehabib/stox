@@ -5,7 +5,9 @@ import { buildScoutedView } from '@/lib/scouting';
 import { ratingColor } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { DraftPickButton } from '@/components/DraftPickButton';
+import { SkipToMyPickButton } from '@/components/SkipToMyPickButton';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
+import { TeamLogo } from '@/components/TeamLogo';
 
 type SortKey = 'pos' | 'ovr' | 'age' | 'potential';
 
@@ -25,9 +27,26 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   }
 
   const order = readJson<string[]>(state.order, []);
-  const onClockTeamId = order[state.pickIndex];
+  // `order` is one round's worth of turn order, reused every round (see
+  // reseedDraftOrder) — pickIndex climbs across the whole multi-round
+  // draft, so it must be taken modulo the order length, not indexed
+  // directly (that was indexing past the array for every pick after round
+  // 1, which silently broke the entire draft beyond round 1).
+  const onClockTeamId = order.length > 0 ? order[state.pickIndex % order.length] : undefined;
   const onClockTeam = onClockTeamId ? await prisma.team.findUnique({ where: { id: onClockTeamId } }) : null;
   const isUserOnClock = onClockTeamId === team.id;
+  const totalPicks = order.length * settings.draftRounds;
+
+  const allTeams = state.kind === 'ROOKIE' && !state.complete ? await prisma.team.findMany({ where: { leagueId: league.id } }) : [];
+  const teamById = new Map(allTeams.map((t) => [t.id, t]));
+  const upcomingPicks = order.length > 0 && !state.complete
+    ? Array.from({ length: Math.min(32, totalPicks - state.pickIndex) }, (_, i) => {
+        const idx = state.pickIndex + i;
+        const round = Math.floor(idx / order.length) + 1;
+        const teamId = order[idx % order.length];
+        return { idx, round, team: teamById.get(teamId) };
+      })
+    : [];
 
   const where: any = { leagueId: league.id, teamId: null, status: 'FREE_AGENT', isDraftee: true };
   if (searchParams.pos) where.position = searchParams.pos;
@@ -78,14 +97,41 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft — Round ${state.round}`}</h1>
-          <p className="text-muted text-sm mt-1">{state.complete ? 'Draft complete.' : `Pick ${state.pickIndex + 1} of ${order.length}`}</p>
+          <p className="text-muted text-sm mt-1">{state.complete ? 'Draft complete.' : `Pick ${state.pickIndex + 1} of ${totalPicks}`}</p>
         </div>
         {!state.complete && onClockTeam && (
-          <div className={`pill ${isUserOnClock ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>
-            {isUserOnClock ? 'You are on the clock' : `On the clock: ${onClockTeam.city} ${onClockTeam.nickname}`}
+          <div className="flex items-center gap-2">
+            <div className={`pill ${isUserOnClock ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>
+              {isUserOnClock ? 'You are on the clock' : `On the clock: ${onClockTeam.city} ${onClockTeam.nickname}`}
+            </div>
+            {!isUserOnClock && <SkipToMyPickButton leagueId={league.id} teamId={team.id} />}
           </div>
         )}
       </div>
+
+      {upcomingPicks.length > 1 && (
+        <div className="card card-pad">
+          <h2 className="label-sm mb-2">Upcoming Picks</h2>
+          <div className="flex gap-1.5 overflow-x-auto pb-1">
+            {upcomingPicks.map((p) => (
+              <div
+                key={p.idx}
+                title={p.team ? `${p.team.city} ${p.team.nickname}` : ''}
+                className={`shrink-0 flex flex-col items-center gap-1 px-2 py-1.5 rounded-lg border ${
+                  p.idx === state.pickIndex
+                    ? 'border-accent bg-accent/10'
+                    : p.team?.id === team.id
+                    ? 'border-accent2/50 bg-accent2/10'
+                    : 'border-line bg-raised'
+                }`}
+              >
+                {p.team && <TeamLogo seed={p.team.id} abbr={p.team.abbr} size={20} />}
+                <span className="text-[10px] text-muted font-mono">R{p.round}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {!state.complete && (
         <>

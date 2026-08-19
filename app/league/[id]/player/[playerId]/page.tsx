@@ -159,8 +159,10 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
                 </div>
               )}
             </div>
-          ) : player.status === 'FREE_AGENT' && userTeam ? (
+          ) : player.status === 'FREE_AGENT' && !player.isDraftee && userTeam ? (
             <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} />
+          ) : player.isDraftee ? (
+            <p className="text-sm text-muted">This prospect is in the draft pool — he can only be acquired through the rookie draft, not signed as a free agent.</p>
           ) : (
             <p className="text-sm text-muted">No contract on file.</p>
           )}

@@ -227,8 +227,12 @@ export async function cutPlayer(opts: {
  */
 export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, week: number, settings: LeagueSettings, rng: Rng) {
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
+  // isDraftee players aren't real free agents yet — they're this year's
+  // rookie class waiting for the draft. Without excluding them, AI teams
+  // were signing undrafted prospects off the board before the draft ever
+  // happened, quietly draining the draft pool.
   const freeAgents = await prisma.player.findMany({
-    where: { leagueId, status: 'FREE_AGENT', teamId: null },
+    where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
     orderBy: { trueOvr: 'desc' },
     take: 60,
   });

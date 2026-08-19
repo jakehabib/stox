@@ -23,7 +23,16 @@ export async function currentPick(leagueId: string) {
   const state = await prisma.draftState.findUnique({ where: { leagueId } });
   if (!state || state.complete) return null;
   const order = readJson<string[]>(state.order, []);
-  const teamId = order[state.pickIndex];
+  if (order.length === 0) return null;
+  // `order` only ever holds ONE round's worth of teams (the standings-based
+  // turn order, reseeded identically every round — see reseedDraftOrder) but
+  // pickIndex climbs across the WHOLE multi-round draft. Indexing it
+  // directly instead of modulo meant every draft broke the instant round 2
+  // started: order[32] is undefined, so nobody was ever "on the clock" past
+  // round 1. Whichever pick a team actually owns in the current round is
+  // still resolved separately in draftPlayer(), so this only decides turn
+  // order, not which specific pick gets consumed.
+  const teamId = order[state.pickIndex % order.length];
   if (!teamId) return null;
   return { state, teamId, order };
 }
@@ -144,7 +153,11 @@ async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng) {
   const needs = teamNeeds(roster as RosterPlayer[]);
 
   let board = usable
-    .map((p) => ({ p, value: playerValue(p as unknown as RosterPlayer, { profile, needs, rng }) * (1 - profile.bpaBias * 0.15) + p.trueOvr * profile.bpaBias * 0.6 }))
+    .map((p) => {
+      const posValue = AI.DRAFT_POSITION_VALUE[p.position as Position] ?? 1;
+      const base = playerValue(p as unknown as RosterPlayer, { profile, needs, rng }) * (1 - profile.bpaBias * 0.15) + p.trueOvr * profile.bpaBias * 0.6;
+      return { p, value: base * posValue };
+    })
     .sort((a, b) => b.value - a.value);
 
   // Occasionally reach into the board rather than always taking BPA-by-value.
