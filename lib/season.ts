@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from './db';
 import { Rng } from './rng';
 import { LEAGUE } from './tuning';
@@ -86,14 +87,15 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
     where: { leagueId, week, seasonYear: league.seasonYear, played: false, kind: 'REGULAR' },
   });
 
-  let played = 0;
-  for (const game of games) {
-    await simulateAndSaveGame(leagueId, game.id, settings, new Rng(`${rng.next()}-${game.id}`));
-    played += 1;
-  }
+  // Every game in a week touches disjoint teams/players, so they're safe to
+  // run concurrently — this was previously a sequential `for` loop awaiting
+  // one game at a time, which serialized 16 games' worth of DB round trips
+  // for no reason and was the single biggest contributor to slow sim speed.
+  const gameRngs = games.map((game) => new Rng(`${rng.next()}-${game.id}`));
+  await Promise.all(games.map((game, i) => simulateAndSaveGame(leagueId, game.id, settings, gameRngs[i])));
+  const played = games.length;
 
   // Recover fatigue league-wide between weeks.
-  await prisma.player.updateMany({ where: { leagueId }, data: {} }); // no-op placeholder for future batch tuning hooks
   await recoverFatigueAndInjuries(leagueId);
   await maybeMakeAiTradeOffer(leagueId, league.seasonYear, week, settings, rng);
 
@@ -156,38 +158,62 @@ export async function simulateAndSaveGame(leagueId: string, gameId: string, sett
 
     await updateStandings(tx as any, game.homeTeamId, game.awayTeamId, result.homeScore, result.awayScore);
 
-    for (const [playerId, weeks] of Object.entries(fatigueMapToInjuries(result))) {
-      await tx.player.update({ where: { id: playerId }, data: { injuryWeeks: weeks } }).catch(() => {});
-    }
-    for (const [playerId, fatigue] of Object.entries(result.fatigue)) {
-      await tx.player.update({ where: { id: playerId }, data: { fatigue: { increment: fatigue } } }).catch(() => {});
-    }
-    if (result.injuries.length > 0) {
-      await tx.transaction.create({
-        data: {
-          leagueId, seasonYear: game.seasonYear, week: game.week, type: 'INJURY',
-          headline: `${result.injuries.length} injury report(s) from ${home.abbr} @ ${away.abbr}`,
-          detail: result.boxScore.injuries.map((i) => `${i.name} (${i.weeks}w)`).join(', '),
-        },
-      });
-    }
+    // Every per-player effect below used to be one awaited UPDATE per row —
+    // for a 53-man-ish box score that's a hundred-plus sequential round
+    // trips per game, times 16 games a week. Collapse each into a single
+    // bulk statement instead.
+    await bulkSetInt(tx, 'injuryWeeks', Object.entries(fatigueMapToInjuries(result)));
+    await bulkIncrementInt(tx, 'fatigue', Object.entries(result.fatigue));
 
-    for (const item of gameHeadlines(result.boxScore, game.homeTeamId, game.awayTeamId)) {
-      await tx.transaction.create({
-        data: { leagueId, seasonYear: game.seasonYear, week: game.week, type: 'NEWS', teamId: item.teamId, headline: item.headline, detail: item.detail },
+    const newsRows: { leagueId: string; seasonYear: number; week: number; type: string; teamId?: string; headline: string; detail: string }[] = [];
+    if (result.injuries.length > 0) {
+      newsRows.push({
+        leagueId, seasonYear: game.seasonYear, week: game.week, type: 'INJURY',
+        headline: `${result.injuries.length} injury report(s) from ${home.abbr} @ ${away.abbr}`,
+        detail: result.boxScore.injuries.map((i) => `${i.name} (${i.weeks}w)`).join(', '),
       });
     }
+    for (const item of gameHeadlines(result.boxScore, game.homeTeamId, game.awayTeamId)) {
+      newsRows.push({ leagueId, seasonYear: game.seasonYear, week: game.week, type: 'NEWS', teamId: item.teamId, headline: item.headline, detail: item.detail });
+    }
+    if (newsRows.length > 0) await tx.transaction.createMany({ data: newsRows });
 
     const allLines = [...result.boxScore.lines.home, ...result.boxScore.lines.away];
     const existing = await tx.player.findMany({ where: { id: { in: allLines.map((l) => l.playerId) } }, select: { id: true, seasonStats: true } });
     const existingById = new Map(existing.map((p) => [p.id, p.seasonStats]));
-    for (const line of allLines) {
+    const statUpdates: [string, string][] = allLines.map((line) => {
       const current = readJson<SeasonStats>(existingById.get(line.playerId), {});
-      await tx.player.update({ where: { id: line.playerId }, data: { seasonStats: writeJson(mergeStats(current, line.stats)) } }).catch(() => {});
-    }
+      return [line.playerId, writeJson(mergeStats(current, line.stats))];
+    });
+    await bulkSetText(tx, 'seasonStats', statUpdates);
   });
 
   return result;
+}
+
+/**
+ * Bulk per-row writes via `UPDATE ... FROM (VALUES ...)`. Postgres can do
+ * hundreds of independent row updates in one round trip this way — the
+ * naive alternative (one `prisma.player.update` per player, awaited in a
+ * loop) was the dominant cost of simulating a week, especially against a
+ * hosted DB where every round trip pays real network latency.
+ */
+async function bulkSetInt(tx: Prisma.TransactionClient, column: 'injuryWeeks', entries: [string, number][]) {
+  if (entries.length === 0) return;
+  const values = Prisma.join(entries.map(([id, v]) => Prisma.sql`(${id}::text, ${v}::int)`));
+  await tx.$executeRaw`UPDATE "Player" AS p SET "${Prisma.raw(column)}" = v.val FROM (VALUES ${values}) AS v(id, val) WHERE p.id = v.id`;
+}
+
+async function bulkIncrementInt(tx: Prisma.TransactionClient, column: 'fatigue', entries: [string, number][]) {
+  if (entries.length === 0) return;
+  const values = Prisma.join(entries.map(([id, v]) => Prisma.sql`(${id}::text, ${v}::int)`));
+  await tx.$executeRaw`UPDATE "Player" AS p SET "${Prisma.raw(column)}" = p."${Prisma.raw(column)}" + v.val FROM (VALUES ${values}) AS v(id, val) WHERE p.id = v.id`;
+}
+
+async function bulkSetText(tx: Prisma.TransactionClient, column: 'seasonStats' | 'careerStats', entries: [string, string][]) {
+  if (entries.length === 0) return;
+  const values = Prisma.join(entries.map(([id, v]) => Prisma.sql`(${id}::text, ${v}::text)`));
+  await tx.$executeRaw`UPDATE "Player" AS p SET "${Prisma.raw(column)}" = v.val FROM (VALUES ${values}) AS v(id, val) WHERE p.id = v.id`;
 }
 
 function fatigueMapToInjuries(result: Awaited<ReturnType<typeof simulateGame>>) {
@@ -251,13 +277,15 @@ async function updateStandings(tx: typeof prisma, homeId: string, awayId: string
 
 async function recoverFatigueAndInjuries(leagueId: string) {
   const { SIM } = await import('./tuning');
-  const players = await prisma.player.findMany({ where: { leagueId, status: 'ACTIVE' } });
-  for (const p of players) {
-    const data: any = {};
-    if (p.fatigue > 0) data.fatigue = Math.max(0, p.fatigue - SIM.FATIGUE_RECOVERY);
-    if (p.injuryWeeks > 0) data.injuryWeeks = p.injuryWeeks - 1;
-    if (Object.keys(data).length) await prisma.player.update({ where: { id: p.id }, data });
-  }
+  // Was one findMany + one sequential awaited UPDATE per active player in the
+  // whole league (~1,700 round trips for a 32-team league) every single
+  // week. A single bulk statement does the same work in one round trip.
+  await prisma.$executeRaw`
+    UPDATE "Player"
+    SET "fatigue" = GREATEST("fatigue" - ${SIM.FATIGUE_RECOVERY}, 0),
+        "injuryWeeks" = GREATEST("injuryWeeks" - 1, 0)
+    WHERE "leagueId" = ${leagueId} AND "status" = 'ACTIVE' AND ("fatigue" > 0 OR "injuryWeeks" > 0)
+  `;
 }
 
 // ---------------------------------------------------------------------------
