@@ -14,8 +14,8 @@ export default async function HomePage() {
       <header className="border-b border-line bg-surface/60 backdrop-blur">
         <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-bold">G</div>
-            <span className="font-semibold tracking-tight text-lg">Gridiron GM</span>
+            <div className="w-8 h-8 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-bold">D</div>
+            <span className="font-semibold tracking-tight text-lg">Dynasty GM Football</span>
           </div>
           <span className="label-sm">Front Office Simulator</span>
         </div>

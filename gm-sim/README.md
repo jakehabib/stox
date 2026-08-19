@@ -1,4 +1,4 @@
-# Gridiron GM
+# Dynasty GM Football
 
 A single-player American football front-office simulator. Built with **Next.js
 14 (App Router, TypeScript)**, **Tailwind CSS**, and **Prisma + Postgres**.
@@ -22,7 +22,7 @@ the full season/offseason cycle.
 Click this button. It opens Vercel (a free website-hosting service) with this
 project pre-loaded:
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/jakehabib/stox/tree/claude/football-gm-simulator-ixeatl/gm-sim&project-name=gridiron-gm&repository-name=gridiron-gm)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/jakehabib/stox/tree/claude/football-gm-simulator-ixeatl/gm-sim&project-name=dynasty-gm-football&repository-name=dynasty-gm-football)
 
 Then:
 

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Gridiron GM',
+  title: 'Dynasty GM Football',
   description: 'A single-player American football front-office simulator.',
 };
 

@@ -32,8 +32,8 @@ export default async function LeagueLayout({ children, params }: { children: Rea
       <header className="border-b border-line bg-surface/80 backdrop-blur sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
           <Link href="/" className="flex items-center gap-2 shrink-0">
-            <div className="w-7 h-7 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-bold text-sm">G</div>
-            <span className="font-semibold text-sm hidden sm:inline">Gridiron GM</span>
+            <div className="w-7 h-7 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-bold text-sm">D</div>
+            <span className="font-semibold text-sm hidden sm:inline">Dynasty GM Football</span>
           </Link>
           <div className="flex items-center gap-3 shrink-0">
             <div className="text-right hidden md:block">
