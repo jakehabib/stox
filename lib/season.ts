@@ -17,6 +17,7 @@ import { SeasonStats } from './types';
 import { gameHeadlines } from './news';
 import { COACH_FIRST, COACH_LAST } from './gen/names';
 import { generateDraftClass, toPlayerCreate } from './gen/players';
+import { classStrengthSummary } from './gen/prospectProfile';
 import { reseedDraftOrder, startRookieDraft } from './draft';
 import { autoDepthChartAll } from './gen/league';
 import { observe } from './scouting';
@@ -779,10 +780,18 @@ async function runAiResignWave(leagueId: string, seasonYear: number, week: numbe
 
 async function addDraftClass(leagueId: string, seasonYear: number, rng: Rng) {
   const size = GENERATION.DRAFT_CLASS_SIZE + GENERATION.DRAFT_CLASS_EXTRA_UDFA;
-  const players = generateDraftClass(rng, size);
+  const { players, strengthByGroup } = generateDraftClass(rng, size);
   const rows = players.map((p) => toPlayerCreate(p, leagueId, { status: 'FREE_AGENT', isDraftee: true, draftYear: seasonYear }));
   const CHUNK = 400;
   for (let i = 0; i < rows.length; i += CHUNK) await prisma.player.createMany({ data: rows.slice(i, i + CHUNK) });
+
+  await prisma.transaction.create({
+    data: {
+      leagueId, seasonYear, week: 1, type: 'NEWS', teamId: null,
+      headline: `${seasonYear} Draft Class Outlook`,
+      detail: classStrengthSummary(strengthByGroup),
+    },
+  });
 
   // Give the user team a baseline scouting book on this class immediately —
   // without it every prospect's fogged view falls back to the same flat

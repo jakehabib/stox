@@ -3,7 +3,8 @@ import { GENERATION, Position, POSITIONS, ROSTER_TARGETS } from '../tuning';
 import { attrsForPosition, computeOverall, AttrMap, POSITION_WEIGHTS } from '../ratings';
 import { FIRST_NAMES, LAST_NAMES, COLLEGES } from './names';
 import { writeJson } from '../json';
-import { generateCollegeProfile, generateCombineTesting, CollegeProfile, CombineTesting } from './prospectProfile';
+import { generateCollegeProfile, generateCombineTesting, generateClassStrength, CollegeProfile, CombineTesting } from './prospectProfile';
+import { positionGroup, PositionGroup } from '../positionGroups';
 
 export interface GeneratedPlayer {
   firstName: string;
@@ -214,14 +215,24 @@ export function generateRoster(rng: Rng, teamStrength: number): GeneratedPlayer[
   return out;
 }
 
-/** A rookie draft class — wide talent spread, that's what makes scouting matter. */
-export function generateDraftClass(rng: Rng, size: number): GeneratedPlayer[] {
+/**
+ * A rookie draft class — wide talent spread, that's what makes scouting
+ * matter. Also gives the class a "personality": a per-position-group
+ * strength bias (loaded at one spot, thin at another) that real draft
+ * classes always have, rather than every year being an identical flat
+ * random sample at every position.
+ */
+export function generateDraftClass(rng: Rng, size: number): { players: GeneratedPlayer[]; strengthByGroup: Record<PositionGroup, number> } {
+  const strengthByGroup = generateClassStrength(rng);
   const out: GeneratedPlayer[] = [];
   for (let i = 0; i < size; i++) {
     // Top of the class is meaningfully better than the back half. [TUNE]
     const pct = i / size;
-    const tierMean = GENERATION.ROOKIE_OVR_MEAN + (1 - pct) * 14 - 6;
+    const position = weightedPosition(rng);
+    const bias = strengthByGroup[positionGroup(position)] ?? 0;
+    const tierMean = GENERATION.ROOKIE_OVR_MEAN + (1 - pct) * 14 - 6 + bias;
     const player = generatePlayer(rng, {
+      position,
       rookie: true,
       ovrTarget: clamp(Math.round(rng.normal(tierMean, GENERATION.ROOKIE_OVR_SD)), 38, 95),
     });
@@ -229,5 +240,5 @@ export function generateDraftClass(rng: Rng, size: number): GeneratedPlayer[] {
     player.combineTesting = generateCombineTesting(rng, player.position, player.trueAttrs, player.trueOvr);
     out.push(player);
   }
-  return out;
+  return { players: out, strengthByGroup };
 }

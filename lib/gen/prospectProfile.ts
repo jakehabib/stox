@@ -1,6 +1,7 @@
 import { Rng, clamp } from '../rng';
 import { Position } from '../tuning';
 import { AttrMap } from '../ratings';
+import { POSITION_GROUPS, PositionGroup } from '../positionGroups';
 
 /**
  * ===========================================================================
@@ -242,4 +243,29 @@ export function prospectBuzzNote(trueOvr: number, potential: number, scoutedOvr:
   if (gap <= -10) return 'Tape doesn\'t match the box score for some evaluators.';
   if (potential >= 92 && confidence < 55) return 'Ceiling nobody has fully seen yet.';
   return null;
+}
+
+/**
+ * Per-position-group OVR bias for one draft class — the difference between
+ * "every class is a flat random sample" and a class having a personality
+ * (loaded at one spot, thin at another, the way real classes are talked
+ * about). Applied as an offset to every prospect's target overall in
+ * generateDraftClass, at that player's own position group.
+ */
+export function generateClassStrength(rng: Rng): Record<PositionGroup, number> {
+  const out = {} as Record<PositionGroup, number>;
+  for (const g of POSITION_GROUPS) out[g] = Math.round(rng.normal(0, 6));
+  return out;
+}
+
+/** Plain-language "loaded here, thin there" summary for the strength map above — the class outlook the user actually reads. */
+export function classStrengthSummary(strength: Record<PositionGroup, number>): string {
+  const entries = Object.entries(strength) as [PositionGroup, number][];
+  const loaded = entries.filter(([, v]) => v >= 5).sort((a, b) => b[1] - a[1]).map(([g]) => g);
+  const thin = entries.filter(([, v]) => v <= -5).sort((a, b) => a[1] - b[1]).map(([g]) => g);
+  const parts: string[] = [];
+  if (loaded.length > 0) parts.push(`Loaded at ${loaded.join(', ')}`);
+  if (thin.length > 0) parts.push(`thin at ${thin.join(', ')}`);
+  if (parts.length === 0) return 'An even class, no real strength or weakness at any one position.';
+  return parts.join(' — ') + '.';
 }

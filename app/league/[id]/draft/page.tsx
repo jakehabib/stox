@@ -79,6 +79,10 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   const positions = Array.from(new Set(pool.map((p) => p.position))).sort((a, b) => positionSortKey(a) - positionSortKey(b));
 
   const recentPicks = await prisma.transaction.findMany({ where: { leagueId: league.id, type: 'DRAFT' }, orderBy: { createdAt: 'desc' }, take: 10 });
+  const classOutlook = await prisma.transaction.findFirst({
+    where: { leagueId: league.id, type: 'NEWS', headline: { contains: 'Draft Class Outlook' } },
+    orderBy: { createdAt: 'desc' },
+  });
 
   const rows = pool.map((p) => {
     const view = buildScoutedView({
@@ -157,6 +161,12 @@ export default async function DraftPage({ params, searchParams }: { params: { id
 
   return (
     <div className="space-y-5">
+      {classOutlook && (
+        <div className="card card-pad flex items-start gap-3 border-accent2/30">
+          <span className="text-xs text-accent2 uppercase tracking-wider shrink-0 mt-0.5">Class Outlook</span>
+          <p className="text-sm text-chalk/90">{classOutlook.detail}</p>
+        </div>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
