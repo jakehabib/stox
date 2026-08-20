@@ -92,8 +92,37 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
   let outlookSeries: { label: string; color: string; points: { x: string; y: number }[] }[] = [];
   let outlookBaseline: { y: number; label: string } | undefined;
   let valuePoints: { id: string; x: number; y: number; label: string; color: string; detail?: string }[] = [];
+  let vsLeagueBars: { label: string; value: number; displayValue: string; color: string }[] = [];
 
   if (advanced) {
+    // League-average spend per position group, so "too much at one spot" has
+    // a real baseline instead of just eyeballing the allocation chart alone.
+    const [leagueTeams, leaguePlayers] = await Promise.all([
+      prisma.team.count({ where: { leagueId: league.id } }),
+      prisma.player.findMany({ where: { leagueId: league.id, status: 'ACTIVE' }, include: { contract: true } }),
+    ]);
+    const leagueByGroup = new Map<string, number>();
+    for (const g of POSITION_GROUPS) leagueByGroup.set(g, 0);
+    for (const p of leaguePlayers) {
+      const hit = capHit(p.contract, settings.capMode);
+      const g = positionGroup(p.position);
+      leagueByGroup.set(g, (leagueByGroup.get(g) ?? 0) + hit);
+    }
+    const myByGroup = new Map<string, number>();
+    for (const g of POSITION_GROUPS) myByGroup.set(g, 0);
+    for (const { p, hit } of rows) myByGroup.set(positionGroup(p.position), (myByGroup.get(positionGroup(p.position)) ?? 0) + hit);
+
+    vsLeagueBars = POSITION_GROUPS.map((g) => {
+      const avg = (leagueByGroup.get(g) ?? 0) / Math.max(1, leagueTeams);
+      const mine = myByGroup.get(g) ?? 0;
+      const diff = mine - avg;
+      return {
+        label: g,
+        value: Math.abs(diff),
+        displayValue: `${diff >= 0 ? '+' : '-'}${formatMoney(Math.abs(diff))} vs avg`,
+        color: diff >= 0 ? '#e66767' : '#3987e5',
+      };
+    }).sort((a, b) => b.value - a.value);
     const byGroup = new Map<string, number>();
     for (const g of POSITION_GROUPS) byGroup.set(g, 0);
     for (const { p, hit } of rows) byGroup.set(positionGroup(p.position), (byGroup.get(positionGroup(p.position)) ?? 0) + hit);
@@ -178,6 +207,15 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
             </h2>
             <p className="text-xs text-muted mb-3">Already-committed cap dollars, {league.seasonYear}–{league.seasonYear + 3}.</p>
             <LineChart series={outlookSeries} baseline={outlookBaseline} formatY="money" />
+          </div>
+
+          <div className="card card-pad">
+            <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
+              Spend vs. League Average
+              <Tooltip text="How your cap allocation at each position group compares to the league-wide average team. Blue = spending less than average there; red = more. Neither is inherently good or bad on its own — a position running red might be a deliberate strength, or an overpay; running blue might be a bargain, or a real hole." />
+            </h2>
+            <p className="text-xs text-muted mb-3">Deviation from the average team's spend, by position group.</p>
+            <HorizontalBarChart bars={vsLeagueBars} />
           </div>
 
           <div className="card card-pad lg:col-span-2">
