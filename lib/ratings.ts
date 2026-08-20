@@ -124,6 +124,29 @@ export function ratingTier(ovr: number): { label: string; className: string } {
   return { label: 'Camp Body', className: 'text-bad' };
 }
 
+/**
+ * A coarser, role-flavored label than ratingTier. For anyone unproven
+ * (a draftee, or a rookie with 0 experience) the grade is drawn from
+ * POTENTIAL rather than current overall — a rookie's present-day number
+ * means almost nothing yet, the projected ceiling is the actual story —
+ * and the whole thing reads from the same fogged scouted view as
+ * everything else, so a label can flip as scouting narrows in on someone,
+ * same as a real draft evaluation.
+ */
+export function playerLabel(opts: { ovr: number; potential: number; isDraftee?: boolean; experience?: number }): { label: string; className: string } {
+  const { ovr, potential, isDraftee, experience } = opts;
+  const unproven = isDraftee || (experience ?? 1) === 0;
+  const grade = unproven ? potential : ovr;
+
+  if (grade >= 97) return { label: 'Generational', className: 'text-gold' };
+  if (grade >= 90) return { label: unproven ? 'Franchise Prospect' : 'Franchise', className: 'text-gold' };
+  if (grade >= 82) return { label: unproven ? 'Star Prospect' : 'Star', className: 'text-accent' };
+  if (grade >= 74) return { label: unproven ? 'Starter Prospect' : 'Starter', className: 'text-accent2' };
+  if (grade >= 66) return { label: unproven ? 'Depth Prospect' : 'Rotational', className: 'text-chalk' };
+  if (grade >= 58) return { label: unproven ? 'Late-Round Prospect' : 'Backup', className: 'text-muted' };
+  return { label: unproven ? 'Deep Sleeper' : 'Camp Body', className: 'text-bad' };
+}
+
 export function ratingColor(v: number): string {
   if (v >= 88) return 'text-gold';
   if (v >= 78) return 'text-accent';

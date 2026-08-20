@@ -2,9 +2,10 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
-import { ratingColor } from '@/lib/ratings';
+import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
-import { LEAGUE } from '@/lib/tuning';
+import { LEAGUE, AI, Position } from '@/lib/tuning';
+import { bigBoardScore } from '@/lib/gen/prospectProfile';
 import { DraftPickButton } from '@/components/DraftPickButton';
 import { LiveDraftTicker } from '@/components/LiveDraftTicker';
 import { ShortlistStar } from '@/components/ShortlistStar';
@@ -87,6 +88,40 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     return { p, view };
   });
 
+  // Consensus big-board rank — position-weighted, computed over the WHOLE
+  // class regardless of any position/shortlist filter currently applied, so
+  // "#1 overall" means the same thing no matter which slice of the board
+  // you're looking at. Reuses the filtered fetch above when nothing's
+  // filtering it down (the common case) instead of a second full query.
+  const classForRank = !searchParams.pos && !shortlistOnly
+    ? rows
+    : await (async () => {
+        const fullPool = await prisma.player.findMany({ where: { leagueId: league.id, teamId: null, status: 'FREE_AGENT', isDraftee: true }, take: 500 });
+        const fullReports = await prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: fullPool.map((p) => p.id) } } });
+        const fullReportMap = new Map(fullReports.map((r) => [r.playerId, r]));
+        return fullPool.map((p) => ({
+          p,
+          view: buildScoutedView({
+            position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
+            report: fullReportMap.get(p.id), settings, isOwnRoster: false, isUserView: true,
+          }),
+        }));
+      })();
+  const ranked = [...classForRank].sort((a, b) =>
+    bigBoardScore(b.view.scoutedOvr, b.p.position as any, b.p.id, league.week, AI.DRAFT_POSITION_VALUE[b.p.position as Position] ?? 1) -
+    bigBoardScore(a.view.scoutedOvr, a.p.position as any, a.p.id, league.week, AI.DRAFT_POSITION_VALUE[a.p.position as Position] ?? 1),
+  );
+  const rankById = new Map(ranked.map(({ p }, i) => [p.id, i + 1]));
+  const rankBadge = (playerId: string): { label: string; className: string } | null => {
+    const rank = rankById.get(playerId);
+    if (!rank) return null;
+    if (rank === 1) return { label: '#1 Consensus', className: 'text-gold' };
+    if (rank <= 5) return { label: 'Top 5', className: 'text-gold' };
+    if (rank <= 10) return { label: 'Top 10', className: 'text-accent' };
+    if (rank <= 32) return { label: 'Top 32', className: 'text-accent2' };
+    return null;
+  };
+
   const sortKey: SortKey = (['pos', 'ovr', 'age', 'potential'] as SortKey[]).includes(searchParams.sort as SortKey)
     ? (searchParams.sort as SortKey) : 'ovr';
   const dir = searchParams.dir === 'asc' ? 1 : -1;
@@ -160,7 +195,8 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 }`}
               >
                 {p.team && <TeamLogo seed={p.team.id} abbr={p.team.abbr} size={20} />}
-                <span className="text-[10px] text-muted font-mono">R{p.round}</span>
+                <span className="text-[10px] font-mono font-semibold">{p.team?.abbr ?? '—'}</span>
+                <span className="text-[9px] text-muted font-mono">Pick {p.idx + 1}</span>
               </div>
             ))}
           </div>
@@ -187,24 +223,35 @@ export default async function DraftPage({ params, searchParams }: { params: { id
               <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
               <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
               <th><a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th>Projection</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {sorted.map(({ p, view }, i) => (
-              <tr key={p.id}>
-                <td><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>
-                <td className="font-mono text-xs text-muted">{p.position}</td>
-                <td className="font-medium flex items-center gap-2">
-                  {!state && <span className="w-6 shrink-0 text-xs text-muted font-mono text-right">{i + 1}</span>}
-                  <PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
-                </td>
-                <td className="text-muted">{p.age}</td>
-                <td className={`font-mono font-semibold ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
-                <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
-                <td>{isUserOnClock && <DraftPickButton leagueId={league.id} teamId={team.id} playerId={p.id} />}</td>
-              </tr>
-            ))}
+            {sorted.map(({ p, view }, i) => {
+              const potentialForLabel = view.revealed ? p.potential : (view.potLow + view.potHigh) / 2;
+              const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0 });
+              return (
+                <tr key={p.id}>
+                  <td><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>
+                  <td className="font-mono text-xs text-muted">{p.position}</td>
+                  <td className="font-medium">
+                    <div className="flex items-center gap-2">
+                      {!state && <span className="w-6 shrink-0 text-xs text-muted font-mono text-right">{i + 1}</span>}
+                      <PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
+                      {rankBadge(p.id) && (
+                        <span className={`pill text-[10px] px-1.5 py-0.5 border-current ${rankBadge(p.id)!.className}`}>{rankBadge(p.id)!.label}</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="text-muted">{p.age}</td>
+                  <td className={`font-mono font-semibold ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
+                  <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+                  <td><span className={`text-xs font-medium ${label.className}`}>{label.label}</span></td>
+                  <td>{isUserOnClock && <DraftPickButton leagueId={league.id} teamId={team.id} playerId={p.id} />}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

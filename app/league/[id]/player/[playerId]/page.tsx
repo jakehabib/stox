@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
-import { ratingColor, ratingTier } from '@/lib/ratings';
+import { ratingColor, ratingTier, playerLabel } from '@/lib/ratings';
 import { formatMoney, capHit, remainingValue } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { sortStatEntries, statLabel } from '@/lib/statLabels';
@@ -15,6 +15,11 @@ import { SignOfferForm } from '@/components/SignOfferForm';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import {
+  CollegeProfile, CombineTesting, aggregateCollegeGames, collegeWeeksElapsed,
+  prospectBuzzNote, COLLEGE_WEEKS,
+} from '@/lib/gen/prospectProfile';
+import { CollegeStatLine } from '@/components/CollegeStatLine';
 
 export default async function PlayerPage({ params }: { params: { id: string; playerId: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -41,6 +46,20 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
 
   const jerseyColor = player.team ? generateTeamLogoParams(player.team.id).primary : undefined;
 
+  // Older test data predates this feature — collegeStats/combineTesting
+  // parse fine as "{}" (not a parse failure, so readJson's fallback never
+  // kicks in) but with no real fields, so check for actual content.
+  const collegeProfileRaw = player.isDraftee ? readJson<Partial<CollegeProfile>>(player.collegeStats, {}) : null;
+  const collegeProfile = collegeProfileRaw?.games?.length ? (collegeProfileRaw as CollegeProfile) : null;
+  const combineRaw = player.isDraftee ? readJson<Partial<CombineTesting>>(player.combineTesting, {}) : null;
+  const combineTesting = combineRaw?.venue ? (combineRaw as CombineTesting) : null;
+  const weeksElapsed = collegeWeeksElapsed(league.week);
+  const collegeToDate = collegeProfile ? aggregateCollegeGames(collegeProfile.games, weeksElapsed) : null;
+  const buzzNote = collegeProfile
+    ? prospectBuzzNote(player.trueOvr, player.potential, view.scoutedOvr, view.confidence, collegeProfile.competitionGrade)
+    : null;
+  const GRADE_CLASS: Record<string, string> = { A: 'text-gold', B: 'text-accent', C: 'text-chalk', D: 'text-warn', F: 'text-bad' };
+
   // Your team's current depth at this player's position — the point is
   // answering "do I need a replacement here" without leaving the card,
   // whether you're looking at your own player, a free agent, or a trade
@@ -65,7 +84,18 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
                 <span className="flex items-center gap-1.5"><TeamLogo seed={player.team.id} abbr={player.team.abbr} size={16} /> {player.team.city} {player.team.nickname}</span>
               ) : player.status === 'FREE_AGENT' ? 'Free Agent' : player.status}
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight">{player.firstName} {player.lastName}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight">{player.firstName} {player.lastName}</h1>
+              {(() => {
+                const lbl = playerLabel({
+                  ovr: view.scoutedOvr,
+                  potential: view.revealed ? player.potential : (view.potLow + view.potHigh) / 2,
+                  isDraftee: player.isDraftee,
+                  experience: player.experience,
+                });
+                return <span className={`pill ${lbl.className} border-current`}>{lbl.label}</span>;
+              })()}
+            </div>
             <p className="text-muted text-sm mt-1">
               Age {player.age} · {Math.floor(player.heightIn / 12)}'{player.heightIn % 12}" · {player.weightLb} lb · {player.college}
               {player.experience > 0 ? ` · Yr ${player.experience}` : ' · Rookie'}
@@ -115,6 +145,40 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           ))}
         </div>
       </div>
+
+      {collegeProfile && collegeToDate && combineTesting && (
+        <div className="card card-pad">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <h2 className="font-semibold">College Profile — {player.college}</h2>
+            <span className={`text-xs font-medium ${GRADE_CLASS[collegeProfile.competitionGrade]}`}>
+              Competition: {collegeProfile.competitionGrade}-tier
+            </span>
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-6">
+            <div>
+              <div className="label-sm mb-2">{combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day'} Testing</div>
+              <div className="grid grid-cols-3 gap-2 text-sm">
+                <div><div className="text-muted text-xs">40-yd</div><div className="font-mono">{combineTesting.fortyYard.toFixed(2)}s</div></div>
+                <div><div className="text-muted text-xs">Vertical</div><div className="font-mono">{combineTesting.vertical}"</div></div>
+                <div><div className="text-muted text-xs">Broad</div><div className="font-mono">{combineTesting.broadJump}"</div></div>
+                <div><div className="text-muted text-xs">3-Cone</div><div className="font-mono">{combineTesting.threeCone.toFixed(2)}s</div></div>
+                <div><div className="text-muted text-xs">Shuttle</div><div className="font-mono">{combineTesting.shuttle.toFixed(2)}s</div></div>
+                <div><div className="text-muted text-xs">Bench</div><div className="font-mono">{combineTesting.benchReps ?? '—'}</div></div>
+              </div>
+            </div>
+
+            <div>
+              <div className="label-sm mb-2">College Season — through week {weeksElapsed} of {COLLEGE_WEEKS}</div>
+              <CollegeStatLine position={player.position} stats={collegeToDate} />
+            </div>
+          </div>
+
+          {buzzNote && (
+            <p className="text-xs text-accent2 italic mt-4 pt-3 border-t border-line/60">{buzzNote}</p>
+          )}
+        </div>
+      )}
 
       <div className="grid sm:grid-cols-2 gap-6">
         <div className="card card-pad">

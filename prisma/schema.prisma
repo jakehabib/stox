@@ -182,6 +182,11 @@ model Player {
   draftRound  Int?
   draftPickNo Int?
 
+  // College scouting profile — only meaningful while isDraftee is true.
+  // JSON strings (see lib/gen/prospectProfile.ts CollegeProfile / CombineTesting).
+  collegeStats    String @default("{}")
+  combineTesting  String @default("{}")
+
   injuryWeeks Int    @default(0)
   injuryType  String?  // human-readable description, e.g. "Hamstring strain" — set when injured, cleared on recovery
   fatigue     Int    @default(0)   // 0-100, restores between weeks

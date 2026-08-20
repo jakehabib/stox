@@ -3,6 +3,7 @@ import { GENERATION, Position, POSITIONS, ROSTER_TARGETS } from '../tuning';
 import { attrsForPosition, computeOverall, AttrMap, POSITION_WEIGHTS } from '../ratings';
 import { FIRST_NAMES, LAST_NAMES, COLLEGES } from './names';
 import { writeJson } from '../json';
+import { generateCollegeProfile, generateCombineTesting, CollegeProfile, CombineTesting } from './prospectProfile';
 
 export interface GeneratedPlayer {
   firstName: string;
@@ -17,6 +18,9 @@ export interface GeneratedPlayer {
   trueOvr: number;
   potential: number;
   devTrait: string;
+  /** Only ever set for the rookie draft class — see generateDraftClass. */
+  collegeProfile?: CollegeProfile;
+  combineTesting?: CombineTesting;
 }
 
 /**
@@ -164,6 +168,8 @@ export function toPlayerCreate(p: GeneratedPlayer, leagueId: string, extra: Reco
     trueOvr: p.trueOvr,
     potential: p.potential,
     devTrait: p.devTrait,
+    ...(p.collegeProfile ? { collegeStats: writeJson(p.collegeProfile) } : {}),
+    ...(p.combineTesting ? { combineTesting: writeJson(p.combineTesting) } : {}),
     ...extra,
   };
 }
@@ -215,12 +221,13 @@ export function generateDraftClass(rng: Rng, size: number): GeneratedPlayer[] {
     // Top of the class is meaningfully better than the back half. [TUNE]
     const pct = i / size;
     const tierMean = GENERATION.ROOKIE_OVR_MEAN + (1 - pct) * 14 - 6;
-    out.push(
-      generatePlayer(rng, {
-        rookie: true,
-        ovrTarget: clamp(Math.round(rng.normal(tierMean, GENERATION.ROOKIE_OVR_SD)), 38, 95),
-      }),
-    );
+    const player = generatePlayer(rng, {
+      rookie: true,
+      ovrTarget: clamp(Math.round(rng.normal(tierMean, GENERATION.ROOKIE_OVR_SD)), 38, 95),
+    });
+    player.collegeProfile = generateCollegeProfile(rng, player.position, player.trueAttrs, player.trueOvr);
+    player.combineTesting = generateCombineTesting(rng, player.position, player.trueAttrs, player.trueOvr);
+    out.push(player);
   }
   return out;
 }
