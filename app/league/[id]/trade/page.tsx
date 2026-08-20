@@ -9,6 +9,8 @@ import { readJson } from '@/lib/json';
 import { isTradeDeadlinePassed } from '@/lib/trade';
 import { projectedDraftOrder, imminentDraftYear } from '@/lib/draft';
 import type { TradeAsset } from '@/lib/trade';
+import { buildTradeRetrospectives } from '@/lib/tradeRetro';
+import { TradeRetrospectives } from '@/components/TradeRetrospectives';
 
 export default async function TradePage({ params, searchParams }: { params: { id: string }; searchParams: { with?: string; reviewOffer?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -37,13 +39,14 @@ export default async function TradePage({ params, searchParams }: { params: { id
   const deadlinePassed = settings.tradeDeadlineEnabled && isTradeDeadlinePassed(league.phase, league.week, settings.tradeDeadlineWeek);
   const [projectedOrder, imminentYear] = await Promise.all([projectedDraftOrder(league.id), imminentDraftYear(league.id)]);
 
-  const [myRoster, myPicks, partnerRoster, partnerPicks, pendingOffers, capSummary] = await Promise.all([
+  const [myRoster, myPicks, partnerRoster, partnerPicks, pendingOffers, capSummary, retrospectives] = await Promise.all([
     prisma.player.findMany({ where: { teamId: team.id }, include: { contract: true }, orderBy: { trueOvr: 'desc' } }),
     prisma.draftPick.findMany({ where: { ownerTeamId: team.id, used: false }, orderBy: [{ year: 'asc' }, { round: 'asc' }] }),
     partnerId ? prisma.player.findMany({ where: { teamId: partnerId }, include: { contract: true }, orderBy: { trueOvr: 'desc' } }) : Promise.resolve([]),
     partnerId ? prisma.draftPick.findMany({ where: { ownerTeamId: partnerId, used: false }, orderBy: [{ year: 'asc' }, { round: 'asc' }] }) : Promise.resolve([]),
     prisma.tradeOffer.findMany({ where: { leagueId: league.id, toTeamId: team.id, status: 'PENDING' }, include: { fromTeam: true }, orderBy: { createdAt: 'desc' } }),
     settings.capMode === 'OFF' ? Promise.resolve(null) : teamCapSummary(team.id, league.seasonYear, settings.capMode),
+    buildTradeRetrospectives(league.id, team.id, settings.capMode, league.seasonYear),
   ]);
 
   const toRosterP = (p: (typeof myRoster)[number]) => ({
@@ -89,6 +92,8 @@ export default async function TradePage({ params, searchParams }: { params: { id
         deadlinePassed={deadlinePassed}
         tradeDeadlineWeek={settings.tradeDeadlineWeek}
       />
+
+      <TradeRetrospectives myAbbr={team.abbr} retrospectives={retrospectives} />
     </div>
   );
 }

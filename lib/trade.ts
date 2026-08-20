@@ -4,6 +4,7 @@ import { AI, LEAGUE } from './tuning';
 import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, philosophySummary, leagueScarcity, RosterPlayer } from './ai/gm';
 import { projectedDraftOrder, imminentDraftYear } from './draft';
 import { CapMode } from './types';
+import { recordTrade } from './tradeRetro';
 
 /**
  * ===========================================================================
@@ -173,6 +174,23 @@ export async function evaluateTrade(opts: {
 export async function executeTrade(opts: {
   leagueId: string; teamA: string; teamB: string; aToB: TradeAsset[]; bToA: TradeAsset[]; seasonYear: number; week: number;
 }) {
+  const [league, teamAInfo, teamBInfo] = await Promise.all([
+    prisma.league.findUniqueOrThrow({ where: { id: opts.leagueId } }),
+    prisma.team.findUniqueOrThrow({ where: { id: opts.teamA } }),
+    prisma.team.findUniqueOrThrow({ where: { id: opts.teamB } }),
+  ]);
+  const capMode: CapMode = JSON.parse(league.settings).capMode ?? 'REALISTIC';
+
+  // Snapshot what's being traded (and what it's worth right now) BEFORE
+  // ownership changes — this is the only record of asset identity a trade
+  // retrospective (lib/tradeRetro.ts) can grade later; the Transaction row
+  // below only ever logs asset counts, not who/what.
+  await recordTrade({
+    leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week,
+    teamAId: opts.teamA, teamBId: opts.teamB, teamAAbbr: teamAInfo.abbr, teamBAbbr: teamBInfo.abbr,
+    aToB: opts.aToB, bToA: opts.bToA, capMode,
+  });
+
   await prisma.$transaction(async (tx) => {
     const move = async (assets: TradeAsset[], toTeam: string) => {
       for (const a of assets) {
@@ -187,15 +205,11 @@ export async function executeTrade(opts: {
     await move(opts.aToB, opts.teamB);
     await move(opts.bToA, opts.teamA);
 
-    const [teamA, teamB] = await Promise.all([
-      tx.team.findUniqueOrThrow({ where: { id: opts.teamA } }),
-      tx.team.findUniqueOrThrow({ where: { id: opts.teamB } }),
-    ]);
     await tx.transaction.create({
       data: {
         leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week, type: 'TRADE',
-        headline: `Trade: ${teamA.abbr} <-> ${teamB.abbr}`,
-        detail: `${teamA.abbr} sends ${opts.aToB.length} asset(s), receives ${opts.bToA.length} asset(s).`,
+        headline: `Trade: ${teamAInfo.abbr} <-> ${teamBInfo.abbr}`,
+        detail: `${teamAInfo.abbr} sends ${opts.aToB.length} asset(s), receives ${opts.bToA.length} asset(s).`,
       },
     });
   });

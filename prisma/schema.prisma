@@ -47,6 +47,7 @@ model League {
   tradeOffers  TradeOffer[]
   seasonRecords TeamSeasonRecord[]
   leagueRecords LeagueRecord[]
+  tradeRecords  TradeRecord[]
 }
 
 model DraftState {
@@ -455,4 +456,33 @@ model LeagueRecord {
 
   @@unique([leagueId, scope, category])
   @@index([leagueId])
+}
+
+// A snapshot of exactly what was traded and what it was worth at the time —
+// the plain Transaction row for a trade only ever recorded asset COUNTS
+// ("sends 2 asset(s)"), never identities, so there was nothing to grade
+// retrospectively. One row per trade, independent of the Transaction feed.
+// See lib/tradeRetro.ts for how this gets turned into a "who won this
+// trade" verdict later.
+model TradeRecord {
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  seasonYear Int
+  week       Int
+  teamAId    String
+  teamBId    String
+  teamAAbbr  String // denormalized — a team can be renamed/relocated later (not currently supported, but cheap insurance)
+  teamBAbbr  String
+
+  // JSON string TradeAssetSnapshot[] (see lib/tradeRetro.ts) — what A sent to
+  // B, and what B sent to A, each priced with the same neutral (no team
+  // need/context) valuation used everywhere else, at the moment of the trade.
+  aToB String
+  bToA String
+
+  createdAt DateTime @default(now())
+
+  @@index([leagueId, createdAt])
 }
