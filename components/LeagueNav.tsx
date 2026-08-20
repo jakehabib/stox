@@ -17,6 +17,7 @@ const NAV = [
   { href: '/schedule', label: 'Schedule' },
   { href: '/news', label: 'News' },
   { href: '/history', label: 'History' },
+  { href: '/gm', label: 'GM Career' },
   { href: '/settings', label: 'Settings' },
 ];
 
