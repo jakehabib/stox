@@ -109,4 +109,27 @@
   /* Large, low-opacity team mark used behind hero/header sections. Absolute
      inside a `relative` wrapper; the wrapper controls clipping. */
   .watermark-logo { @apply absolute pointer-events-none opacity-[0.07] -z-0; }
+
+  /* Rating chip — the proprietary rating shape (RatingBadge). A notched top
+     corner instead of a plain rounded square, echoing the shield/hexagon
+     crest language already used for team logos. The notch is filled by a
+     separate tier-colored flag element (border-triangle trick) positioned
+     absolutely inside — see RatingBadge.tsx. */
+  .rating-chip {
+    --chip-notch: 12px;
+    clip-path: polygon(var(--chip-notch) 0, 100% 0, 100% 100%, 0 100%, 0 var(--chip-notch));
+  }
+  .rating-chip-flag {
+    @apply absolute top-0 left-0 w-0 h-0;
+    border-style: solid;
+    border-width: var(--chip-notch) var(--chip-notch) 0 0;
+    border-right-color: transparent !important;
+  }
+
+  /* Scoreboard-style digit readout — Draft Day's clock. Each MM/SS pair
+     sits in its own dark well so it reads like a stadium game clock, not a
+     plain number in text. */
+  .scoreboard-digits {
+    @apply inline-flex items-stretch gap-1 bg-ink/70 rounded-md px-3 py-1.5 border border-line;
+  }
 }

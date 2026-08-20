@@ -1,4 +1,5 @@
 import { TeamLogo } from '../TeamLogo';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 interface Side { teamId: string; abbr: string; city: string; wins: number; losses: number; ties?: number }
 
@@ -8,12 +9,17 @@ export function MatchupCard({ away, home, weekLabel, score }: {
   score?: { away: number; home: number };
 }) {
   return (
-    <div className="card px-5 py-4">
-      <div className="label-sm text-center mb-3">{weekLabel}</div>
-      <div className="flex items-center justify-between">
+    <div className="card overflow-hidden">
+      <div className="label-sm text-center pt-4">{weekLabel}</div>
+      <div className="flex items-center justify-between px-5 py-3">
         <MatchupSide side={away} score={score?.away} align="left" />
         <div className="font-display text-muted text-sm px-3">@</div>
         <MatchupSide side={home} score={score?.home} align="right" />
+      </div>
+      {/* Split identity bar — each side's own team color, not a shared accent. */}
+      <div className="h-[3px] w-full flex">
+        <div className="flex-1" style={{ background: generateTeamLogoParams(away.teamId).primary }} />
+        <div className="flex-1" style={{ background: generateTeamLogoParams(home.teamId).primary }} />
       </div>
     </div>
   );
@@ -21,11 +27,12 @@ export function MatchupCard({ away, home, weekLabel, score }: {
 
 function MatchupSide({ side, score, align }: { side: Side; score?: number; align: 'left' | 'right' }) {
   const record = `${side.wins}-${side.losses}${side.ties ? `-${side.ties}` : ''}`;
+  const color = generateTeamLogoParams(side.teamId).primary;
   const row = (
     <>
       <TeamLogo seed={side.teamId} abbr={side.abbr} size={36} />
       <div>
-        <div className="font-display font-bold uppercase tracking-wide leading-none">{side.city}</div>
+        <div className="font-display font-bold uppercase tracking-wide leading-none" style={{ color }}>{side.city}</div>
         <div className="text-xs text-muted mt-1">{record}</div>
       </div>
     </>

@@ -10,21 +10,27 @@ export function TeamHeader({
   phaseLabel: string; weekLabel?: string;
   capSpace: string; rosterCount: number; rosterMax?: number;
 }) {
-  const { primary } = generateTeamLogoParams(teamId);
+  const { primary, accent } = generateTeamLogoParams(teamId);
 
   return (
     <div
-      className="relative overflow-hidden rounded-lg border border-line/70 bg-card"
-      style={{ ['--team-accent' as never]: primary }}
+      className="relative overflow-hidden rounded-lg border border-line/70 bg-card border-l-[3px]"
+      style={{ ['--team-accent' as never]: primary, ['--team-accent-2' as never]: accent, borderLeftColor: primary }}
     >
       {/* Large low-opacity watermark — the one place the team crest gets to be big. */}
       <TeamLogo seed={teamId} abbr={abbr} size={280} className="watermark-logo -right-16 -top-16" />
-      {/* Thin top accent line in the team's primary color — subtle identity, not a full recolor. */}
-      <div className="h-[3px] w-full" style={{ background: 'var(--team-accent)' }} />
+      {/* Two-tone ribbon edge in the team's actual color pair — subtle
+          identity, not a full recolor of the panel. */}
+      <div className="h-[3px] w-full flex">
+        <div className="flex-[5]" style={{ background: 'var(--team-accent)' }} />
+        <div className="flex-1" style={{ background: 'var(--team-accent-2)' }} />
+      </div>
 
       <div className="relative px-5 py-4 flex flex-wrap items-center gap-x-8 gap-y-4">
         <div className="flex items-center gap-3">
-          <TeamLogo seed={teamId} abbr={abbr} size={52} />
+          <div className="rounded-full ring-2 ring-offset-2 ring-offset-card" style={{ ['--tw-ring-color' as never]: 'var(--team-accent-2)' }}>
+            <TeamLogo seed={teamId} abbr={abbr} size={52} />
+          </div>
           <div>
             <div className="font-display font-bold text-xl uppercase tracking-wide leading-none">{city} {nickname}</div>
             <div className="text-xs text-muted mt-1.5">{standing}</div>
@@ -34,6 +40,7 @@ export function TeamHeader({
         <StatNumber
           value={`${wins}-${losses}${ties ? `-${ties}` : ''}`}
           label="Record" size="md" labelPosition="inline"
+          color="text-[color:var(--team-accent)]"
         />
 
         <div>

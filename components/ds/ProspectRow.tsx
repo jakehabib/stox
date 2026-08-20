@@ -1,5 +1,6 @@
 import { PlayerAvatar } from '../PlayerAvatar';
 import { ScoutingRange } from './ScoutingRange';
+import { IconStar } from './icons';
 
 export function ProspectRow({
   playerId, rank, position, name, college, ovrLow, ovrHigh, confidence, potentialTag, shortlisted, topN,
@@ -25,7 +26,7 @@ export function ProspectRow({
         className={`btn-icon shrink-0 ${shortlisted ? 'text-gold' : ''}`}
         aria-label={shortlisted ? 'Remove from shortlist' : 'Add to shortlist'}
       >
-        {shortlisted ? '★' : '☆'}
+        <IconStar size={16} filled={shortlisted} />
       </button>
     </div>
   );

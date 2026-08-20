@@ -1,5 +1,3 @@
-import { TeamLogo } from '@/components/TeamLogo';
-import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { StatNumber } from '@/components/ds/StatNumber';
 import { RatingBadge } from '@/components/ds/RatingBadge';
@@ -15,6 +13,7 @@ import { CapDecisionPanel } from '@/components/ds/CapDecisionPanel';
 import { TradeOfferPreview } from '@/components/ds/TradeOfferPreview';
 import { PlayerRowMobile } from '@/components/ds/PlayerRowMobile';
 import { BottomNav } from '@/components/ds/BottomNav';
+import { IconStar } from '@/components/ds/icons';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 // Demo-only data — nothing here reads from the database. This route exists
@@ -250,10 +249,14 @@ export default function DesignSystemPage() {
       {/* ================================================================ */}
       <section className="section">
         <SectionHeading eyebrow="11" title="News / League Wire" />
-        <div className="panel px-4">
-          <NewsRow teamId={DEMO_TEAM.id} abbr={DEMO_TEAM.abbr} headline="Giants sign S. Alvarez to a 2-year, $9.4M deal" detail="Fills the primary need at CB2." meta="WK 12" />
-          <NewsRow teamId={PARTNER_TEAM.id} abbr={PARTNER_TEAM.abbr} headline="Dolphins place K. Hooper on injured reserve" detail="Hamstring strain — 4 to 6 weeks." meta="WK 12" />
-          <NewsRow headline="League Record: M. Thompson sets the single-season passing yards record — 5,214" meta="2026" />
+        <div className="panel px-4 divide-y divide-line/60">
+          <NewsRow featured category="TRADE" teamId={DEMO_TEAM.id} abbr={DEMO_TEAM.abbr}
+            headline="Giants land WR D. Sampson in three-team deal with Miami and Denver"
+            detail="New York gives up a 2027 third and CB T. Reyes to bolster the receiving corps ahead of the playoff push."
+            meta="WK 12" />
+          <NewsRow category="SIGNING" teamId={DEMO_TEAM.id} abbr={DEMO_TEAM.abbr} headline="Giants sign S. Alvarez to a 2-year, $9.4M deal" detail="Fills the primary need at CB2." meta="WK 12" />
+          <NewsRow category="INJURY" teamId={PARTNER_TEAM.id} abbr={PARTNER_TEAM.abbr} headline="Dolphins place K. Hooper on injured reserve" detail="Hamstring strain — 4 to 6 weeks." meta="WK 12" />
+          <NewsRow category="RECORD" headline="M. Thompson sets the single-season passing yards record — 5,214" meta="2026" />
         </div>
       </section>
 
@@ -285,7 +288,7 @@ export default function DesignSystemPage() {
           <button className="btn-secondary">Cancel</button>
           <button className="btn-tertiary">View details</button>
           <button className="btn-danger">Release Player</button>
-          <button className="btn-icon">★</button>
+          <button className="btn-icon"><IconStar size={16} /></button>
         </div>
       </section>
 
@@ -297,9 +300,9 @@ export default function DesignSystemPage() {
           sub-navigation inside each is a real information-architecture decision — revisit deliberately
           during the mobile-polish stage, not here.
         </p>
-        <div className="max-w-sm rounded-lg overflow-hidden border border-line">
+        <div className="max-w-sm rounded-lg overflow-hidden border border-line" style={{ ['--team-accent' as never]: teamColor }}>
           <div className="h-24 bg-raised flex items-center justify-center text-xs text-muted">page content</div>
-          <BottomNav active={0} />
+          <BottomNav active={1} />
         </div>
       </section>
 

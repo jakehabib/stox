@@ -222,3 +222,20 @@ ever force-pushed over, so every state below still exists in git history).
   Checkpoint commit — the last one *before* any redesign changes —
   is `529cdff` ("Fix GM Career page missing the current season's games").
   If a redesign stage doesn't land well, this is the commit to come back to.
+- **2026-08-20 — Redesign Stage 1: design tokens.** New token layer
+  (color roles, a big-number type scale, section/panel layout primitives,
+  a `--team-accent` variable) plus 14 reusable presentational components
+  under `components/ds/`, all reviewable at `/design-system` — a
+  developer-only route with no nav link, not real game data. Nothing in
+  production pages changed yet. Commit `6b79705`.
+- **2026-08-20 — Redesign Stage 1 refinement: distinctiveness pass.**
+  Follow-up to the token pass, aimed specifically at not reading as
+  generic: a proprietary notched-corner "rating chip" shape for OVR/
+  potential instead of a plain rounded tile; stronger team-color
+  presence (a two-tone header ribbon, team-colored record numbers,
+  per-team-colored matchup names); a more dramatic Draft Day "On The
+  Clock" state (broadcast-style status tag, scoreboard-style clock
+  digits); an editorial League Wire treatment (colored category kickers,
+  a bigger lead story); and a real hand-drawn line-icon set
+  (`components/ds/icons.tsx`) replacing every emoji/text-glyph icon.
+  Still on `/design-system` only.
