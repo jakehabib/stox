@@ -71,33 +71,80 @@ npm run build         # production build (generates the client, syncs the
    ~1,500 players, contracts, a full schedule, and your starting scouting
    book all get created at once).
 2. **Team Dashboard** — your record, cap space, roster needs (bar chart by
-   position), recent results, and the league transaction wire.
+   position), recent results, the league transaction wire, and — whenever
+   the league is somewhere in the offseason — an **Offseason Roadmap**
+   widget showing all five stages (Housekeeping → Re-sign → Free Agency →
+   Draft → New Season) with the current one highlighted, so it's never
+   ambiguous whether a free agency window or draft period is open.
 3. **Roster** — every player on your team, with scouted rating **ranges**
-   instead of hard numbers (unless you disable scouting in Settings). Click
-   a name to open their **Player** page — attribute-by-attribute scouted
-   ranges, contract details, a **Release** button, and a **Scout** button to
-   spend weekly scouting points narrowing the range.
+   instead of hard numbers (unless you disable scouting in Settings), plus
+   a **Fill Roster** action that auto-signs free agents for understaffed
+   positions through the same cap-enforcing signing path as everywhere
+   else. Click a name to open their **Player** page — attribute-by-attribute
+   scouted ranges, a role/potential **label** (Prospect → Star → Franchise →
+   Generational, reading off the same fogged data so it can be wrong until
+   scouting narrows in), contract details, a **Release** button, and a
+   **Scout** button to spend weekly scouting points narrowing the range. A
+   draft prospect's card also shows a **College Profile**: a full college
+   season box score (revealed progressively across the NFL season) plus
+   combine/pro-day testing and a competition-strength grade.
 4. **Depth Chart** — reorder each position group with the ▲/▼ buttons; this
    is the exact order the sim engine snaps to on game day. "Auto-Sort by
    Rating" resets it to true-value order.
-5. Hit **Advance ▸** in the top-right repeatedly to sim games. Click any
-   final score to read the generated **recap** and box score.
+5. Hit **Advance ▸** in the top-right repeatedly to sim games — the dropdown
+   only ever offers targets that make sense for the phase you're actually
+   in (no more "Advance to Midseason" once you're already in the
+   offseason), and disappears entirely on a gated phase (Re-sign, Draft)
+   where there's nothing valid to multi-advance into. Click any final score
+   to read the generated **recap** and box score.
 6. **Free Agency** / **Trade** / **Draft** pages work whenever the league
    phase allows it (the top bar always shows the current phase — Regular
    Season, Free Agency, Draft, etc.). The season loop is: Regular Season →
    Playoffs → Offseason (progression, aging, new draft class) → Re-sign
    window → Free Agency (4 weeks) → Rookie Draft → back to Preseason.
-7. **Settings** covers every option from the design doc's settings screen —
+   - **Re-sign** shows your own expiring contracts starting the week their
+     final contract year begins — not just once the offseason RESIGN phase
+     opens — with a **Not Re-sign** action (confirm, then release) and a
+     **Let the AI Pick** button that delegates every pending decision to
+     the same logic AI teams use for their own players.
+   - **Draft** is a year-round scouting hub, not just a DRAFT-phase screen —
+     the incoming class exists from week 1 and is fully browsable
+     (sortable, filterable, ★ shortlist-able) all season. It carries a
+     **Class Outlook** banner ("Loaded at LB, DB — thin at QB") since each
+     year's class now has real position-strength personality instead of
+     being an identical flat random sample, and a position-weighted
+     **consensus big board** (#1 / Top 5 / Top 10 / Top 32 badges, round 1
+     only) alongside per-player Prospect/Star/Franchise/Generational tags.
+     Live draft day paces one AI pick at a time (pausable) instead of
+     silently batch-skipping.
+   - **Trade** value is driven by real positional economics, not raw
+     rating — see `lib/ai/gm.ts` below.
+7. **Cap** and **Stats** pages each have a **Basic / Advanced** toggle. Advanced
+   adds real charts (cap allocation by position, multi-year cap outlook,
+   cap hit vs. market value, your spend vs. the league average; passer
+   rating leaderboard, an offense-vs-defense quadrant, your team's scoring
+   trend). Stats also has a **League / My Team** toggle — My Team swaps the
+   league leaderboards for one full-roster table of position-shaped
+   efficiency stats (completion %, Y/A, YPC, catch %, tackle+sack "impact,"
+   INT+PD "playmaker" score, etc.) for every player you have that's
+   recorded a stat.
+8. **Settings** covers every option from the design doc's settings screen —
    cap mode, difficulty, scouting toggles, injury/progression rates, trade
    rules, sim variance, recap verbosity, and more.
 
 ## Where things live
 
 - `prisma/schema.prisma` — full data model (teams, players with true vs.
-  scouted values, contracts/cap, draft picks, scouts, coordinators, league
-  state, settings blob)
-- `lib/tuning.ts` — **every balance constant in the game**, grouped by system
-- `lib/gen/` — player generation, name/team pools, league creation
+  scouted values plus college/combine profile JSON, contracts/cap, draft
+  picks, scouts, coordinators, league state, settings blob)
+- `lib/tuning.ts` — **every balance constant in the game**, grouped by
+  system — including `TRADE_VALUE`/`TRADE_VALUE_TIER` (positional trade
+  economics) and `AI.DRAFT_POSITION_VALUE` (draft-specific position
+  premium, a deliberately separate curve from trade value)
+- `lib/gen/` — player generation, name/team pools, league creation;
+  `lib/gen/prospectProfile.ts` generates each rookie's college season,
+  combine/pro-day testing, competition grade, and each class's
+  position-strength bias
 - `lib/scouting.ts` — the fog-of-war system (section 6): observed values,
   error bands by attribute difficulty, confidence growth
 - `lib/cap.ts`, `lib/cap-summary.ts` — salary cap in Realistic / Simplified /
@@ -105,26 +152,45 @@ npm run build         # production build (generates the client, syncs the
 - `lib/sim/` — unit ratings (`units.ts`), drive-based game resolution
   (`engine.ts`), recap text generation (`recap.ts`)
 - `lib/ai/gm.ts` — the shared AI GM brain used by free agency, trades, and
-  the draft (needs, player/pick valuation, personality profile)
+  the draft: needs, league scarcity, personality profile, and
+  `playerValueDetailed()` — trade/asset value from position-tier
+  replacement-level curves, position-specific age arcs, contract surplus,
+  bounded team-need and scarcity multipliers, and a hard per-tier ceiling
+  (see `scripts/benchmarkTradeValue.ts` for the full scenario coverage)
 - `lib/freeagency.ts`, `lib/trade.ts`, `lib/draft.ts` — the three acquisition
   systems, each with a user-facing path and an AI-vs-AI/AI-vs-user path
 - `lib/season.ts` — the season/offseason phase machine and `advanceWeek`,
   the single entry point that moves league time forward
 - `app/league/[id]/` — every screen (dashboard, roster, player, depth chart,
-  free agency, trade, draft, cap sheet, standings, schedule, game recap,
-  settings)
+  free agency, trade, draft, cap sheet, stats, standings, schedule, game
+  recap, settings)
 - `app/actions/` — server actions backing every mutation (sign, cut, trade,
   draft, scout, advance week, settings)
+- `components/charts/` — the small shared chart kit (bar/line/scatter) used
+  by the Cap and Stats Advanced views
+- `scripts/benchmarkTradeValue.ts` — permanent, framework-free benchmark
+  suite for trade valuation (`npx tsx scripts/benchmarkTradeValue.ts`);
+  `scripts/simHealth.ts` — the invariant-checking harness (see
+  `GAME_INVARIANTS.md`)
 
 ## Known simplifications (documented, not bugs)
 
 - AI teams don't carry their own `ScoutingReport` rows — they evaluate free
   agents/trades/draft prospects off true ratings. Modeling AI fog-of-war
   would 32x the scouting data for no gameplay benefit in a single-player game.
-- The re-sign window (`RESIGN` phase) doesn't yet give the original team an
-  exclusive negotiating period before a player hits the open market — expiring
-  contracts go straight to the free agent pool, which anyone (including you)
-  can then sign from, including on your own roster.
+- The re-sign window doesn't give the original team an *exclusive*
+  negotiating period before a player hits the open market — expiring
+  contracts go straight to the free agent pool, which anyone (including
+  you) can then sign from. (Visibility is earlier than the real deadline,
+  per above — it's specifically the exclusivity that isn't modeled.)
+- There's no autonomous AI-vs-AI trading — AI teams only trade with the
+  user (via the trade screen, or an unsolicited offer the AI proposes).
+  Two AI teams never make a deal with each other in the background.
+- College stats/combine testing are procedurally generated at class
+  creation, not the output of an actually-simulated college season — see
+  the header comment in `lib/gen/prospectProfile.ts` for exactly what's
+  tuned to real NCAA norms (13-game season, the real NCAA passer
+  efficiency formula) versus placeholder.
 - `showAdvancedStats` and `autoAdvanceWeeks` settings are stored and shown in
   the Settings screen but don't yet gate any behavior — flagged as
   "STORED-ONLY" right in the settings UI.
