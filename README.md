@@ -9,6 +9,16 @@ the design doc is implemented end-to-end: player generation, scouting
 fog-of-war, the sim engine, salary cap, free agency, trades, the draft, and
 the full season/offseason cycle.
 
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" width="49%" alt="Team Dashboard" />
+  <img src="docs/screenshots/draft-hub.png" width="49%" alt="Draft Hub with Class Outlook and consensus big board" />
+  <img src="docs/screenshots/player-card.png" width="49%" alt="Player card with College Profile" />
+  <img src="docs/screenshots/cap-advanced.png" width="49%" alt="Cap page, Advanced view" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/stats-myteam.png" width="70%" alt="Stats page, My Team / Advanced view" />
+</p>
+
 > **Balance disclaimer:** Every number that the design doc marked "tunable" —
 > position weights, RNG spreads, market-value curves, AI valuation formulas,
 > the draft pick chart, etc. — is a first-pass placeholder. They're all
