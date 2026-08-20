@@ -12,7 +12,7 @@ import { ShortlistStar } from '@/components/ShortlistStar';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
 
-type SortKey = 'pos' | 'ovr' | 'age' | 'potential';
+type SortKey = 'consensus' | 'pos' | 'ovr' | 'age' | 'potential';
 
 export default async function DraftPage({ params, searchParams }: { params: { id: string }; searchParams: { pos?: string; sort?: string; dir?: string; shortlist?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -126,12 +126,16 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     return null;
   };
 
-  const sortKey: SortKey = (['pos', 'ovr', 'age', 'potential'] as SortKey[]).includes(searchParams.sort as SortKey)
-    ? (searchParams.sort as SortKey) : 'ovr';
+  const sortKey: SortKey = (['consensus', 'pos', 'ovr', 'age', 'potential'] as SortKey[]).includes(searchParams.sort as SortKey)
+    ? (searchParams.sort as SortKey) : 'consensus';
   const dir = searchParams.dir === 'asc' ? 1 : -1;
 
   const sorted = [...rows].sort((a, b) => {
     switch (sortKey) {
+      // Rank 1 is the BEST prospect, so "best first" (the default, dir=-1)
+      // means ascending rank number — the opposite direction of every other
+      // column here, where higher is better. Flip the sign to match.
+      case 'consensus': return ((rankById.get(a.p.id) ?? Infinity) - (rankById.get(b.p.id) ?? Infinity)) * -dir;
       case 'ovr': return (a.view.scoutedOvr - b.view.scoutedOvr) * dir;
       case 'age': return (a.p.age - b.p.age) * dir;
       case 'potential': {
@@ -228,6 +232,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           <thead>
             <tr>
               <th></th>
+              <th><a href={sortHref('consensus')} className="hover:text-chalk">Rank{sortKey === 'consensus' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
               <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
               <th>Name</th>
               <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
@@ -238,17 +243,19 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             </tr>
           </thead>
           <tbody>
-            {sorted.map(({ p, view }, i) => {
+            {sorted.map(({ p, view }) => {
               const potentialForLabel = view.revealed ? p.potential : (view.potLow + view.potHigh) / 2;
               const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0 });
               return (
                 <tr key={p.id}>
                   <td><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>
+                  <td className="font-mono text-xs text-muted text-right">{rankById.get(p.id) ?? '—'}</td>
                   <td className="font-mono text-xs text-muted">{p.position}</td>
                   <td className="font-medium">
                     <div className="flex items-center gap-2">
-                      {!state && <span className="w-6 shrink-0 text-xs text-muted font-mono text-right">{i + 1}</span>}
-                      <PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
+                      <a href={`/league/${league.id}/player/${p.id}`} className="flex items-center gap-2 hover:text-accent2">
+                        <PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
+                      </a>
                       {rankBadge(p.id) && (
                         <span className={`pill text-[10px] px-1.5 py-0.5 border-current ${rankBadge(p.id)!.className}`}>{rankBadge(p.id)!.label}</span>
                       )}
