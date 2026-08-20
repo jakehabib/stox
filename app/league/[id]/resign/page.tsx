@@ -31,7 +31,7 @@ export default async function ResignPage({ params }: { params: { id: string } })
     <div className="space-y-5 max-w-3xl">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Re-sign Window</h1>
+          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Re-sign Window</h1>
           <p className="text-muted text-sm mt-1">
             Players whose deals are up or about to be. Extend anyone you want to keep — whoever's still undecided once the
             re-sign phase ends gets released to free agency, and other teams can sign them from there.

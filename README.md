@@ -437,3 +437,59 @@ ever force-pushed over, so every state below still exists in git history).
   focal number. No changes to any cap math, sort logic, or the
   Basic/Advanced toggle. Verified against a real league's Basic and
   Advanced views via Playwright with zero console errors.
+- **2026-08-20 — Redesign Stage 8: consolidated nav shell, League Wire
+  ticker, Standings/Schedule, and a Free Agency/Depth Chart depth
+  pass.** Checkpoint before this change: `973abab`. A user review of
+  the Cap/Free Agency/Depth Chart pages, plus reference screenshots
+  from another design (explicitly given as inspiration, not a spec to
+  copy 1:1), triggered a broader pass than a single-page stage:
+  - **Consolidated top nav** (`components/LeagueNav.tsx`) — the old
+    15-item flat tab bar is now six categories (Home, Team, Market,
+    Draft, League, GM Career, System) with a second-tier sub-nav for
+    whichever category is active. Every real destination from the old
+    bar still exists at the same URL; nothing was removed or renamed,
+    only regrouped. GM Career got promoted to its own top-level
+    category rather than nesting under Team, per a direct ask mid-work.
+  - **League Wire ticker** (`components/ds/LeagueWireTicker.tsx`) — a
+    continuously-scrolling strip of the league's most recent
+    transactions, above the header on every league page. Deliberately
+    passive/ambient only, per explicit instruction: it shows real
+    `Transaction` headlines (already-happened facts — trades, signings,
+    injuries, stat-leader trivia), colored by the same category
+    vocabulary as the News page, and never anything the player needs
+    to reliably see or act on (cap space, alerts, and roster needs stay
+    in the static header/Front Office Brief, not the ticker). Pauses on
+    hover so a headline can be read; holds still under
+    `prefers-reduced-motion`.
+  - **Free Agency** got a real hero: a team-tinted cap-space strip plus
+    a "Top Available" spotlight (the single best free agent on the
+    market by rating, independent of whatever position filter is
+    active) with its own scouted-OVR badge and a Negotiate action —
+    not just a recolored table.
+  - **Depth Chart** got a team-tinted masthead (team name, group count,
+    and a real "N positions with no backup" callout computed from
+    actual roster depth — not a fabricated stat) and the starter row in
+    each position group now gets a team-accent left border instead of
+    a generic gray highlight.
+  - **Standings** now wires up real week-over-week rank deltas for
+    every division (reusing `computeRankDeltas`, previously only used
+    on the Dashboard's own division), switched to `.panel`, and
+    colorized W/L.
+  - **Schedule** now renders each matchup with the `MatchupCard`
+    component instead of a plain one-line row — team records, real
+    per-side scores, split team-color identity bar. Dropped from a
+    3-column to a 2-column grid after review showed longer city names
+    (San Francisco, Kansas City) truncating awkwardly at 3 columns.
+  - **Every remaining page title** switched from the plain
+    `text-2xl font-semibold` to the same big condensed display
+    treatment already used in every hero panel this stage
+    (`font-display font-extrabold text-3xl uppercase tracking-wide`),
+    so page identity reads with real weight everywhere, not just on
+    hero-panel pages.
+  - No changes to trade/cap/scouting math, sort/filter logic, or any
+    server action. Verified every touched route (Dashboard, Team
+    sub-nav, Market sub-nav, League sub-nav, GM Career, Trade, Free
+    Agency, Depth Chart, Schedule) via Playwright, including confirming
+    the ticker's marquee animation itself (not just its static layout)
+    causes zero console errors and pauses correctly under
+    `prefers-reduced-motion`.

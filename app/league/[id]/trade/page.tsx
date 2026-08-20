@@ -67,7 +67,7 @@ export default async function TradePage({ params, searchParams }: { params: { id
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Trade Center</h1>
+        <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Trade Center</h1>
         <p className="text-muted text-sm mt-1">Build an offer. The AI values players and picks the same way it does everywhere else — no free lunches.</p>
       </div>
 

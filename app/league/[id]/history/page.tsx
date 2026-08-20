@@ -41,7 +41,7 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Ring of Honor</h1>
+        <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Ring of Honor</h1>
         <p className="text-muted text-sm mt-1">League-wide records and award winners — every franchise's story feeds into this one.</p>
       </div>
 

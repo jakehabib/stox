@@ -6,6 +6,9 @@ import { formatMoney } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { TeamLogo } from '@/components/TeamLogo';
 import { LeagueNav } from '@/components/LeagueNav';
+import { LeagueWireTicker } from '@/components/ds/LeagueWireTicker';
+import { transactionCategory } from '@/lib/newsCategory';
+import { prisma } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,10 +17,15 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   if (!ctx || !ctx.userTeam) notFound();
   const { league, userTeam, phaseLabel } = ctx;
 
-  const cap = ctx.settings.capMode === 'OFF' ? null : await teamCapSummary(userTeam.id, league.seasonYear, ctx.settings.capMode);
+  const [cap, tickerTx] = await Promise.all([
+    ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : teamCapSummary(userTeam.id, league.seasonYear, ctx.settings.capMode),
+    prisma.transaction.findMany({ where: { leagueId: league.id }, orderBy: { createdAt: 'desc' }, take: 14 }),
+  ]);
+  const tickerItems = tickerTx.map((t) => ({ category: transactionCategory(t.type, t.headline), headline: t.headline }));
 
   return (
     <div className="min-h-screen">
+      <LeagueWireTicker items={tickerItems} />
       <header className="border-b border-line bg-surface/80 backdrop-blur sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
           <Link href="/" className="flex items-center gap-2 shrink-0">

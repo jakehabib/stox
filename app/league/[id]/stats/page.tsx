@@ -153,7 +153,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{myTeam ? 'My Team Stats' : 'League Stats'} — {league.seasonYear}</h1>
+          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">{myTeam ? 'My Team Stats' : 'League Stats'} — {league.seasonYear}</h1>
           <p className="text-muted text-sm mt-1">{myTeam ? 'Your full roster, every efficiency stat on the books.' : 'League leaders and team production, season-to-date.'}</p>
         </div>
         <div className="flex flex-col items-end gap-1.5">

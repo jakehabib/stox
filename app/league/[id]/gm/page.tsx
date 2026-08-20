@@ -21,7 +21,7 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
       <div className="flex items-center gap-4">
         <TeamLogo seed={team.id} abbr={team.abbr} size={48} />
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">GM Career</h1>
+          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">GM Career</h1>
           <p className="text-muted text-sm mt-1">
             Running the {team.city} {team.nickname} since {s.firstYear} — {s.tenureYears} season{s.tenureYears === 1 ? '' : 's'} on the job.
           </p>

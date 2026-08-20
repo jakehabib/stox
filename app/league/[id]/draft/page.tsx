@@ -179,7 +179,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
 
       {!(state && onClockTeam) && (
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">
             {state ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft — Round ${state.round}`) : `${league.seasonYear} Draft Class`}
           </h1>
           <p className="text-muted text-sm mt-1">

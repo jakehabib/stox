@@ -40,7 +40,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
   if (settings.capMode === 'OFF') {
     return (
       <div className="space-y-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Salary Cap</h1>
+        <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Salary Cap</h1>
         <div className="panel p-4 text-muted text-sm">
           Cap mode is set to <strong>Off</strong> in league settings — spending has no limit and cuts leave no dead money.
           Change this in <Link href={`/league/${league.id}/settings`} className="text-accent2 hover:underline">Settings</Link>.
@@ -165,7 +165,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Salary Cap — {league.seasonYear}</h1>
+        <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Salary Cap — {league.seasonYear}</h1>
         <div className="flex gap-1.5">
           <Link href={`/league/${league.id}/cap`} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
           <Link href={`/league/${league.id}/cap?view=advanced`} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>

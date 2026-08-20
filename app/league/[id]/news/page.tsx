@@ -45,7 +45,7 @@ export default async function NewsPage({ params, searchParams }: { params: { id:
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">League News</h1>
+        <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">League News</h1>
         <p className="text-muted text-sm mt-1">Everything the league's transaction wire has picked up.</p>
       </div>
 

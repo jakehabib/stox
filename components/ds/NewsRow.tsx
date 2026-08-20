@@ -2,7 +2,7 @@ import { TeamLogo } from '../TeamLogo';
 
 export type NewsCategory = 'TRADE' | 'SIGNING' | 'INJURY' | 'RECORD' | 'AWARD' | 'DRAFT' | 'GAME' | 'LEAGUE';
 
-const CATEGORY_COLOR: Record<NewsCategory, string> = {
+export const CATEGORY_COLOR: Record<NewsCategory, string> = {
   TRADE: 'text-accent2', SIGNING: 'text-accent', INJURY: 'text-bad', GAME: 'text-chalk',
   RECORD: 'text-gold', AWARD: 'text-gold', DRAFT: 'text-accent2', LEAGUE: 'text-muted',
 };

@@ -9,7 +9,7 @@ export default async function SettingsPage({ params }: { params: { id: string } 
   return (
     <div className="max-w-3xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">League Settings</h1>
+        <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">League Settings</h1>
         <p className="text-muted text-sm mt-1">Full control surface from the design doc. A few toggles marked "stored only" are recorded but not yet wired into a system.</p>
       </div>
 

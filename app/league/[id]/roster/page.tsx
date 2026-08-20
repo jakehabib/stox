@@ -74,7 +74,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Roster</h1>
+          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Roster</h1>
           <p className="text-muted text-sm mt-1">{players.length} players · {team.city} {team.nickname}</p>
         </div>
         <FillRosterButton leagueId={league.id} teamId={team.id} />
