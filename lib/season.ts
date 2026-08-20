@@ -81,11 +81,23 @@ export async function advanceWeek(leagueId: string) {
       return { summary: `Free agency, week ${league.week}: ${signings} AI signing(s) league-wide.` };
     }
 
-    case 'DRAFT':
-      return { summary: 'Draft is in progress — make your picks, then advance.' };
+    case 'DRAFT': {
+      // Nothing else in the app ever moved the league out of DRAFT once the
+      // last pick was made — draftPlayer()/advancePick() mark DraftState
+      // complete, but no code path read that flag to advance League.phase,
+      // so every league dead-ended here permanently after its first draft.
+      const state = await prisma.draftState.findUnique({ where: { leagueId } });
+      if (!state?.complete) return { summary: 'Draft is in progress — make your picks, then advance.' };
+      await prisma.league.update({ where: { id: leagueId }, data: { phase: 'PRESEASON', week: 1 } });
+      return { summary: 'The draft is complete. On to the new league year.' };
+    }
 
-    case 'FANTASY_DRAFT':
-      return { summary: 'Fantasy draft is in progress — make your picks, then advance.' };
+    case 'FANTASY_DRAFT': {
+      const state = await prisma.draftState.findUnique({ where: { leagueId } });
+      if (!state?.complete) return { summary: 'Fantasy draft is in progress — make your picks, then advance.' };
+      await prisma.league.update({ where: { id: leagueId }, data: { phase: 'PRESEASON', week: 1 } });
+      return { summary: 'Fantasy draft complete. Setting up your inaugural season.' };
+    }
 
     default:
       return { summary: `Unhandled phase: ${league.phase}` };
@@ -649,6 +661,10 @@ async function progressAllPlayers(leagueId: string, rng: Rng, retirementEnabled:
   }
 
   if (retiringIds.length > 0) {
+    // Retirement never deleted the player's Contract row (a longstanding
+    // bug — every other path off an active roster does), leaving a stale
+    // contract attached to a player nobody could ever cut or extend again.
+    await prisma.contract.deleteMany({ where: { playerId: { in: retiringIds } } });
     await prisma.player.updateMany({ where: { id: { in: retiringIds } }, data: { status: 'RETIRED', teamId: null } });
   }
   if (survivorIds.length > 0) {
