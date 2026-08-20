@@ -12,6 +12,7 @@ export interface ContractLike {
   guaranteed: number;
   /** Cap-only trailing years (see schema comment) — optional so older call sites without it still work. */
   voidYears?: number;
+  isRookieDeal?: boolean;
 }
 
 /** Salary cap for a given season. Grows each year. */

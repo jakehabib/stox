@@ -1,7 +1,8 @@
 import { Rng, clamp } from '../rng';
-import { AI, ROSTER_TARGETS, ROSTER_NEED_QUALITY_WEIGHT, Position, POSITIONS, PICK_VALUE_CHART, LEAGUE } from '../tuning';
+import { AI, ROSTER_TARGETS, ROSTER_NEED_QUALITY_WEIGHT, Position, POSITIONS, PICK_VALUE_CHART, LEAGUE, TRADE_VALUE, TRADE_VALUE_TIER } from '../tuning';
 import { GmProfile } from '../types';
-import { marketValue } from '../cap';
+import { marketValue, remainingValue, ContractLike } from '../cap';
+import { CapMode } from '../types';
 import { readJson } from '../json';
 
 /**
@@ -27,6 +28,8 @@ export interface RosterPlayer {
   trueOvr: number;
   age: number;
   potential: number;
+  /** Optional — only trade-value pricing needs this. Free agents/rookie-pool players naturally have none. */
+  contract?: ContractLike | null;
 }
 
 export function defaultGmProfile(rng: Rng): GmProfile {
@@ -89,11 +92,38 @@ export function needSeverity(score: number): { label: string; className: string 
   return { label: 'Notable', className: 'text-muted' };
 }
 
+/**
+ * League-wide scarcity per position, 0 (plentiful good talent) .. 1
+ * (barely any). Pure function over an already-fetched roster snapshot —
+ * callers fetch the whole league's players ONCE per trade evaluation (not
+ * per player, not per render) and reuse this across every asset in the
+ * deal, per the "don't make this expensive" requirement. "Good" is a
+ * simple, cheap threshold (75+ OVR); expected supply assumes roughly one
+ * good player per team is normal, so scarcity only shows up when a
+ * position is genuinely thin league-wide.
+ */
+export function leagueScarcity(allPlayers: { position: string; trueOvr: number }[]): Record<string, number> {
+  const GOOD_THRESHOLD = 75;
+  const counts: Record<string, number> = {};
+  for (const p of allPlayers) {
+    if (p.trueOvr < GOOD_THRESHOLD) continue;
+    counts[p.position] = (counts[p.position] ?? 0) + 1;
+  }
+  const scarcity: Record<string, number> = {};
+  for (const pos of POSITIONS) {
+    const supply = counts[pos] ?? 0;
+    scarcity[pos] = clamp(1 - supply / LEAGUE.TEAM_COUNT, 0, 1);
+  }
+  return scarcity;
+}
+
 export interface ValueBreakdown {
   base: number;
   upside: number;
   ageMult: number;
   needMult: number;
+  contractMult: number;
+  scarcityMult: number;
   noiseMult: number;
   total: number;
   /**
@@ -107,12 +137,26 @@ export interface ValueBreakdown {
   reasons: { text: string; weight: number }[];
 }
 
+/** Tier curve evaluated at a given overall — pulled out so upside can reuse the exact same position-shaped curve as base, instead of a separate flat formula. */
+function tierCurveValue(ovr: number, curve: { replacementLevel: number; steepness: number; scale: number; ceiling: number }): number {
+  const surplus = Math.max(0, ovr - curve.replacementLevel);
+  return Math.min(curve.ceiling, (Math.exp(surplus * curve.steepness) - 1) * curve.scale);
+}
+
 /**
  * What a player is worth to THIS team, in abstract "value points" comparable
- * to draft pick chart value. Used by trades and FA alike. This is the
- * detailed form — it returns WHY, not just a number, so the trade screen can
- * say something like "Chicago values your 31-year-old WR less because
- * they're rebuilding" instead of just accepting or rejecting silently.
+ * to draft pick chart value (pickValue() below shares the same scale — a
+ * mid/late Round 1 pick prices around 400-900). Used by trades and FA alike.
+ * This is the detailed form — it returns WHY, not just a number, so the
+ * trade screen can say something like "Chicago values your 31-year-old WR
+ * less because they're rebuilding" instead of just accepting or rejecting
+ * silently.
+ *
+ * Player QUALITY and TRADE-ASSET VALUE are not the same thing — a 99 OVR
+ * punter is the best punter in football and still only a modest trade
+ * asset, because the position itself has a low ceiling on how much a team
+ * will pay for it. Position, age, and contract control interact with talent
+ * rather than everything just multiplying one shared curve.
  */
 export function playerValueDetailed(
   p: RosterPlayer,
@@ -122,29 +166,39 @@ export function playerValueDetailed(
     /** 0..1 — 1 = full win-now, weights current rating over potential. */
     sharpness?: number;
     rng?: Rng;
+    capMode?: CapMode;
+    /** 0..1 per position — how thin the league-wide supply of good players there is. See leagueScarcity(). Omit to skip (defaults to neutral). */
+    scarcity?: Record<string, number>;
   },
 ): ValueBreakdown {
   const { profile, needs } = opts;
   const sharpness = opts.sharpness ?? 1;
+  const capMode = opts.capMode ?? 'REALISTIC';
   const reasons: { text: string; weight: number }[] = [];
 
-  // Base: exponential in overall so stars are worth far more than starters,
-  // but gently enough that a great player reads as "worth several good
-  // players," not 40-80x one — the previous curve made trade ratios feel
-  // arbitrary since one asset would either trivially dominate or be
-  // worthless regardless of everything else in the deal.
-  // [FRAGILE PLACEHOLDER] tuned so a 90 OVR ~= a mid-first-round pick.
-  const base = Math.pow(1.075, p.trueOvr - 55) * 22;
-  if (p.trueOvr >= 90) {
-    reasons.push({ text: 'He grades as one of the best players in the league — that alone drives a huge price.', weight: base * 0.6 });
-  } else if (p.trueOvr >= 82) {
-    reasons.push({ text: "He's a real difference-maker at his position.", weight: base * 0.3 });
+  const tier = TRADE_VALUE_TIER[p.position as Position] ?? 'MID';
+  const curve = TRADE_VALUE.TIER_CURVE[tier];
+  const base = tierCurveValue(p.trueOvr, curve);
+
+  if (tier === 'QB' && p.trueOvr >= 82) {
+    reasons.push({ text: 'Quarterbacks at this level are extremely difficult to replace — that alone drives a huge price.', weight: base * 0.6 });
+  } else if (tier === 'PREMIUM' && p.trueOvr >= 85) {
+    reasons.push({ text: "He's a premium-position difference-maker — the market pays up for that.", weight: base * 0.4 });
+  } else if (tier === 'MINIMAL' && p.trueOvr >= 88) {
+    reasons.push({ text: `He grades as one of the best at his position, but that position carries limited trade-market value no matter how well he plays it.`, weight: base * 0.1 });
+  } else if (tier === 'LOW' && p.trueOvr >= 85) {
+    reasons.push({ text: `${p.position === 'RB' ? 'Running back' : 'This position'} has real value, but positional economics and the age curve cap how high it goes.`, weight: base * 0.15 });
   }
 
-  // Potential weighting depends on whether the team is contending.
+  // Potential weighting depends on whether the team is contending — reuses
+  // the SAME tier curve as base (evaluated at the higher, upside-adjusted
+  // overall) rather than a separate flat formula, so a QB's untapped
+  // ceiling is worth far more than a kicker's in exactly the same way his
+  // current level already is.
   const potentialWeight =
     AI.REBUILD_POTENTIAL_WEIGHT * (1 - profile.winNow) + AI.CONTENDER_POTENTIAL_WEIGHT * profile.winNow;
-  const upside = Math.max(0, p.potential - p.trueOvr) * potentialWeight * 4;
+  const effectiveCeiling = p.trueOvr + Math.max(0, p.potential - p.trueOvr) * potentialWeight;
+  const upside = Math.max(0, tierCurveValue(effectiveCeiling, curve) - base);
   if (upside > base * 0.15) {
     reasons.push({
       text: profile.winNow < 0.4
@@ -154,38 +208,73 @@ export function playerValueDetailed(
     });
   }
 
-  // Age curve: a 32-year-old at the same rating is worth much less.
-  // [TUNE] value falls ~8%/yr past 28, rises slightly for under-25s.
+  // Age curve — position-specific arc (RB earliest/fastest decline, OL/QB
+  // longest, K/P barely age at all).
+  const ageCurve = TRADE_VALUE.AGE_CURVE[tier];
   let ageMult = 1;
-  if (p.age > 28) ageMult -= (p.age - 28) * 0.09;
-  else if (p.age < 25) ageMult += (25 - p.age) * 0.04;
-  ageMult = clamp(ageMult, 0.25, 1.3);
+  if (p.age > ageCurve.declineStart) ageMult -= (p.age - ageCurve.declineStart) * ageCurve.declinePerYear;
+  else if (p.age < ageCurve.youthThreshold) ageMult += (ageCurve.youthThreshold - p.age) * ageCurve.youthPremiumPerYear;
+  ageMult = clamp(ageMult, TRADE_VALUE.AGE_MULT_MIN, TRADE_VALUE.AGE_MULT_MAX);
   const ageSwing = base * Math.abs(ageMult - 1);
   if (ageMult < 0.85) {
     reasons.push({
       text: profile.winNow < 0.4
         ? `We're rebuilding, so a ${p.age}-year-old holds less value for us than the league average.`
-        : `At ${p.age}, there isn't much term left on this — we discount it.`,
+        : `At age ${p.age}, his future value is beginning to decline — we discount it.`,
       weight: ageSwing,
     });
   } else if (ageMult > 1.1) {
     reasons.push({ text: "He's young and still ascending — that's worth a premium to us.", weight: ageSwing });
   }
 
-  const needVal = needs?.[p.position] ?? 0;
-  const needMult = needs ? 1 + needVal * (AI.NEED_MULT - 1) : 1;
-  const needSwing = base * (needMult - 1);
-  if (needVal > 0.5) {
-    reasons.push({ text: `This fills a real hole for us at ${p.position}.`, weight: needSwing });
-  } else if (needs && needVal < 0.1) {
-    // Genuinely low-impact by construction (needMult never drops below 1 —
-    // lack of need can't devalue a player, only failing to bonus him), so
-    // this gets a token weight and will only surface when nothing else
-    // about the player is remarkable enough to say more.
-    reasons.push({ text: `We're already deep at ${p.position}, so this doesn't move the needle much.`, weight: 0.5 });
+  // Contract surplus: expectedMarketCost - actualControlledCost, scaled by
+  // how many years of control are actually left (a one-year rental's
+  // "surplus" doesn't compound the way a four-year team-friendly deal's
+  // does) and clamped to a bounded range — a great contract can meaningfully
+  // raise value, a bad one can meaningfully lower it, but neither can run
+  // away unbounded.
+  let contractMult = 1;
+  if (capMode !== 'OFF' && p.contract) {
+    const expectedApy = marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential });
+    const actualAnnual = remainingValue(p.contract, capMode) / Math.max(1, p.contract.yearsRemaining);
+    const surplusFraction = clamp((expectedApy - actualAnnual) / Math.max(expectedApy, 1), -1.5, 1.5);
+    const controlFactor = clamp(p.contract.yearsRemaining / TRADE_VALUE.CONTRACT_CONTROL_YEARS_FULL, 0.25, 1);
+    contractMult = clamp(1 + surplusFraction * controlFactor * TRADE_VALUE.CONTRACT_SURPLUS_WEIGHT, TRADE_VALUE.CONTRACT_MULT_MIN, TRADE_VALUE.CONTRACT_MULT_MAX);
+    const contractSwing = base * Math.abs(contractMult - 1);
+    if (contractMult > 1.12) {
+      reasons.push({
+        text: p.contract.isRookieDeal
+          ? "His rookie contract creates significant surplus value."
+          : 'This contract pays well below market for his level — real surplus value.',
+        weight: contractSwing,
+      });
+    } else if (contractMult < 0.9) {
+      reasons.push({ text: 'The contract is expensive relative to expected production.', weight: contractSwing });
+    }
   }
 
-  let total = (base + upside) * ageMult * needMult;
+  // Team-need multiplier — bounded on both ends (real front offices actively
+  // discount a redundant asset, not just withhold a bonus; and even
+  // desperate need never overrides positional economics enough to make a
+  // punter cost a premium pick).
+  const needVal = needs?.[p.position] ?? 0;
+  const needMult = needs
+    ? TRADE_VALUE.NEED_MULT_MIN + needVal * (TRADE_VALUE.NEED_MULT_MAX - TRADE_VALUE.NEED_MULT_MIN)
+    : 1;
+  const needSwing = base * Math.abs(needMult - 1);
+  if (needVal > 0.55) {
+    reasons.push({ text: `This fills a real hole for us at ${p.position}.`, weight: needSwing });
+  } else if (needs && needVal < 0.15) {
+    reasons.push({ text: `We're already strong at ${p.position}, so this doesn't move the needle much.`, weight: needSwing });
+  }
+
+  // League scarcity — modest by design (see TRADE_VALUE.SCARCITY_MULT_*).
+  const scarcityVal = opts.scarcity?.[p.position];
+  const scarcityMult = scarcityVal !== undefined
+    ? TRADE_VALUE.SCARCITY_MULT_MIN + scarcityVal * (TRADE_VALUE.SCARCITY_MULT_MAX - TRADE_VALUE.SCARCITY_MULT_MIN)
+    : 1;
+
+  let total = (base + upside) * ageMult * contractMult * needMult * scarcityMult;
 
   // Imperfect evaluation. Lower sharpness (easier difficulty) = noisier AI.
   let noiseMult = 1;
@@ -193,8 +282,16 @@ export function playerValueDetailed(
     noiseMult = 1 + opts.rng.normal(0, 0.09 * (2 - sharpness));
     total *= noiseMult;
   }
+
+  // Absolute sanity ceiling — applied to the FINAL total, after every
+  // multiplier, so no stack of favorable modifiers (young + cheap + needed +
+  // scarce) can push an ordinary player at a low-value position past what
+  // that position can ever be worth. This is what actually guarantees "a
+  // punter can never be worth a first-round pick," not just the base curve.
+  total = Math.min(total, curve.ceiling);
+
   reasons.sort((a, b) => b.weight - a.weight);
-  return { base, upside, ageMult, needMult, noiseMult, total: Math.max(1, total), reasons };
+  return { base, upside, ageMult, needMult, contractMult, scarcityMult, noiseMult, total: Math.max(1, total), reasons };
 }
 
 /** Convenience wrapper for callers that only need the number. */

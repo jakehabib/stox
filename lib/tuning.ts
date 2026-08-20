@@ -353,8 +353,6 @@ export const AI = {
   TRADE_COUNTER_WINDOW: 0.25,
   /** How much AI values a draft pick vs a player of equal chart value. */
   PICK_VALUE_BIAS: 1.0,
-  /** Need multiplier: value of a player at a position of need. */
-  NEED_MULT: 1.25,
   /** Rebuilding teams weight youth/potential this much more. */
   REBUILD_POTENTIAL_WEIGHT: 0.55,
   CONTENDER_POTENTIAL_WEIGHT: 0.18,
@@ -381,6 +379,118 @@ export const AI = {
 export const PICK_VALUE_CHART = (overallPick: number): number => {
   // Smooth exponential approximation of the classic chart. PLACEHOLDER curve.
   return Math.round(3000 * Math.exp(-0.0255 * (overallPick - 1)));
+};
+
+// ---------------------------------------------------------------------------
+// Trade/asset value — positional economics [FRAGILE]
+// ---------------------------------------------------------------------------
+/**
+ * playerValueDetailed() (lib/ai/gm.ts) used to price EVERY position off one
+ * universal `Math.pow(1.075, ovr - 55)` curve — a 90 OVR punter and a 90 OVR
+ * quarterback got literally the same base number, with only the (capped at
+ * 1.25x) need multiplier able to move it. That's why an elite punter could
+ * trade like a first-round pick: nothing in the formula knew punters exist.
+ *
+ * The fix is to give each position its own curve, not just a flat
+ * multiplier bolted onto one shared curve — "elite at a low-value position"
+ * should mean "the best version of a replaceable role," not "as valuable as
+ * an elite premium-position player." Five tiers, from real NFL trade-market
+ * economics: QB is its own tier (retains value into its 30s, curves up
+ * sharply near the top); EDGE/LT/WR/CB are premium non-QB spots that can
+ * still fetch true blue-chip value; DT/RT/IOL/TE/S/LB matter but the market
+ * doesn't pay a premium-position price for them; RB is real but shallow —
+ * even a great one caps out around Day 2 value on the age curve realities
+ * of the position; K/P/FB stay compressed near the bottom no matter the
+ * rating, because a replacement at those spots is always close by.
+ */
+export type TradeValueTier = 'QB' | 'PREMIUM' | 'MID' | 'LOW' | 'MINIMAL';
+
+export const TRADE_VALUE_TIER: Record<Position, TradeValueTier> = {
+  QB: 'QB',
+  EDGE: 'PREMIUM', LT: 'PREMIUM', WR: 'PREMIUM', CB: 'PREMIUM',
+  DT: 'MID', RT: 'MID', LG: 'MID', RG: 'MID', C: 'MID', TE: 'MID', S: 'MID', LB: 'MID',
+  RB: 'LOW',
+  K: 'MINIMAL', P: 'MINIMAL', FB: 'MINIMAL',
+};
+
+export const TRADE_VALUE = {
+  /**
+   * Per-tier curve: value = min(ceiling, (exp(max(0, ovr - replacementLevel)
+   * * steepness) - 1) * scale). `replacementLevel` is the OVR where trade
+   * surplus starts being counted at all (a below-replacement player is
+   * theoretically a zero/negative asset, floored at a small positive number
+   * so the math never inverts); `steepness` is how fast surplus compounds
+   * into value — this is the part a flat multiplier can't express, since it
+   * changes the CURVE's shape, not just its height; `ceiling` is the
+   * absolute sanity cap in the same value-point units pickValue() already
+   * uses (a mid/late Round 1 pick prices around 400-900 in these units, see
+   * pickValue below), so no combination of contract/age/scarcity bonuses can
+   * ever push an ordinary punter into premium-pick territory.
+   */
+  TIER_CURVE: {
+    QB: { replacementLevel: 58, steepness: 0.145, scale: 16, ceiling: 3400 },
+    PREMIUM: { replacementLevel: 60, steepness: 0.105, scale: 22, ceiling: 2200 },
+    MID: { replacementLevel: 62, steepness: 0.082, scale: 9, ceiling: 1100 },
+    LOW: { replacementLevel: 64, steepness: 0.072, scale: 28, ceiling: 480 },
+    MINIMAL: { replacementLevel: 68, steepness: 0.05, scale: 14, ceiling: 90 },
+  } as Record<TradeValueTier, { replacementLevel: number; steepness: number; scale: number; ceiling: number }>,
+
+  /**
+   * Age curve per tier — real career arcs differ enormously by position.
+   * `declineStart`/`declinePerYear` model the back half; `youthThreshold`/
+   * `youthPremiumPerYear` model the age-control premium teams pay for a
+   * player who'll still be great years from now. RBs decline earliest and
+   * fastest; offensive line and QB retain value longest; K/P barely age at
+   * all (leg talent doesn't erode like a 25-year-old's speed does).
+   */
+  AGE_CURVE: {
+    QB: { declineStart: 34, declinePerYear: 0.035, youthThreshold: 26, youthPremiumPerYear: 0.025 },
+    PREMIUM: { declineStart: 29, declinePerYear: 0.075, youthThreshold: 25, youthPremiumPerYear: 0.035 },
+    MID: { declineStart: 30, declinePerYear: 0.06, youthThreshold: 25, youthPremiumPerYear: 0.03 },
+    LOW: { declineStart: 26, declinePerYear: 0.12, youthThreshold: 24, youthPremiumPerYear: 0.05 },
+    MINIMAL: { declineStart: 33, declinePerYear: 0.02, youthThreshold: 26, youthPremiumPerYear: 0.012 },
+  } as Record<TradeValueTier, { declineStart: number; declinePerYear: number; youthThreshold: number; youthPremiumPerYear: number }>,
+
+  /** Bounds on the final age multiplier — keeps even a very old/young edge case bounded rather than blowing up. */
+  AGE_MULT_MIN: 0.2,
+  AGE_MULT_MAX: 1.4,
+
+  /**
+   * Contract surplus: expectedMarketCost - actualControlledCost, as a
+   * fraction of market cost, scaled down by how much control is actually
+   * left (an expiring rental's "surplus" doesn't compound across future
+   * years the way a multi-year team-friendly deal's does) and by this
+   * weight, then clamped to a bounded multiplier. A cheap rookie-scale
+   * blue-chipper should be worth meaningfully more than the same player on
+   * a market-rate second contract; an expensive, expiring veteran should be
+   * worth meaningfully less.
+   */
+  CONTRACT_SURPLUS_WEIGHT: 0.55,
+  CONTRACT_CONTROL_YEARS_FULL: 4, // years of control at which the surplus/discount fraction applies at full strength
+  CONTRACT_MULT_MIN: 0.55,
+  CONTRACT_MULT_MAX: 1.75,
+
+  /**
+   * League scarcity: how thin the league-wide supply of good (75+ OVR)
+   * players at this position is relative to one-per-team. Computed once per
+   * trade evaluation (not per player/render) and passed in as a plain
+   * number map — see leagueScarcity() in lib/ai/gm.ts. Deliberately modest:
+   * this nudges value, it can never be the reason a punter prices like a
+   * premium asset.
+   */
+  SCARCITY_MULT_MIN: 0.9,
+  SCARCITY_MULT_MAX: 1.15,
+
+  /**
+   * Team-need multiplier, replacing the old flat AI.NEED_MULT=1.25 for
+   * every position uniformly. Bounded exactly as real front offices behave:
+   * a team that's set at a position pays LESS for a redundant asset (not
+   * just "no bonus," an actual discount), and even desperate need has a
+   * hard ceiling — "we have no punter" is never a reason to pay a
+   * first-round price for one.
+   */
+  NEED_MULT_MIN: 0.72, // no need / already deep
+  NEED_MULT_MAX: 1.28, // maximum, even at severe need
 };
 
 // ---------------------------------------------------------------------------

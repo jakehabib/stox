@@ -1,8 +1,9 @@
 import { prisma } from './db';
 import { Rng } from './rng';
 import { AI, LEAGUE } from './tuning';
-import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, philosophySummary, RosterPlayer } from './ai/gm';
+import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, philosophySummary, leagueScarcity, RosterPlayer } from './ai/gm';
 import { projectedDraftOrder, imminentDraftYear } from './draft';
+import { CapMode } from './types';
 
 /**
  * ===========================================================================
@@ -81,13 +82,15 @@ async function assetValues(
   rng: Rng,
   projectedOrder: Map<string, number>,
   imminentYear: number | null,
+  capMode: CapMode,
+  scarcity: Record<string, number>,
 ): Promise<{ total: number; reasons: string[] }> {
   let total = 0;
   const weighted: { text: string; weight: number }[] = [];
   for (const a of assets) {
     if (a.type === 'PLAYER') {
-      const p = await prisma.player.findUniqueOrThrow({ where: { id: a.id } });
-      const v = playerValueDetailed(p as unknown as RosterPlayer, { profile, needs, rng });
+      const p = await prisma.player.findUniqueOrThrow({ where: { id: a.id }, include: { contract: true } });
+      const v = playerValueDetailed(p as unknown as RosterPlayer, { profile, needs, rng, capMode, scarcity });
       total += v.total;
       for (const r of v.reasons) weighted.push({ text: `${p.firstName} ${p.lastName}: ${r.text}`, weight: r.weight });
     } else {
@@ -121,18 +124,27 @@ export async function evaluateTrade(opts: {
 }): Promise<TradeEvaluation> {
   const rng = new Rng(`trade-${opts.aiTeamId}-${Date.now()}`);
   const team = await prisma.team.findUniqueOrThrow({ where: { id: opts.aiTeamId } });
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: team.leagueId } });
+  const capMode: CapMode = JSON.parse(league.settings).capMode ?? 'REALISTIC';
   const profile = parseGmProfile(team.gmProfile, rng);
-  const roster = await prisma.player.findMany({
-    where: { teamId: opts.aiTeamId },
-    select: { id: true, position: true, trueOvr: true, age: true, potential: true },
-  });
+  const [roster, allPlayers, projectedOrder, imminentYear] = await Promise.all([
+    prisma.player.findMany({
+      where: { teamId: opts.aiTeamId },
+      select: { id: true, position: true, trueOvr: true, age: true, potential: true },
+    }),
+    // One league-wide fetch reused for scarcity across every asset in this
+    // trade, not queried per player — see leagueScarcity()'s cost note.
+    prisma.player.findMany({ where: { leagueId: team.leagueId, status: 'ACTIVE' }, select: { position: true, trueOvr: true } }),
+    projectedDraftOrder(team.leagueId),
+    imminentDraftYear(team.leagueId),
+  ]);
   const needs = teamNeeds(roster as RosterPlayer[]);
-  const [projectedOrder, imminentYear] = await Promise.all([projectedDraftOrder(team.leagueId), imminentDraftYear(team.leagueId)]);
+  const scarcity = leagueScarcity(allPlayers);
 
   // opts.give flows TO the AI => that's what the AI receives.
   // opts.get flows FROM the AI => that's what the AI sends away.
-  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, rng, projectedOrder, imminentYear);
-  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, rng, projectedOrder, imminentYear);
+  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, rng, projectedOrder, imminentYear, capMode, scarcity);
+  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, rng, projectedOrder, imminentYear, capMode, scarcity);
   const sendValue = send.total;
   const receiveValue = receive.total;
   const philosophy = philosophySummary(profile);
@@ -250,11 +262,13 @@ export async function maybeGenerateAiTradeOffer(leagueId: string, userTeamId: st
   if (aiTeams.length === 0) return null;
   const aiTeam = rng.pick(aiTeams);
 
-  const roster = await prisma.player.findMany({ where: { teamId: aiTeam.id } });
+  const roster = await prisma.player.findMany({ where: { teamId: aiTeam.id }, include: { contract: true } });
   if (roster.length < 4) return null;
   const needs = teamNeeds(roster as RosterPlayer[]);
   const profile = parseGmProfile(aiTeam.gmProfile, rng);
   const philosophy = philosophySummary(profile);
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const capMode: CapMode = JSON.parse(league.settings).capMode ?? 'REALISTIC';
 
   // Offer from a position with real depth (need near 0) and a player who
   // isn't a core starter — the AI's own logic wouldn't shop its best guy.
@@ -263,13 +277,13 @@ export async function maybeGenerateAiTradeOffer(leagueId: string, userTeamId: st
   const surplus = candidates.length > 0 ? rng.pick(candidates) : rng.pick(roster.filter((p) => p.trueOvr >= 55 && p.trueOvr <= 78));
   if (!surplus) return null;
 
-  const askValue = playerValueDetailed(surplus as unknown as RosterPlayer, { profile, needs, rng }).total;
+  const askValue = playerValueDetailed(surplus as unknown as RosterPlayer, { profile, needs, rng, capMode }).total;
 
   const userPicks = await prisma.draftPick.findMany({ where: { ownerTeamId: userTeamId, used: false }, orderBy: [{ year: 'asc' }, { round: 'asc' }] });
   // Find the cheapest pick (by this team's own pick-value scale) that still
   // roughly covers what it's asking — keeps the ask honest rather than
   // reaching for the user's best future first-rounder every time.
-  const currentYear = (await prisma.league.findUniqueOrThrow({ where: { id: leagueId } })).seasonYear;
+  const currentYear = league.seasonYear;
   const [projectedOrder, imminentYear] = await Promise.all([projectedDraftOrder(leagueId), imminentDraftYear(leagueId)]);
   const priced = userPicks
     .map((p) => ({ pick: p, value: pickValue(p.round, effectiveSlot(p, imminentYear, projectedOrder), profile, p.year, currentYear) }))
