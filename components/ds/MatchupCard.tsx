@@ -27,12 +27,15 @@ export function MatchupCard({ away, home, weekLabel, score }: {
 
 function MatchupSide({ side, score, align }: { side: Side; score?: number; align: 'left' | 'right' }) {
   const record = `${side.wins}-${side.losses}${side.ties ? `-${side.ties}` : ''}`;
-  const color = generateTeamLogoParams(side.teamId).primary;
+  // Curated team colors are deliberately dark for use as fills/borders —
+  // several fail contrast as small text on this near-black background, so
+  // lighten at render time rather than using the raw primary hex.
+  const textColor = `color-mix(in srgb, ${generateTeamLogoParams(side.teamId).primary} 60%, white 40%)`;
   const row = (
     <>
       <TeamLogo seed={side.teamId} abbr={side.abbr} size={36} className="shrink-0" />
       <div className="min-w-0">
-        <div className="font-display font-bold uppercase tracking-wide leading-none truncate" style={{ color }}>{side.city}</div>
+        <div className="font-display font-bold uppercase tracking-wide leading-none truncate" style={{ color: textColor }}>{side.city}</div>
         <div className="text-xs text-muted mt-1">{record}</div>
       </div>
     </>

@@ -1,6 +1,12 @@
 import { TeamLogo } from '../TeamLogo';
 
-interface Row { teamId: string; abbr: string; city: string; wins: number; losses: number; ties?: number; isUser?: boolean }
+interface Row {
+  teamId: string; abbr: string; city: string; wins: number; losses: number; ties?: number; isUser?: boolean;
+  /** Rank change since last week — positive is up. Omit for "no change." */
+  delta?: number;
+  /** Last five results, most recent last — 'W' | 'L' | 'T'. */
+  lastFive?: ('W' | 'L' | 'T')[];
+}
 
 export function StandingsTable({ label, rows }: { label: string; rows: Row[] }) {
   return (
@@ -21,6 +27,28 @@ export function StandingsTable({ label, rows }: { label: string; rows: Row[] }) 
                 </td>
                 <td className="font-mono text-right">{r.wins}-{r.losses}{r.ties ? `-${r.ties}` : ''}</td>
                 <td className="font-mono text-muted text-right w-14">{pct.toFixed(3).slice(1)}</td>
+                <td className="w-10 text-right">
+                  {r.delta ? (
+                    <span className={`text-xs font-mono ${r.delta > 0 ? 'text-accent' : 'text-bad'}`}>
+                      {r.delta > 0 ? '▲' : '▼'}{Math.abs(r.delta)}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted">—</span>
+                  )}
+                </td>
+                {r.lastFive && (
+                  <td className="w-16">
+                    <div className="flex gap-0.5 justify-end">
+                      {r.lastFive.map((res, gi) => (
+                        <span
+                          key={gi}
+                          className={`w-2 h-4 rounded-sm ${res === 'W' ? 'bg-accent' : res === 'L' ? 'bg-bad' : 'bg-line'}`}
+                          title={res === 'W' ? 'Win' : res === 'L' ? 'Loss' : 'Tie'}
+                        />
+                      ))}
+                    </div>
+                  </td>
+                )}
               </tr>
             );
           })}

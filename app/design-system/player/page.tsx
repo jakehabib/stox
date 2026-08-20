@@ -2,8 +2,10 @@ import { PlayerHero } from '@/components/ds/PlayerHero';
 import { ScoutingRange } from '@/components/ds/ScoutingRange';
 import { ContractSummary } from '@/components/ds/ContractSummary';
 import { NewsRow } from '@/components/ds/NewsRow';
+import { Timeline } from '@/components/ds/Timeline';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
+import { positionBadgeClass } from '@/components/ds/positionColor';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 const TEAM_COLOR = generateTeamLogoParams('demo-nyg').primary;
@@ -12,26 +14,22 @@ export default function PlayerPageMockup() {
   return (
     <div className="max-w-5xl mx-auto px-6 py-10 space-y-10" style={{ ['--team-accent' as never]: TEAM_COLOR }}>
       <div>
-        <div className="label-sm">Mockup — Stage 3</div>
+        <div className="label-sm">Mockup — Stage 3 (rework)</div>
         <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide mt-1">Player Page Composition</h1>
         <p className="text-muted mt-1 max-w-2xl text-sm">
           A signed veteran below; a draft prospect variant (College Profile) at the bottom. Mock data only.
         </p>
       </div>
 
-      {/* Hero ---------------------------------------------------------------- */}
-      <div className="card card-pad">
-        <PlayerHero
-          playerId="demo-player-1" name="Marcus Jones" position="WR" jersey={11} age={26}
-          ovr={87} potentialLow={89} potentialHigh={93} confidence={80}
-          contract="3 years · $18.4M APY"
-          teamColor={TEAM_COLOR}
-          attributes={[
-            { label: 'Speed', value: 94 }, { label: 'Route Running', value: 88 }, { label: 'Catching', value: 91 },
-            { label: 'Release', value: 83 }, { label: 'YAC', value: 90 }, { label: 'Awareness', value: 79 },
-          ]}
-        />
-      </div>
+      {/* Hero — the card treatment lives inside PlayerHero itself now. */}
+      <PlayerHero
+        playerId="demo-player-1" name="Marcus Jones" position="WR" jersey={11} age={26}
+        ovr={87} potentialLow={89} potentialHigh={93} confidence={80}
+        contract="3 years · $18.4M APY"
+        teamColor={TEAM_COLOR}
+        tags={['ELITE']}
+        keyStats={[{ value: '78', label: 'REC' }, { value: '1,142', label: 'YDS' }, { value: '9', label: 'TD' }]}
+      />
 
       <div className="grid md:grid-cols-3 gap-8">
         {/* Overview -------------------------------------------------------- */}
@@ -87,6 +85,17 @@ export default function PlayerPageMockup() {
           </div>
 
           <div className="section">
+            <SectionHeading title="Career Highlights" />
+            <div className="panel p-5">
+              <Timeline entries={[
+                { year: '2026', text: 'Set a career high with 1,142 receiving yards, earning his first Pro Bowl nod.' },
+                { year: '2025', text: 'Named a team captain after leading all receivers in third-down conversion rate.' },
+                { year: '2022', text: 'Drafted 41st overall out of LSU — the Giants\' first pick of the Whitfield era.' },
+              ]} />
+            </div>
+          </div>
+
+          <div className="section">
             <SectionHeading title="Transaction History" />
             <div className="panel px-4 divide-y divide-line/60">
               <NewsRow category="TRADE" teamId="demo-nyg" abbr="NYG" headline="Acquired by New York in a three-team trade" detail="Sent from Miami with a 2027 5th for a 2027 3rd and CB T. Reyes." meta="2026" />
@@ -131,8 +140,11 @@ export default function PlayerPageMockup() {
         <div className="card card-pad flex flex-wrap items-start gap-6">
           <PlayerAvatar seed="demo-prospect-1" age={21} size={112} teamColor={TEAM_COLOR} />
           <div className="flex-1 min-w-[220px]">
-            <div className="font-display font-bold text-3xl uppercase tracking-wide leading-none">Jaylen Marsh</div>
-            <div className="text-sm text-muted mt-1.5">EDGE · Age 21 · Ohio State</div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`pill border ${positionBadgeClass('EDGE')}`}>EDGE</span>
+              <span className="text-sm text-muted">Age 21 · Ohio State</span>
+            </div>
+            <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-2">Jaylen Marsh</div>
             <div className="flex gap-2 mt-3">
               <span className="pill border-gold/40 text-gold">TOP 10</span>
               <span className="pill border-line text-muted">Star Prospect</span>

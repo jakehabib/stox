@@ -253,3 +253,34 @@ ever force-pushed over, so every state below still exists in git history).
   narrow sidebar. Also removed a duplicated OVR/Potential display on the
   player mockup — the hero already shows it, so a second panel just
   repeating it added nothing.
+- **2026-08-20 — Redesign rework: richer heroes, real actions, fixed a
+  systemic contrast bug.** Reworked all three mockups after side-by-side
+  reference screenshots showed the first pass was too passive. Changes:
+  `TeamHeader` now embeds the next matchup + win probability and a
+  tenure/scenario line instead of a separate matchup card; `PlayerHero`
+  got a bigger "trading card" treatment (photo-tinted panel, position-
+  specific key stats, a bolder filled rating chip) with attributes moved
+  to their own section (was duplicated with the page's Ratings section);
+  `OnTheClock` became a horizontal control-panel layout with real Make
+  Selection/Pause buttons and a stadium-light texture; `FrontOfficeBrief`
+  and the new `PickTradeOffer` got real per-item actions (Sign a CB,
+  Accept/Counter/Decline) instead of a chevron implying "go elsewhere";
+  `NewsRow` gained a metric slot so a story carries its own payoff, not
+  just a timestamp; `StandingsTable` gained rank-change deltas and a
+  colored "last five" form guide; added position-group color coding
+  (`positionColor.ts`, reusing the already-CVD-validated viz palette) and
+  a `ScoutsRoom` advisor-quote component. Fixed two real bugs caught in
+  review: a win-probability pill that read as clipped by the corner
+  watermark (wasn't actually clipped — DOM measurement confirmed — but
+  was unreadable against it, fixed by giving that row a solid backing);
+  and, more importantly, a **systemic contrast bug** — several curated
+  team colors (see `lib/gen/teamLogo.ts`) are deliberately dark for use as
+  fills/borders, but multiple components were using that same dark color
+  as small TEXT on the near-black background. Fixed with a new
+  `--team-text` CSS token (a lightened `color-mix()` of `--team-accent`)
+  used everywhere team color renders as text, defined once in
+  `globals.css` so every current and future component gets it by
+  switching one variable. Also fixed a real prospect-row layout
+  regression the Draft rework introduced (names truncating mid-word once
+  a Draft button was added) by giving the name its own line instead of
+  sharing it with status pills.

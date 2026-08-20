@@ -122,9 +122,10 @@ export default function DesignSystemPage() {
         <SectionHeading eyebrow="1" title="Team Header" />
         <TeamHeader
           teamId={DEMO_TEAM.id} abbr={DEMO_TEAM.abbr} city={DEMO_TEAM.city} nickname={DEMO_TEAM.nickname}
-          wins={8} losses={3} ties={0} standing="1st · AFC East"
-          phaseLabel="Regular Season" weekLabel="Week 12 · vs Miami"
-          capSpace="$12.8M" rosterCount={53}
+          wins={8} losses={3} ties={0} standing="1st · AFC East" tenureLabel="Year 4 of your tenure"
+          scenarioTag="Clinch scenario: live at Week 12"
+          stats={[{ value: '$12.8M', label: 'Cap Space', color: 'text-accent' }, { value: '53/53', label: 'Roster' }]}
+          nextGame={{ teamId: PARTNER_TEAM.id, abbr: PARTNER_TEAM.abbr, city: 'Miami', wins: 6, losses: 5, winProb: 64, home: false }}
         />
       </section>
 
@@ -137,10 +138,8 @@ export default function DesignSystemPage() {
             ovr={87} potentialLow={89} potentialHigh={93} confidence={80}
             contract="3 years · $18.4M APY"
             teamColor={teamColor}
-            attributes={[
-              { label: 'Speed', value: 94 }, { label: 'Route Running', value: 88 }, { label: 'Catching', value: 91 },
-              { label: 'Release', value: 83 }, { label: 'YAC', value: 90 }, { label: 'Awareness', value: 79 },
-            ]}
+            tags={['ELITE']}
+            keyStats={[{ value: '78', label: 'REC' }, { value: '1,142', label: 'YDS' }, { value: '9', label: 'TD' }]}
           />
         </div>
       </section>

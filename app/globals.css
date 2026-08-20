@@ -11,6 +11,15 @@
        hardcoding a color, so recoloring one wrapper recolors every accent
        use inside it. Falls back to the house blue when no team is in scope. */
     --team-accent: #38bdf8;
+    /* --team-text: a guaranteed-legible variant for TEXT specifically.
+       Curated team colors (see lib/gen/teamLogo.ts COLOR_PAIRS) are
+       deliberately dark/saturated for use as fills and borders — several
+       (oxblood, midnight, forest) fail contrast as small text on this
+       near-black background. Lightened at render time via color-mix, not
+       baked into the palette, so every component gets it for free by
+       switching from var(--team-accent) to var(--team-text) for text.
+       Use --team-accent for fills/borders/watermarks; --team-text for text. */
+    --team-text: color-mix(in srgb, var(--team-accent) 60%, white 40%);
   }
   body {
     @apply bg-ink text-chalk antialiased;

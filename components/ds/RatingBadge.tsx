@@ -25,15 +25,25 @@ function tierHex(v: number): string {
  * tiers as everywhere else, so a gold 91 here means the same thing it does
  * in a roster table.
  */
-export function RatingBadge({ value, label, size = 'md' }: { value: number; label?: string; size?: keyof typeof SIZE }) {
+export function RatingBadge({ value, label, size = 'md', filled }: {
+  value: number; label?: string; size?: keyof typeof SIZE;
+  /** Bolder tinted-fill treatment for hero contexts — still the notched
+   * chip, just with presence to match a big player-card header instead of
+   * blending into a sidebar. */
+  filled?: boolean;
+}) {
   const color = ratingColor(value);
   const hex = tierHex(value);
   const s = SIZE[size];
   return (
     <div className="inline-flex flex-col items-center gap-1">
       <div
-        className={`rating-chip relative panel ${s.box} flex items-center justify-center`}
-        style={{ borderColor: `${hex}80`, ['--chip-notch' as never]: `${s.flag}px` }}
+        className={`rating-chip relative ${filled ? '' : 'panel'} ${s.box} flex items-center justify-center`}
+        style={{
+          borderColor: hex, borderWidth: filled ? 2 : 1,
+          background: filled ? `${hex}1f` : undefined,
+          ['--chip-notch' as never]: `${s.flag}px`,
+        }}
       >
         <div className="rating-chip-flag" style={{ borderTopColor: hex }} />
         <span className={`stat-value ${s.text} ${color}`}>{value}</span>

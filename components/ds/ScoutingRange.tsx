@@ -9,13 +9,17 @@ function confidenceLabel(confidence: number): { text: string; color: string } {
  * track segment between low/high on a 40-99 scale, not a raw progress bar
  * or a "confidence: 62%" debug readout.
  */
-export function ScoutingRange({ low, high, confidence, label = 'OVR' }: { low: number; high: number; confidence: number; label?: string }) {
+export function ScoutingRange({ low, high, confidence, label = 'OVR', className = 'w-40' }: {
+  low: number; high: number; confidence: number; label?: string;
+  /** Width utility — narrower (e.g. "w-28") for dense rows like a draft board. */
+  className?: string;
+}) {
   const c = confidenceLabel(confidence);
   const SCALE_MIN = 40, SCALE_MAX = 99;
   const pct = (v: number) => ((v - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)) * 100;
 
   return (
-    <div className="w-40">
+    <div className={className}>
       <div className="flex items-baseline justify-between mb-1.5">
         <span className="label-sm">{label}</span>
         <span className="stat-value text-stat-sm text-chalk">{low}–{high}</span>

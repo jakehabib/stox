@@ -1,9 +1,9 @@
 import { TeamLogo } from '../TeamLogo';
 
-export type NewsCategory = 'TRADE' | 'SIGNING' | 'INJURY' | 'RECORD' | 'AWARD' | 'DRAFT' | 'LEAGUE';
+export type NewsCategory = 'TRADE' | 'SIGNING' | 'INJURY' | 'RECORD' | 'AWARD' | 'DRAFT' | 'GAME' | 'LEAGUE';
 
 const CATEGORY_COLOR: Record<NewsCategory, string> = {
-  TRADE: 'text-accent2', SIGNING: 'text-accent', INJURY: 'text-bad',
+  TRADE: 'text-accent2', SIGNING: 'text-accent', INJURY: 'text-bad', GAME: 'text-chalk',
   RECORD: 'text-gold', AWARD: 'text-gold', DRAFT: 'text-accent2', LEAGUE: 'text-muted',
 };
 
@@ -14,8 +14,10 @@ const CATEGORY_COLOR: Record<NewsCategory, string> = {
  * gives the lead story in a list more visual weight than what follows it,
  * the way a real front page does.
  */
-export function NewsRow({ teamId, abbr, category, headline, detail, meta, featured }: {
+export function NewsRow({ teamId, abbr, category, headline, detail, meta, metric, featured }: {
   teamId?: string; abbr?: string; category: NewsCategory; headline: string; detail?: string; meta: string;
+  /** The concrete number the story is actually about — "+81 rating", "24 sacks", "1 yr $5.1M" — so the row carries its own payoff instead of just a timestamp. */
+  metric?: string;
   featured?: boolean;
 }) {
   return (
@@ -28,7 +30,10 @@ export function NewsRow({ teamId, abbr, category, headline, detail, meta, featur
         <div className={`font-display font-bold leading-snug mt-0.5 ${featured ? 'text-lg' : 'text-sm'}`}>{headline}</div>
         {detail && <div className={`text-muted mt-0.5 ${featured ? 'text-sm' : 'text-xs'}`}>{detail}</div>}
       </div>
-      <div className="text-[11px] text-muted shrink-0 pt-0.5 font-mono">{meta}</div>
+      <div className="shrink-0 text-right">
+        {metric && <div className="stat-value text-stat-sm">{metric}</div>}
+        <div className="text-[11px] text-muted pt-0.5 font-mono">{meta}</div>
+      </div>
     </div>
   );
 }

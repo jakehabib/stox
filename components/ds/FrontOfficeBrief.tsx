@@ -1,20 +1,21 @@
-import { IconChevronRight } from './icons';
-
 export interface BriefItem {
   category: 'Roster' | 'Scouting' | 'Contracts' | 'Trade Market' | 'Cap' | 'Trade Offers';
-  text: string;
+  headline: string;
+  detail: string;
+  action: string;
 }
 
 const CATEGORY_COLOR: Record<BriefItem['category'], string> = {
-  Roster: 'text-accent2', Scouting: 'text-gold', Contracts: 'text-warn',
-  'Trade Market': 'text-accent', Cap: 'text-bad', 'Trade Offers': 'text-accent2',
+  Roster: 'text-accent2 border-accent2/40', Scouting: 'text-gold border-gold/40', Contracts: 'text-warn border-warn/40',
+  'Trade Market': 'text-accent border-accent/40', Cap: 'text-bad border-bad/40', 'Trade Offers': 'text-accent2 border-accent2/40',
 };
 
 /**
- * The game's core differentiator gets a treatment that says so — a left
- * accent spine and per-item category kickers, not a plain gray list. Same
- * BriefItem category set as lib/frontOffice.ts, so wiring real data in
- * later is a straight prop swap.
+ * The game's core differentiator gets a treatment that says so: a headline
+ * (not a plain sentence), and — the actual point of a "brief" — a concrete
+ * next action per item, not a chevron implying "go read more elsewhere."
+ * Same BriefItem category set as lib/frontOffice.ts, so wiring real data in
+ * later is close to a straight prop swap.
  */
 export function FrontOfficeBrief({ items }: { items: BriefItem[] }) {
   return (
@@ -25,10 +26,13 @@ export function FrontOfficeBrief({ items }: { items: BriefItem[] }) {
       </div>
       <div className="divide-y divide-line/60">
         {items.map((item, i) => (
-          <div key={i} className="flex items-center gap-3 px-4 py-2.5 hover:bg-raised/50 transition-colors">
-            <span className={`label-sm w-24 shrink-0 ${CATEGORY_COLOR[item.category]}`}>{item.category}</span>
-            <span className="text-sm flex-1">{item.text}</span>
-            <IconChevronRight size={16} className="text-muted shrink-0" />
+          <div key={i} className="flex items-center gap-3 px-4 py-3">
+            <div className="flex-1 min-w-0">
+              <span className={`pill ${CATEGORY_COLOR[item.category]} mb-1.5`}>{item.category}</span>
+              <div className="text-sm font-semibold">{item.headline}</div>
+              <div className="text-xs text-muted mt-0.5">{item.detail}</div>
+            </div>
+            <button className="btn-secondary text-xs shrink-0 whitespace-nowrap">{item.action}</button>
           </div>
         ))}
       </div>
