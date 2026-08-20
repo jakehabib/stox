@@ -420,3 +420,20 @@ ever force-pushed over, so every state below still exists in git history).
   Verified against a real league with a pending AI trade offer, an
   expired trade deadline banner, and a 100-player free agent board, via
   Playwright with zero console errors.
+- **2026-08-20 — Redesign Stage 7: Cap.** Checkpoint before this change:
+  `382c893`. Started with the same restrained Roster/Trade treatment
+  (`.card`→`.panel`, `positionBadgeClass`, `.stat-value` on the OVR
+  column) but a user review of the first pass correctly flagged that,
+  next to the hero-panel pages, it read as barely changed — the Cap
+  page's summary block genuinely deserved a real focal moment the way
+  Dashboard/Player/Draft got one, not just quieter borders. Reworked
+  the top cap-usage block into a team-tinted hero (radial gradient,
+  watermark team logo, stadium-light texture — the same device as
+  Draft Day's "On The Clock") with cap space as a single large
+  `stat-value` figure in `--team-text`, the usage bar and Active
+  Salary/Dead Money/Mode detail underneath. The four Advanced-view
+  chart panels, the Contracts table, and the Dead Money list kept the
+  quieter `.panel` treatment — they're data blocks, not the page's one
+  focal number. No changes to any cap math, sort logic, or the
+  Basic/Advanced toggle. Verified against a real league's Basic and
+  Advanced views via Playwright with zero console errors.

@@ -9,6 +9,9 @@ import { POSITION_GROUPS, positionGroup } from '@/lib/positionGroups';
 import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
 import { LineChart } from '@/components/charts/LineChart';
 import { ScatterChart } from '@/components/charts/ScatterChart';
+import { positionBadgeClass } from '@/components/ds/positionColor';
+import { TeamLogo } from '@/components/TeamLogo';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'cap' | 'base' | 'years' | 'savings';
 
@@ -38,7 +41,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
     return (
       <div className="space-y-4">
         <h1 className="text-2xl font-semibold tracking-tight">Salary Cap</h1>
-        <div className="card card-pad text-muted text-sm">
+        <div className="panel p-4 text-muted text-sm">
           Cap mode is set to <strong>Off</strong> in league settings — spending has no limit and cuts leave no dead money.
           Change this in <Link href={`/league/${league.id}/settings`} className="text-accent2 hover:underline">Settings</Link>.
         </div>
@@ -53,6 +56,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
   ]);
 
   const usedPct = Math.min(100, Math.round((summary.capUsed / summary.capTotal) * 100));
+  const teamColor = generateTeamLogoParams(team.id).primary;
 
   const rows = players.map((p) => {
     const bases = p.contract ? (JSON.parse(p.contract.baseSalaries) as number[]) : [];
@@ -168,30 +172,53 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
         </div>
       </div>
 
-      <div className="card card-pad">
-        <div className="flex items-center justify-between mb-2 text-sm">
-          <span className="text-muted">{formatMoney(summary.capUsed)} used of {formatMoney(summary.capTotal)}</span>
-          <span className={summary.capSpace >= 0 ? 'text-accent font-semibold' : 'text-bad font-semibold'}>{formatMoney(summary.capSpace)} space</span>
-        </div>
-        <div className="h-3 bg-raised rounded-full overflow-hidden">
-          <div className={`h-full ${usedPct > 96 ? 'bg-bad' : usedPct > 85 ? 'bg-warn' : 'bg-accent'}`} style={{ width: `${usedPct}%` }} />
-        </div>
-        <div className="grid grid-cols-3 gap-4 mt-4 text-sm">
-          <div><div className="label-sm">Active Salary</div><div className="font-mono">{formatMoney(summary.activeSalary)}</div></div>
-          <div>
-            <div className="label-sm inline-flex items-center gap-1.5">
-              Dead Money
-              <Tooltip text="Cap charges left behind by players already cut or traded away — signing bonus proration that has to count against the cap somewhere even though they're gone. It still counts against your space, but nothing you do now changes it." />
+      <div
+        className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
+        style={{
+          ['--team-accent' as never]: teamColor,
+          borderColor: 'var(--team-accent)',
+          background: 'radial-gradient(ellipse 120% 140% at 100% 0%, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 70%)',
+        }}
+      >
+        <div
+          className="absolute inset-0 opacity-[0.05] pointer-events-none"
+          style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
+        />
+        <TeamLogo seed={team.id} abbr={team.abbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
+
+        <div className="relative px-6 py-6">
+          <div className="flex items-end justify-between flex-wrap gap-4 mb-4">
+            <div>
+              <div className="label-sm">Cap Space</div>
+              <div
+                className={`stat-value text-stat-xl leading-none mt-1 ${summary.capSpace < 0 ? 'text-bad' : ''}`}
+                style={summary.capSpace >= 0 ? { color: 'var(--team-text)' } : undefined}
+              >
+                {formatMoney(summary.capSpace)}
+              </div>
             </div>
-            <div className="font-mono">{formatMoney(summary.deadMoney)}</div>
+            <div className="text-sm text-muted text-right">{formatMoney(summary.capUsed)} used of {formatMoney(summary.capTotal)}</div>
           </div>
-          <div><div className="label-sm">Mode</div><div>{settings.capMode === 'REALISTIC' ? 'Realistic' : 'Simplified'}</div></div>
+          <div className="h-3 bg-raised rounded-full overflow-hidden">
+            <div className={`h-full ${usedPct > 96 ? 'bg-bad' : usedPct > 85 ? 'bg-warn' : 'bg-accent'}`} style={{ width: `${usedPct}%` }} />
+          </div>
+          <div className="grid grid-cols-3 gap-4 mt-5 text-sm">
+            <div><div className="label-sm">Active Salary</div><div className="font-mono">{formatMoney(summary.activeSalary)}</div></div>
+            <div>
+              <div className="label-sm inline-flex items-center gap-1.5">
+                Dead Money
+                <Tooltip text="Cap charges left behind by players already cut or traded away — signing bonus proration that has to count against the cap somewhere even though they're gone. It still counts against your space, but nothing you do now changes it." />
+              </div>
+              <div className="font-mono">{formatMoney(summary.deadMoney)}</div>
+            </div>
+            <div><div className="label-sm">Mode</div><div>{settings.capMode === 'REALISTIC' ? 'Realistic' : 'Simplified'}</div></div>
+          </div>
         </div>
       </div>
 
       {advanced && (
         <div className="grid lg:grid-cols-2 gap-5">
-          <div className="card card-pad">
+          <div className="panel p-4">
             <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
               Cap Allocation by Position
               <Tooltip text="Share of your total cap spend going to each position group right now. Real front offices watch this to spot an unbalanced roster — e.g. too much of the cap tied up at one spot to build real depth elsewhere." />
@@ -200,7 +227,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
             <HorizontalBarChart bars={allocationBars} />
           </div>
 
-          <div className="card card-pad">
+          <div className="panel p-4">
             <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
               Multi-Year Cap Outlook
               <Tooltip text="Total cap already committed in each future year from contracts on the books today (dead money and new signings aren't included — this is just what you'd owe if the roster froze exactly as it is). The dashed line is this year's cap limit for reference; future caps will actually be higher as the league cap grows." />
@@ -209,7 +236,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
             <LineChart series={outlookSeries} baseline={outlookBaseline} formatY="money" />
           </div>
 
-          <div className="card card-pad">
+          <div className="panel p-4">
             <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
               Spend vs. League Average
               <Tooltip text="How your cap allocation at each position group compares to the league-wide average team. Blue = spending less than average there; red = more. Neither is inherently good or bad on its own — a position running red might be a deliberate strength, or an overpay; running blue might be a bargain, or a real hole." />
@@ -218,7 +245,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
             <HorizontalBarChart bars={vsLeagueBars} />
           </div>
 
-          <div className="card card-pad lg:col-span-2">
+          <div className="panel p-4 lg:col-span-2">
             <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
               Cap Hit vs. Overall Rating
               <Tooltip text="Every player under contract, plotted by rating and cap hit. Blue = costing less than his rating's market value (a bargain); red = costing more (an overpay, fairly or not — a young player on a big second contract will often show red here even if the deal was reasonable when signed)." />
@@ -233,7 +260,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
         </div>
       )}
 
-      <div className="card overflow-hidden">
+      <div className="panel overflow-hidden">
         <div className="px-4 py-3 border-b border-line font-semibold text-sm">Contracts</div>
         <div className="overflow-x-auto">
           <table className="table-clean">
@@ -256,9 +283,9 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
               {sorted.map(({ p, hit, base, dead, savings }) => (
                 <tr key={p.id}>
                   <td><Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium">{p.firstName} {p.lastName}</Link></td>
-                  <td className="text-muted font-mono text-xs">{p.position}</td>
+                  <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                   <td className="text-muted">{p.age}</td>
-                  <td className="font-mono text-muted">{p.trueOvr}</td>
+                  <td className="stat-value text-stat-sm text-muted">{p.trueOvr}</td>
                   <td className="font-mono">{formatMoney(hit)}</td>
                   <td className="font-mono text-muted">{formatMoney(base)}</td>
                   <td className="font-mono">{p.contract?.yearsRemaining ?? '—'}</td>
@@ -275,7 +302,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       </div>
 
       {deadRows.length > 0 && (
-        <div className="card card-pad">
+        <div className="panel p-4">
           <h2 className="font-semibold mb-2 text-sm">Dead Money Charges</h2>
           {deadRows.map((r) => (
             <div key={r.id} className="flex justify-between text-sm py-1">
