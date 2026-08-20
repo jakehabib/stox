@@ -803,11 +803,17 @@ async function addDraftClass(leagueId: string, seasonYear: number, rng: Rng) {
   if (userTeam) {
     const created = await prisma.player.findMany({
       where: { leagueId, isDraftee: true, draftYear: seasonYear },
-      select: { id: true, position: true, trueAttrs: true },
+      select: { id: true, position: true, trueAttrs: true, potential: true },
     });
     const reportRows = created.map((p) => {
       const trueAttrs = readJson<AttrMap>(p.trueAttrs, {});
-      const observed = observe(rng, p.position as Position, trueAttrs, SCOUTING.ROOKIE_BASE_CONFIDENCE);
+      // truePotential MUST be passed — without it observe() never sets the
+      // synthetic potential-observation key, so buildScoutedView's fallback
+      // (`observed[POTENTIAL_OBS_KEY] ?? SCOUTING.POTENTIAL_DEFAULT_CENTER`)
+      // collapses every unscouted rookie to the exact same flat 75 center,
+      // which is why every prospect read as "Starter Prospect" — identical
+      // to the scoutedOvr flat-62 bug fixed above, just for potential.
+      const observed = observe(rng, p.position as Position, trueAttrs, SCOUTING.ROOKIE_BASE_CONFIDENCE, 50, 0, p.potential);
       return {
         playerId: p.id,
         teamId: userTeam.id,

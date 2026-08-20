@@ -327,7 +327,7 @@ export async function seedScoutingReports(
 ) {
   const players = await prisma.player.findMany({
     where: { leagueId },
-    select: { id: true, teamId: true, position: true, trueAttrs: true, trueOvr: true, isDraftee: true, experience: true },
+    select: { id: true, teamId: true, position: true, trueAttrs: true, trueOvr: true, isDraftee: true, experience: true, potential: true },
   });
 
   const rows: any[] = [];
@@ -339,7 +339,10 @@ export async function seedScoutingReports(
     else confidence = SCOUTING.ROOKIE_BASE_CONFIDENCE;
 
     const trueAttrs = JSON.parse(p.trueAttrs) as AttrMap;
-    const observed = observe(rng, p.position as Position, trueAttrs, confidence);
+    // truePotential must be passed or observe() never sets the synthetic
+    // potential-observation key, collapsing every unscouted player's
+    // potential to the same flat SCOUTING.POTENTIAL_DEFAULT_CENTER.
+    const observed = observe(rng, p.position as Position, trueAttrs, confidence, 50, 0, p.potential);
     rows.push({
       playerId: p.id,
       teamId,
