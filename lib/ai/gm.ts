@@ -1,5 +1,5 @@
 import { Rng, clamp } from '../rng';
-import { AI, ROSTER_TARGETS, Position, POSITIONS, PICK_VALUE_CHART, LEAGUE } from '../tuning';
+import { AI, ROSTER_TARGETS, ROSTER_NEED_QUALITY_WEIGHT, Position, POSITIONS, PICK_VALUE_CHART, LEAGUE } from '../tuning';
 import { GmProfile } from '../types';
 import { marketValue } from '../cap';
 import { readJson } from '../json';
@@ -62,11 +62,13 @@ export function teamNeeds(players: RosterPlayer[]): Record<string, number> {
     // Quality need: how far the starter is below a "fine starter" baseline.
     // [TUNE] 72 is treated as an acceptable starter.
     const starter = group[0]?.trueOvr ?? 40;
-    const qualityNeed = clamp((72 - starter) / 30, 0, 1);
+    const qualityWeight = ROSTER_NEED_QUALITY_WEIGHT[pos] ?? 1;
+    const qualityNeed = clamp((72 - starter) / 30, 0, 1) * qualityWeight;
 
     // Depth need: second body matters more at high-snap positions. Positions
-    // that only ever roster one player (K, P) never carry a "backup" — that's
-    // not a hole, it's the position, so skip this term entirely for them.
+    // that only ever roster one player (K, P, FB) never carry a "backup" —
+    // that's not a hole, it's the position, so skip this term entirely for
+    // them.
     const backup = group[1]?.trueOvr ?? 40;
     const depthNeed = target.max > 1 ? clamp((62 - backup) / 30, 0, 1) * 0.4 : 0;
 

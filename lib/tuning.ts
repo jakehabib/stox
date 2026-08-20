@@ -67,6 +67,18 @@ export const ROSTER_TARGETS: Record<Position, { min: number; ideal: number; max:
   P:    { min: 1, ideal: 1, max: 1 },
 };
 
+/**
+ * How much a mediocre starter at this position should register as a
+ * roster "need" — separate from whether the position is filled at all.
+ * A below-average kicker, punter, or fullback is real but nowhere near
+ * as urgent as a below-average corner or tackle, since these positions
+ * touch the game far less and are trivially replaceable off the street.
+ * Missing [TUNE] entries default to full weight (1).
+ */
+export const ROSTER_NEED_QUALITY_WEIGHT: Partial<Record<Position, number>> = {
+  K: 0.25, P: 0.25, FB: 0.25,
+};
+
 // ---------------------------------------------------------------------------
 // Player generation [TUNE]
 // ---------------------------------------------------------------------------
