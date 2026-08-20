@@ -7,14 +7,16 @@ import { PlayerAvatar } from './PlayerAvatar';
 import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
 import { CapMode } from '@/lib/types';
-import { cutPlayerAction } from '@/app/actions/roster';
+import { cutPlayerAction, applyFranchiseTagAction } from '@/app/actions/roster';
 
-export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, availableSpace, capMode, yearsRemaining }: {
+export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, availableSpace, capMode, yearsRemaining, canTag }: {
   leagueId: string; playerId: string; name: string; position: string; age: number; ovr: number;
-  currentApy: number; availableSpace: number; capMode: CapMode; yearsRemaining: number;
+  currentApy: number; availableSpace: number; capMode: CapMode; yearsRemaining: number; canTag?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [confirmingWalk, setConfirmingWalk] = useState(false);
+  const [tagPending, setTagPending] = useState(false);
+  const [tagMessage, setTagMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -26,6 +28,17 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
     startTransition(async () => {
       await cutPlayerAction(leagueId, playerId);
       router.refresh();
+    });
+  };
+
+  const tag = () => {
+    setTagPending(true);
+    setTagMessage(null);
+    startTransition(async () => {
+      const result = await applyFranchiseTagAction(leagueId, playerId);
+      setTagPending(false);
+      setTagMessage(result.message);
+      if (result.ok) router.refresh();
     });
   };
 
@@ -50,20 +63,28 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
             availableSpace={availableSpace} capMode={capMode} onDone={() => setOpen(false)}
           />
           {isTrulyExpiring && (
-            confirmingWalk ? (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-muted flex-1">Let {name} walk to free agency?</span>
-                <button disabled={pending} onClick={notResign} className="btn-danger text-xs px-3 py-1.5">
-                  {pending ? 'Releasing…' : 'Confirm — Not Re-sign'}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              {confirmingWalk ? (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted flex-1">Let {name} walk to free agency?</span>
+                  <button disabled={pending} onClick={notResign} className="btn-danger text-xs px-3 py-1.5">
+                    {pending ? 'Releasing…' : 'Confirm — Not Re-sign'}
+                  </button>
+                  <button onClick={() => setConfirmingWalk(false)} className="btn-ghost text-xs px-3 py-1.5">Cancel</button>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmingWalk(true)} className="text-xs text-bad hover:underline">
+                  Not Re-sign — let him walk
                 </button>
-                <button onClick={() => setConfirmingWalk(false)} className="btn-ghost text-xs px-3 py-1.5">Cancel</button>
-              </div>
-            ) : (
-              <button onClick={() => setConfirmingWalk(true)} className="text-xs text-bad hover:underline">
-                Not Re-sign — let him walk
-              </button>
-            )
+              )}
+              {canTag && (
+                <button disabled={tagPending} onClick={tag} className="pill border-gold/40 text-gold text-xs hover:bg-gold/10">
+                  {tagPending ? 'Tagging…' : 'Franchise Tag'}
+                </button>
+              )}
+            </div>
           )}
+          {tagMessage && <p className={`text-xs ${tagMessage.startsWith('Tagged') ? 'text-accent' : 'text-bad'}`}>{tagMessage}</p>}
         </div>
       )}
     </div>

@@ -22,6 +22,11 @@ export default async function ResignPage({ params }: { params: { id: string } })
 
   const summary = settings.capMode === 'OFF' ? null : await teamCapSummary(team.id, league.seasonYear, settings.capMode);
 
+  const canTag = settings.franchiseTagEnabled && league.phase === 'RESIGN';
+  const alreadyTagged = canTag
+    ? (await prisma.contract.findFirst({ where: { teamId: team.id, isFranchiseTag: true, signedYear: league.seasonYear } })) !== null
+    : true;
+
   return (
     <div className="space-y-5 max-w-3xl">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -54,6 +59,7 @@ export default async function ResignPage({ params }: { params: { id: string } })
               availableSpace={summary ? summary.capSpace + (p.contract ? capHit(p.contract, settings.capMode) : 0) : Number.MAX_SAFE_INTEGER}
               capMode={settings.capMode}
               yearsRemaining={p.contract?.yearsRemaining ?? 0}
+              canTag={canTag && !alreadyTagged}
             />
           ))}
         </div>

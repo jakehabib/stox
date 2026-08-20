@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { cutPlayer as cutPlayerLib, signFreeAgentWithCompetition, evaluateOffer, extendContract, restructureContract, leadingCompetingBid, fillRosterForTeam } from '@/lib/freeagency';
+import { cutPlayer as cutPlayerLib, signFreeAgentWithCompetition, evaluateOffer, extendContract, restructureContract, applyFranchiseTag, leadingCompetingBid, fillRosterForTeam } from '@/lib/freeagency';
 import { parseSettings } from '@/lib/settings';
 import { autoDepthChart } from '@/lib/gen/league';
 import { Rng } from '@/lib/rng';
@@ -65,6 +65,20 @@ export async function extendContractAction(
   }
   revalidatePath(`/league/${leagueId}`, 'layout');
   return { ok: true, message: 'Extension signed.' };
+}
+
+export async function applyFranchiseTagAction(leagueId: string, playerId: string) {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  if (!settings.franchiseTagEnabled) return { ok: false, message: 'Franchise tags are disabled in league settings.' };
+  if (league.phase !== 'RESIGN') return { ok: false, message: 'The franchise tag can only be used during the Re-sign window.' };
+  try {
+    const result = await applyFranchiseTag({ leagueId, playerId, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week });
+    revalidatePath(`/league/${leagueId}`, 'layout');
+    return { ok: true, message: `Tagged — 1-yr, fully guaranteed at $${(result.tagValue / 1_000_000).toFixed(1)}M.` };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'Franchise tag failed.' };
+  }
 }
 
 export async function restructureContractAction(leagueId: string, playerId: string, convertAmount: number, addVoidYears: number) {

@@ -3,7 +3,7 @@ import { Rng, clamp } from './rng';
 import { CAP } from './tuning';
 import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
-import { buildContract, marketValue, suggestedYears, capHit } from './cap';
+import { buildContract, marketValue, suggestedYears, capHit, formatMoney } from './cap';
 import { maxOffer, parseGmProfile, teamNeeds, RosterPlayer } from './ai/gm';
 import { teamCapSummary } from './cap-summary';
 
@@ -172,6 +172,72 @@ export async function extendContract(opts: {
       },
     });
   });
+}
+
+/**
+ * Franchise tag: a 1-year, fully guaranteed contract at the average of the
+ * top-N salaries at the position league-wide (franchiseTagValue in
+ * lib/cap.ts), keeping a player off the open market without a negotiated
+ * long-term deal. Real-NFL simplification for now — one tag per team per
+ * season, no exclusive/non-exclusive split, no escalating value for a
+ * second consecutive tag on the same player (that needs contract-history
+ * tracking this schema doesn't keep once a contract is replaced) — see
+ * README's Known Simplifications.
+ */
+export async function applyFranchiseTag(opts: {
+  leagueId: string;
+  playerId: string;
+  seasonYear: number;
+  capMode: LeagueSettings['capMode'];
+  week: number;
+}) {
+  const { franchiseTagValue } = await import('./cap');
+  const { playerId, seasonYear, capMode } = opts;
+
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
+  if (!player.teamId) throw new Error('Player is not on a roster.');
+  const teamId = player.teamId;
+
+  const alreadyTagged = await prisma.contract.findFirst({ where: { teamId, isFranchiseTag: true, signedYear: seasonYear } });
+  if (alreadyTagged) throw new Error('Already used your franchise tag this offseason — one per team, per year.');
+
+  const positionPeers = await prisma.player.findMany({
+    where: { leagueId: opts.leagueId, position: player.position, status: 'ACTIVE' },
+    include: { contract: true },
+  });
+  const positionSalaries = positionPeers.map((p) => capHit(p.contract, capMode)).filter((v) => v > 0);
+  const tagValue = franchiseTagValue(positionSalaries);
+
+  const summary = await teamCapSummary(teamId, seasonYear, capMode);
+  const oldHit = player.contract ? capHit(player.contract, capMode) : 0;
+  const availableSpace = summary.capSpace + oldHit;
+  if (capMode !== 'OFF' && tagValue > availableSpace + 1) {
+    throw new Error(`The tag would exceed the cap by $${Math.round((tagValue - availableSpace) / 1000)}K.`);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.contract.deleteMany({ where: { playerId } });
+    await tx.contract.create({
+      data: {
+        playerId, teamId,
+        years: 1, yearsRemaining: 1, signedYear: seasonYear,
+        baseSalaries: writeJson([tagValue]),
+        signingBonus: 0,
+        guaranteed: tagValue,
+        isRookieDeal: false,
+        isFranchiseTag: true,
+      },
+    });
+    await tx.transaction.create({
+      data: {
+        leagueId: opts.leagueId, seasonYear, week: opts.week, type: 'TAG', teamId,
+        headline: `${player.firstName} ${player.lastName} franchise-tagged`,
+        detail: `1-yr, fully guaranteed at ${formatMoney(tagValue)}`,
+      },
+    });
+  });
+
+  return { tagValue };
 }
 
 /**
