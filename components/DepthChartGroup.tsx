@@ -5,6 +5,7 @@ import { setDepthChartAction } from '@/app/actions/roster';
 import { ratingColor } from '@/lib/ratings';
 import { PlayerAvatar } from './PlayerAvatar';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { positionBadgeClass } from './ds/positionColor';
 
 interface P { id: string; name: string; ovr: number; age: number; injured: boolean }
 
@@ -32,9 +33,9 @@ export function DepthChartGroup({ teamId, position, players, order }: { teamId: 
   };
 
   return (
-    <div className="card card-pad">
+    <div className="panel p-4">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="font-semibold font-mono text-sm">{position}</h3>
+        <h3 className={`font-display font-bold text-sm uppercase tracking-wide ${positionBadgeClass(position)}`}>{position}</h3>
         {pending && <span className="text-xs text-muted">Saving…</span>}
       </div>
       <div className="space-y-1">
@@ -45,7 +46,7 @@ export function DepthChartGroup({ teamId, position, players, order }: { teamId: 
             <div key={id} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${idx === 0 ? 'bg-raised' : ''}`}>
               <span className="text-xs text-muted w-4">{idx + 1}</span>
               <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} />
-              <span className={`text-xs font-mono font-semibold w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
+              <span className={`stat-value text-xs w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
               <span className="text-sm flex-1 truncate">{p.name}</span>
               {p.injured && <span className="text-[10px] text-bad">INJ</span>}
               <div className="flex flex-col">

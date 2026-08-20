@@ -9,6 +9,7 @@ import { positionSortKey } from '@/lib/league-data';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { FillRosterButton } from '@/components/FillRosterButton';
+import { positionBadgeClass } from '@/components/ds/positionColor';
 
 type SortKey = 'pos' | 'ovr' | 'age' | 'potential' | 'cap' | 'years';
 
@@ -79,7 +80,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
         <FillRosterButton leagueId={league.id} teamId={team.id} />
       </div>
 
-      <div className="card overflow-hidden">
+      <div className="panel overflow-hidden">
         <div className="overflow-x-auto">
           <table className="table-clean">
             <thead>
@@ -97,7 +98,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
             <tbody>
               {sorted.map(({ p, view, hit }) => (
                 <tr key={p.id}>
-                  <td className="font-mono text-xs text-muted">{p.position}</td>
+                  <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                   <td>
                     <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2">
                       <PlayerAvatar seed={p.id} age={p.age} size={28} teamColor={teamColor} />
@@ -105,7 +106,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
                     </Link>
                   </td>
                   <td className="text-muted">{p.age}</td>
-                  <td className={`font-mono font-semibold ${ratingColor(view.scoutedOvr)}`}>
+                  <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>
                     {view.revealed || view.confidence >= 90 ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}
                   </td>
                   <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>

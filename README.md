@@ -359,3 +359,18 @@ ever force-pushed over, so every state below still exists in git history).
   real league, confirming both branches render correctly and every
   button (extension, restructure, release, sign offer, scout/focus
   report) still works.
+- **2026-08-20 — Redesign Stage 4: Roster + Depth Chart.** Checkpoint
+  before this change: `4b0837a`. Smaller, presentation-only pass on two
+  pages: the Roster table's position column now uses
+  `positionBadgeClass` (the same categorical position-group colors as
+  everywhere else) instead of a plain gray monospace label, and its OVR
+  column uses the `.stat-value` display-number treatment. The Depth
+  Chart's per-position group card switched from `.card` to the denser
+  `.panel` styling and its position header is now colorized the same
+  way. No data-fetching, sorting, or drag/reorder logic touched —
+  `DepthChartGroup`'s `move()` reorder function and
+  `setDepthChartAction` call are byte-for-byte unchanged. Verified via
+  Playwright screenshots of both pages against real roster data (39
+  players across every position group) and by exercising the depth
+  chart's actual up/down reorder buttons end-to-end (swap persisted,
+  then reverted), confirming zero console errors throughout.
