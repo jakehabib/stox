@@ -341,3 +341,61 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
   }
   return { signings };
 }
+
+/**
+ * "Fill Roster" — sign free agents for the user's own understaffed
+ * positions, using the exact same market-value offer and cap-enforcing
+ * signFreeAgent() path as every other signing in the game (AI waves and
+ * user negotiation alike). One pass = at most one signing per position
+ * that still shows a notable need, most severe first — click again for
+ * another pass if bodies or cap room remain.
+ */
+export async function fillRosterForTeam(opts: {
+  leagueId: string;
+  teamId: string;
+  seasonYear: number;
+  week: number;
+  settings: LeagueSettings;
+  rng: Rng;
+}): Promise<{ signed: { name: string; position: string; apy: number }[] }> {
+  const { leagueId, teamId, seasonYear, week, settings, rng } = opts;
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
+  const profile = parseGmProfile(team.gmProfile, rng);
+  const signed: { name: string; position: string; apy: number }[] = [];
+
+  const roster = await prisma.player.findMany({ where: { teamId }, select: { id: true, position: true, trueOvr: true, age: true, potential: true } });
+  const needs = teamNeeds(roster as RosterPlayer[]);
+  const neededPositions = Object.entries(needs)
+    .filter(([, v]) => v >= 0.15) // same "Notable" floor as the Roster Needs widget
+    .sort((a, b) => b[1] - a[1]);
+
+  const takenIds = new Set<string>();
+  for (const [position, needScore] of neededPositions) {
+    const summary = await teamCapSummary(teamId, seasonYear, settings.capMode);
+    const budget = Math.max(0, summary.capSpace - 3_000_000);
+    if (budget < CAP.MIN_SALARY) break; // no room left at all — stop trying
+
+    const candidates = await prisma.player.findMany({
+      where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false, position },
+      orderBy: { trueOvr: 'desc' },
+      take: 10,
+    });
+    const pick = candidates.find((c) => !takenIds.has(c.id));
+    if (!pick) continue; // nobody left at this position this pass
+
+    const offer = maxOffer(pick as unknown as RosterPlayer, { profile, needs: { [position]: needScore }, capSpace: budget, rng });
+    if (offer < CAP.MIN_SALARY) continue;
+
+    const apy = Math.round(offer);
+    const years = suggestedYears(pick.trueOvr, pick.age);
+    try {
+      await signFreeAgent({ leagueId, playerId: pick.id, teamId, apy, years, seasonYear, capMode: settings.capMode, week });
+      takenIds.add(pick.id);
+      signed.push({ name: `${pick.firstName} ${pick.lastName}`, position, apy });
+    } catch {
+      /* cap edge case — try the next position */
+    }
+  }
+
+  return { signed };
+}

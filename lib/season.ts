@@ -724,40 +724,56 @@ async function releaseUnresignedExpiringContracts(leagueId: string) {
 }
 
 /**
- * AI-only pass: each AI team decides whether to extend its own expiring
- * (0-years-remaining) players before they'd otherwise walk — the same
- * need/profile-driven logic the rest of the AI GM uses, just applied to
- * "keep your own guy" instead of "sign someone else's."
+ * Decide re-sign outcomes for one team's expiring (0-years-remaining)
+ * players using the same need/profile-driven logic the rest of the AI GM
+ * uses, just applied to "keep your own guy" instead of "sign someone
+ * else's." Shared between the AI-only offseason wave and the user-facing
+ * "Let the AI pick" delegate button on the re-sign page.
  */
-async function runAiResignWave(leagueId: string, seasonYear: number, week: number, capMode: LeagueSettings['capMode'], rng: Rng) {
+export async function resignDecisionsForTeam(
+  leagueId: string,
+  teamId: string,
+  seasonYear: number,
+  week: number,
+  capMode: LeagueSettings['capMode'],
+  rng: Rng,
+) {
   const { parseGmProfile, teamNeeds } = await import('./ai/gm');
   const { marketValue, suggestedYears } = await import('./cap');
   const { extendContract } = await import('./freeagency');
+  const { teamCapSummary } = await import('./cap-summary');
 
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
+  const roster = await prisma.player.findMany({ where: { teamId, status: 'ACTIVE' }, include: { contract: true } });
+  const expiring = roster.filter((p) => p.contract && p.contract.yearsRemaining === 0);
+  if (expiring.length === 0) return { kept: 0, released: 0 };
+
+  const needs = teamNeeds(roster.map((p) => ({ id: p.id, position: p.position, trueOvr: p.trueOvr, age: p.age, potential: p.potential })));
+  const profile = parseGmProfile(team.gmProfile, rng);
+  let kept = 0;
+
+  for (const p of expiring) {
+    const summary = await teamCapSummary(team.id, seasonYear, capMode);
+    // [TUNE] Keep him if he's still good enough to matter and the team
+    // has real room; better players and needier positions get priority.
+    const worthKeeping = p.trueOvr >= 62 && (p.trueOvr >= 74 || (needs[p.position] ?? 0) > 0.3);
+    const willingness = 0.35 + profile.winNow * 0.3 + (needs[p.position] ?? 0) * 0.35;
+    if (!worthKeeping || !rng.bool(willingness)) continue;
+
+    const apy = Math.round(marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential }) * (0.95 + rng.float(0, 0.15)));
+    const years = suggestedYears(p.trueOvr, p.age);
+    const usable = summary.capSpace - 3_000_000;
+    if (usable < apy) continue;
+    const ok = await extendContract({ leagueId, playerId: p.id, apy, years, seasonYear, capMode, week }).then(() => true).catch(() => false);
+    if (ok) kept++;
+  }
+  return { kept, released: expiring.length - kept };
+}
+
+async function runAiResignWave(leagueId: string, seasonYear: number, week: number, capMode: LeagueSettings['capMode'], rng: Rng) {
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
   for (const team of teams) {
-    const roster = await prisma.player.findMany({ where: { teamId: team.id, status: 'ACTIVE' }, include: { contract: true } });
-    const expiring = roster.filter((p) => p.contract && p.contract.yearsRemaining === 0);
-    if (expiring.length === 0) continue;
-
-    const needs = teamNeeds(roster.map((p) => ({ id: p.id, position: p.position, trueOvr: p.trueOvr, age: p.age, potential: p.potential })));
-    const profile = parseGmProfile(team.gmProfile, rng);
-    const { teamCapSummary } = await import('./cap-summary');
-
-    for (const p of expiring) {
-      const summary = await teamCapSummary(team.id, seasonYear, capMode);
-      // [TUNE] Keep him if he's still good enough to matter and the team
-      // has real room; better players and needier positions get priority.
-      const worthKeeping = p.trueOvr >= 62 && (p.trueOvr >= 74 || (needs[p.position] ?? 0) > 0.3);
-      const willingness = 0.35 + profile.winNow * 0.3 + (needs[p.position] ?? 0) * 0.35;
-      if (!worthKeeping || !rng.bool(willingness)) continue;
-
-      const apy = Math.round(marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential }) * (0.95 + rng.float(0, 0.15)));
-      const years = suggestedYears(p.trueOvr, p.age);
-      const usable = summary.capSpace - 3_000_000;
-      if (usable < apy) continue;
-      await extendContract({ leagueId, playerId: p.id, apy, years, seasonYear, capMode, week }).catch(() => { /* cap edge case — let him walk */ });
-    }
+    await resignDecisionsForTeam(leagueId, team.id, seasonYear, week, capMode, rng);
   }
 }
 

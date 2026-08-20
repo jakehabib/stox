@@ -4,21 +4,52 @@ import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { advanceWeekAction, getLeaguePhaseAction, AdvanceMode } from '@/app/actions/league';
 
-const OPTIONS: { mode: AdvanceMode; label: string }[] = [
-  { mode: 'week', label: 'Advance 1 Week' },
-  { mode: '3weeks', label: 'Advance 3 Weeks' },
-  { mode: 'midseason', label: 'Advance to Midseason' },
-  { mode: 'playoffs', label: 'Advance to Playoffs' },
-  { mode: 'offseason', label: 'Advance to Offseason' },
-];
-
 /** Phases that need the user to actually do something before the sim keeps going. */
 const GATE_PHASES = new Set(['RESIGN', 'DRAFT', 'FANTASY_DRAFT']);
 const MAX_ITERATIONS = 60; // safety backstop, not a real target
 
 const PHASE_NOUN: Record<string, string> = {
   PRESEASON: 'preseason', REGULAR: 'week', PLAYOFFS: 'playoff round', OFFSEASON: 'offseason step',
+  FREE_AGENCY: 'free agency week',
 };
+
+/**
+ * The dropdown used to show the same five options ("Advance to Midseason",
+ * "Advance to Playoffs", ...) no matter what phase the league was actually
+ * in — once you were already past the regular season those targets either
+ * did nothing or silently collapsed to a 1-step advance, which read as
+ * broken. Options are now built from the phase actually on screen.
+ */
+function optionsFor(phase: string): { mode: AdvanceMode; label: string }[] {
+  if (GATE_PHASES.has(phase)) return []; // nothing to multi-advance into — resolve this stage first
+  if (phase === 'OFFSEASON') {
+    return [
+      { mode: 'week', label: 'Advance 1 Step' },
+      { mode: 'nextstage', label: 'Advance to Re-sign Window' },
+    ];
+  }
+  if (phase === 'FREE_AGENCY') {
+    return [
+      { mode: 'week', label: 'Advance 1 Week' },
+      { mode: '3weeks', label: 'Advance 3 Weeks' },
+      { mode: 'nextstage', label: 'Advance to Draft' },
+    ];
+  }
+  if (phase === 'PLAYOFFS') {
+    return [
+      { mode: 'week', label: 'Advance 1 Round' },
+      { mode: 'offseason', label: 'Advance to Offseason' },
+    ];
+  }
+  // PRESEASON / REGULAR
+  return [
+    { mode: 'week', label: 'Advance 1 Week' },
+    { mode: '3weeks', label: 'Advance 3 Weeks' },
+    { mode: 'midseason', label: 'Advance to Midseason' },
+    { mode: 'playoffs', label: 'Advance to Playoffs' },
+    { mode: 'offseason', label: 'Advance to Offseason' },
+  ];
+}
 
 function stopBefore(phase: string, week: number, mode: AdvanceMode, midseasonWeek: number): boolean {
   if (GATE_PHASES.has(phase)) return true;
@@ -34,10 +65,12 @@ function stopAfter(phase: string, week: number, mode: AdvanceMode, midseasonWeek
   if (mode === 'midseason' && (phase !== 'REGULAR' || week >= midseasonWeek)) return true;
   if (mode === 'playoffs' && phase !== 'REGULAR' && phase !== 'PRESEASON') return true;
   if (mode === 'offseason' && phase === 'OFFSEASON') return true;
+  if (mode === 'nextstage' && phase !== startPhase) return true;
   return false;
 }
 
-export function AdvanceWeekButton({ leagueId }: { leagueId: string }) {
+export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string; currentPhase: string }) {
+  const OPTIONS = optionsFor(currentPhase);
   const [pending, startTransition] = useTransition();
   const [toast, setToast] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
@@ -107,19 +140,21 @@ export function AdvanceWeekButton({ leagueId }: { leagueId: string }) {
   return (
     <div className="relative" ref={ref}>
       <div className="flex">
-        <button onClick={runSingle} disabled={pending} className="btn-primary rounded-r-none">
+        <button onClick={runSingle} disabled={pending} className={`btn-primary ${OPTIONS.length > 0 ? 'rounded-r-none' : ''}`}>
           {pending ? (progress ?? 'Simulating…') : 'Advance ▸'}
         </button>
-        <button
-          onClick={() => setMenuOpen((v) => !v)}
-          disabled={pending}
-          className="btn-primary rounded-l-none border-l border-black/20 px-2"
-          aria-label="More advance options"
-        >
-          ▾
-        </button>
+        {OPTIONS.length > 0 && (
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            disabled={pending}
+            className="btn-primary rounded-l-none border-l border-black/20 px-2"
+            aria-label="More advance options"
+          >
+            ▾
+          </button>
+        )}
       </div>
-      {menuOpen && (
+      {menuOpen && OPTIONS.length > 0 && (
         <div className="absolute right-0 top-full mt-1 w-56 card py-1 z-30 animate-fadeUp shadow-lg">
           {OPTIONS.map((o) => (
             <button

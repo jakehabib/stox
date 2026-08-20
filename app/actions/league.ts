@@ -47,7 +47,7 @@ export async function getLeaguePhaseAction(leagueId: string) {
   return { phase: league.phase, week: league.week, seasonYear: league.seasonYear, seasonLength: settings.seasonLength };
 }
 
-export type AdvanceMode = 'week' | '3weeks' | 'midseason' | 'playoffs' | 'offseason';
+export type AdvanceMode = 'week' | '3weeks' | 'midseason' | 'playoffs' | 'offseason' | 'nextstage';
 
 export async function updateSettingsAction(leagueId: string, formData: FormData) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });

@@ -42,7 +42,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
               <div className="label-sm">{phaseLabel}</div>
               <div className="text-sm font-mono font-semibold">{league.seasonYear} · Wk {league.week}</div>
             </div>
-            <AdvanceWeekButton leagueId={league.id} />
+            <AdvanceWeekButton leagueId={league.id} currentPhase={league.phase} />
           </div>
         </div>
         <LeagueNav leagueId={league.id} />

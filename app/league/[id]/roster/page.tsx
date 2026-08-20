@@ -8,6 +8,7 @@ import { buildScoutedView } from '@/lib/scouting';
 import { positionSortKey } from '@/lib/league-data';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { FillRosterButton } from '@/components/FillRosterButton';
 
 type SortKey = 'pos' | 'ovr' | 'age' | 'potential' | 'cap' | 'years';
 
@@ -75,6 +76,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
           <h1 className="text-2xl font-semibold tracking-tight">Roster</h1>
           <p className="text-muted text-sm mt-1">{players.length} players · {team.city} {team.nickname}</p>
         </div>
+        <FillRosterButton leagueId={league.id} teamId={team.id} />
       </div>
 
       <div className="card overflow-hidden">

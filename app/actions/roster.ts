@@ -2,15 +2,25 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { cutPlayer as cutPlayerLib, signFreeAgentWithCompetition, evaluateOffer, extendContract, restructureContract, leadingCompetingBid } from '@/lib/freeagency';
+import { cutPlayer as cutPlayerLib, signFreeAgentWithCompetition, evaluateOffer, extendContract, restructureContract, leadingCompetingBid, fillRosterForTeam } from '@/lib/freeagency';
 import { parseSettings } from '@/lib/settings';
 import { autoDepthChart } from '@/lib/gen/league';
+import { Rng } from '@/lib/rng';
 
 export async function cutPlayerAction(leagueId: string, playerId: string) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   await cutPlayerLib({ leagueId, playerId, capMode: settings.capMode, seasonYear: league.seasonYear, week: league.week });
   revalidatePath(`/league/${leagueId}`, 'layout');
+}
+
+export async function fillRosterAction(leagueId: string, teamId: string) {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  const rng = new Rng(`fill-roster-${teamId}-${league.seasonYear}-${league.week}`);
+  const result = await fillRosterForTeam({ leagueId, teamId, seasonYear: league.seasonYear, week: league.week, settings, rng });
+  revalidatePath(`/league/${leagueId}`, 'layout');
+  return result;
 }
 
 export async function offerContractAction(leagueId: string, playerId: string, teamId: string, apy: number, years: number) {

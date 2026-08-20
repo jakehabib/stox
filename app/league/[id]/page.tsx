@@ -11,6 +11,7 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { buildFrontOfficeBrief } from '@/lib/frontOffice';
 import { SeasonAnnouncement, AwardLine } from '@/components/SeasonAnnouncement';
 import { Tooltip } from '@/components/Tooltip';
+import { OffseasonRoadmap } from '@/components/OffseasonRoadmap';
 
 const AWARD_TYPES: { type: string; code: string; label: string }[] = [
   { type: 'AWARD_MVP', code: 'MVP', label: 'MVP' },
@@ -93,6 +94,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           awards={seasonAnnouncement.awards}
         />
       )}
+      <OffseasonRoadmap currentPhase={league.phase} />
       {league.phase === 'RESIGN' && (
         <Link href={`/league/${league.id}/resign`} className="card card-pad flex items-center justify-between gap-4 border-warn/40 hover:bg-raised transition-colors">
           <div>
