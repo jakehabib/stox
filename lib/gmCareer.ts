@@ -31,7 +31,7 @@ export interface GmAward {
 
 export interface GmCareerSummary {
   tenureYears: number;
-  firstYear: number | null;
+  firstYear: number;
   wins: number;
   losses: number;
   ties: number;
@@ -71,7 +71,11 @@ function hitThreshold(round: number): number {
   return 64;
 }
 
-export async function buildGmCareerSummary(leagueId: string, team: { id: string; abbr: string }): Promise<GmCareerSummary> {
+export async function buildGmCareerSummary(
+  leagueId: string,
+  team: { id: string; abbr: string; wins: number; losses: number; ties: number },
+  currentSeasonYear: number,
+): Promise<GmCareerSummary> {
   const [seasons, tradeTx, draftPicks, capCharges, tagCount, awardTx] = await Promise.all([
     prisma.teamSeasonRecord.findMany({ where: { teamId: team.id }, orderBy: { year: 'asc' } }),
     prisma.transaction.findMany({ where: { leagueId, type: 'TRADE' }, select: { headline: true } }),
@@ -87,11 +91,21 @@ export async function buildGmCareerSummary(leagueId: string, team: { id: string;
     }),
   ]);
 
-  const tenureYears = seasons.length;
-  const firstYear = seasons[0]?.year ?? null;
-  const wins = seasons.reduce((s, r) => s + r.wins, 0);
-  const losses = seasons.reduce((s, r) => s + r.losses, 0);
-  const ties = seasons.reduce((s, r) => s + r.ties, 0);
+  // TeamSeasonRecord only gets a row once a season fully wraps (playoffs
+  // done) — until then the games already played this year live only on
+  // Team.wins/losses/ties, which resets to 0 at the next RESET_STANDINGS.
+  // Fold that in so the career record isn't missing the season in progress.
+  const currentSeasonLogged = seasons.some((r) => r.year === currentSeasonYear);
+  const currentGamesPlayed = team.wins + team.losses + team.ties;
+  const includeCurrent = !currentSeasonLogged && currentGamesPlayed > 0;
+
+  // "Seasons on the job" counts the one in progress too — you're the GM
+  // this year whether or not a game's been played yet.
+  const tenureYears = seasons.length + (currentSeasonLogged ? 0 : 1);
+  const firstYear = seasons[0]?.year ?? currentSeasonYear;
+  const wins = seasons.reduce((s, r) => s + r.wins, 0) + (includeCurrent ? team.wins : 0);
+  const losses = seasons.reduce((s, r) => s + r.losses, 0) + (includeCurrent ? team.losses : 0);
+  const ties = seasons.reduce((s, r) => s + r.ties, 0) + (includeCurrent ? team.ties : 0);
   const playoffAppearances = seasons.filter((r) => r.playoffResult !== 'MISSED').length;
   const championships = seasons.filter((r) => r.playoffResult === 'CHAMPION').length;
   const runnerUps = seasons.filter((r) => r.playoffResult === 'RUNNER_UP').length;

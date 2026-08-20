@@ -11,7 +11,7 @@ const RESULT_LABEL: Record<string, string> = {
 export default async function GmCareerPage({ params }: { params: { id: string } }) {
   const { league, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
-  const s = await buildGmCareerSummary(league.id, { id: team.id, abbr: team.abbr });
+  const s = await buildGmCareerSummary(league.id, team, league.seasonYear);
 
   const games = s.wins + s.losses + s.ties;
   const winPct = games > 0 ? s.wins / (s.wins + s.losses || 1) : 0;
@@ -23,9 +23,7 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">GM Career</h1>
           <p className="text-muted text-sm mt-1">
-            {s.firstYear
-              ? `Running the ${team.city} ${team.nickname} since ${s.firstYear} — ${s.tenureYears} season${s.tenureYears === 1 ? '' : 's'} on the job.`
-              : `You've just taken over the ${team.city} ${team.nickname}. The book on you starts now.`}
+            Running the {team.city} {team.nickname} since {s.firstYear} — {s.tenureYears} season{s.tenureYears === 1 ? '' : 's'} on the job.
           </p>
         </div>
       </div>
