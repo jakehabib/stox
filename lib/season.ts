@@ -18,6 +18,7 @@ import { gameHeadlines } from './news';
 import { COACH_FIRST, COACH_LAST } from './gen/names';
 import { generateDraftClass, toPlayerCreate } from './gen/players';
 import { classStrengthSummary } from './gen/prospectProfile';
+import { checkAndUpdateRecords, recordBreakHeadline } from './records';
 import { reseedDraftOrder, startRookieDraft } from './draft';
 import { autoDepthChartAll } from './gen/league';
 import { observe } from './scouting';
@@ -566,7 +567,7 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
       return { summary: 'Rosters have aged a year — some careers are over, the rest are a year further along.' };
     }
     case 'RESET_STANDINGS': {
-      await rollSeasonStatsIntoCareer(leagueId);
+      await rollSeasonStatsIntoCareer(leagueId, league.seasonYear);
       await prisma.team.updateMany({
         where: { leagueId },
         data: { wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgnst: 0, divWins: 0, divLosses: 0, confWins: 0, confLosses: 0, playoffSeed: null, eliminated: false },
@@ -641,17 +642,28 @@ async function fireStrugglingCoordinators(leagueId: string, seasonYear: number, 
  * Fold this year's accumulated seasonStats into careerStats, then clear
  * seasonStats for the new year. Runs for every player who's ever had a stat
  * line, active or not, so a player cut mid-season still keeps what he earned.
+ * Also checks the just-finalized season/career lines against LeagueRecord
+ * while both are in hand — see lib/records.ts.
  */
-async function rollSeasonStatsIntoCareer(leagueId: string) {
+async function rollSeasonStatsIntoCareer(leagueId: string, seasonYear: number) {
   const players = await prisma.player.findMany({
     where: { leagueId, NOT: { seasonStats: '{}' } },
-    select: { id: true, seasonStats: true, careerStats: true },
+    select: { id: true, firstName: true, lastName: true, seasonStats: true, careerStats: true, team: { select: { abbr: true } } },
   });
+  const recordInputs: Parameters<typeof checkAndUpdateRecords>[2] = [];
   for (const p of players) {
     const season = readJson<SeasonStats>(p.seasonStats, {});
     if (Object.keys(season).length === 0) continue;
     const career = mergeStats(readJson<SeasonStats>(p.careerStats, {}), season);
     await prisma.player.update({ where: { id: p.id }, data: { careerStats: writeJson(career), seasonStats: '{}' } });
+    recordInputs.push({ id: p.id, firstName: p.firstName, lastName: p.lastName, teamAbbr: p.team?.abbr ?? 'FA', seasonFinal: season, careerFinal: career });
+  }
+
+  const breaks = await checkAndUpdateRecords(leagueId, seasonYear, recordInputs);
+  for (const b of breaks) {
+    await prisma.transaction.create({
+      data: { leagueId, seasonYear, week: 1, type: 'NEWS', teamId: null, headline: 'League Record', detail: recordBreakHeadline(b) },
+    });
   }
 }
 

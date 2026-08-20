@@ -46,6 +46,7 @@ model League {
   draftState   DraftState?
   tradeOffers  TradeOffer[]
   seasonRecords TeamSeasonRecord[]
+  leagueRecords LeagueRecord[]
 }
 
 model DraftState {
@@ -434,4 +435,24 @@ model TeamSeasonRecord {
 
   @@unique([teamId, year])
   @@index([leagueId, year])
+}
+
+// Single-season and career statistical highs, checked/updated once per
+// season during the offseason stats rollover (see lib/records.ts). One row
+// per (leagueId, scope, category) — the current holder, not full history.
+model LeagueRecord {
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  scope    String // SEASON | CAREER
+  category String // e.g. "passYds", "sacks" — matches SeasonStats keys
+  value    Int
+  playerId String
+  playerName String // denormalized — a retired/traded holder still displays correctly
+  teamAbbr String   // team the record was set with (denormalized, same reason)
+  seasonYear Int    // season the record was set in (SEASON) or last improved in (CAREER)
+
+  @@unique([leagueId, scope, category])
+  @@index([leagueId])
 }

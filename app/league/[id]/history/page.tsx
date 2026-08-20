@@ -2,10 +2,16 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { TeamLogo } from '@/components/TeamLogo';
 import { HistoryTeamSelect } from '@/components/HistoryTeamSelect';
+import { statLabel } from '@/lib/statLabels';
 
 const RESULT_LABEL: Record<string, string> = {
   MISSED: 'Missed Playoffs', WILDCARD: 'Lost Wild Card', DIVISIONAL: 'Lost Divisional',
   CONFERENCE: 'Lost Conference', RUNNER_UP: 'Runner-Up', CHAMPION: 'Champion',
+};
+
+const AWARD_LABEL: Record<string, string> = {
+  AWARD_MVP: 'MVP', AWARD_OPOY: 'Offensive Player of the Year', AWARD_DPOY: 'Defensive Player of the Year',
+  AWARD_ROTY: 'Rookie of the Year', AWARD_SBMVP: 'Championship MVP',
 };
 
 export default async function HistoryPage({ params, searchParams }: { params: { id: string }; searchParams: { team?: string } }) {
@@ -13,17 +19,94 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
   const allTeams = await prisma.team.findMany({ where: { leagueId: league.id }, orderBy: { city: 'asc' } });
   const teamId = searchParams.team || userTeam?.id || allTeams[0]?.id;
   const team = allTeams.find((t) => t.id === teamId);
+  const teamById = new Map(allTeams.map((t) => [t.id, t]));
 
   const records = teamId
     ? await prisma.teamSeasonRecord.findMany({ where: { teamId }, orderBy: { year: 'desc' } })
     : [];
   const championships = records.filter((r) => r.playoffResult === 'CHAMPION');
 
+  const [leagueRecords, awardWinners] = await Promise.all([
+    prisma.leagueRecord.findMany({ where: { leagueId: league.id } }),
+    prisma.transaction.findMany({
+      where: { leagueId: league.id, type: { in: Object.keys(AWARD_LABEL) } },
+      orderBy: [{ seasonYear: 'desc' }, { createdAt: 'asc' }],
+    }),
+  ]);
+  const seasonRecords = leagueRecords.filter((r) => r.scope === 'SEASON');
+  const careerRecords = leagueRecords.filter((r) => r.scope === 'CAREER');
+
   return (
     <div className="space-y-5">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Ring of Honor</h1>
+        <p className="text-muted text-sm mt-1">League-wide records and award winners — every franchise's story feeds into this one.</p>
+      </div>
+
+      {leagueRecords.length > 0 && (
+        <div className="grid md:grid-cols-2 gap-5">
+          <div className="card overflow-hidden">
+            <div className="px-4 py-3 border-b border-line font-semibold text-sm">Single-Season Records</div>
+            <table className="table-clean">
+              <thead><tr><th>Category</th><th>Record</th><th>Player</th><th>Year</th></tr></thead>
+              <tbody>
+                {seasonRecords.map((r) => (
+                  <tr key={r.id}>
+                    <td className="text-muted">{statLabel(r.category)}</td>
+                    <td className="font-mono font-semibold">{r.value.toLocaleString()}</td>
+                    <td>{r.playerName} <span className="text-xs text-muted">{r.teamAbbr}</span></td>
+                    <td className="font-mono text-muted">{r.seasonYear}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="card overflow-hidden">
+            <div className="px-4 py-3 border-b border-line font-semibold text-sm">Career Records</div>
+            <table className="table-clean">
+              <thead><tr><th>Category</th><th>Record</th><th>Player</th><th>As Of</th></tr></thead>
+              <tbody>
+                {careerRecords.map((r) => (
+                  <tr key={r.id}>
+                    <td className="text-muted">{statLabel(r.category)}</td>
+                    <td className="font-mono font-semibold">{r.value.toLocaleString()}</td>
+                    <td>{r.playerName} <span className="text-xs text-muted">{r.teamAbbr}</span></td>
+                    <td className="font-mono text-muted">{r.seasonYear}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {awardWinners.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="px-4 py-3 border-b border-line font-semibold text-sm">Award Winners</div>
+          <table className="table-clean">
+            <thead><tr><th>Year</th><th>Award</th><th>Player</th><th>Team</th><th>Stat Line</th></tr></thead>
+            <tbody>
+              {awardWinners.map((t) => {
+                const winnerTeam = t.teamId ? teamById.get(t.teamId) : null;
+                return (
+                  <tr key={t.id}>
+                    <td className="font-mono text-muted">{t.seasonYear}</td>
+                    <td className="text-gold">🏆 {AWARD_LABEL[t.type] ?? t.type}</td>
+                    <td>{t.headline}</td>
+                    <td>{winnerTeam ? <span className="flex items-center gap-1.5"><TeamLogo seed={winnerTeam.id} abbr={winnerTeam.abbr} size={18} /> {winnerTeam.abbr}</span> : <span className="text-muted">FA</span>}</td>
+                    <td className="text-xs text-muted">{t.detail}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="border-t border-line/60 pt-5 space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Franchise History</h1>
+          <h2 className="text-xl font-semibold tracking-tight">Franchise History</h2>
           <p className="text-muted text-sm mt-1">Every completed season survives here, even after standings reset for the new year.</p>
         </div>
         <HistoryTeamSelect leagueId={league.id} teamId={teamId} options={allTeams.map((t) => ({ id: t.id, label: `${t.city} ${t.nickname}` }))} />
@@ -74,6 +157,7 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
             )}
           </tbody>
         </table>
+      </div>
       </div>
     </div>
   );
