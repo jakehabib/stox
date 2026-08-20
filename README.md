@@ -374,3 +374,32 @@ ever force-pushed over, so every state below still exists in git history).
   players across every position group) and by exercising the depth
   chart's actual up/down reorder buttons end-to-end (swap persisted,
   then reverted), confirming zero console errors throughout.
+- **2026-08-20 — Redesign Stage 5: Draft Hub + Draft Day.** Checkpoint
+  before this change: `cad04f6`. One page serves two very different
+  moments — the year-round scouting hub (browsing the ~300-deep class
+  before the draft opens) and the live draft event — so it got two
+  treatments:
+  - **Live draft**: replaced the plain "On the clock" pill with a
+    team-tinted hero panel (radial gradient, watermark team logo,
+    stadium-light texture — the same "event" language as the
+    `/design-system` Draft Day mockup), showing round/pick/team and
+    embedding the real `LiveDraftTicker` unchanged (pause, fast-forward,
+    last-pick readout, the actual AI-pick-tick timer). Deliberately did
+    *not* reuse the mockup `OnTheClock` component as-is — it assumed a
+    countdown clock the real page has no equivalent state for, so
+    building a fake mm:ss timer would have shown information that isn't
+    real. Kept the functional ticker instead of inventing one.
+  - **Big Board table** (used in both states): position column now uses
+    `positionBadgeClass`, OVR/rank columns use `.stat-value`, the table
+    wrapper switched from `.card` to `.panel`, and the position-filter
+    pills moved into a `SectionHeading` action slot instead of a bare
+    row. Upcoming Picks strip and Recent Picks list switched to `.panel`
+    for the denser data-block look, matching Roster/Depth Chart.
+  - No changes to sorting, filtering, shortlist, big-board consensus
+    ranking, or the pick/draft server actions — every `SortKey`,
+    `sortHref`/`posHref`/`shortlistHref` builder, and the `DraftPickButton`/
+    `ShortlistStar`/`LiveDraftTicker` prop wiring is untouched.
+  - Verified against a real league mid-live-draft (round 1, pick 21,
+    user on the clock) and a real league still in-season with the
+    scouting hub showing a full 300-player class, both via Playwright
+    with zero console errors.

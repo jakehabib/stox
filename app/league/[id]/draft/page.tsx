@@ -6,11 +6,14 @@ import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE, AI, Position } from '@/lib/tuning';
 import { bigBoardScore } from '@/lib/gen/prospectProfile';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { DraftPickButton } from '@/components/DraftPickButton';
 import { LiveDraftTicker } from '@/components/LiveDraftTicker';
 import { ShortlistStar } from '@/components/ShortlistStar';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
+import { SectionHeading } from '@/components/ds/SectionHeading';
+import { positionBadgeClass } from '@/components/ds/positionColor';
 
 type SortKey = 'consensus' | 'pos' | 'ovr' | 'age' | 'potential';
 
@@ -163,15 +166,18 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     return `/league/${league.id}/draft?${posP}${shortlistOnly ? '' : 'shortlist=1&'}${suffix}`;
   };
 
+  const onClockColor = onClockTeam ? generateTeamLogoParams(onClockTeam.id).primary : undefined;
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {classOutlook && (
-        <div className="card card-pad flex items-start gap-3 border-accent2/30">
-          <span className="text-xs text-accent2 uppercase tracking-wider shrink-0 mt-0.5">Class Outlook</span>
+        <div className="panel px-4 py-3 flex items-start gap-3">
+          <span className="label-sm text-accent2 shrink-0 mt-0.5">Class Outlook</span>
           <p className="text-sm text-chalk/90">{classOutlook.detail}</p>
         </div>
       )}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+
+      {!(state && onClockTeam) && (
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
             {state ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft — Round ${state.round}`) : `${league.seasonYear} Draft Class`}
@@ -182,18 +188,42 @@ export default async function DraftPage({ params, searchParams }: { params: { id
               : `${pool.length} prospects on the board — scout them now, the draft opens after free agency.`}
           </p>
         </div>
-        {state && onClockTeam && (
-          <div className="flex items-center gap-2 flex-wrap">
-            {!isUserOnClock && (
-              <div className="pill border-line text-muted">On the clock: {onClockTeam.city} {onClockTeam.nickname}</div>
-            )}
+      )}
+
+      {state && onClockTeam && (
+        <div
+          className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
+          style={{
+            ['--team-accent' as never]: onClockColor,
+            borderColor: 'var(--team-accent)',
+            background: 'radial-gradient(ellipse 120% 140% at 0% 50%, color-mix(in srgb, var(--team-accent) 18%, transparent), transparent 70%)',
+          }}
+        >
+          <div
+            className="absolute inset-0 opacity-[0.05] pointer-events-none"
+            style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
+          />
+          <TeamLogo seed={onClockTeam.id} abbr={onClockTeam.abbr} size={240} className="watermark-logo opacity-[0.06] -right-16 -top-16" />
+
+          <div className="relative flex flex-wrap items-center justify-between gap-4 px-6 py-6">
+            <div className="flex items-center gap-4 min-w-[260px]">
+              <TeamLogo seed={onClockTeam.id} abbr={onClockTeam.abbr} size={56} />
+              <div>
+                <div className="label-sm">
+                  {state.kind === 'FANTASY' ? 'Fantasy Draft' : `Round ${state.round}`} · Pick {state.pickIndex + 1} of {totalPicks}
+                </div>
+                <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1" style={{ color: 'var(--team-text)' }}>
+                  {isUserOnClock ? 'You Are On The Clock' : `${onClockTeam.city} On The Clock`}
+                </div>
+              </div>
+            </div>
             <LiveDraftTicker leagueId={league.id} userTeamId={team.id} isUserOnClock={isUserOnClock} draftComplete={false} />
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {upcomingPicks.length > 1 && (
-        <div className="card card-pad">
+        <div className="panel p-4">
           <h2 className="label-sm mb-2">Upcoming Picks</h2>
           <div className="flex gap-1.5 overflow-x-auto pb-1">
             {upcomingPicks.map((p) => (
@@ -217,67 +247,76 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         </div>
       )}
 
-      <div className="flex gap-2 flex-wrap items-center">
-        <a href={posHref()} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</a>
-        {positions.map((pos) => (
-          <a key={pos} href={posHref(pos)} className={`pill ${searchParams.pos === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</a>
-        ))}
-        <a href={shortlistHref()} className={`pill ${shortlistOnly ? 'border-gold text-gold bg-gold/10' : 'border-line text-muted'}`}>
-          ★ Shortlist {shortlistIds.size > 0 && `(${shortlistIds.size})`}
-        </a>
+      <div className="section">
+        <SectionHeading
+          title="Big Board"
+          action={
+            <div className="flex gap-2 flex-wrap items-center">
+              <a href={posHref()} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</a>
+              {positions.map((pos) => (
+                <a key={pos} href={posHref(pos)} className={`pill ${searchParams.pos === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</a>
+              ))}
+              <a href={shortlistHref()} className={`pill ${shortlistOnly ? 'border-gold text-gold bg-gold/10' : 'border-line text-muted'}`}>
+                ★ Shortlist {shortlistIds.size > 0 && `(${shortlistIds.size})`}
+              </a>
+            </div>
+          }
+        />
+
+        <div className="panel overflow-hidden">
+          <table className="table-clean">
+            <thead>
+              <tr>
+                <th></th>
+                <th><a href={sortHref('consensus')} className="hover:text-chalk">Rank{sortKey === 'consensus' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th>Name</th>
+                <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th><a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th>Projection</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map(({ p, view }) => {
+                const potentialForLabel = view.revealed ? p.potential : (view.potLow + view.potHigh) / 2;
+                const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0 });
+                return (
+                  <tr key={p.id}>
+                    <td><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>
+                    <td className="stat-value text-stat-sm text-muted text-right">{rankById.get(p.id) ?? '—'}</td>
+                    <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
+                    <td className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <a href={`/league/${league.id}/player/${p.id}`} className="flex items-center gap-2 hover:text-accent2">
+                          <PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
+                        </a>
+                        {rankBadge(p.id) && (
+                          <span className={`pill text-[10px] px-1.5 py-0.5 border-current ${rankBadge(p.id)!.className}`}>{rankBadge(p.id)!.label}</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="text-muted">{p.age}</td>
+                    <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
+                    <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+                    <td><span className={`text-xs font-medium ${label.className}`}>{label.label}</span></td>
+                    <td>{isUserOnClock && <DraftPickButton leagueId={league.id} teamId={team.id} playerId={p.id} />}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div className="card overflow-hidden">
-        <table className="table-clean">
-          <thead>
-            <tr>
-              <th></th>
-              <th><a href={sortHref('consensus')} className="hover:text-chalk">Rank{sortKey === 'consensus' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-              <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-              <th>Name</th>
-              <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-              <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-              <th><a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-              <th>Projection</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map(({ p, view }) => {
-              const potentialForLabel = view.revealed ? p.potential : (view.potLow + view.potHigh) / 2;
-              const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0 });
-              return (
-                <tr key={p.id}>
-                  <td><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>
-                  <td className="font-mono text-xs text-muted text-right">{rankById.get(p.id) ?? '—'}</td>
-                  <td className="font-mono text-xs text-muted">{p.position}</td>
-                  <td className="font-medium">
-                    <div className="flex items-center gap-2">
-                      <a href={`/league/${league.id}/player/${p.id}`} className="flex items-center gap-2 hover:text-accent2">
-                        <PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
-                      </a>
-                      {rankBadge(p.id) && (
-                        <span className={`pill text-[10px] px-1.5 py-0.5 border-current ${rankBadge(p.id)!.className}`}>{rankBadge(p.id)!.label}</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="text-muted">{p.age}</td>
-                  <td className={`font-mono font-semibold ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
-                  <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
-                  <td><span className={`text-xs font-medium ${label.className}`}>{label.label}</span></td>
-                  <td>{isUserOnClock && <DraftPickButton leagueId={league.id} teamId={team.id} playerId={p.id} />}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="card card-pad">
-        <h2 className="font-semibold mb-2 text-sm">Recent Picks</h2>
-        <div className="space-y-1.5 text-sm">
-          {recentPicks.map((t) => <div key={t.id} className="text-muted">{t.headline}</div>)}
-          {recentPicks.length === 0 && <p className="text-muted text-sm">No picks yet.</p>}
+      <div className="section">
+        <SectionHeading title="Recent Picks" />
+        <div className="panel px-4">
+          {recentPicks.map((t) => (
+            <div key={t.id} className="text-sm text-muted py-2 border-b border-line/60 last:border-0">{t.headline}</div>
+          ))}
+          {recentPicks.length === 0 && <p className="text-muted text-sm py-2">No picks yet.</p>}
         </div>
       </div>
     </div>
