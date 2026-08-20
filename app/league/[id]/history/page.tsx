@@ -3,6 +3,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { TeamLogo } from '@/components/TeamLogo';
 import { HistoryTeamSelect } from '@/components/HistoryTeamSelect';
 import { statLabel } from '@/lib/statLabels';
+import { buildDynastyLeaderboard } from '@/lib/dynastyScore';
 
 const RESULT_LABEL: Record<string, string> = {
   MISSED: 'Missed Playoffs', WILDCARD: 'Lost Wild Card', DIVISIONAL: 'Lost Divisional',
@@ -26,12 +27,13 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
     : [];
   const championships = records.filter((r) => r.playoffResult === 'CHAMPION');
 
-  const [leagueRecords, awardWinners] = await Promise.all([
+  const [leagueRecords, awardWinners, dynastyLeaderboard] = await Promise.all([
     prisma.leagueRecord.findMany({ where: { leagueId: league.id } }),
     prisma.transaction.findMany({
       where: { leagueId: league.id, type: { in: Object.keys(AWARD_LABEL) } },
       orderBy: [{ seasonYear: 'desc' }, { createdAt: 'asc' }],
     }),
+    buildDynastyLeaderboard(league.id),
   ]);
   const seasonRecords = leagueRecords.filter((r) => r.scope === 'SEASON');
   const careerRecords = leagueRecords.filter((r) => r.scope === 'CAREER');
@@ -41,6 +43,32 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Ring of Honor</h1>
         <p className="text-muted text-sm mt-1">League-wide records and award winners — every franchise's story feeds into this one.</p>
+      </div>
+
+      <div className="card overflow-hidden">
+        <div className="px-4 py-3 border-b border-line">
+          <div className="font-semibold text-sm">Dynasty Score</div>
+          <div className="text-xs text-muted mt-0.5">Championships, playoff depth, win rate, draft hits, cap discipline, awards, and league records held — rolled into one ranking.</div>
+        </div>
+        <table className="table-clean">
+          <thead><tr><th>Rank</th><th>Team</th><th>Score</th><th>Driven By</th></tr></thead>
+          <tbody>
+            {dynastyLeaderboard.map((d, i) => (
+              <tr key={d.teamId} className={d.isUser ? 'bg-accent/5' : ''}>
+                <td className="font-mono text-muted">{i + 1}</td>
+                <td>
+                  <span className="flex items-center gap-1.5">
+                    <TeamLogo seed={d.teamId} abbr={d.teamAbbr} size={18} />
+                    <span className={d.isUser ? 'font-semibold' : ''}>{d.teamName}</span>
+                    {d.isUser && <span className="pill border-accent/40 text-accent text-[10px]">You</span>}
+                  </span>
+                </td>
+                <td className="font-mono font-semibold">{d.score}</td>
+                <td className="text-xs text-muted">{d.breakdown.slice(0, 3).map((b) => b.label).join(' · ') || 'Nothing on the board yet'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {leagueRecords.length > 0 && (
