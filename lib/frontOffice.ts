@@ -21,9 +21,12 @@ import { Position } from './tuning';
 
 export interface BriefItem {
   category: 'Roster' | 'Scouting' | 'Contracts' | 'Trade Market' | 'Cap' | 'Trade Offers';
-  text: string;
+  headline: string;
+  detail: string;
+  /** Short call-to-action label, e.g. "Browse Free Agents". */
+  action: string;
   /** League-relative path, e.g. "/roster" — caller prefixes with /league/{id}. */
-  href?: string;
+  href: string;
 }
 
 export async function buildFrontOfficeBrief(
@@ -45,8 +48,10 @@ export async function buildFrontOfficeBrief(
   if (worstNeed && worstNeed[1] > 0.4) {
     items.push({
       category: 'Roster',
-      text: `${worstNeed[0]} is your thinnest position right now — worth addressing before it costs you a game.`,
-      href: '/roster',
+      headline: `${worstNeed[0]} is your thinnest position`,
+      detail: 'Worth addressing before it costs you a game.',
+      action: 'Browse Free Agents',
+      href: '/free-agency',
     });
   }
 
@@ -59,7 +64,9 @@ export async function buildFrontOfficeBrief(
   if (bestScouted) {
     items.push({
       category: 'Scouting',
-      text: `Our film department has the deepest book on ${bestScouted.player.firstName} ${bestScouted.player.lastName} among this year's prospects — ${bestScouted.confidence}% confidence, range ${bestScouted.ovrLow}-${bestScouted.ovrHigh}.`,
+      headline: `Deepest book on the board: ${bestScouted.player.firstName} ${bestScouted.player.lastName}`,
+      detail: `${bestScouted.confidence}% confidence, range ${bestScouted.ovrLow}-${bestScouted.ovrHigh}.`,
+      action: 'View Draft Board',
       href: '/draft',
     });
   }
@@ -73,7 +80,9 @@ export async function buildFrontOfficeBrief(
     const mv = marketValue({ ovr: expiring.trueOvr, position: expiring.position as Position, age: expiring.age });
     items.push({
       category: 'Contracts',
-      text: `${expiring.firstName} ${expiring.lastName}'s contract expires soon. Market rate is around ${formatMoney(mv)}/yr — get ahead of it before he hits the open market.`,
+      headline: `${expiring.firstName} ${expiring.lastName}'s contract expires soon`,
+      detail: `Market rate is around ${formatMoney(mv)}/yr — get ahead of it before he hits the open market.`,
+      action: 'Open Extension',
       href: `/player/${expiring.id}`,
     });
   }
@@ -103,7 +112,9 @@ export async function buildFrontOfficeBrief(
     if (best) {
       items.push({
         category: 'Trade Market',
-        text: `${best.team.city} is short at ${best.pos} — a position you're deep at. Worth a call.`,
+        headline: `${best.team.city} is short at ${best.pos}`,
+        detail: "A position you're deep at — worth a call.",
+        action: 'Explore Trade',
         href: '/trade',
       });
     }
@@ -125,9 +136,11 @@ export async function buildFrontOfficeBrief(
       }
       items.push({
         category: 'Cap',
-        text: bestCut
-          ? `You're over the cap by ${formatMoney(-summary.capSpace)}. Cutting ${bestCut.name} would clear ${formatMoney(bestCut.savings)}.`
-          : `You're over the cap by ${formatMoney(-summary.capSpace)} with no easy cuts — a restructure or trade may be the only way out.`,
+        headline: `You're over the cap by ${formatMoney(-summary.capSpace)}`,
+        detail: bestCut
+          ? `Cutting ${bestCut.name} would clear ${formatMoney(bestCut.savings)}.`
+          : 'No easy cuts — a restructure or trade may be the only way out.',
+        action: 'Open Cap',
         href: '/cap',
       });
     }
@@ -138,7 +151,9 @@ export async function buildFrontOfficeBrief(
   if (offerCount > 0) {
     items.push({
       category: 'Trade Offers',
-      text: `${offerCount} team${offerCount > 1 ? 's are' : ' is'} waiting on a response to a trade offer.`,
+      headline: `${offerCount} trade offer${offerCount > 1 ? 's' : ''} waiting on a response`,
+      detail: offerCount > 1 ? 'A few teams are waiting to hear back.' : 'One team is waiting to hear back.',
+      action: 'Review Offers',
       href: '/trade',
     });
   }

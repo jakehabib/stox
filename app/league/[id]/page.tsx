@@ -3,15 +3,22 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { formatMoney } from '@/lib/cap';
-import { ratingTier } from '@/lib/ratings';
 import { readJson } from '@/lib/json';
 import { shortResult } from '@/lib/sim/recap';
 import { teamNeeds, needSeverity } from '@/lib/ai/gm';
-import { TeamLogo } from '@/components/TeamLogo';
 import { buildFrontOfficeBrief } from '@/lib/frontOffice';
+import { buildGmCareerSummary } from '@/lib/gmCareer';
+import { estimateWinProbability } from '@/lib/winProbability';
+import { transactionCategory } from '@/lib/newsCategory';
 import { SeasonAnnouncement, AwardLine } from '@/components/SeasonAnnouncement';
-import { Tooltip } from '@/components/Tooltip';
 import { OffseasonRoadmap } from '@/components/OffseasonRoadmap';
+import { TeamHeader } from '@/components/ds/TeamHeader';
+import { FrontOfficeBrief } from '@/components/ds/FrontOfficeBrief';
+import { RosterNeeds } from '@/components/ds/RosterNeeds';
+import { NewsRow, NewsCategory } from '@/components/ds/NewsRow';
+import { StandingsTable } from '@/components/ds/StandingsTable';
+import { SectionHeading } from '@/components/ds/SectionHeading';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 const AWARD_TYPES: { type: string; code: string; label: string }[] = [
   { type: 'AWARD_MVP', code: 'MVP', label: 'MVP' },
@@ -21,22 +28,27 @@ const AWARD_TYPES: { type: string; code: string; label: string }[] = [
   { type: 'AWARD_SBMVP', code: 'SB MVP', label: 'Championship MVP' },
 ];
 
+const ORDINAL = (n: number) => {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
+};
+
 export default async function TeamDashboard({ params }: { params: { id: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
 
-  const [roster, upcomingGames, recentGames, picks, transactions] = await Promise.all([
+  const [roster, upcomingGames, recentGames, picks, transactions, divisionTeams] = await Promise.all([
     prisma.player.findMany({ where: { teamId: team.id }, orderBy: { trueOvr: 'desc' } }),
     prisma.game.findMany({ where: { leagueId: league.id, OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }], played: false }, orderBy: { week: 'asc' }, take: 1, include: { homeTeam: true, awayTeam: true } }),
     prisma.game.findMany({ where: { leagueId: league.id, OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }], played: true }, orderBy: { week: 'desc' }, take: 3, include: { homeTeam: true, awayTeam: true } }),
     prisma.draftPick.count({ where: { ownerTeamId: team.id, used: false } }),
     prisma.transaction.findMany({ where: { leagueId: league.id, OR: [{ teamId: team.id }, { teamId: null }] }, orderBy: { createdAt: 'desc' }, take: 6 }),
+    prisma.team.findMany({ where: { leagueId: league.id, conference: team.conference, division: team.division } }),
   ]);
 
-  // Proactive "you just won the league" moment — the season's CHAMPION/AWARD
-  // transactions and the seasonYear increment happen in different offseason
-  // steps, so this naturally shows for the first step or two of OFFSEASON
-  // and disappears once seasonYear rolls over, with no extra state to track.
+  // --- Season announcement (unchanged from the prior page — a proactive
+  // "you just won the league" moment, not part of this visual pass) --------
   let seasonAnnouncement: { championName: string; championTeamId: string; championAbbr: string; awards: AwardLine[] } | null = null;
   if (league.phase === 'OFFSEASON') {
     const [championTx, awardTxs] = await Promise.all([
@@ -76,6 +88,91 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   const topNeeds = Object.entries(needs).sort((a, b) => b[1] - a[1]).slice(0, 5).filter(([, v]) => v > 0.1);
   const injured = roster.filter((p) => p.injuryWeeks > 0);
   const next = upcomingGames[0];
+  const tenure = await buildGmCareerSummary(league.id, team, league.seasonYear);
+  const teamColor = generateTeamLogoParams(team.id).primary;
+
+  // --- Next matchup + a display-only win probability read (see lib/winProbability.ts) ---
+  let nextGame: { teamId: string; abbr: string; city: string; wins: number; losses: number; winProb: number; home: boolean } | undefined;
+  if (next) {
+    const oppTeam = next.homeTeamId === team.id ? next.awayTeam : next.homeTeam;
+    const oppRoster = await prisma.player.findMany({ where: { teamId: oppTeam.id }, select: { trueOvr: true } });
+    const oppOverall = Math.round(oppRoster.reduce((s, p) => s + p.trueOvr, 0) / Math.max(1, oppRoster.length));
+    const winProb = estimateWinProbability({
+      myOverall: overall, oppOverall,
+      myWins: team.wins, myLosses: team.losses, oppWins: oppTeam.wins, oppLosses: oppTeam.losses,
+    });
+    nextGame = { teamId: oppTeam.id, abbr: oppTeam.abbr, city: oppTeam.city, wins: oppTeam.wins, losses: oppTeam.losses, winProb, home: next.homeTeamId === team.id };
+  }
+
+  // --- Division standings + a real "last five" form guide (existing Game
+  // results only — no new tracked state) --------------------------------
+  const divisionSorted = [...divisionTeams].sort((a, b) => {
+    const pctA = (a.wins + a.ties * 0.5) / Math.max(1, a.wins + a.losses + a.ties);
+    const pctB = (b.wins + b.ties * 0.5) / Math.max(1, b.wins + b.losses + b.ties);
+    return pctB - pctA;
+  });
+  const divisionRank = divisionSorted.findIndex((t) => t.id === team.id) + 1;
+  const lastFiveByTeam = await Promise.all(divisionSorted.map(async (t) => {
+    const games = await prisma.game.findMany({
+      where: { leagueId: league.id, OR: [{ homeTeamId: t.id }, { awayTeamId: t.id }], played: true },
+      orderBy: { week: 'desc' }, take: 5, select: { homeTeamId: true, homeScore: true, awayScore: true },
+    });
+    const results = games.reverse().map((g): 'W' | 'L' | 'T' => {
+      const my = g.homeTeamId === t.id ? g.homeScore : g.awayScore;
+      const opp = g.homeTeamId === t.id ? g.awayScore : g.homeScore;
+      return my === opp ? 'T' : my > opp ? 'W' : 'L';
+    });
+    return { teamId: t.id, results };
+  }));
+  const lastFiveMap = new Map(lastFiveByTeam.map((r) => [r.teamId, r.results]));
+
+  // --- League Wire — real transactions and real recent-game recaps,
+  // combined and sorted by recency. No new schema; both already existed.
+  // A transaction's team can be anyone in the league, not just this
+  // division, so resolve abbrs from exactly the teams referenced here. ---
+  const txTeamIds = Array.from(new Set(transactions.map((t) => t.teamId).filter((id): id is string => !!id)));
+  const wireTeams = txTeamIds.length > 0
+    ? await prisma.team.findMany({ where: { id: { in: txTeamIds } }, select: { id: true, abbr: true } })
+    : [];
+  const wireTeamAbbr = new Map(wireTeams.map((t) => [t.id, t.abbr]));
+
+  interface WireEntry { key: string; seasonYear: number; week: number; render: (featured: boolean) => React.ReactNode }
+  const wireFromTx: WireEntry[] = transactions.map((t) => ({
+    key: t.id, seasonYear: t.seasonYear, week: t.week,
+    render: (featured) => (
+      <NewsRow
+        key={t.id} featured={featured}
+        category={transactionCategory(t.type, t.headline) as NewsCategory}
+        teamId={t.teamId ?? undefined} abbr={t.teamId ? wireTeamAbbr.get(t.teamId) : undefined}
+        headline={t.headline} detail={t.detail || undefined} meta={`WK ${t.week}`}
+      />
+    ),
+  }));
+  const wireFromGames: WireEntry[] = recentGames.map((g) => {
+    const box = readJson<any>(g.boxScore, null);
+    const oppTeam = g.homeTeamId === team.id ? g.awayTeam : g.homeTeam;
+    const won = (g.homeTeamId === team.id ? g.homeScore : g.awayScore) > (g.homeTeamId === team.id ? g.awayScore : g.homeScore);
+    return {
+      key: g.id, seasonYear: league.seasonYear, week: g.week,
+      render: (featured) => (
+        <NewsRow
+          key={g.id} featured={featured}
+          category="GAME"
+          teamId={team.id} abbr={team.abbr}
+          headline={`${team.city} ${won ? 'beat' : 'lost to'} ${oppTeam.city}`}
+          detail={g.recap || undefined}
+          meta={`WK ${g.week}`}
+          metric={box ? shortResult(box) : `${g.homeScore}-${g.awayScore}`}
+        />
+      ),
+    };
+  });
+  // Games first so a real result outranks same-week trivia news on a tie —
+  // "what happened last week" belongs above "who's pacing the league."
+  const wire = [...wireFromGames, ...wireFromTx]
+    .sort((a, b) => b.seasonYear - a.seasonYear || b.week - a.week)
+    .slice(0, 6)
+    .map((w, i) => w.render(i === 0));
 
   return (
     <div className="space-y-8">
@@ -106,142 +203,61 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           <span className="text-xs text-accent2">Go to Re-sign →</span>
         </Link>
       )}
-      <div className="flex items-end justify-between flex-wrap gap-4">
-        <div className="flex items-center gap-4">
-          <TeamLogo seed={team.id} abbr={team.abbr} size={64} />
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{team.city} {team.nickname}</h1>
-            <p className="text-muted text-sm mt-1">
-              {team.conference} {team.division} · {team.wins}-{team.losses}{team.ties ? `-${team.ties}` : ''} ·
-              {' '}Overall <span className={ratingTier(overall).className}>{overall}</span> ({ratingTier(overall).label})
-            </p>
-          </div>
-        </div>
-        <div className="flex gap-2 text-sm text-muted">
-          <span className="pill border-line">{team.offScheme}</span>
-          <span className="pill border-line">{team.defScheme}</span>
-        </div>
-      </div>
 
-      <div className="grid md:grid-cols-4 gap-4">
-        <div className="card card-pad">
-          <div className="label-sm mb-1">Next Game</div>
-          {next ? (
-            <>
-              <div className="font-semibold flex items-center gap-2">
-                {next.homeTeamId === team.id ? 'vs' : '@'}
-                <TeamLogo seed={next.homeTeamId === team.id ? next.awayTeam.id : next.homeTeam.id} abbr={next.homeTeamId === team.id ? next.awayTeam.abbr : next.homeTeam.abbr} size={22} />
-                {next.homeTeamId === team.id ? next.awayTeam.abbr : next.homeTeam.abbr}
-              </div>
-              <div className="text-xs text-muted mt-1">Week {next.week} · {next.kind}</div>
-            </>
-          ) : <div className="text-sm text-muted">Season complete</div>}
-        </div>
-        <div className="card card-pad">
-          <div className="label-sm mb-1">Roster</div>
-          <div className="font-semibold">{roster.length} players</div>
-          <div className="text-xs text-muted mt-1">{injured.length} on injury report</div>
-        </div>
-        <div className="card card-pad">
-          <div className="label-sm mb-1 inline-flex items-center gap-1.5">Cap Space<Tooltip text="What's left under this year's salary cap after every active contract's cap hit. Negative means you're over the cap and need to clear room before you can sign or extend anyone." /></div>
-          {cap ? (
-            <div className={`font-semibold font-mono ${cap.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(cap.capSpace)}</div>
-          ) : <div className="font-semibold text-muted">Cap Off</div>}
-          <div className="text-xs text-muted mt-1">{cap ? `${formatMoney(cap.capUsed)} used` : 'No spending limit'}</div>
-        </div>
-        <div className="card card-pad">
-          <div className="label-sm mb-1">Draft Capital</div>
-          <div className="font-semibold">{picks} picks owned</div>
-          <Link href={`/league/${league.id}/draft`} className="text-xs text-accent2 hover:underline">View draft board →</Link>
-        </div>
+      <div style={{ ['--team-accent' as never]: teamColor }}>
+        <TeamHeader
+          teamId={team.id} abbr={team.abbr} city={team.city} nickname={team.nickname}
+          wins={team.wins} losses={team.losses} ties={team.ties}
+          standing={`${ORDINAL(divisionRank)} · ${team.conference} ${team.division}`}
+          tenureLabel={tenure.tenureYears <= 1 ? 'Your first season' : `Year ${tenure.tenureYears} of your tenure`}
+          stats={[
+            cap
+              ? { value: formatMoney(cap.capSpace), label: 'Cap Space', color: cap.capSpace >= 0 ? 'text-accent' : 'text-bad' }
+              : { value: 'Off', label: 'Cap Space' },
+            { value: `${roster.length}${injured.length ? ` (${injured.length} inj)` : ''}`, label: 'Roster' },
+            { value: `${picks}`, label: 'Picks Owned' },
+          ]}
+          nextGame={nextGame}
+        />
       </div>
-
-      {brief.length > 0 && (
-        <div className="card card-pad">
-          <h2 className="font-semibold mb-3">Front Office Brief — Week {league.week}</h2>
-          <div className="space-y-2.5">
-            {brief.map((item, i) => (
-              <Link
-                key={i}
-                href={item.href ? `/league/${league.id}${item.href}` : '#'}
-                className="flex items-start gap-3 text-sm px-3 py-2 -mx-3 rounded-lg hover:bg-raised transition-colors"
-              >
-                <span className="label-sm w-24 shrink-0 pt-0.5">{item.category}</span>
-                <span className="flex-1 text-chalk/90">{item.text}</span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          <div className="card card-pad">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-semibold inline-flex items-center gap-1.5">
-                Roster Needs
-                <Tooltip text="Blends whether a position is understaffed with how the starter (and, at high-snap spots, the backup) grades out. Only positions above a minor threshold show up here — an empty list means nothing urgent, not zero possible upgrades." />
-              </h2>
-              <Link href={`/league/${league.id}/free-agency`} className="text-xs text-accent2 hover:underline">Browse free agents →</Link>
+          {brief.length > 0 && (
+            <div className="section">
+              <FrontOfficeBrief items={brief.map((b) => ({ ...b, href: `/league/${league.id}${b.href}` }))} weekLabel={`Week ${league.week}`} />
             </div>
-            {topNeeds.length === 0 ? (
-              <p className="text-sm text-muted">No glaring holes right now — nice work.</p>
-            ) : (
-              <div className="space-y-2">
-                {topNeeds.map(([pos, val]) => {
-                  const severity = needSeverity(val);
-                  return (
-                    <div key={pos} className="flex items-center gap-3">
-                      <span className="w-12 text-sm font-mono text-muted">{pos}</span>
-                      <div className="flex-1 h-2 bg-raised rounded-full overflow-hidden">
-                        <div className="h-full bg-warn" style={{ width: `${Math.round(val * 100)}%` }} />
-                      </div>
-                      <span className={`text-xs w-16 text-right font-medium ${severity.className}`}>{severity.label}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          )}
 
-          <div className="card card-pad">
-            <h2 className="font-semibold mb-3">Recent Results</h2>
-            {recentGames.length === 0 ? (
-              <p className="text-sm text-muted">No games played yet.</p>
-            ) : (
-              <div className="space-y-2">
-                {recentGames.map((g) => {
-                  const box = readJson<any>(g.boxScore, null);
-                  const won = (g.homeTeamId === team.id ? g.homeScore : g.awayScore) > (g.homeTeamId === team.id ? g.awayScore : g.homeScore);
-                  return (
-                    <Link key={g.id} href={`/league/${league.id}/game/${g.id}`} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-raised transition-colors">
-                      <span className="text-sm flex items-center gap-2">
-                        Wk {g.week} · {g.homeTeamId === team.id ? 'vs' : '@'}
-                        <TeamLogo seed={g.homeTeamId === team.id ? g.awayTeam.id : g.homeTeam.id} abbr={g.homeTeamId === team.id ? g.awayTeam.abbr : g.homeTeam.abbr} size={20} />
-                        {g.homeTeamId === team.id ? g.awayTeam.abbr : g.homeTeam.abbr}
-                      </span>
-                      <span className={`text-sm font-mono font-semibold ${won ? 'text-accent' : 'text-bad'}`}>{box ? shortResult(box) : `${g.homeScore}-${g.awayScore}`}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
+          <div className="section">
+            <SectionHeading title="League Wire" action={<Link href={`/league/${league.id}/news`} className="text-xs text-accent2 hover:underline">View all →</Link>} />
+            <div className="panel px-4 divide-y divide-line/60">
+              {wire.length > 0 ? wire : <p className="text-sm text-muted py-3">No news yet.</p>}
+            </div>
           </div>
         </div>
 
-        <div className="card card-pad">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">League Wire</h2>
-            <Link href={`/league/${league.id}/news`} className="text-xs text-accent2 hover:underline">View all →</Link>
+        <div className="space-y-6">
+          <div className="section">
+            <SectionHeading title="Roster Needs" action={<Link href={`/league/${league.id}/free-agency`} className="text-xs text-accent2 hover:underline">Browse →</Link>} />
+            <div className="panel p-4">
+              {topNeeds.length === 0 ? (
+                <p className="text-sm text-muted">No glaring holes right now — nice work.</p>
+              ) : (
+                <RosterNeeds needs={topNeeds.map(([pos, val]) => ({ position: pos, value: val, ...needSeverity(val) }))} />
+              )}
+            </div>
           </div>
-          <div className="space-y-3">
-            {transactions.map((t) => (
-              <div key={t.id} className="text-sm border-b border-line/60 pb-2 last:border-0">
-                <div className="font-medium">{t.headline}</div>
-                {t.detail && <div className="text-xs text-muted mt-0.5">{t.detail}</div>}
-              </div>
-            ))}
-            {transactions.length === 0 && <p className="text-sm text-muted">No transactions yet.</p>}
+
+          <div className="section">
+            <SectionHeading title={`${team.conference} ${team.division}`} />
+            <StandingsTable
+              label="Standings"
+              rows={divisionSorted.map((t) => ({
+                teamId: t.id, abbr: t.abbr, city: t.city, wins: t.wins, losses: t.losses, ties: t.ties,
+                isUser: t.id === team.id, lastFive: lastFiveMap.get(t.id),
+              }))}
+            />
           </div>
         </div>
       </div>

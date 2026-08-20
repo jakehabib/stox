@@ -1,8 +1,12 @@
+import Link from 'next/link';
+
 export interface BriefItem {
   category: 'Roster' | 'Scouting' | 'Contracts' | 'Trade Market' | 'Cap' | 'Trade Offers';
   headline: string;
   detail: string;
   action: string;
+  /** Where the action button goes. Renders a plain button (inert) when omitted. */
+  href?: string;
 }
 
 const CATEGORY_COLOR: Record<BriefItem['category'], string> = {
@@ -17,12 +21,14 @@ const CATEGORY_COLOR: Record<BriefItem['category'], string> = {
  * Same BriefItem category set as lib/frontOffice.ts, so wiring real data in
  * later is close to a straight prop swap.
  */
-export function FrontOfficeBrief({ items }: { items: BriefItem[] }) {
+export function FrontOfficeBrief({ items, weekLabel }: { items: BriefItem[]; weekLabel?: string }) {
   return (
     <div className="panel border-l-2 border-l-accent overflow-hidden">
       <div className="px-4 py-3 border-b border-line/70">
         <div className="section-eyebrow">Front Office</div>
-        <div className="font-display font-bold text-sm uppercase tracking-wide">This Week's Brief</div>
+        <div className="font-display font-bold text-sm uppercase tracking-wide">
+          This Week's Brief{weekLabel ? ` — ${weekLabel}` : ''}
+        </div>
       </div>
       <div className="divide-y divide-line/60">
         {items.map((item, i) => (
@@ -32,7 +38,11 @@ export function FrontOfficeBrief({ items }: { items: BriefItem[] }) {
               <div className="text-sm font-semibold">{item.headline}</div>
               <div className="text-xs text-muted mt-0.5">{item.detail}</div>
             </div>
-            <button className="btn-secondary text-xs shrink-0 whitespace-nowrap">{item.action}</button>
+            {item.href ? (
+              <Link href={item.href} className="btn-secondary text-xs shrink-0 whitespace-nowrap">{item.action}</Link>
+            ) : (
+              <button className="btn-secondary text-xs shrink-0 whitespace-nowrap">{item.action}</button>
+            )}
           </div>
         ))}
       </div>

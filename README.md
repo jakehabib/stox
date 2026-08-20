@@ -284,3 +284,38 @@ ever force-pushed over, so every state below still exists in git history).
   regression the Draft rework introduced (names truncating mid-word once
   a Draft button was added) by giving the name its own line instead of
   sharing it with status pills.
+- **2026-08-20 — Redesign Stage 2: the real Dashboard.** First production
+  page — `app/league/[id]/page.tsx` now uses the redesigned components
+  instead of the mockup. Checkpoint before this change: `e002cb2`. Real
+  data wiring, not just a visual swap:
+  - `TeamHeader` shows real division rank, tenure (reusing
+    `buildGmCareerSummary` from the GM Career page), and the actual next
+    opponent with a new **display-only** win-probability estimate
+    (`lib/winProbability.ts` — never touches the sim engine, which plays
+    every game out on its own regardless of this number).
+  - `lib/frontOffice.ts`'s `BriefItem` now carries a real headline/detail/
+    action/href instead of one sentence, so the brief's buttons actually
+    navigate (Browse Free Agents, Open Extension, Explore Trade, Open
+    Cap, Review Offers) — every underlying threshold/decision is
+    unchanged, only how the text is composed.
+  - League Wire merges real `Transaction` rows with real game recaps
+    (reusing the `Game.recap` text already generated at sim time) into
+    one feed, sorted by recency with the actual result outranking
+    same-week trivia news — no new schema.
+  - Division standings' "last five" form guide is real `Game` history,
+    not synthetic.
+  - Deliberately **not** implemented (would require real new logic, not
+    presentation): playoff clinch-scenario math, and week-over-week
+    standings rank deltas (no historical snapshot exists to diff
+    against) — `StandingsTable` just shows "—" for those today.
+  - Caught two real bugs in review before shipping: transaction team
+    logos were only resolved against the 4-team division (any other
+    team's news showed a blank placeholder) — fixed by querying exactly
+    the teams referenced in that batch of transactions; and the real
+    game recap was getting crowded out of the League Wire's top 6 by
+    generic stat-leader trivia on a same-week tie — fixed by giving game
+    results sort priority over news on ties, and marking the top story
+    `featured`.
+  - Verified against three real leagues in different phases (mid-season,
+    playoff push, post-draft/offseason with no next game scheduled) via
+    Playwright, watching the browser console for client errors on each.

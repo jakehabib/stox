@@ -75,10 +75,10 @@ export default function DashboardMockup() {
             <SectionHeading title="Roster Needs" />
             <div className="panel p-4">
               <RosterNeeds needs={[
-                { position: 'CB', level: 'Severe' },
-                { position: 'EDGE', level: 'High' },
-                { position: 'OT', level: 'Moderate' },
-                { position: 'RB', level: 'Low' },
+                { position: 'CB', value: 0.82, label: 'Urgent', className: 'text-bad' },
+                { position: 'EDGE', value: 0.55, label: 'High', className: 'text-warn' },
+                { position: 'OT', value: 0.3, label: 'Moderate', className: 'text-warn' },
+                { position: 'RB', value: 0.12, label: 'Notable', className: 'text-muted' },
               ]} />
             </div>
           </div>
