@@ -4,6 +4,14 @@
 
 @layer base {
   html { color-scheme: dark; }
+  :root {
+    /* Team-accent token — a page/section sets this via inline style
+       (style={{ '--team-accent': hex }}) once it knows which team it's
+       showing; everything downstream reads var(--team-accent) instead of
+       hardcoding a color, so recoloring one wrapper recolors every accent
+       use inside it. Falls back to the house blue when no team is in scope. */
+    --team-accent: #38bdf8;
+  }
   body {
     @apply bg-ink text-chalk antialiased;
     /* Faint yard-line hashmarks instead of a soft SaaS gradient glow —
@@ -62,4 +70,43 @@
   .table-clean th { @apply label-sm text-left px-3 py-2 border-b border-line sticky top-0 bg-card; }
   .table-clean td { @apply px-3 py-2 border-b border-line/60; }
   .table-clean tr:hover td { @apply bg-raised/50; }
+
+  /* --- Redesign primitives ------------------------------------------------
+     Section-based layout (heading + divider) is the default; reach for
+     .card only when content represents a genuinely distinct object (a
+     player, a trade offer, a matchup) — see /design-system for the
+     rationale and every variant in context. */
+  .section { @apply space-y-3; }
+  .section-head {
+    @apply flex items-center justify-between gap-3 pb-2 border-b border-line/70;
+  }
+  .section-title {
+    @apply font-display font-bold uppercase tracking-wide text-sm text-chalk;
+  }
+  .section-eyebrow {
+    @apply label-sm;
+  }
+  .divider { @apply border-t border-line/60; }
+
+  /* Squarer, denser surface for tables/data blocks — distinct from .card's
+     rounder "this is one object" framing. */
+  .panel { @apply bg-card/60 border border-line/70 rounded-md; }
+
+  /* Big sports numbers — OVR, records, cap space. Always the display face,
+     bold, tabular figures so digits don't jiggle across a row. Pair with
+     the fontSize.stat-* scale (tailwind.config.ts) or an explicit size. */
+  .stat-value {
+    font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    line-height: 0.95;
+  }
+
+  .btn-tertiary { @apply btn text-accent2 hover:underline px-1.5; }
+  .btn-icon { @apply btn w-8 h-8 p-0 text-muted hover:text-chalk hover:bg-raised; }
+
+  /* Large, low-opacity team mark used behind hero/header sections. Absolute
+     inside a `relative` wrapper; the wrapper controls clipping. */
+  .watermark-logo { @apply absolute pointer-events-none opacity-[0.07] -z-0; }
 }

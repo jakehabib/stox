@@ -35,6 +35,18 @@ const config: Config = {
       },
       boxShadow: {
         card: '0 1px 0 0 rgba(255,255,255,0.03) inset, 0 6px 16px -10px rgba(0,0,0,0.7)',
+        // Genuinely elevated surfaces only — open menus/popovers, the "on
+        // the clock" draft state — not every panel. Reach for `card` first.
+        elevated: '0 1px 0 0 rgba(255,255,255,0.04) inset, 0 16px 40px -12px rgba(0,0,0,0.75)',
+      },
+      // Stat-number scale — big sports numbers (OVR, records, cap space)
+      // get sizes distinct from the body type scale. Always pair with the
+      // .stat-value class (globals.css) for the display face + tabular figures.
+      fontSize: {
+        'stat-sm': ['1.25rem', { lineHeight: '1', letterSpacing: '-0.01em' }],
+        'stat-md': ['1.75rem', { lineHeight: '0.95', letterSpacing: '-0.01em' }],
+        'stat-lg': ['2.75rem', { lineHeight: '0.9', letterSpacing: '-0.015em' }],
+        'stat-xl': ['4rem', { lineHeight: '0.88', letterSpacing: '-0.02em' }],
       },
       keyframes: {
         fadeUp: { '0%': { opacity: '0', transform: 'translateY(6px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },

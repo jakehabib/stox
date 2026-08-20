@@ -206,3 +206,19 @@ npm run build         # production build (generates the client, syncs the
   "STORED-ONLY" right in the settings UI.
 - Stat lines are allocated top-down from team drive totals (so the score and
   box score can never disagree) rather than simulated play-by-play.
+
+## Changelog
+
+Every notable change lands here with the commit it shipped in, so there's
+always a plain-English trail back to "what did this look like before." To
+undo anything, ask to revert to a commit below (or the app owner can do it
+directly: `git revert <hash>`, or check out an earlier commit — nothing is
+ever force-pushed over, so every state below still exists in git history).
+
+- **2026-08-20 — Visual redesign kickoff.** Starting a staged visual
+  redesign (design tokens → dashboard → player page → rest of the app) to
+  move away from the generic dark-dashboard look. Game logic, simulation,
+  and database behavior are explicitly out of scope for this effort.
+  Checkpoint commit — the last one *before* any redesign changes —
+  is `529cdff` ("Fix GM Career page missing the current season's games").
+  If a redesign stage doesn't land well, this is the commit to come back to.
