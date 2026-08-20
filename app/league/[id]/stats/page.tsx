@@ -35,9 +35,60 @@ function passerRating(s: SeasonStats): number | null {
   return ((a + b + c + d) / 6) * 100;
 }
 
-export default async function StatsPage({ params, searchParams }: { params: { id: string }; searchParams: { view?: string } }) {
+/** Position-shaped nerdy per-player line — efficiency rates, not just volume, for the My Team deep-dive. */
+function nerdyLine(position: string, s: SeasonStats): { label: string; value: string }[] {
+  const pct = (num: number, den: number) => (den > 0 ? `${((num / den) * 100).toFixed(1)}%` : '—');
+  const rate = (num: number, den: number, digits = 1) => (den > 0 ? (num / den).toFixed(digits) : '—');
+  switch (position) {
+    case 'QB': {
+      const rating = passerRating(s);
+      return [
+        { label: 'Cmp %', value: pct(s.passCmp ?? 0, s.passAtt ?? 0) },
+        { label: 'Y/A', value: rate(s.passYds ?? 0, s.passAtt ?? 0, 1) },
+        { label: 'TD %', value: pct(s.passTd ?? 0, s.passAtt ?? 0) },
+        { label: 'INT %', value: pct(s.int ?? 0, s.passAtt ?? 0) },
+        { label: 'Rating', value: rating !== null ? rating.toFixed(1) : '—' },
+      ];
+    }
+    case 'RB': case 'FB':
+      return [
+        { label: 'YPC', value: rate(s.rushYds ?? 0, s.rushAtt ?? 0, 1) },
+        { label: 'Catch %', value: pct(s.rec ?? 0, s.targets ?? 0) },
+        { label: 'Total Yds', value: String((s.rushYds ?? 0) + (s.recYds ?? 0)) },
+        { label: 'TDs', value: String((s.rushTd ?? 0) + (s.recTd ?? 0)) },
+      ];
+    case 'WR': case 'TE':
+      return [
+        { label: 'Catch %', value: pct(s.rec ?? 0, s.targets ?? 0) },
+        { label: 'Y/R', value: rate(s.recYds ?? 0, s.rec ?? 0, 1) },
+        { label: 'Y/Target', value: rate(s.recYds ?? 0, s.targets ?? 0, 1) },
+        { label: 'TDs', value: String(s.recTd ?? 0) },
+      ];
+    case 'EDGE': case 'DT': case 'LB':
+      return [
+        { label: 'Impact (Tkl+Sk)', value: String((s.tackles ?? 0) + (s.sacks ?? 0)) },
+        { label: 'Sacks', value: String(s.sacks ?? 0) },
+        { label: 'Forced Fum.', value: String(s.ff ?? 0) },
+      ];
+    case 'CB': case 'S':
+      return [
+        { label: 'Playmaker (INT+PD)', value: String((s.defInt ?? 0) + (s.pd ?? 0)) },
+        { label: 'INT', value: String(s.defInt ?? 0) },
+        { label: 'Passes Def.', value: String(s.pd ?? 0) },
+      ];
+    case 'K':
+      return [{ label: 'FG %', value: pct(s.fgm ?? 0, s.fga ?? 0) }, { label: 'XP %', value: pct(s.xpm ?? 0, s.xpa ?? 0) }];
+    case 'P':
+      return [{ label: 'Avg', value: rate(s.puntYds ?? 0, s.punts ?? 0, 1) }];
+    default:
+      return [];
+  }
+}
+
+export default async function StatsPage({ params, searchParams }: { params: { id: string }; searchParams: { view?: string; scope?: string } }) {
   const { league, userTeam } = await getLeagueContext(params.id);
   const advanced = searchParams.view === 'advanced';
+  const myTeam = searchParams.scope === 'myteam';
 
   const [players, teams] = await Promise.all([
     prisma.player.findMany({ where: { leagueId: league.id, seasonStats: { not: '{}' } }, include: { team: true } }),
@@ -62,8 +113,11 @@ export default async function StatsPage({ params, searchParams }: { params: { id
   let quadrantAvgs: { x?: number; y?: number } = {};
   let weeklyTrend: { label: string; color: string; points: { x: string; y: number }[] }[] = [];
 
+  const myPlayers = userTeam ? withStats.filter(({ p }) => p.teamId === userTeam.id) : [];
+
   if (advanced) {
-    ratingBars = withStats
+    const ratingPool = myTeam ? myPlayers : withStats;
+    ratingBars = ratingPool
       .map(({ p, stats }) => ({ p, rating: passerRating(stats) }))
       .filter((x): x is { p: typeof withStats[number]['p']; rating: number } => x.rating !== null)
       .sort((a, b) => b.rating - a.rating)
@@ -99,12 +153,20 @@ export default async function StatsPage({ params, searchParams }: { params: { id
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">League Stats — {league.seasonYear}</h1>
-          <p className="text-muted text-sm mt-1">League leaders and team production, season-to-date.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{myTeam ? 'My Team Stats' : 'League Stats'} — {league.seasonYear}</h1>
+          <p className="text-muted text-sm mt-1">{myTeam ? 'Your full roster, every efficiency stat on the books.' : 'League leaders and team production, season-to-date.'}</p>
         </div>
-        <div className="flex gap-1.5">
-          <Link href={`/league/${league.id}/stats`} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
-          <Link href={`/league/${league.id}/stats?view=advanced`} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
+        <div className="flex flex-col items-end gap-1.5">
+          <div className="flex gap-1.5">
+            <Link href={`/league/${league.id}/stats${advanced ? '?view=advanced' : ''}`} className={`pill ${!myTeam ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>League</Link>
+            {userTeam && (
+              <Link href={`/league/${league.id}/stats?scope=myteam${advanced ? '&view=advanced' : ''}`} className={`pill ${myTeam ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>My Team</Link>
+            )}
+          </div>
+          <div className="flex gap-1.5">
+            <Link href={`/league/${league.id}/stats${myTeam ? '?scope=myteam' : ''}`} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
+            <Link href={`/league/${league.id}/stats?view=advanced${myTeam ? '&scope=myteam' : ''}`} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
+          </div>
         </div>
       </div>
 
@@ -147,72 +209,115 @@ export default async function StatsPage({ params, searchParams }: { params: { id
             </div>
           )}
 
-          <div className="grid md:grid-cols-2 gap-5">
-          {CATEGORIES.map((cat) => {
-            const leaders = [...withStats]
-              .filter(({ stats }) => (stats[cat.primary.key] ?? 0) > 0)
-              .sort((a, b) => (b.stats[cat.primary.key] ?? 0) - (a.stats[cat.primary.key] ?? 0))
-              .slice(0, 10);
-            return (
-              <div key={cat.title} className="card overflow-hidden">
-                <div className="px-4 py-3 border-b border-line font-semibold text-sm">{cat.title}</div>
+          {myTeam ? (
+            <div className="card overflow-hidden">
+              <div className="px-4 py-3 border-b border-line font-semibold text-sm">Full Roster Stat Line</div>
+              <div className="overflow-x-auto">
                 <table className="table-clean">
                   <thead>
-                    <tr>
-                      <th>Player</th>
-                      <th>{cat.primary.label}</th>
-                      {cat.extra.map((c) => <th key={c.key}>{c.label}</th>)}
-                    </tr>
+                    <tr><th>Player</th><th>Pos</th><th colSpan={5}>Efficiency</th></tr>
                   </thead>
                   <tbody>
-                    {leaders.map(({ p, stats }, i) => (
-                      <tr key={p.id}>
-                        <td>
-                          <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
-                            <span className="text-xs text-muted w-4 shrink-0">{i + 1}</span>
-                            <PlayerAvatar seed={p.id} age={p.age} size={22} />
-                            <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
-                            <span className="text-xs text-muted font-mono shrink-0">{p.position}</span>
-                          </Link>
-                        </td>
-                        <td className="font-mono font-semibold">{stats[cat.primary.key] ?? 0}</td>
-                        {cat.extra.map((c) => <td key={c.key} className="font-mono text-muted">{stats[c.key] ?? 0}</td>)}
-                      </tr>
-                    ))}
-                    {leaders.length === 0 && (
-                      <tr><td colSpan={2 + cat.extra.length} className="text-sm text-muted">No qualifying players yet.</td></tr>
+                    {myPlayers.length === 0 && (
+                      <tr><td colSpan={7} className="text-sm text-muted">No stats recorded yet this season.</td></tr>
                     )}
+                    {myPlayers.map(({ p, stats }) => {
+                      const line = nerdyLine(p.position, stats);
+                      return (
+                        <tr key={p.id}>
+                          <td>
+                            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
+                              <PlayerAvatar seed={p.id} age={p.age} size={22} />
+                              <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
+                            </Link>
+                          </td>
+                          <td className="font-mono text-xs text-muted">{p.position}</td>
+                          {line.length === 0 ? (
+                            <td colSpan={5} className="text-xs text-muted">—</td>
+                          ) : (
+                            line.map((m) => (
+                              <td key={m.label} className="font-mono text-sm">
+                                <span className="text-muted text-xs mr-1.5">{m.label}</span>{m.value}
+                              </td>
+                            ))
+                          )}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
-            );
-          })}
-          </div>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 gap-5">
+            {CATEGORIES.map((cat) => {
+              const leaders = [...withStats]
+                .filter(({ stats }) => (stats[cat.primary.key] ?? 0) > 0)
+                .sort((a, b) => (b.stats[cat.primary.key] ?? 0) - (a.stats[cat.primary.key] ?? 0))
+                .slice(0, 10);
+              return (
+                <div key={cat.title} className="card overflow-hidden">
+                  <div className="px-4 py-3 border-b border-line font-semibold text-sm">{cat.title}</div>
+                  <table className="table-clean">
+                    <thead>
+                      <tr>
+                        <th>Player</th>
+                        <th>{cat.primary.label}</th>
+                        {cat.extra.map((c) => <th key={c.key}>{c.label}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {leaders.map(({ p, stats }, i) => (
+                        <tr key={p.id}>
+                          <td>
+                            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
+                              <span className="text-xs text-muted w-4 shrink-0">{i + 1}</span>
+                              <PlayerAvatar seed={p.id} age={p.age} size={22} />
+                              <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
+                              <span className="text-xs text-muted font-mono shrink-0">{p.position}</span>
+                            </Link>
+                          </td>
+                          <td className="font-mono font-semibold">{stats[cat.primary.key] ?? 0}</td>
+                          {cat.extra.map((c) => <td key={c.key} className="font-mono text-muted">{stats[c.key] ?? 0}</td>)}
+                        </tr>
+                      ))}
+                      {leaders.length === 0 && (
+                        <tr><td colSpan={2 + cat.extra.length} className="text-sm text-muted">No qualifying players yet.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+            </div>
+          )}
         </>
       )}
 
-      <div className="card overflow-hidden">
-        <div className="px-4 py-3 border-b border-line font-semibold text-sm">Team Stats</div>
-        <table className="table-clean">
-          <thead><tr><th>Team</th><th>Record</th><th>PF</th><th>PA</th><th>Diff</th><th>Off. Yards</th></tr></thead>
-          <tbody>
-            {teamRows.map(({ t, offYards, diff }) => (
-              <tr key={t.id}>
-                <td>
-                  <Link href={`/league/${league.id}/standings`} className="hover:text-accent2 flex items-center gap-2 font-medium">
-                    <TeamLogo seed={t.id} abbr={t.abbr} size={22} /> {t.city} {t.nickname}
-                  </Link>
-                </td>
-                <td className="font-mono text-muted">{t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ''}</td>
-                <td className="font-mono">{t.pointsFor}</td>
-                <td className="font-mono text-muted">{t.pointsAgnst}</td>
-                <td className={`font-mono ${diff >= 0 ? 'text-accent' : 'text-bad'}`}>{diff >= 0 ? '+' : ''}{diff}</td>
-                <td className="font-mono text-muted">{offYards.toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {!myTeam && (
+        <div className="card overflow-hidden">
+          <div className="px-4 py-3 border-b border-line font-semibold text-sm">Team Stats</div>
+          <table className="table-clean">
+            <thead><tr><th>Team</th><th>Record</th><th>PF</th><th>PA</th><th>Diff</th><th>Off. Yards</th></tr></thead>
+            <tbody>
+              {teamRows.map(({ t, offYards, diff }) => (
+                <tr key={t.id}>
+                  <td>
+                    <Link href={`/league/${league.id}/standings`} className="hover:text-accent2 flex items-center gap-2 font-medium">
+                      <TeamLogo seed={t.id} abbr={t.abbr} size={22} /> {t.city} {t.nickname}
+                    </Link>
+                  </td>
+                  <td className="font-mono text-muted">{t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ''}</td>
+                  <td className="font-mono">{t.pointsFor}</td>
+                  <td className="font-mono text-muted">{t.pointsAgnst}</td>
+                  <td className={`font-mono ${diff >= 0 ? 'text-accent' : 'text-bad'}`}>{diff >= 0 ? '+' : ''}{diff}</td>
+                  <td className="font-mono text-muted">{offYards.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
