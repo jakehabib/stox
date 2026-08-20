@@ -11,9 +11,9 @@ export function MatchupCard({ away, home, weekLabel, score }: {
   return (
     <div className="card overflow-hidden">
       <div className="label-sm text-center pt-4">{weekLabel}</div>
-      <div className="flex items-center justify-between px-5 py-3">
+      <div className="flex items-center justify-between px-5 py-3 gap-2">
         <MatchupSide side={away} score={score?.away} align="left" />
-        <div className="font-display text-muted text-sm px-3">@</div>
+        <div className="font-display text-muted text-sm px-1 shrink-0">@</div>
         <MatchupSide side={home} score={score?.home} align="right" />
       </div>
       {/* Split identity bar — each side's own team color, not a shared accent. */}
@@ -30,17 +30,17 @@ function MatchupSide({ side, score, align }: { side: Side; score?: number; align
   const color = generateTeamLogoParams(side.teamId).primary;
   const row = (
     <>
-      <TeamLogo seed={side.teamId} abbr={side.abbr} size={36} />
-      <div>
-        <div className="font-display font-bold uppercase tracking-wide leading-none" style={{ color }}>{side.city}</div>
+      <TeamLogo seed={side.teamId} abbr={side.abbr} size={36} className="shrink-0" />
+      <div className="min-w-0">
+        <div className="font-display font-bold uppercase tracking-wide leading-none truncate" style={{ color }}>{side.city}</div>
         <div className="text-xs text-muted mt-1">{record}</div>
       </div>
     </>
   );
   return (
-    <div className={`flex items-center gap-3 flex-1 ${align === 'right' ? 'flex-row-reverse text-right' : ''}`}>
+    <div className={`flex items-center gap-2 flex-1 min-w-0 ${align === 'right' ? 'flex-row-reverse text-right' : ''}`}>
       {row}
-      {score !== undefined && <span className="stat-value text-stat-lg ml-2">{score}</span>}
+      {score !== undefined && <span className="stat-value text-stat-lg shrink-0">{score}</span>}
     </div>
   );
 }

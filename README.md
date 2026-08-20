@@ -239,3 +239,17 @@ ever force-pushed over, so every state below still exists in git history).
   a bigger lead story); and a real hand-drawn line-icon set
   (`components/ds/icons.tsx`) replacing every emoji/text-glyph icon.
   Still on `/design-system` only.
+- **2026-08-20 — Redesign: Dashboard, Player Page, and Live Draft mockups.**
+  Full-page compositions assembled from the components above, still mock
+  data only, at `/design-system/dashboard`, `/design-system/player`, and
+  `/design-system/draft` — a preview of what those real pages could look
+  like before any production page is touched. Added four more reusable
+  components along the way: `FrontOfficeBrief` (the game's core
+  differentiator gets its own visual treatment, not a plain gray list),
+  `RosterNeeds`, `StandingsTable`, and `RecentPicksFeed`. Caught and fixed
+  two real layout bugs in review: `MatchupCard` overflowed/clipped a
+  team's logo when squeezed into a two-column layout with a score shown,
+  and `RecentPicksFeed`'s round/pick label wrapped to two lines in a
+  narrow sidebar. Also removed a duplicated OVR/Potential display on the
+  player mockup — the hero already shows it, so a second panel just
+  repeating it added nothing.
