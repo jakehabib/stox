@@ -1,7 +1,8 @@
 import { prisma } from './db';
 import { Rng } from './rng';
-import { AI } from './tuning';
+import { AI, LEAGUE } from './tuning';
 import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, philosophySummary, RosterPlayer } from './ai/gm';
+import { projectedDraftOrder, imminentDraftYear } from './draft';
 
 /**
  * ===========================================================================
@@ -19,6 +20,20 @@ export interface TradeAsset {
   id: string; // playerId or draftPickId
 }
 
+/**
+ * Real NFL trades run all the way through the regular season up to a fixed
+ * week (the Tuesday after week 9 in the current CBA), then freeze until the
+ * new league year opens back up around free agency. Mapped onto this game's
+ * phase machine: closed for the rest of REGULAR once you're past the
+ * deadline week, and for PLAYOFFS/OFFSEASON/RESIGN (still the same league
+ * year) — reopening the moment FREE_AGENCY starts, since that's this game's
+ * equivalent of the new league year beginning.
+ */
+export function isTradeDeadlinePassed(phase: string, week: number, deadlineWeek: number): boolean {
+  if (phase === 'REGULAR') return week > deadlineWeek;
+  return phase === 'PLAYOFFS' || phase === 'OFFSEASON' || phase === 'RESIGN';
+}
+
 export interface TradeEvaluation {
   accepted: boolean;
   sendValue: number;
@@ -32,6 +47,31 @@ export interface TradeEvaluation {
   philosophy: ReturnType<typeof philosophySummary>;
 }
 
+/**
+ * DraftPick.slot only ever reflects real standings for a year that's
+ * already been reseeded (right before that year's own draft) — before that
+ * it's just the placeholder assigned at generation time, unrelated to
+ * performance. For the NEXT draft that hasn't happened yet, use the live
+ * "if the season ended today" projection instead, so a 0-5 team's 1st
+ * actually prices like a 1st, not whatever arbitrary slot it was created
+ * with. Every year after that has no standings to project from at all yet,
+ * so it prices at the middle of the round — a neutral assumption rather
+ * than a stale, arbitrarily-favorable-or-unfavorable placeholder.
+ *
+ * "The next draft" is deliberately identified by `imminentYear` (the
+ * smallest year with any unused pick), not by comparing `pick.year` to
+ * `currentYear` directly — DraftPick.year for the upcoming draft is
+ * pre-generated as `seasonYear + 1` and stays that way for the whole
+ * season, but RESET_STANDINGS bumps seasonYear to match it partway through
+ * the offseason, before that draft actually runs — so which one is "this
+ * season's pick" depends on where in the phase machine the league sits.
+ */
+function effectiveSlot(pick: { year: number; slot: number; originalTeamId: string }, imminentYear: number | null, projectedOrder: Map<string, number>): number {
+  if (imminentYear !== null && pick.year === imminentYear) return projectedOrder.get(pick.originalTeamId) ?? pick.slot;
+  if (imminentYear !== null && pick.year > imminentYear) return Math.ceil(LEAGUE.TEAM_COUNT / 2);
+  return pick.slot;
+}
+
 async function assetValues(
   assets: TradeAsset[],
   forTeamId: string,
@@ -39,6 +79,8 @@ async function assetValues(
   needs: Record<string, number>,
   currentYear: number,
   rng: Rng,
+  projectedOrder: Map<string, number>,
+  imminentYear: number | null,
 ): Promise<{ total: number; reasons: string[] }> {
   let total = 0;
   const weighted: { text: string; weight: number }[] = [];
@@ -50,7 +92,7 @@ async function assetValues(
       for (const r of v.reasons) weighted.push({ text: `${p.firstName} ${p.lastName}: ${r.text}`, weight: r.weight });
     } else {
       const pick = await prisma.draftPick.findUniqueOrThrow({ where: { id: a.id } });
-      total += pickValue(pick.round, pick.slot, profile, pick.year, currentYear);
+      total += pickValue(pick.round, effectiveSlot(pick, imminentYear, projectedOrder), profile, pick.year, currentYear);
     }
   }
   // Sort ACROSS every asset on this side of the deal, not just within one —
@@ -85,11 +127,12 @@ export async function evaluateTrade(opts: {
     select: { id: true, position: true, trueOvr: true, age: true, potential: true },
   });
   const needs = teamNeeds(roster as RosterPlayer[]);
+  const [projectedOrder, imminentYear] = await Promise.all([projectedDraftOrder(team.leagueId), imminentDraftYear(team.leagueId)]);
 
   // opts.give flows TO the AI => that's what the AI receives.
   // opts.get flows FROM the AI => that's what the AI sends away.
-  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, rng);
-  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, rng);
+  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, rng, projectedOrder, imminentYear);
+  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, rng, projectedOrder, imminentYear);
   const sendValue = send.total;
   const receiveValue = receive.total;
   const philosophy = philosophySummary(profile);
@@ -227,8 +270,9 @@ export async function maybeGenerateAiTradeOffer(leagueId: string, userTeamId: st
   // roughly covers what it's asking — keeps the ask honest rather than
   // reaching for the user's best future first-rounder every time.
   const currentYear = (await prisma.league.findUniqueOrThrow({ where: { id: leagueId } })).seasonYear;
+  const [projectedOrder, imminentYear] = await Promise.all([projectedDraftOrder(leagueId), imminentDraftYear(leagueId)]);
   const priced = userPicks
-    .map((p) => ({ pick: p, value: pickValue(p.round, p.slot, profile, p.year, currentYear) }))
+    .map((p) => ({ pick: p, value: pickValue(p.round, effectiveSlot(p, imminentYear, projectedOrder), profile, p.year, currentYear) }))
     .filter((x) => x.value >= askValue * 0.8)
     .sort((a, b) => a.value - b.value);
   const askPick = priced[0]?.pick ?? userPicks[userPicks.length - 1];

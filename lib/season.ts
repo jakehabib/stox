@@ -11,7 +11,7 @@ import { retirementChance, bumpForMilestone } from './progression';
 import { AttrMap } from './ratings';
 import { applyInSeasonProgression } from './development';
 import { runAiFreeAgencyWave } from './freeagency';
-import { maybeGenerateAiTradeOffer } from './trade';
+import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
 import { mergeStats } from './stats';
 import { SeasonStats } from './types';
 import { gameHeadlines } from './news';
@@ -159,6 +159,7 @@ const MAX_PENDING_OFFERS = 3;
  */
 async function maybeMakeAiTradeOffer(leagueId: string, seasonYear: number, week: number, settings: ReturnType<typeof parseSettings>, rng: Rng) {
   if (!settings.tradesEnabled) return;
+  if (settings.tradeDeadlineEnabled && isTradeDeadlinePassed('REGULAR', week, settings.tradeDeadlineWeek)) return;
   const userTeam = await prisma.team.findFirst({ where: { leagueId, isUser: true } });
   if (!userTeam) return;
 

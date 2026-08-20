@@ -6,6 +6,8 @@ import { parseGmProfile, philosophySummary } from '@/lib/ai/gm';
 import { capHit } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { readJson } from '@/lib/json';
+import { isTradeDeadlinePassed } from '@/lib/trade';
+import { projectedDraftOrder, imminentDraftYear } from '@/lib/draft';
 import type { TradeAsset } from '@/lib/trade';
 
 export default async function TradePage({ params, searchParams }: { params: { id: string }; searchParams: { with?: string; reviewOffer?: string } }) {
@@ -32,6 +34,9 @@ export default async function TradePage({ params, searchParams }: { params: { id
 
   const partnerId = searchParams.with || reviewPartnerId || otherTeams[0]?.id;
 
+  const deadlinePassed = settings.tradeDeadlineEnabled && isTradeDeadlinePassed(league.phase, league.week, settings.tradeDeadlineWeek);
+  const [projectedOrder, imminentYear] = await Promise.all([projectedDraftOrder(league.id), imminentDraftYear(league.id)]);
+
   const [myRoster, myPicks, partnerRoster, partnerPicks, pendingOffers, capSummary] = await Promise.all([
     prisma.player.findMany({ where: { teamId: team.id }, include: { contract: true }, orderBy: { trueOvr: 'desc' } }),
     prisma.draftPick.findMany({ where: { ownerTeamId: team.id, used: false }, orderBy: [{ year: 'asc' }, { round: 'asc' }] }),
@@ -45,6 +50,15 @@ export default async function TradePage({ params, searchParams }: { params: { id
     id: p.id, name: `${p.firstName} ${p.lastName}`, position: p.position, ovr: p.trueOvr, age: p.age,
     capHit: settings.capMode === 'OFF' ? 0 : capHit(p.contract, settings.capMode),
     yearsRemaining: p.contract?.yearsRemaining ?? 0,
+  });
+
+  // Only the next draft that hasn't happened yet gets a live projection — a
+  // further-future year has no standings to project from at all. This is
+  // deliberately keyed off imminentDraftYear rather than league.seasonYear;
+  // see lib/draft.ts for why the two aren't always the same thing.
+  const toPickP = (p: (typeof myPicks)[number]) => ({
+    id: p.id, year: p.year, round: p.round, slot: p.slot,
+    projectedSlot: p.year === imminentYear ? projectedOrder.get(p.originalTeamId) : undefined,
   });
 
   return (
@@ -65,13 +79,15 @@ export default async function TradePage({ params, searchParams }: { params: { id
         partners={otherTeams.map((t) => ({ id: t.id, name: `${t.city} ${t.nickname}`, abbr: t.abbr, philosophy: philosophySummary(parseGmProfile(t.gmProfile)) }))}
         partnerId={partnerId ?? ''}
         myRoster={myRoster.map(toRosterP)}
-        myPicks={myPicks.map((p) => ({ id: p.id, year: p.year, round: p.round, slot: p.slot }))}
+        myPicks={myPicks.map(toPickP)}
         partnerRoster={partnerRoster.map(toRosterP)}
-        partnerPicks={partnerPicks.map((p) => ({ id: p.id, year: p.year, round: p.round, slot: p.slot }))}
+        partnerPicks={partnerPicks.map(toPickP)}
         initialGive={initialGive}
         initialGet={initialGet}
         capSpace={capSummary?.capSpace ?? Number.MAX_SAFE_INTEGER}
         capMode={settings.capMode}
+        deadlinePassed={deadlinePassed}
+        tradeDeadlineWeek={settings.tradeDeadlineWeek}
       />
     </div>
   );

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { evaluateTrade, executeTrade, rankTradePartners, TradeAsset } from '@/lib/trade';
+import { evaluateTrade, executeTrade, rankTradePartners, isTradeDeadlinePassed, TradeAsset } from '@/lib/trade';
 import { parseSettings } from '@/lib/settings';
 import { readJson } from '@/lib/json';
 
@@ -18,6 +18,10 @@ export async function rankTradePartnersAction(leagueId: string, position: string
 
 export async function executeTradeAction(leagueId: string, teamA: string, teamB: string, aToB: TradeAsset[], bToA: TradeAsset[]) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  if (settings.tradeDeadlineEnabled && isTradeDeadlinePassed(league.phase, league.week, settings.tradeDeadlineWeek)) {
+    throw new Error('The trade deadline has passed for this league year.');
+  }
   await executeTrade({ leagueId, teamA, teamB, aToB, bToA, seasonYear: league.seasonYear, week: league.week });
   revalidatePath(`/league/${leagueId}`, 'layout');
 }
@@ -28,6 +32,10 @@ export async function respondToTradeOfferAction(leagueId: string, offerId: strin
 
   if (accept) {
     const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+    const settings = parseSettings(league.settings);
+    if (settings.tradeDeadlineEnabled && isTradeDeadlinePassed(league.phase, league.week, settings.tradeDeadlineWeek)) {
+      throw new Error('The trade deadline has passed for this league year.');
+    }
     await executeTrade({
       leagueId, teamA: offer.fromTeamId, teamB: offer.toTeamId,
       aToB: readJson<TradeAsset[]>(offer.give, []),

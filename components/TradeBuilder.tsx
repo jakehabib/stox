@@ -13,11 +13,13 @@ import type { PhilosophySummary } from '@/lib/ai/gm';
 import type { TradePartnerSuggestion } from '@/lib/trade';
 
 interface RosterP { id: string; name: string; position: string; ovr: number; age: number; capHit: number; yearsRemaining: number }
-interface Pick { id: string; year: number; round: number; slot: number }
+/** projectedSlot: where this pick would land "if the season ended today" — only ever set for a current-year pick, since a future year has no standings yet to project from. */
+interface Pick { id: string; year: number; round: number; slot: number; projectedSlot?: number }
 interface Team { id: string; name: string; abbr: string; philosophy?: PhilosophySummary }
 
 export function TradeBuilder({
   leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks, initialGive, initialGet, capSpace, capMode,
+  deadlinePassed, tradeDeadlineWeek,
 }: {
   leagueId: string; myTeam: Team; partners: Team[]; partnerId: string;
   myRoster: RosterP[]; myPicks: Pick[]; partnerRoster: RosterP[]; partnerPicks: Pick[];
@@ -25,6 +27,8 @@ export function TradeBuilder({
   initialGive?: string[]; initialGet?: string[];
   /** Current cap space, so the impact of this exact trade is visible before accepting it. */
   capSpace: number; capMode: string;
+  /** Trade deadline (see lib/trade.ts isTradeDeadlinePassed) — when true, the builder stays visible for browsing but can't submit or execute anything. */
+  deadlinePassed?: boolean; tradeDeadlineWeek?: number;
 }) {
   const router = useRouter();
   const [give, setGive] = useState<Set<string>>(new Set(initialGive));
@@ -125,6 +129,13 @@ export function TradeBuilder({
         {currentPartner?.philosophy && <PhilosophyBadges p={currentPartner.philosophy} />}
       </div>
 
+      {deadlinePassed && (
+        <div className="card card-pad border-warn/40 bg-warn/5 text-sm">
+          <span className="text-warn font-semibold">Trade deadline has passed.</span>
+          <span className="text-muted"> Trades reopen once free agency opens for the new league year{tradeDeadlineWeek ? ` — the deadline was week ${tradeDeadlineWeek}` : ''}. You can still browse rosters and picks below.</span>
+        </div>
+      )}
+
       {shoppedPosition && (
         <div className="card card-pad">
           <h3 className="font-semibold text-sm mb-2">Best trade partners for a {shoppedPosition}</h3>
@@ -165,10 +176,10 @@ export function TradeBuilder({
           )}
         </div>
         <div className="flex gap-2">
-          <button className="btn-secondary" disabled={pending || (giveAssets.length === 0 && getAssets.length === 0)} onClick={propose}>
-            {pending ? 'Evaluating…' : 'Propose Trade'}
+          <button className="btn-secondary" disabled={pending || deadlinePassed || (giveAssets.length === 0 && getAssets.length === 0)} onClick={propose}>
+            {pending ? 'Evaluating…' : deadlinePassed ? 'Deadline Passed' : 'Propose Trade'}
           </button>
-          {result?.accepted && (
+          {result?.accepted && !deadlinePassed && (
             <button className="btn-primary" disabled={pending} onClick={execute}>Confirm & Execute</button>
           )}
         </div>
@@ -270,9 +281,11 @@ function TeamPanel({ title, teamId, teamAbbr, teamName, roster, picks, selected,
           <button
             key={p.id}
             onClick={() => onToggle(p.id)}
+            title={p.projectedSlot ? `Projected pick ${p.projectedSlot} of 32 if the season ended today` : undefined}
             className={`pill ${selected.has(p.id) ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}
           >
             {p.year} R{p.round}
+            {p.projectedSlot && <span className="text-[10px] opacity-70 ml-1">(proj. #{p.projectedSlot})</span>}
           </button>
         ))}
         {picks.length === 0 && <span className="text-xs text-muted">No picks owned.</span>}

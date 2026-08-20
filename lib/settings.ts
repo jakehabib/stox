@@ -32,7 +32,8 @@ export interface LeagueSettings {
   // --- Transactions ---------------------------------------------------------
   tradesEnabled: boolean;
   aiTradeFrequency: number;         // 0..1, how often AI teams propose trades
-  tradeDeadlineWeek: number;
+  tradeDeadlineEnabled: boolean;    // when on, no trades from tradeDeadlineWeek+1 through the rest of the league year
+  tradeDeadlineWeek: number;        // last REGULAR week trades are allowed; default 9 matches the real NFL's Tuesday-after-week-9 deadline
   franchiseTagEnabled: boolean;
   aiAcceptsLopsided: boolean;       // off => AI enforces strict value ratios
 
@@ -69,6 +70,7 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
 
   tradesEnabled: true,
   aiTradeFrequency: 0.35,
+  tradeDeadlineEnabled: true,
   tradeDeadlineWeek: 9,
   franchiseTagEnabled: true,
   aiAcceptsLopsided: false,

@@ -67,6 +67,8 @@ export async function updateSettingsAction(leagueId: string, formData: FormData)
     retirementEnabled: formData.get('retirementEnabled') === 'on',
     tradesEnabled: formData.get('tradesEnabled') === 'on',
     aiTradeFrequency: Number(formData.get('aiTradeFrequency') || current.aiTradeFrequency),
+    tradeDeadlineEnabled: formData.get('tradeDeadlineEnabled') === 'on',
+    tradeDeadlineWeek: Number(formData.get('tradeDeadlineWeek') || current.tradeDeadlineWeek),
     franchiseTagEnabled: formData.get('franchiseTagEnabled') === 'on',
     aiAcceptsLopsided: formData.get('aiAcceptsLopsided') === 'on',
     simVariance: Number(formData.get('simVariance') || current.simVariance),

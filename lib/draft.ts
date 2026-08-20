@@ -183,20 +183,56 @@ async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng) {
   return board[0].p;
 }
 
-/** Reseed round-1 pick slots (and every round) from final standings, worst first. */
-export async function reseedDraftOrder(leagueId: string, seasonYear: number) {
-  const teams = await prisma.team.findMany({ where: { leagueId } });
-  const order = [...teams].sort((a, b) => {
+/** Worst record first, tie-broken by point differential — the real draft-order rule, used both to actually reseed and to project it live mid-season. */
+function standingsOrder<T extends { id: string; wins: number; losses: number; ties: number; pointsFor: number; pointsAgnst: number }>(teams: T[]): T[] {
+  return [...teams].sort((a, b) => {
     const pctA = a.wins / Math.max(1, a.wins + a.losses + a.ties);
     const pctB = b.wins / Math.max(1, b.wins + b.losses + b.ties);
     if (pctA !== pctB) return pctA - pctB;
     return a.pointsFor - a.pointsAgnst - (b.pointsFor - b.pointsAgnst);
   });
+}
+
+/** Reseed round-1 pick slots (and every round) from final standings, worst first. */
+export async function reseedDraftOrder(leagueId: string, seasonYear: number) {
+  const teams = await prisma.team.findMany({ where: { leagueId } });
+  const order = standingsOrder(teams);
   const picks = await prisma.draftPick.findMany({ where: { leagueId, year: seasonYear } });
   for (const pick of picks) {
     const slot = order.findIndex((t) => t.id === pick.originalTeamId) + 1;
     if (slot > 0) await prisma.draftPick.update({ where: { id: pick.id }, data: { slot } });
   }
+}
+
+/**
+ * "If the season ended right now" draft order, by originalTeamId — the same
+ * worst-first rule reseedDraftOrder applies at year's end, computed live
+ * from whatever wins/losses/points exist at this exact moment. Lets the
+ * trade screen show (and price) a current-year pick's likely slot well
+ * before the real reseed happens, instead of the meaningless placeholder
+ * DraftPick.slot carries until then (it's only ever set once, right before
+ * that year's draft).
+ */
+export async function projectedDraftOrder(leagueId: string): Promise<Map<string, number>> {
+  const teams = await prisma.team.findMany({ where: { leagueId } });
+  const order = standingsOrder(teams);
+  return new Map(order.map((t, i) => [t.id, i + 1]));
+}
+
+/**
+ * The next draft that hasn't happened yet — the smallest DraftPick.year
+ * with any unused pick. Deliberately NOT "league.seasonYear" or
+ * "seasonYear + 1": which one actually matches depends on where in the
+ * phase machine the league currently sits (DraftPick.year for the upcoming
+ * draft is pre-generated as seasonYear + 1 and stays that way all the way
+ * through the season, but RESET_STANDINGS bumps seasonYear to match it
+ * partway through the offseason, before that draft actually runs) — so
+ * comparing against seasonYear directly is only right some of the time.
+ * "Smallest unused year" is well-defined everywhere in between.
+ */
+export async function imminentDraftYear(leagueId: string): Promise<number | null> {
+  const next = await prisma.draftPick.findFirst({ where: { leagueId, used: false }, orderBy: { year: 'asc' }, select: { year: true } });
+  return next?.year ?? null;
 }
 
 export async function startRookieDraft(leagueId: string, seasonYear: number, rng: Rng) {

@@ -75,6 +75,14 @@ export default async function SettingsPage({ params }: { params: { id: string } 
             tip="Rough odds, each week, that an AI team proactively sends you an unsolicited trade offer. 0 means AI teams never approach you first — you can still trade with them, you just have to initiate."
           />
           <Toggle
+            label="Trade deadline enabled" name="tradeDeadlineEnabled" defaultChecked={settings.tradeDeadlineEnabled}
+            tip="When on, no trades (yours or the AI's) go through past the deadline week until free agency opens for the new league year — same shape as the real NFL's deadline and offseason trading freeze."
+          />
+          <NumberField
+            label="Trade deadline (week)" name="tradeDeadlineWeek" defaultValue={settings.tradeDeadlineWeek}
+            tip="Last regular-season week trades are allowed. Defaults to 9, matching the real NFL's Tuesday-after-week-9 deadline for a 17-game season."
+          />
+          <Toggle
             label="Franchise tag enabled" name="franchiseTagEnabled" defaultChecked={settings.franchiseTagEnabled}
             tip="Whether the franchise tag tool is available for handling your own expiring contracts."
           />
