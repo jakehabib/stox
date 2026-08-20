@@ -6,23 +6,31 @@
   html { color-scheme: dark; }
   body {
     @apply bg-ink text-chalk antialiased;
-    background-image: radial-gradient(circle at 10% 0%, rgba(56,189,248,0.06), transparent 40%),
-                       radial-gradient(circle at 90% 10%, rgba(74,222,128,0.05), transparent 45%);
+    /* Faint yard-line hashmarks instead of a soft SaaS gradient glow —
+       reads as a field under stadium lights, not a generic AI dashboard. */
+    background-image:
+      repeating-linear-gradient(to bottom, rgba(255,255,255,0.028) 0px, rgba(255,255,255,0.028) 1px, transparent 1px, transparent 96px),
+      radial-gradient(circle at 50% -12%, rgba(255,255,255,0.05), transparent 55%);
     background-attachment: fixed;
   }
   ::selection { background: rgba(74,222,128,0.25); }
+  h1, h2, h3 {
+    font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
 }
 
 @layer components {
   .card {
-    @apply bg-card border border-line rounded-xl shadow-card;
+    @apply bg-card border border-line rounded-lg shadow-card;
   }
   .card-pad { @apply p-5; }
   .stat-tile {
-    @apply bg-raised border border-line rounded-lg px-3 py-2.5;
+    @apply bg-raised border border-line rounded-md px-3 py-2.5;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-2 text-sm font-semibold
            transition-colors duration-150 disabled:opacity-40 disabled:pointer-events-none;
   }
   .btn-primary { @apply btn bg-accent text-ink hover:bg-accent/90; }
@@ -33,14 +41,23 @@
     @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border;
   }
   .input {
-    @apply bg-raised border border-line rounded-lg px-3 py-2 text-sm text-chalk placeholder:text-muted/60
+    @apply bg-raised border border-line rounded-md px-3 py-2 text-sm text-chalk placeholder:text-muted/60
            focus:outline-none focus:ring-1 focus:ring-accent2/60 focus:border-accent2/60;
   }
   .label-sm { @apply text-xs uppercase tracking-wider text-muted font-medium; }
+  /* Broadcast lower-third tab, not a rounded pill — a solid underline bar
+     marks the active section instead of a soft hover-only background. */
   .nav-link {
-    @apply px-3 py-2 rounded-lg text-sm font-medium text-muted hover:text-chalk hover:bg-raised transition-colors;
+    @apply relative px-3 py-2 text-sm font-display font-semibold uppercase tracking-wide
+           text-muted hover:text-chalk transition-colors;
   }
-  .nav-link-active { @apply nav-link text-chalk bg-raised; }
+  .nav-link::after {
+    content: '';
+    @apply absolute left-3 right-3 -bottom-[1px] h-[2px] bg-transparent rounded-full transition-colors;
+  }
+  .nav-link:hover::after { @apply bg-line; }
+  .nav-link-active { @apply nav-link text-chalk; }
+  .nav-link-active::after { @apply bg-accent; }
   .table-clean { @apply w-full text-sm border-separate border-spacing-0; }
   .table-clean th { @apply label-sm text-left px-3 py-2 border-b border-line sticky top-0 bg-card; }
   .table-clean td { @apply px-3 py-2 border-b border-line/60; }

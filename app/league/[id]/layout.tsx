@@ -5,25 +5,9 @@ import { AdvanceWeekButton } from '@/components/AdvanceWeekButton';
 import { formatMoney } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { TeamLogo } from '@/components/TeamLogo';
+import { LeagueNav } from '@/components/LeagueNav';
 
 export const dynamic = 'force-dynamic';
-
-const NAV = [
-  { href: '', label: 'Dashboard' },
-  { href: '/roster', label: 'Roster' },
-  { href: '/depth-chart', label: 'Depth Chart' },
-  { href: '/resign', label: 'Re-sign' },
-  { href: '/free-agency', label: 'Free Agency' },
-  { href: '/trade', label: 'Trade' },
-  { href: '/draft', label: 'Draft' },
-  { href: '/cap', label: 'Cap' },
-  { href: '/standings', label: 'Standings' },
-  { href: '/stats', label: 'Stats' },
-  { href: '/schedule', label: 'Schedule' },
-  { href: '/news', label: 'News' },
-  { href: '/history', label: 'History' },
-  { href: '/settings', label: 'Settings' },
-];
 
 export default async function LeagueLayout({ children, params }: { children: React.ReactNode; params: { id: string } }) {
   const ctx = await getLeagueContext(params.id).catch(() => null);
@@ -37,8 +21,8 @@ export default async function LeagueLayout({ children, params }: { children: Rea
       <header className="border-b border-line bg-surface/80 backdrop-blur sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
           <Link href="/" className="flex items-center gap-2 shrink-0">
-            <div className="w-7 h-7 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-bold text-sm">D</div>
-            <span className="font-semibold text-sm hidden sm:inline">Dynasty GM Football</span>
+            <div className="w-7 h-7 rounded-md bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-display font-bold text-sm">D</div>
+            <span className="font-display font-bold text-base tracking-wide uppercase hidden sm:inline">Dynasty GM</span>
           </Link>
           <div className="flex items-center gap-3 shrink-0">
             <div className="flex items-center gap-2">
@@ -61,13 +45,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
             <AdvanceWeekButton leagueId={league.id} />
           </div>
         </div>
-        <nav className="max-w-7xl mx-auto px-6 pb-2 flex gap-1 overflow-x-auto">
-          {NAV.map((item) => (
-            <Link key={item.href} href={`/league/${league.id}${item.href}`} className="nav-link whitespace-nowrap">
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        <LeagueNav leagueId={league.id} />
       </header>
       <main className="max-w-7xl mx-auto px-6 py-8">{children}</main>
     </div>
