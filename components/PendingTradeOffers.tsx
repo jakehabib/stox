@@ -34,7 +34,7 @@ export function PendingTradeOffers({ leagueId, offers }: { leagueId: string; off
   };
 
   return (
-    <div className="card card-pad space-y-3 border-accent2/30">
+    <div className="panel p-4 space-y-3 border-accent2/30">
       <h3 className="font-semibold text-sm flex items-center gap-2">
         <span className="w-2 h-2 rounded-full bg-accent2 animate-pulse" />
         Trade Offers ({offers.length})

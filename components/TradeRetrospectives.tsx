@@ -27,7 +27,7 @@ export function TradeRetrospectives({ myAbbr, retrospectives }: { myAbbr: string
   if (retrospectives.length === 0) return null;
 
   return (
-    <div className="card overflow-hidden">
+    <div className="panel overflow-hidden">
       <div className="px-4 py-3 border-b border-line">
         <div className="font-semibold text-sm">Trade Retrospectives</div>
         <div className="text-xs text-muted mt-0.5">Every trade you've made, graded by how the return has held up since.</div>

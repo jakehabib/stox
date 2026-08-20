@@ -9,6 +9,7 @@ import { PlayerAvatar } from './PlayerAvatar';
 import { TeamLogo } from './TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { Tooltip } from './Tooltip';
+import { positionBadgeClass } from './ds/positionColor';
 import type { PhilosophySummary } from '@/lib/ai/gm';
 import type { TradePartnerSuggestion } from '@/lib/trade';
 
@@ -130,14 +131,14 @@ export function TradeBuilder({
       </div>
 
       {deadlinePassed && (
-        <div className="card card-pad border-warn/40 bg-warn/5 text-sm">
+        <div className="panel p-4 border-warn/40 bg-warn/5 text-sm">
           <span className="text-warn font-semibold">Trade deadline has passed.</span>
           <span className="text-muted"> Trades reopen once free agency opens for the new league year{tradeDeadlineWeek ? ` — the deadline was week ${tradeDeadlineWeek}` : ''}. You can still browse rosters and picks below.</span>
         </div>
       )}
 
       {shoppedPosition && (
-        <div className="card card-pad">
+        <div className="panel p-4">
           <h3 className="font-semibold text-sm mb-2">Best trade partners for a {shoppedPosition}</h3>
           {partnerSuggestions === null ? (
             <p className="text-xs text-muted">Checking around the league…</p>
@@ -166,12 +167,12 @@ export function TradeBuilder({
         <TeamPanel title="You receive" teamId={partnerId} teamAbbr={currentPartner?.abbr ?? ''} teamName={currentPartner?.name ?? ''} roster={partnerRoster} picks={partnerPicks} selected={get} onToggle={(id) => toggle(get, setGet, id)} />
       </div>
 
-      <div className="card card-pad flex items-center justify-between flex-wrap gap-3">
+      <div className="panel p-4 flex items-center justify-between flex-wrap gap-3">
         <div className="text-sm text-muted flex items-center gap-3 flex-wrap">
           <span>{giveAssets.length} asset(s) out · {getAssets.length} asset(s) in</span>
           {capMode !== 'OFF' && (
             <span>
-              Your cap space after: <span className={`font-mono font-semibold ${capAfter < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(capAfter)}</span>
+              Your cap space after: <span className={`stat-value text-stat-sm ${capAfter < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(capAfter)}</span>
             </span>
           )}
         </div>
@@ -186,7 +187,7 @@ export function TradeBuilder({
       </div>
 
       {result && (
-        <div className={`card card-pad text-sm space-y-3 ${result.accepted ? 'border-accent/40' : 'border-bad/30'}`}>
+        <div className={`panel p-4 text-sm space-y-3 ${result.accepted ? 'border-accent/40' : 'border-bad/30'}`}>
           <div className={result.accepted ? 'text-accent' : 'text-bad'}>{result.message}</div>
           <TradeScoreBar ratio={result.ratio} requiredRatio={result.requiredRatio} accepted={result.accepted} />
           {(result.explanation?.give.length || result.explanation?.receive.length) ? (
@@ -270,7 +271,7 @@ function TeamPanel({ title, teamId, teamAbbr, teamName, roster, picks, selected,
 }) {
   const teamColor = generateTeamLogoParams(teamId).primary;
   return (
-    <div className="card card-pad">
+    <div className="panel p-4">
       <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
         <TeamLogo seed={teamId} abbr={teamAbbr} size={24} />
         {title} <span className="text-muted font-normal">({teamName})</span>
@@ -307,8 +308,8 @@ function TeamPanel({ title, teamId, teamAbbr, teamName, roster, picks, selected,
             className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm ${selected.has(p.id) ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised border border-transparent'}`}
           >
             <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} />
-            <span className="text-xs font-mono text-muted w-8">{p.position}</span>
-            <span className={`text-xs font-mono font-semibold w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
+            <span className={`text-xs font-semibold w-8 ${positionBadgeClass(p.position)}`}>{p.position}</span>
+            <span className={`stat-value text-xs w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
             <span className="flex-1 truncate">{p.name}</span>
             <span className="w-12 text-right text-xs text-muted font-mono">{p.age}</span>
             <span className="w-16 text-right text-xs text-muted font-mono">{p.capHit > 0 ? formatMoney(p.capHit) : '—'}</span>

@@ -403,3 +403,20 @@ ever force-pushed over, so every state below still exists in git history).
     user on the clock) and a real league still in-season with the
     scouting hub showing a full 300-player class, both via Playwright
     with zero console errors.
+- **2026-08-20 — Redesign Stage 6: Trade Center + Free Agency.**
+  Checkpoint before this change: `69570f8`. Both pages are dense
+  data-browsing surfaces, so this was the same treatment as
+  Roster/Draft: `positionBadgeClass` on every position label,
+  `.stat-value` on every OVR figure and the trade builder's live
+  cap-space-after readout, and `.card` → `.panel` on every data block
+  (the two `TeamPanel` roster/picks columns in the trade builder, the
+  deadline-passed banner, the "best trade partners" callout, the trade
+  summary bar, the trade-evaluation result panel, pending AI offers,
+  trade retrospectives, and the free agent table). No changes to any
+  trade math, evaluation logic, server actions, sort/filter behavior,
+  or the pending-offer accept/decline/review flow — every prop and
+  handler in `TradeBuilder`, `PendingTradeOffers`, and
+  `TradeRetrospectives` is untouched, only className/JSX structure.
+  Verified against a real league with a pending AI trade offer, an
+  expired trade deadline banner, and a 100-player free agent board, via
+  Playwright with zero console errors.

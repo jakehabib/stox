@@ -6,6 +6,7 @@ import { ratingColor } from '@/lib/ratings';
 import { marketValue, formatMoney } from '@/lib/cap';
 import { positionSortKey } from '@/lib/league-data';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
+import { positionBadgeClass } from '@/components/ds/positionColor';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'market';
 
@@ -68,7 +69,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         ))}
       </div>
 
-      <div className="card overflow-hidden">
+      <div className="panel overflow-hidden">
         <table className="table-clean">
           <thead>
             <tr>
@@ -83,10 +84,10 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
           <tbody>
             {sorted.map(({ p, view, market }) => (
               <tr key={p.id}>
-                <td className="font-mono text-xs text-muted">{p.position}</td>
+                <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                 <td><a href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName}</a></td>
                 <td className="text-muted">{p.age}</td>
-                <td className={`font-mono font-semibold ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
+                <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
                 <td className="font-mono text-muted">{formatMoney(market)}/yr</td>
                 <td><a href={`/league/${league.id}/player/${p.id}`} className="btn-secondary text-xs px-2.5 py-1">Negotiate</a></td>
               </tr>
