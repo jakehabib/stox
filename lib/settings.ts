@@ -24,7 +24,7 @@ export interface LeagueSettings {
   scoutingBudgetPerWeek: number;    // scouting points/week before scout speed
 
   // --- Progression ----------------------------------------------------------
-  progressionSpeed: number;         // multiplier on offseason dev rolls
+  progressionSpeed: number;         // multiplier on in-season development rolls
   injuriesEnabled: boolean;
   injurySeverity: number;           // multiplier on injury duration
   retirementEnabled: boolean;

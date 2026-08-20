@@ -16,6 +16,7 @@ const AWARD_TYPES: { type: string; code: string; label: string }[] = [
   { type: 'AWARD_OPOY', code: 'OPOY', label: 'Offensive Player of the Year' },
   { type: 'AWARD_DPOY', code: 'DPOY', label: 'Defensive Player of the Year' },
   { type: 'AWARD_ROTY', code: 'ROTY', label: 'Rookie of the Year' },
+  { type: 'AWARD_SBMVP', code: 'SB MVP', label: 'Championship MVP' },
 ];
 
 export default async function TeamDashboard({ params }: { params: { id: string } }) {

@@ -1,14 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db';
 import { Rng } from './rng';
-import { LEAGUE, Position } from './tuning';
+import { LEAGUE, Position, PROGRESSION } from './tuning';
 import { parseSettings, LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { simulateGame, SimTeamInput } from './sim/engine';
 import { generateRecap } from './sim/recap';
 import { SimPlayer, SimStaff } from './sim/units';
-import { progressPlayer, retirementChance, growthMean } from './progression';
-import { AttrMap, computeOverall } from './ratings';
+import { retirementChance, bumpForMilestone } from './progression';
+import { AttrMap } from './ratings';
+import { applyInSeasonProgression } from './development';
 import { runAiFreeAgencyWave } from './freeagency';
 import { maybeGenerateAiTradeOffer } from './trade';
 import { mergeStats } from './stats';
@@ -107,6 +108,7 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
 
   // Recover fatigue league-wide between weeks.
   await recoverFatigueAndInjuries(leagueId);
+  await applyInSeasonProgression(leagueId, league.seasonYear, week, settings.seasonLength, rng, settings.progressionSpeed);
   await maybeMakeAiTradeOffer(leagueId, league.seasonYear, week, settings, rng);
 
   const nextWeek = week + 1;
@@ -437,12 +439,13 @@ async function snapshotSeasonHistory(leagueId: string, seasonYear: number) {
  */
 async function recordSeasonAwards(leagueId: string, seasonYear: number, week: number) {
   const { computeSeasonAwards } = await import('./awards');
-  const awards = await computeSeasonAwards(leagueId);
+  const awards = await computeSeasonAwards(leagueId, seasonYear);
   const entries: [string, typeof awards.mvp][] = [
     ['AWARD_MVP', awards.mvp],
     ['AWARD_OPOY', awards.opoy],
     ['AWARD_DPOY', awards.dpoy],
     ['AWARD_ROTY', awards.roty],
+    ['AWARD_SBMVP', awards.sbmvp],
   ];
   for (const [type, winner] of entries) {
     if (!winner) continue;
@@ -456,7 +459,26 @@ async function recordSeasonAwards(leagueId: string, seasonYear: number, week: nu
         detail: winner.statLine,
       },
     });
+    await applyAwardDevelopmentBump(winner.playerId);
   }
+}
+
+/**
+ * A season award is a real, deliberate jump to both current rating and
+ * potential ceiling — bigger than an in-season stat-leader milestone (see
+ * lib/development.ts), since it's earned across a full year of production
+ * (or, for Super Bowl MVP, a defining performance on the biggest stage)
+ * rather than a mid-season snapshot.
+ */
+async function applyAwardDevelopmentBump(playerId: string) {
+  const player = await prisma.player.findUnique({ where: { id: playerId }, select: { trueAttrs: true, position: true, potential: true } });
+  if (!player) return;
+  const attrs = readJson<AttrMap>(player.trueAttrs, {});
+  const bumped = bumpForMilestone(player.position as Position, attrs, player.potential, PROGRESSION.AWARD_OVR_BUMP, PROGRESSION.AWARD_POTENTIAL_BUMP);
+  await prisma.player.update({
+    where: { id: playerId },
+    data: { trueAttrs: writeJson(bumped.attrs), trueOvr: bumped.ovr, potential: bumped.potential },
+  });
 }
 
 async function createNextPlayoffRound(leagueId: string, seasonYear: number, fromKind: string, toKind: string) {
@@ -507,9 +529,9 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
 
   switch (step) {
     case 'PROGRESS': {
-      await progressAllPlayers(leagueId, rng, settings.progressionSpeed, settings.retirementEnabled);
+      await progressAllPlayers(leagueId, rng, settings.retirementEnabled);
       await prisma.league.update({ where: { id: leagueId }, data: { week: league.week + 1 } });
-      return { summary: 'Offseason development complete — players have progressed or declined.' };
+      return { summary: 'Rosters have aged a year — some careers are over, the rest are a year further along.' };
     }
     case 'RESET_STANDINGS': {
       await rollSeasonStatsIntoCareer(leagueId);
@@ -601,21 +623,38 @@ async function rollSeasonStatsIntoCareer(leagueId: string) {
   }
 }
 
-async function progressAllPlayers(leagueId: string, rng: Rng, speed: number, retirementEnabled: boolean) {
-  const players = await prisma.player.findMany({ where: { leagueId, status: 'ACTIVE' } });
+/**
+ * Yearly aging: age +1, a completed season of experience, and (past 32) a
+ * retirement roll. Attribute growth itself no longer happens here — it's
+ * spread across in-season checkpoints all year (see lib/development.ts) so
+ * it's visible well before the offseason, not delivered as one lump. Batched
+ * into two updateMany calls instead of one round trip per player, matching
+ * the bulk-write pattern used everywhere else a whole league gets touched.
+ */
+async function progressAllPlayers(leagueId: string, rng: Rng, retirementEnabled: boolean) {
+  const players = await prisma.player.findMany({
+    where: { leagueId, status: 'ACTIVE' },
+    select: { id: true, age: true, trueOvr: true, position: true },
+  });
+  if (players.length === 0) return;
+
+  const retiringIds: string[] = [];
+  const survivorIds: string[] = [];
   for (const p of players) {
-    if (retirementEnabled && p.age >= 32) {
-      const chance = retirementChance(p.age, p.trueOvr);
-      if (rng.bool(chance)) {
-        await prisma.player.update({ where: { id: p.id }, data: { status: 'RETIRED', teamId: null } });
-        continue;
-      }
+    if (retirementEnabled && p.age >= 32 && rng.bool(retirementChance(p.age, p.trueOvr, p.position as any))) {
+      retiringIds.push(p.id);
+    } else {
+      survivorIds.push(p.id);
     }
-    const attrs = readJson<AttrMap>(p.trueAttrs, {});
-    const { attrs: newAttrs, ovr } = progressPlayer(rng, p.position as any, attrs, p.age, p.potential, p.devTrait, speed);
-    await prisma.player.update({
-      where: { id: p.id },
-      data: { trueAttrs: writeJson(newAttrs), trueOvr: ovr, age: p.age + 1, experience: p.experience + 1, fatigue: 0, injuryWeeks: 0 },
+  }
+
+  if (retiringIds.length > 0) {
+    await prisma.player.updateMany({ where: { id: { in: retiringIds } }, data: { status: 'RETIRED', teamId: null } });
+  }
+  if (survivorIds.length > 0) {
+    await prisma.player.updateMany({
+      where: { id: { in: survivorIds } },
+      data: { age: { increment: 1 }, experience: { increment: 1 }, fatigue: 0, injuryWeeks: 0 },
     });
   }
 }

@@ -5,9 +5,10 @@ import { TeamLogo } from '@/components/TeamLogo';
 const TYPE_LABELS: Record<string, string> = {
   ALL: 'All', NEWS: 'Performances', TRADE: 'Trades', SIGN: 'Signings', CUT: 'Releases',
   DRAFT: 'Draft', INJURY: 'Injuries', RESIGN: 'Re-signs', TAG: 'Tags', CHAMPION: 'Championships', FIRE: 'Firings',
-  AWARD_MVP: 'MVP', AWARD_OPOY: 'OPOY', AWARD_DPOY: 'DPOY', AWARD_ROTY: 'ROTY',
+  AWARD_MVP: 'MVP', AWARD_OPOY: 'OPOY', AWARD_DPOY: 'DPOY', AWARD_ROTY: 'ROTY', AWARD_SBMVP: 'SB MVP',
+  DEV_MILESTONE: 'Development',
 };
-const FILTERS = ['ALL', 'NEWS', 'TRADE', 'SIGN', 'CUT', 'DRAFT', 'INJURY', 'CHAMPION', 'FIRE'];
+const FILTERS = ['ALL', 'NEWS', 'TRADE', 'SIGN', 'CUT', 'DRAFT', 'INJURY', 'CHAMPION', 'FIRE', 'DEV_MILESTONE'];
 
 const TYPE_STYLE: Record<string, string> = {
   NEWS: 'border-accent2/30 text-accent2 bg-accent2/10',
@@ -24,6 +25,8 @@ const TYPE_STYLE: Record<string, string> = {
   AWARD_OPOY: 'border-gold/40 text-gold bg-gold/10',
   AWARD_DPOY: 'border-gold/40 text-gold bg-gold/10',
   AWARD_ROTY: 'border-gold/40 text-gold bg-gold/10',
+  AWARD_SBMVP: 'border-gold/40 text-gold bg-gold/10',
+  DEV_MILESTONE: 'border-accent2/30 text-accent2 bg-accent2/10',
 };
 
 export default async function NewsPage({ params, searchParams }: { params: { id: string }; searchParams: { type?: string } }) {

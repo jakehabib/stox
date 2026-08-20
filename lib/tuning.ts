@@ -126,6 +126,59 @@ export const DEV_TRAIT_MULT: Record<string, number> = {
   Slow: 0.6, Normal: 1.0, Star: 1.5, Superstar: 2.1, // [TUNE]
 };
 
+/**
+ * [TUNE] Position-aware aging. Real careers don't all bend the same way:
+ * backs and defensive backs lean on speed/burst, peak earliest, and fall off
+ * a cliff; quarterbacks, offensive line, and specialists lean on technique
+ * and lean bodies that hold up, so they both develop and decline later and
+ * slower. `peakShift` moves a position along the shared AGE_CURVE (positive
+ * = ages like someone younger; negative = ages like someone older);
+ * `declineMult` then scales only the back (negative) half of the curve, so
+ * this never changes how fast a young player develops — only how hard the
+ * downslope bites once it starts. Missing positions get no adjustment.
+ */
+export const POSITION_AGE_PROFILE: Partial<Record<Position, { peakShift: number; declineMult: number }>> = {
+  RB: { peakShift: -2, declineMult: 1.35 },
+  WR: { peakShift: -1, declineMult: 1.15 },
+  CB: { peakShift: -1, declineMult: 1.15 },
+  S:  { peakShift: -1, declineMult: 1.1 },
+  QB: { peakShift: 3, declineMult: 0.6 },
+  LT: { peakShift: 2, declineMult: 0.75 },
+  LG: { peakShift: 2, declineMult: 0.75 },
+  C:  { peakShift: 2, declineMult: 0.75 },
+  RG: { peakShift: 2, declineMult: 0.75 },
+  RT: { peakShift: 2, declineMult: 0.75 },
+  K:  { peakShift: 4, declineMult: 0.5 },
+  P:  { peakShift: 4, declineMult: 0.5 },
+};
+export const DEFAULT_AGE_PROFILE = { peakShift: 0, declineMult: 1 };
+
+/**
+ * [TUNE] In-season player development. Growth used to land in one lump at
+ * the offseason PROGRESS step — realistic for a "career" but invisible on a
+ * week-to-week basis. Instead, the same total growth a player would've
+ * gotten in one offseason roll is now spread across checkpoints during the
+ * season itself, so improvement (and decline) is something you can actually
+ * watch happen a few games at a time.
+ */
+export const PROGRESSION = {
+  /** Run a development checkpoint every N regular-season weeks. */
+  CHECKPOINT_INTERVAL: 4,
+  /** Share of a full year's growth applied per checkpoint (4 checkpoints/season ≈ one full year, same total as the old single roll). */
+  CHECKPOINT_GROWTH_SHARE: 0.25,
+  /** Growth multiplier for a player pacing the top of his position group in production since the last checkpoint. */
+  BREAKOUT_GROWTH_MULT: 1.6,
+  /** Growth multiplier for an established starter (trueOvr 65+) producing at the bottom of his position group. */
+  SLUMP_GROWTH_MULT: 0.6,
+  /** OVR bump (spread across attributes) for leading the league in a major stat category at a checkpoint. */
+  STAT_LEADER_OVR_BUMP: 1,
+  /** Potential-ceiling bump for the same. */
+  STAT_LEADER_POTENTIAL_BUMP: 1,
+  /** OVR + potential bump for winning a season award (MVP/OPOY/DPOY/ROTY/Super Bowl MVP). */
+  AWARD_OVR_BUMP: 3,
+  AWARD_POTENTIAL_BUMP: 2,
+};
+
 // ---------------------------------------------------------------------------
 // Sim engine [FRAGILE]
 // ---------------------------------------------------------------------------

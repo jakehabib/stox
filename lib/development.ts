@@ -1,0 +1,158 @@
+import { Prisma } from '@prisma/client';
+import { prisma } from './db';
+import { Rng } from './rng';
+import { Position, PROGRESSION } from './tuning';
+import { AttrMap } from './ratings';
+import { progressPlayer, bumpForMilestone } from './progression';
+import { readJson, writeJson } from './json';
+import { SeasonStats } from './types';
+import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS } from './awards';
+
+/**
+ * ===========================================================================
+ * IN-SEASON PLAYER DEVELOPMENT
+ * ===========================================================================
+ * Growth used to land in one lump at the offseason PROGRESS step — realistic
+ * for a career arc, but invisible week to week. Every few games (see
+ * PROGRESSION.CHECKPOINT_INTERVAL in lib/tuning.ts) this instead:
+ *   1. Applies a scaled-down version of the normal age-curve growth roll —
+ *      spread across a season the total is the same as the old single roll.
+ *   2. Nudges that roll up or down by how a player is actually performing
+ *      against others at his own position this year.
+ *   3. Hands a real, deliberate bump — to both current rating and the
+ *      potential ceiling — to whoever is currently pacing the league in a
+ *      marquee stat category, with a news item marking the moment.
+ * Season awards (lib/awards.ts) apply the same kind of deliberate bump at a
+ * larger size once the year is over — see recordSeasonAwards in lib/season.ts.
+ * ===========================================================================
+ */
+
+const STAT_LEADER_CATEGORIES: { key: keyof SeasonStats; label: string }[] = [
+  { key: 'passYds', label: 'passing yards' },
+  { key: 'passTd', label: 'passing touchdowns' },
+  { key: 'rushYds', label: 'rushing yards' },
+  { key: 'recYds', label: 'receiving yards' },
+  { key: 'tackles', label: 'tackles' },
+  { key: 'sacks', label: 'sacks' },
+  { key: 'defInt', label: 'interceptions' },
+];
+
+function lastCheckpointBefore(week: number, interval: number): number {
+  return Math.floor((week - 1) / interval) * interval;
+}
+
+/**
+ * Share of a full year's growth to apply after this week's games — 0 if
+ * `week` isn't a checkpoint. Fires every CHECKPOINT_INTERVAL weeks, plus the
+ * final regular-season week itself (however many weeks that leftover window
+ * covers) so no games go uncredited just because the season length isn't a
+ * clean multiple of the interval.
+ */
+export function checkpointShare(week: number, seasonLength: number): number {
+  const interval = PROGRESSION.CHECKPOINT_INTERVAL;
+  const isCheckpoint = week % interval === 0 || week === seasonLength;
+  if (!isCheckpoint) return 0;
+  const weeksInWindow = week - lastCheckpointBefore(week, interval);
+  if (weeksInWindow <= 0) return 0;
+  return (weeksInWindow / interval) * PROGRESSION.CHECKPOINT_GROWTH_SHARE;
+}
+
+export async function applyInSeasonProgression(
+  leagueId: string,
+  seasonYear: number,
+  week: number,
+  seasonLength: number,
+  rng: Rng,
+  speed: number,
+): Promise<void> {
+  const share = checkpointShare(week, seasonLength);
+  if (share <= 0) return;
+
+  const players = await prisma.player.findMany({ where: { leagueId, status: 'ACTIVE' } });
+  if (players.length === 0) return;
+
+  const statsById = new Map(players.map((p) => [p.id, readJson<SeasonStats>(p.seasonStats, {})]));
+
+  // --- Performance tier: rank each player against others at his own
+  // position by production-per-week so far. Positions with no tracked
+  // individual production (offensive line) never get a nonzero rate, so
+  // they fall out of ranking entirely and just get the base age-curve roll.
+  const byPosition = new Map<string, typeof players>();
+  for (const p of players) (byPosition.get(p.position) ?? byPosition.set(p.position, []).get(p.position)!).push(p);
+
+  const tierById = new Map<string, 'breakout' | 'slump'>();
+  for (const group of byPosition.values()) {
+    const isDefensive = DEFENSIVE_POSITIONS.has(group[0].position);
+    const rated = group
+      .map((p) => ({
+        id: p.id,
+        trueOvr: p.trueOvr,
+        rate: (isDefensive ? defensiveScore(statsById.get(p.id)!) : offensiveScore(statsById.get(p.id)!)) / week,
+      }))
+      .filter((p) => p.rate !== 0)
+      .sort((a, b) => b.rate - a.rate);
+    const n = rated.length;
+    if (n < 4) continue; // sample too small at this position for rank to mean anything
+    rated.forEach((p, i) => {
+      const pct = i / n;
+      if (pct < 0.15) tierById.set(p.id, 'breakout');
+      else if (pct > 0.85 && p.trueOvr >= 65) tierById.set(p.id, 'slump');
+    });
+  }
+
+  // --- Stat-leader milestone: whoever tops the league in a marquee category
+  // right now gets flagged, once per player even if he leads several.
+  const leaderCategoriesById = new Map<string, string[]>();
+  for (const cat of STAT_LEADER_CATEGORIES) {
+    let best: (typeof players)[number] | null = null;
+    let bestVal = 0;
+    for (const p of players) {
+      const v = statsById.get(p.id)![cat.key] ?? 0;
+      if (v > bestVal) { bestVal = v; best = p; }
+    }
+    if (best) {
+      const list = leaderCategoriesById.get(best.id) ?? [];
+      list.push(cat.label);
+      leaderCategoriesById.set(best.id, list);
+    }
+  }
+
+  const updates: { id: string; attrs: string; ovr: number; potential: number }[] = [];
+  const leaders: { name: string; categories: string[] }[] = [];
+
+  for (const p of players) {
+    const attrs = readJson<AttrMap>(p.trueAttrs, {});
+    const tier = tierById.get(p.id);
+    const perfMult = tier === 'breakout' ? PROGRESSION.BREAKOUT_GROWTH_MULT : tier === 'slump' ? PROGRESSION.SLUMP_GROWTH_MULT : 1;
+    const { attrs: rolled, ovr: rolledOvr } = progressPlayer(rng, p.position as Position, attrs, p.age, p.potential, p.devTrait, speed, share * perfMult);
+
+    const categories = leaderCategoriesById.get(p.id);
+    if (categories) {
+      const milestone = bumpForMilestone(p.position as Position, rolled, p.potential, PROGRESSION.STAT_LEADER_OVR_BUMP, PROGRESSION.STAT_LEADER_POTENTIAL_BUMP);
+      updates.push({ id: p.id, attrs: writeJson(milestone.attrs), ovr: milestone.ovr, potential: milestone.potential });
+      leaders.push({ name: `${p.firstName} ${p.lastName}`, categories });
+    } else {
+      updates.push({ id: p.id, attrs: writeJson(rolled), ovr: rolledOvr, potential: p.potential });
+    }
+  }
+
+  // One bulk UPDATE...FROM(VALUES...) instead of one round trip per rostered
+  // player — the same pattern lib/season.ts uses for weekly game writes,
+  // needed here too since this can touch 1,500+ players in a full league.
+  const values = Prisma.join(updates.map((u) => Prisma.sql`(${u.id}::text, ${u.attrs}::text, ${u.ovr}::int, ${u.potential}::int)`));
+  await prisma.$executeRaw`
+    UPDATE "Player" AS p SET "trueAttrs" = v.attrs, "trueOvr" = v.ovr, "potential" = v.potential
+    FROM (VALUES ${values}) AS v(id, attrs, ovr, potential)
+    WHERE p.id = v.id
+  `;
+
+  if (leaders.length > 0) {
+    await prisma.transaction.createMany({
+      data: leaders.map((l) => ({
+        leagueId, seasonYear, week, type: 'DEV_MILESTONE',
+        headline: `${l.name} is pacing the league in ${l.categories.join(' and ')}`,
+        detail: 'Sustained production like that is starting to show up in his game.',
+      })),
+    });
+  }
+}
