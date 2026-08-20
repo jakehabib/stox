@@ -8,6 +8,7 @@ import { formatMoney } from '@/lib/cap';
 import { PlayerAvatar } from './PlayerAvatar';
 import { TeamLogo } from './TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { Tooltip } from './Tooltip';
 import type { PhilosophySummary } from '@/lib/ai/gm';
 import type { TradePartnerSuggestion } from '@/lib/trade';
 
@@ -204,7 +205,10 @@ function TradeScoreBar({ ratio, requiredRatio, accepted }: { ratio: number; requ
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <span className="label-sm">Trade Score</span>
+        <span className="label-sm inline-flex items-center gap-1.5">
+          Trade Score
+          <Tooltip text="How your offer's value compares to what this team needs to see to accept — 100% is the acceptance line, marked by the vertical tick. Below it, they'll counter or decline; well below, they'll just decline." />
+        </span>
         <span className={`text-xs font-mono ${accepted ? 'text-accent' : 'text-muted'}`}>{Math.round(pct)}% of what they need</span>
       </div>
       <div className="relative h-2.5 rounded-full bg-raised overflow-hidden">
@@ -217,10 +221,19 @@ function TradeScoreBar({ ratio, requiredRatio, accepted }: { ratio: number; requ
 
 function PhilosophyBadges({ p }: { p: PhilosophySummary }) {
   return (
-    <div className="flex gap-1.5 flex-wrap">
-      <span className="pill border-line text-muted">{p.windowLabel}</span>
-      <span className="pill border-line text-muted">{p.tradeTendency} trader</span>
-      <span className="pill border-line text-muted">{p.pickPreference}</span>
+    <div className="flex gap-1.5 flex-wrap items-center">
+      <span className="pill border-line text-muted inline-flex items-center gap-1">
+        {p.windowLabel}
+        <Tooltip text="Where this front office sees itself right now — rebuilding teams value youth and draft capital over immediate roster quality; contenders will pay a premium for it." />
+      </span>
+      <span className="pill border-line text-muted inline-flex items-center gap-1">
+        {p.tradeTendency} trader
+        <Tooltip text="How willing this GM is to make a deal at all — aggressive GMs engage more readily; conservative ones need a clearly favorable offer before they'll even counter." />
+      </span>
+      <span className="pill border-line text-muted inline-flex items-center gap-1">
+        {p.pickPreference}
+        <Tooltip text="This GM's bias between draft picks and immediate talent when the value is otherwise close — it doesn't change what they'll accept, only which side of an even trade they lean toward." />
+      </span>
     </div>
   );
 }

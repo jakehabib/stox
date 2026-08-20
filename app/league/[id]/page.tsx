@@ -10,6 +10,7 @@ import { teamNeeds, needSeverity } from '@/lib/ai/gm';
 import { TeamLogo } from '@/components/TeamLogo';
 import { buildFrontOfficeBrief } from '@/lib/frontOffice';
 import { SeasonAnnouncement, AwardLine } from '@/components/SeasonAnnouncement';
+import { Tooltip } from '@/components/Tooltip';
 
 const AWARD_TYPES: { type: string; code: string; label: string }[] = [
   { type: 'AWARD_MVP', code: 'MVP', label: 'MVP' },
@@ -140,7 +141,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           <div className="text-xs text-muted mt-1">{injured.length} on injury report</div>
         </div>
         <div className="card card-pad">
-          <div className="label-sm mb-1">Cap Space</div>
+          <div className="label-sm mb-1 inline-flex items-center gap-1.5">Cap Space<Tooltip text="What's left under this year's salary cap after every active contract's cap hit. Negative means you're over the cap and need to clear room before you can sign or extend anyone." /></div>
           {cap ? (
             <div className={`font-semibold font-mono ${cap.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(cap.capSpace)}</div>
           ) : <div className="font-semibold text-muted">Cap Off</div>}
@@ -175,7 +176,10 @@ export default async function TeamDashboard({ params }: { params: { id: string }
         <div className="lg:col-span-2 space-y-6">
           <div className="card card-pad">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="font-semibold">Roster Needs</h2>
+              <h2 className="font-semibold inline-flex items-center gap-1.5">
+                Roster Needs
+                <Tooltip text="Blends whether a position is understaffed with how the starter (and, at high-snap spots, the backup) grades out. Only positions above a minor threshold show up here — an empty list means nothing urgent, not zero possible upgrades." />
+              </h2>
               <Link href={`/league/${league.id}/free-agency`} className="text-xs text-accent2 hover:underline">Browse free agents →</Link>
             </div>
             {topNeeds.length === 0 ? (

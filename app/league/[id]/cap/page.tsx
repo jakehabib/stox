@@ -4,6 +4,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { positionSortKey } from '@/lib/league-data';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { formatMoney, capHit, deadMoneyOnCut, capSavingsOnCut } from '@/lib/cap';
+import { Tooltip } from '@/components/Tooltip';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'cap' | 'base' | 'years' | 'savings';
 
@@ -88,7 +89,13 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
         </div>
         <div className="grid grid-cols-3 gap-4 mt-4 text-sm">
           <div><div className="label-sm">Active Salary</div><div className="font-mono">{formatMoney(summary.activeSalary)}</div></div>
-          <div><div className="label-sm">Dead Money</div><div className="font-mono">{formatMoney(summary.deadMoney)}</div></div>
+          <div>
+            <div className="label-sm inline-flex items-center gap-1.5">
+              Dead Money
+              <Tooltip text="Cap charges left behind by players already cut or traded away — signing bonus proration that has to count against the cap somewhere even though they're gone. It still counts against your space, but nothing you do now changes it." />
+            </div>
+            <div className="font-mono">{formatMoney(summary.deadMoney)}</div>
+          </div>
           <div><div className="label-sm">Mode</div><div>{settings.capMode === 'REALISTIC' ? 'Realistic' : 'Simplified'}</div></div>
         </div>
       </div>
@@ -102,9 +109,12 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
                 <th>Player</th>
                 {COLUMNS.map((c) => (
                   <th key={c.key}>
-                    <Link href={sortHref(c.key)} className="hover:text-chalk whitespace-nowrap">
-                      {c.label}{sortKey === c.key && (dir === -1 ? ' ▾' : ' ▴')}
-                    </Link>
+                    <span className="inline-flex items-center gap-1">
+                      <Link href={sortHref(c.key)} className="hover:text-chalk whitespace-nowrap">
+                        {c.label}{sortKey === c.key && (dir === -1 ? ' ▾' : ' ▴')}
+                      </Link>
+                      {c.key === 'savings' && <Tooltip text="What cutting this player right now would do to your cap: how much space you'd free up, and how much dead money it would leave behind instead." />}
+                    </span>
                   </th>
                 ))}
               </tr>
