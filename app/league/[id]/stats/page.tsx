@@ -5,6 +5,10 @@ import { readJson } from '@/lib/json';
 import { SeasonStats } from '@/lib/types';
 import { TeamLogo } from '@/components/TeamLogo';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
+import { Tooltip } from '@/components/Tooltip';
+import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
+import { LineChart } from '@/components/charts/LineChart';
+import { ScatterChart } from '@/components/charts/ScatterChart';
 
 interface LeaderCol { key: keyof SeasonStats; label: string; format?: (n: number) => string }
 interface LeaderCategory { title: string; primary: LeaderCol; extra: LeaderCol[] }
@@ -19,8 +23,21 @@ const CATEGORIES: LeaderCategory[] = [
   { title: 'Interceptions', primary: { key: 'defInt', label: 'INT' }, extra: [{ key: 'pd', label: 'PD' }, { key: 'tackles', label: 'Tkl' }] },
 ];
 
-export default async function StatsPage({ params }: { params: { id: string } }) {
-  const { league } = await getLeagueContext(params.id);
+/** The real NFL passer rating formula — every component clamped to [0, 2.375] before averaging. */
+function passerRating(s: SeasonStats): number | null {
+  const att = s.passAtt ?? 0;
+  if (att < 1) return null;
+  const clamp = (v: number) => Math.max(0, Math.min(2.375, v));
+  const a = clamp(((s.passCmp ?? 0) / att - 0.3) * 5);
+  const b = clamp(((s.passYds ?? 0) / att - 3) * 0.25);
+  const c = clamp(((s.passTd ?? 0) / att) * 20);
+  const d = clamp(2.375 - ((s.int ?? 0) / att) * 25);
+  return ((a + b + c + d) / 6) * 100;
+}
+
+export default async function StatsPage({ params, searchParams }: { params: { id: string }; searchParams: { view?: string } }) {
+  const { league, userTeam } = await getLeagueContext(params.id);
+  const advanced = searchParams.view === 'advanced';
 
   const [players, teams] = await Promise.all([
     prisma.player.findMany({ where: { leagueId: league.id, seasonStats: { not: '{}' } }, include: { team: true } }),
@@ -39,17 +56,98 @@ export default async function StatsPage({ params }: { params: { id: string } }) 
     .map((t) => ({ t, offYards: teamOffYards.get(t.id) ?? 0, diff: t.pointsFor - t.pointsAgnst }))
     .sort((a, b) => b.t.wins - a.t.wins || b.diff - a.diff);
 
+  // --- Advanced-view data -----------------------------------------------
+  let ratingBars: { label: string; value: number; displayValue: string; color: string }[] = [];
+  let quadrantPoints: { id: string; x: number; y: number; label: string; color: string; detail?: string }[] = [];
+  let quadrantAvgs: { x?: number; y?: number } = {};
+  let weeklyTrend: { label: string; color: string; points: { x: string; y: number }[] }[] = [];
+
+  if (advanced) {
+    ratingBars = withStats
+      .map(({ p, stats }) => ({ p, rating: passerRating(stats) }))
+      .filter((x): x is { p: typeof withStats[number]['p']; rating: number } => x.rating !== null)
+      .sort((a, b) => b.rating - a.rating)
+      .slice(0, 8)
+      .map(({ p, rating }) => ({ label: `${p.firstName[0]}.${p.lastName}`, value: rating, displayValue: rating.toFixed(1), color: '#3987e5' }));
+
+    const withGames = teams.map((t) => {
+      const gp = t.wins + t.losses + t.ties;
+      return { t, gp, ppg: gp > 0 ? t.pointsFor / gp : 0, papg: gp > 0 ? t.pointsAgnst / gp : 0 };
+    }).filter((x) => x.gp > 0);
+    const avgPpg = withGames.reduce((s, x) => s + x.ppg, 0) / Math.max(1, withGames.length);
+    const avgPapg = withGames.reduce((s, x) => s + x.papg, 0) / Math.max(1, withGames.length);
+    quadrantAvgs = { x: avgPapg, y: avgPpg };
+    quadrantPoints = withGames.map(({ t, ppg, papg }) => ({
+      id: t.id, x: papg, y: ppg, label: `${t.city} ${t.nickname}`,
+      color: t.id === userTeam?.id ? '#3987e5' : '#5a5a63',
+      detail: t.id === userTeam?.id ? 'Your team' : undefined,
+    }));
+
+    if (userTeam) {
+      const games = await prisma.game.findMany({
+        where: { leagueId: league.id, kind: 'REGULAR', played: true, OR: [{ homeTeamId: userTeam.id }, { awayTeamId: userTeam.id }] },
+        orderBy: { week: 'asc' },
+      });
+      weeklyTrend = [
+        { label: 'Points For', color: '#3987e5', points: games.map((g) => ({ x: `Wk ${g.week}`, y: g.homeTeamId === userTeam.id ? g.homeScore : g.awayScore })) },
+        { label: 'Points Against', color: '#e66767', points: games.map((g) => ({ x: `Wk ${g.week}`, y: g.homeTeamId === userTeam.id ? g.awayScore : g.homeScore })) },
+      ];
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">League Stats — {league.seasonYear}</h1>
-        <p className="text-muted text-sm mt-1">League leaders and team production, season-to-date.</p>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">League Stats — {league.seasonYear}</h1>
+          <p className="text-muted text-sm mt-1">League leaders and team production, season-to-date.</p>
+        </div>
+        <div className="flex gap-1.5">
+          <Link href={`/league/${league.id}/stats`} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
+          <Link href={`/league/${league.id}/stats?view=advanced`} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
+        </div>
       </div>
 
       {withStats.length === 0 ? (
         <div className="card card-pad text-sm text-muted">No stats recorded yet this season — check back after Week 1.</div>
       ) : (
-        <div className="grid md:grid-cols-2 gap-5">
+        <>
+          {advanced && (
+            <div className="grid lg:grid-cols-2 gap-5">
+              <div className="card card-pad">
+                <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
+                  Passer Rating
+                  <Tooltip text="The real NFL passer rating formula — completion %, yards/attempt, TD rate, and INT rate, each capped and blended into one number. 100 is a solid, unspectacular season; 158.3 is the mathematical maximum." />
+                </h2>
+                <p className="text-xs text-muted mb-3">Top qualifying passers, season-to-date.</p>
+                {ratingBars.length > 0 ? <HorizontalBarChart bars={ratingBars} maxValue={158.3} /> : <p className="text-sm text-muted">No qualifying passers yet.</p>}
+              </div>
+
+              <div className="card card-pad">
+                <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
+                  Offense vs. Defense
+                  <Tooltip text="Every team by points scored per game (up) and points allowed per game (right, so lower/left is better defense). Dashed lines mark the league average on each axis — top-left is the most complete quadrant: score a lot, allow little." />
+                </h2>
+                <p className="text-xs text-muted mb-3">Points/game — your team highlighted, dashed lines are league average.</p>
+                <ScatterChart
+                  points={quadrantPoints}
+                  xLabel="Points Allowed / Game" yLabel="Points Scored / Game"
+                  formatX="decimal1" formatY="decimal1"
+                  quadrantLines={quadrantAvgs}
+                />
+              </div>
+
+              {weeklyTrend.length > 0 && weeklyTrend[0].points.length > 0 && (
+                <div className="card card-pad lg:col-span-2">
+                  <h2 className="font-semibold mb-1">Your Team — Scoring Trend</h2>
+                  <p className="text-xs text-muted mb-3">Points for/against by week, season-to-date.</p>
+                  <LineChart series={weeklyTrend} formatY="integer" />
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid md:grid-cols-2 gap-5">
           {CATEGORIES.map((cat) => {
             const leaders = [...withStats]
               .filter(({ stats }) => (stats[cat.primary.key] ?? 0) > 0)
@@ -89,7 +187,8 @@ export default async function StatsPage({ params }: { params: { id: string } }) 
               </div>
             );
           })}
-        </div>
+          </div>
+        </>
       )}
 
       <div className="card overflow-hidden">

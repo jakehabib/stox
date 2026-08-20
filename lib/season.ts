@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db';
 import { Rng } from './rng';
-import { LEAGUE, Position, PROGRESSION } from './tuning';
+import { LEAGUE, Position, PROGRESSION, SCOUTING, GENERATION } from './tuning';
 import { parseSettings, LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { simulateGame, SimTeamInput } from './sim/engine';
@@ -17,9 +17,9 @@ import { SeasonStats } from './types';
 import { gameHeadlines } from './news';
 import { COACH_FIRST, COACH_LAST } from './gen/names';
 import { generateDraftClass, toPlayerCreate } from './gen/players';
-import { GENERATION } from './tuning';
 import { reseedDraftOrder, startRookieDraft } from './draft';
 import { autoDepthChartAll } from './gen/league';
+import { observe } from './scouting';
 
 /**
  * ===========================================================================
@@ -762,11 +762,39 @@ async function runAiResignWave(leagueId: string, seasonYear: number, week: numbe
 }
 
 async function addDraftClass(leagueId: string, seasonYear: number, rng: Rng) {
-  const size = GENERATION.DRAFT_CLASS_SIZE;
+  const size = GENERATION.DRAFT_CLASS_SIZE + GENERATION.DRAFT_CLASS_EXTRA_UDFA;
   const players = generateDraftClass(rng, size);
   const rows = players.map((p) => toPlayerCreate(p, leagueId, { status: 'FREE_AGENT', isDraftee: true, draftYear: seasonYear }));
   const CHUNK = 400;
   for (let i = 0; i < rows.length; i += CHUNK) await prisma.player.createMany({ data: rows.slice(i, i + CHUNK) });
+
+  // Give the user team a baseline scouting book on this class immediately —
+  // without it every prospect's fogged view falls back to the same flat
+  // "no observation yet" center (see scouting.ts buildScoutedView), which
+  // makes the draft board's OVR/potential sort a no-op until someone is
+  // individually scouted. seedScoutingReports() does the same thing for the
+  // initial class at league creation; new classes need it too.
+  const userTeam = await prisma.team.findFirst({ where: { leagueId, isUser: true } });
+  if (userTeam) {
+    const created = await prisma.player.findMany({
+      where: { leagueId, isDraftee: true, draftYear: seasonYear },
+      select: { id: true, position: true, trueAttrs: true },
+    });
+    const reportRows = created.map((p) => {
+      const trueAttrs = readJson<AttrMap>(p.trueAttrs, {});
+      const observed = observe(rng, p.position as Position, trueAttrs, SCOUTING.ROOKIE_BASE_CONFIDENCE);
+      return {
+        playerId: p.id,
+        teamId: userTeam.id,
+        confidence: Math.round(SCOUTING.ROOKIE_BASE_CONFIDENCE),
+        observed: writeJson(observed),
+        lastWeek: 0,
+      };
+    });
+    for (let i = 0; i < reportRows.length; i += CHUNK) {
+      await prisma.scoutingReport.createMany({ data: reportRows.slice(i, i + CHUNK) });
+    }
+  }
 }
 
 async function addFutureDraftPicks(leagueId: string, seasonYear: number) {

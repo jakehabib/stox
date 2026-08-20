@@ -71,9 +71,18 @@ export function deadMoneyOnCut(c: ContractLike | null | undefined, mode: CapMode
  * Cap hit for every remaining real year of the deal (index 0 = this year),
  * so a negotiation UI can show the whole schedule a front-loaded or
  * back-loaded structure actually produces instead of just year 1.
+ *
+ * `baseSalaries` always holds the FULL original contract (indexed from
+ * signing, same as capHit()'s own yearIdx lookup) — it has to, since
+ * capHit() reads year-elapsed-so-far back out of it. This only ever got
+ * called on a brand-new contract preview before (ExtendContractForm), where
+ * yearsRemaining == years, so yearIdx is always 0 and slicing was a no-op —
+ * nothing surfaced this. Called on an existing, partway-elapsed contract
+ * without slicing from yearIdx, it would hand back already-elapsed past
+ * years glued onto the front of "the remaining schedule."
  */
 export function capHitSchedule(c: ContractLike, mode: CapMode): number[] {
-  const bases = readJson<number[]>(c.baseSalaries, []);
+  const bases = readJson<number[]>(c.baseSalaries, []).slice(Math.max(0, c.years - c.yearsRemaining));
   if (mode === 'OFF') return bases.map(() => 0);
   if (mode === 'SIMPLIFIED') {
     const total = bases.reduce((a, b) => a + b, 0) + c.signingBonus;

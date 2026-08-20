@@ -19,6 +19,13 @@ const config: Config = {
         warn: '#fbbf24',
         bad: '#f87171',
         gold: '#eab308',
+        // Analytics categorical palette (dark-mode steps), validated against
+        // this app's card surface with the dataviz skill's CVD checker —
+        // fixed order, never cycled/reassigned per chart. viz-good/viz-bad
+        // are the diverging pair for over/underpaid-style value scales.
+        viz1: '#3987e5', viz2: '#d95926', viz3: '#199e70', viz4: '#c98500',
+        viz5: '#d55181', viz6: '#008300', viz7: '#9085e9', viz8: '#e66767',
+        vizGood: '#3987e5', vizBad: '#e66767',
       },
       fontFamily: {
         sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Inter', 'sans-serif'],

@@ -107,8 +107,9 @@ export const GENERATION = {
   DEV_TRAIT_WEIGHTS: { Slow: 0.25, Normal: 0.55, Star: 0.15, Superstar: 0.05 },
   /** Attribute noise around the position-implied value. */
   ATTR_SD: 7,
-  DRAFT_CLASS_SIZE: 224, // 7 rounds x 32, plus UDFA overflow handled separately
-  DRAFT_CLASS_EXTRA_UDFA: 60,
+  DRAFT_CLASS_SIZE: 224, // 7 rounds x 32 — exactly the number of picks
+  /** Extra prospects generated beyond the pick count, so a real share of the class goes undrafted into UDFA free agency instead of every prospect getting picked. */
+  DRAFT_CLASS_EXTRA_UDFA: 176,
 };
 
 /** [TUNE] Age curve: multiplier applied to progression roll by age bracket. */

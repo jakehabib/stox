@@ -3,8 +3,12 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { positionSortKey } from '@/lib/league-data';
 import { teamCapSummary } from '@/lib/cap-summary';
-import { formatMoney, capHit, deadMoneyOnCut, capSavingsOnCut } from '@/lib/cap';
+import { formatMoney, capHit, deadMoneyOnCut, capSavingsOnCut, capHitSchedule, capForYear, marketValue } from '@/lib/cap';
 import { Tooltip } from '@/components/Tooltip';
+import { POSITION_GROUPS, positionGroup } from '@/lib/positionGroups';
+import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
+import { LineChart } from '@/components/charts/LineChart';
+import { ScatterChart } from '@/components/charts/ScatterChart';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'cap' | 'base' | 'years' | 'savings';
 
@@ -18,9 +22,17 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'savings', label: 'Cut: Savings / Dead' },
 ];
 
-export default async function CapPage({ params, searchParams }: { params: { id: string }; searchParams: { sort?: string; dir?: string } }) {
+// Fixed group -> color assignment, in POSITION_GROUPS order — identity, not
+// value-rank, drives the color per the dataviz skill's categorical rule.
+const GROUP_COLOR: Record<string, string> = {
+  QB: '#3987e5', RB: '#d95926', 'WR/TE': '#199e70', OL: '#c98500',
+  DL: '#d55181', LB: '#008300', DB: '#9085e9', ST: '#e66767',
+};
+
+export default async function CapPage({ params, searchParams }: { params: { id: string }; searchParams: { sort?: string; dir?: string; view?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
+  const advanced = searchParams.view === 'advanced';
 
   if (settings.capMode === 'OFF') {
     return (
@@ -72,12 +84,60 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
 
   const sortHref = (key: SortKey) => {
     const nextDir = sortKey === key && dir === -1 ? 'asc' : 'desc';
-    return `/league/${league.id}/cap?sort=${key}&dir=${nextDir}`;
+    return `/league/${league.id}/cap?sort=${key}&dir=${nextDir}${advanced ? '&view=advanced' : ''}`;
   };
+
+  // --- Advanced-view data -----------------------------------------------
+  let allocationBars: { label: string; value: number; displayValue: string; color: string }[] = [];
+  let outlookSeries: { label: string; color: string; points: { x: string; y: number }[] }[] = [];
+  let outlookBaseline: { y: number; label: string } | undefined;
+  let valuePoints: { id: string; x: number; y: number; label: string; color: string; detail?: string }[] = [];
+
+  if (advanced) {
+    const byGroup = new Map<string, number>();
+    for (const g of POSITION_GROUPS) byGroup.set(g, 0);
+    for (const { p, hit } of rows) byGroup.set(positionGroup(p.position), (byGroup.get(positionGroup(p.position)) ?? 0) + hit);
+    allocationBars = POSITION_GROUPS
+      .map((g) => ({ label: g, value: byGroup.get(g) ?? 0, displayValue: `${formatMoney(byGroup.get(g) ?? 0)} (${summary.capUsed > 0 ? Math.round(((byGroup.get(g) ?? 0) / summary.capUsed) * 100) : 0}%)`, color: GROUP_COLOR[g] }))
+      .sort((a, b) => b.value - a.value);
+
+    const OUTLOOK_YEARS = 4;
+    const totals = new Array(OUTLOOK_YEARS).fill(0);
+    for (const { p } of rows) {
+      if (!p.contract) continue;
+      const schedule = capHitSchedule(p.contract, settings.capMode);
+      for (let i = 0; i < OUTLOOK_YEARS; i++) totals[i] += schedule[i] ?? 0;
+    }
+    outlookSeries = [{
+      label: 'Committed Cap',
+      color: '#3987e5',
+      points: totals.map((v, i) => ({ x: String(league.seasonYear + i), y: v })),
+    }];
+    outlookBaseline = { y: summary.capTotal, label: `${league.seasonYear} cap limit` };
+
+    valuePoints = rows
+      .filter(({ p }) => p.contract)
+      .map(({ p, hit }) => {
+        const expected = marketValue({ ovr: p.trueOvr, position: p.position as any, age: p.age, potential: p.potential });
+        const surplus = expected - hit; // positive = good value (underpaying for the rating)
+        return {
+          id: p.id, x: p.trueOvr, y: hit,
+          label: `${p.firstName} ${p.lastName}`,
+          color: surplus >= 0 ? '#3987e5' : '#e66767',
+          detail: surplus >= 0 ? `${formatMoney(surplus)}/yr under market value` : `${formatMoney(-surplus)}/yr over market value`,
+        };
+      });
+  }
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Salary Cap — {league.seasonYear}</h1>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">Salary Cap — {league.seasonYear}</h1>
+        <div className="flex gap-1.5">
+          <Link href={`/league/${league.id}/cap`} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
+          <Link href={`/league/${league.id}/cap?view=advanced`} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
+        </div>
+      </div>
 
       <div className="card card-pad">
         <div className="flex items-center justify-between mb-2 text-sm">
@@ -99,6 +159,41 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
           <div><div className="label-sm">Mode</div><div>{settings.capMode === 'REALISTIC' ? 'Realistic' : 'Simplified'}</div></div>
         </div>
       </div>
+
+      {advanced && (
+        <div className="grid lg:grid-cols-2 gap-5">
+          <div className="card card-pad">
+            <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
+              Cap Allocation by Position
+              <Tooltip text="Share of your total cap spend going to each position group right now. Real front offices watch this to spot an unbalanced roster — e.g. too much of the cap tied up at one spot to build real depth elsewhere." />
+            </h2>
+            <p className="text-xs text-muted mb-3">Share of {formatMoney(summary.capUsed)} committed, by position group.</p>
+            <HorizontalBarChart bars={allocationBars} />
+          </div>
+
+          <div className="card card-pad">
+            <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
+              Multi-Year Cap Outlook
+              <Tooltip text="Total cap already committed in each future year from contracts on the books today (dead money and new signings aren't included — this is just what you'd owe if the roster froze exactly as it is). The dashed line is this year's cap limit for reference; future caps will actually be higher as the league cap grows." />
+            </h2>
+            <p className="text-xs text-muted mb-3">Already-committed cap dollars, {league.seasonYear}–{league.seasonYear + 3}.</p>
+            <LineChart series={outlookSeries} baseline={outlookBaseline} formatY="money" />
+          </div>
+
+          <div className="card card-pad lg:col-span-2">
+            <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
+              Cap Hit vs. Overall Rating
+              <Tooltip text="Every player under contract, plotted by rating and cap hit. Blue = costing less than his rating's market value (a bargain); red = costing more (an overpay, fairly or not — a young player on a big second contract will often show red here even if the deal was reasonable when signed)." />
+            </h2>
+            <p className="text-xs text-muted mb-3">Blue = under market value for the rating · Red = over market value</p>
+            <ScatterChart
+              points={valuePoints}
+              xLabel="Overall Rating" yLabel="Cap Hit"
+              formatX="integer" formatY="money"
+            />
+          </div>
+        </div>
+      )}
 
       <div className="card overflow-hidden">
         <div className="px-4 py-3 border-b border-line font-semibold text-sm">Contracts</div>
