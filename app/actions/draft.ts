@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { draftPlayer, runAiPicksUntilUser } from '@/lib/draft';
+import { draftPlayer, runAiPicksUntilUser, draftOneAiPick } from '@/lib/draft';
 import { Rng } from '@/lib/rng';
 
 export async function draftPlayerAction(leagueId: string, playerId: string, teamId: string) {
@@ -27,4 +27,27 @@ export async function advanceToUserPickAction(leagueId: string, userTeamId: stri
   const picksMade = await runAiPicksUntilUser(leagueId, userTeamId, rng, league.seasonYear);
   revalidatePath(`/league/${leagueId}`, 'layout');
   return { picksMade };
+}
+
+/**
+ * One visible AI pick at a time, for a paced/live draft-day feed the client
+ * calls on a timer — a no-op returning null once the user is on the clock.
+ */
+export async function draftOneAiPickAction(leagueId: string, userTeamId: string) {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const rng = new Rng(`draft-tick-${leagueId}-${Date.now()}-${Math.round(Math.random() * 1e6)}`);
+  const result = await draftOneAiPick(leagueId, userTeamId, rng, league.seasonYear);
+  revalidatePath(`/league/${leagueId}`, 'layout');
+  return result;
+}
+
+export async function toggleShortlistAction(leagueId: string, teamId: string, playerId: string) {
+  const existing = await prisma.shortlistEntry.findUnique({ where: { playerId_teamId: { playerId, teamId } } });
+  if (existing) {
+    await prisma.shortlistEntry.delete({ where: { id: existing.id } });
+  } else {
+    await prisma.shortlistEntry.create({ data: { playerId, teamId } });
+  }
+  revalidatePath(`/league/${leagueId}/draft`);
+  return { shortlisted: !existing };
 }

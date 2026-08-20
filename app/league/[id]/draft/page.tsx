@@ -6,50 +6,51 @@ import { ratingColor } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE } from '@/lib/tuning';
 import { DraftPickButton } from '@/components/DraftPickButton';
-import { SkipToMyPickButton } from '@/components/SkipToMyPickButton';
+import { LiveDraftTicker } from '@/components/LiveDraftTicker';
+import { ShortlistStar } from '@/components/ShortlistStar';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
 
 type SortKey = 'pos' | 'ovr' | 'age' | 'potential';
 
-export default async function DraftPage({ params, searchParams }: { params: { id: string }; searchParams: { pos?: string; sort?: string; dir?: string } }) {
+export default async function DraftPage({ params, searchParams }: { params: { id: string }; searchParams: { pos?: string; sort?: string; dir?: string; shortlist?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
 
-  const state = await prisma.draftState.findUnique({ where: { leagueId: league.id } });
+  const stateRow = await prisma.draftState.findUnique({ where: { leagueId: league.id } });
+  // The draft page doubles as a year-round scouting hub: the incoming class
+  // is generated at week 1 of the season (see addDraftClass in season.ts),
+  // long before DraftState exists — it only gets created once the DRAFT
+  // phase actually opens, months later. `stateRow` also lingers as a stale,
+  // already-complete row from last year's draft for most of the season
+  // (startRookieDraft only replaces it once the next draft starts), so
+  // "is a draft live right now" is its own check, not just "does state exist."
+  const draftLive = !!stateRow && !stateRow.complete;
+  const state = draftLive ? stateRow! : null;
 
-  if (!state) {
-    return (
-      <div className="space-y-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Draft</h1>
-        <div className="card card-pad text-sm text-muted">No draft is currently active. The rookie draft opens automatically after free agency each offseason.</div>
-      </div>
-    );
-  }
-
-  const isFantasy = state.kind === 'FANTASY';
+  const isFantasy = state?.kind === 'FANTASY';
   // Fantasy draft has no DraftPick rows — it's a plain snake of team turns,
   // so the stored order is the whole story there. A rookie draft resolves
   // the team on the clock from LIVE DraftPick ownership every round instead
   // of a turn-order array (see lib/draft.ts currentPick() for why a fixed
   // array silently ignores any trade involving a round-2+ pick).
-  const order = isFantasy ? readJson<string[]>(state.order, []) : [];
+  const order = state && isFantasy ? readJson<string[]>(state.order, []) : [];
   const roundSize = LEAGUE.TEAM_COUNT;
-  const rookiePicks = !isFantasy && !state.complete
+  const rookiePicks = state && !isFantasy
     ? await prisma.draftPick.findMany({ where: { leagueId: league.id, year: league.seasonYear }, orderBy: [{ round: 'asc' }, { slot: 'asc' }] })
     : [];
   const rookiePickByIndex = new Map(rookiePicks.map((p) => [(p.round - 1) * roundSize + (p.slot - 1), p]));
 
-  const totalPicks = isFantasy ? order.length : roundSize * settings.draftRounds;
-  const onClockTeamId = isFantasy
-    ? (order.length > 0 ? order[state.pickIndex % order.length] : undefined)
-    : rookiePickByIndex.get(state.pickIndex)?.ownerTeamId;
+  const totalPicks = state ? (isFantasy ? order.length : roundSize * settings.draftRounds) : 0;
+  const onClockTeamId = state
+    ? (isFantasy ? (order.length > 0 ? order[state.pickIndex % order.length] : undefined) : rookiePickByIndex.get(state.pickIndex)?.ownerTeamId)
+    : undefined;
   const onClockTeam = onClockTeamId ? await prisma.team.findUnique({ where: { id: onClockTeamId } }) : null;
-  const isUserOnClock = onClockTeamId === team.id;
+  const isUserOnClock = !!state && onClockTeamId === team.id;
 
-  const allTeams = state.kind === 'ROOKIE' && !state.complete ? await prisma.team.findMany({ where: { leagueId: league.id } }) : [];
+  const allTeams = state?.kind === 'ROOKIE' ? await prisma.team.findMany({ where: { leagueId: league.id } }) : [];
   const teamById = new Map(allTeams.map((t) => [t.id, t]));
-  const upcomingPicks = totalPicks > 0 && !state.complete
+  const upcomingPicks = state && totalPicks > 0
     ? Array.from({ length: Math.min(32, totalPicks - state.pickIndex) }, (_, i) => {
         const idx = state.pickIndex + i;
         if (isFantasy) {
@@ -61,9 +62,17 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       })
     : [];
 
+  const shortlistEntries = await prisma.shortlistEntry.findMany({ where: { teamId: team.id }, select: { playerId: true } });
+  const shortlistIds = new Set(shortlistEntries.map((s) => s.playerId));
+  const shortlistOnly = searchParams.shortlist === '1';
+
+  // During a live draft, only the top of the board matters pick-to-pick.
+  // Off the clock, this is the whole-class scouting hub — show a lot more
+  // of it (the class is ~400 deep now that a real UDFA share exists).
   const where: any = { leagueId: league.id, teamId: null, status: 'FREE_AGENT', isDraftee: true };
   if (searchParams.pos) where.position = searchParams.pos;
-  const pool = await prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: 80 });
+  if (shortlistOnly) where.id = { in: Array.from(shortlistIds) };
+  const pool = await prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: shortlistOnly ? undefined : (draftLive ? 80 : 300) });
   const reports = await prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: pool.map((p) => p.id) } } });
   const reportMap = new Map(reports.map((r) => [r.playerId, r]));
   const positions = Array.from(new Set(pool.map((p) => p.position))).sort((a, b) => positionSortKey(a) - positionSortKey(b));
@@ -95,29 +104,41 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     }
   });
 
-  const posQuery = searchParams.pos ? `pos=${searchParams.pos}&` : '';
+  const shortlistQuery = shortlistOnly ? 'shortlist=1&' : '';
+  const posQuery = (searchParams.pos ? `pos=${searchParams.pos}&` : '') + shortlistQuery;
   const sortHref = (key: SortKey) => {
     const nextDir = sortKey === key && dir === -1 ? 'asc' : 'desc';
     return `/league/${league.id}/draft?${posQuery}sort=${key}&dir=${nextDir}`;
   };
   const posHref = (pos?: string) => {
-    const suffix = `sort=${sortKey}&dir=${dir === -1 ? 'desc' : 'asc'}`;
+    const suffix = `${shortlistQuery}sort=${sortKey}&dir=${dir === -1 ? 'desc' : 'asc'}`;
     return pos ? `/league/${league.id}/draft?pos=${pos}&${suffix}` : `/league/${league.id}/draft?${suffix}`;
+  };
+  const shortlistHref = () => {
+    const posP = searchParams.pos ? `pos=${searchParams.pos}&` : '';
+    const suffix = `sort=${sortKey}&dir=${dir === -1 ? 'desc' : 'asc'}`;
+    return `/league/${league.id}/draft?${posP}${shortlistOnly ? '' : 'shortlist=1&'}${suffix}`;
   };
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft — Round ${state.round}`}</h1>
-          <p className="text-muted text-sm mt-1">{state.complete ? 'Draft complete.' : `Pick ${state.pickIndex + 1} of ${totalPicks}`}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {state ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft — Round ${state.round}`) : `${league.seasonYear} Draft Class`}
+          </h1>
+          <p className="text-muted text-sm mt-1">
+            {state
+              ? `Pick ${state.pickIndex + 1} of ${totalPicks}`
+              : `${pool.length} prospects on the board — scout them now, the draft opens after free agency.`}
+          </p>
         </div>
-        {!state.complete && onClockTeam && (
-          <div className="flex items-center gap-2">
-            <div className={`pill ${isUserOnClock ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>
-              {isUserOnClock ? 'You are on the clock' : `On the clock: ${onClockTeam.city} ${onClockTeam.nickname}`}
-            </div>
-            {!isUserOnClock && <SkipToMyPickButton leagueId={league.id} teamId={team.id} />}
+        {state && onClockTeam && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {!isUserOnClock && (
+              <div className="pill border-line text-muted">On the clock: {onClockTeam.city} {onClockTeam.nickname}</div>
+            )}
+            <LiveDraftTicker leagueId={league.id} userTeamId={team.id} isUserOnClock={isUserOnClock} draftComplete={false} />
           </div>
         )}
       </div>
@@ -131,7 +152,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 key={p.idx}
                 title={p.team ? `${p.team.city} ${p.team.nickname}` : ''}
                 className={`shrink-0 flex flex-col items-center gap-1 px-2 py-1.5 rounded-lg border ${
-                  p.idx === state.pickIndex
+                  p.idx === state!.pickIndex
                     ? 'border-accent bg-accent/10'
                     : p.team?.id === team.id
                     ? 'border-accent2/50 bg-accent2/10'
@@ -146,43 +167,47 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         </div>
       )}
 
-      {!state.complete && (
-        <>
-          <div className="flex gap-2 flex-wrap">
-            <a href={posHref()} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</a>
-            {positions.map((pos) => (
-              <a key={pos} href={posHref(pos)} className={`pill ${searchParams.pos === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</a>
-            ))}
-          </div>
+      <div className="flex gap-2 flex-wrap items-center">
+        <a href={posHref()} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</a>
+        {positions.map((pos) => (
+          <a key={pos} href={posHref(pos)} className={`pill ${searchParams.pos === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</a>
+        ))}
+        <a href={shortlistHref()} className={`pill ${shortlistOnly ? 'border-gold text-gold bg-gold/10' : 'border-line text-muted'}`}>
+          ★ Shortlist {shortlistIds.size > 0 && `(${shortlistIds.size})`}
+        </a>
+      </div>
 
-          <div className="card overflow-hidden">
-            <table className="table-clean">
-              <thead>
-                <tr>
-                  <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-                  <th>Name</th>
-                  <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-                  <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-                  <th><a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map(({ p, view }) => (
-                  <tr key={p.id}>
-                    <td className="font-mono text-xs text-muted">{p.position}</td>
-                    <td className="font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span></td>
-                    <td className="text-muted">{p.age}</td>
-                    <td className={`font-mono font-semibold ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
-                    <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
-                    <td>{isUserOnClock && <DraftPickButton leagueId={league.id} teamId={team.id} playerId={p.id} />}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+      <div className="card overflow-hidden">
+        <table className="table-clean">
+          <thead>
+            <tr>
+              <th></th>
+              <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th>Name</th>
+              <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th><a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(({ p, view }, i) => (
+              <tr key={p.id}>
+                <td><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>
+                <td className="font-mono text-xs text-muted">{p.position}</td>
+                <td className="font-medium flex items-center gap-2">
+                  {!state && <span className="w-6 shrink-0 text-xs text-muted font-mono text-right">{i + 1}</span>}
+                  <PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
+                </td>
+                <td className="text-muted">{p.age}</td>
+                <td className={`font-mono font-semibold ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
+                <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+                <td>{isUserOnClock && <DraftPickButton leagueId={league.id} teamId={team.id} playerId={p.id} />}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <div className="card card-pad">
         <h2 className="font-semibold mb-2 text-sm">Recent Picks</h2>

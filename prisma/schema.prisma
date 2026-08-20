@@ -109,6 +109,7 @@ model Team {
   depthChart   DepthChartSlot[]
   tradeOffersFrom TradeOffer[]
   seasonRecords   TeamSeasonRecord[]
+  shortlist       ShortlistEntry[]
 
   @@index([leagueId])
 }
@@ -194,6 +195,7 @@ model Player {
   reports   ScoutingReport[]
   depthSlots DepthChartSlot[]
   draftPick DraftPick?
+  shortlistedBy ShortlistEntry[]
 
   @@index([leagueId])
   @@index([teamId])
@@ -223,6 +225,20 @@ model ScoutingReport {
   ovrHigh    Int    @default(99)
   notes      String @default("")
   lastWeek   Int    @default(0)
+
+  @@unique([playerId, teamId])
+  @@index([teamId])
+}
+
+/// A team's personal draft board — prospects flagged to track through the season, independent of scouting confidence.
+model ShortlistEntry {
+  id       String @id @default(cuid())
+  playerId String
+  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  teamId   String
+  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
 
   @@unique([playerId, teamId])
   @@index([teamId])

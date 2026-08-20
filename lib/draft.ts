@@ -151,6 +151,29 @@ export async function runAiPicksUntilUser(leagueId: string, userTeamId: string, 
   return picksMade;
 }
 
+/**
+ * Make exactly ONE AI pick (a no-op if the user is already on the clock),
+ * for a live, paced draft-day feed — one visible pick at a time instead of
+ * a single opaque batch — rather than fast-forwarding an entire batch of
+ * turns silently. Returns null when there's nothing to do right now.
+ */
+export async function draftOneAiPick(leagueId: string, userTeamId: string, rng: Rng, seasonYear: number) {
+  const pickInfo = await currentPick(leagueId);
+  if (!pickInfo || pickInfo.teamId === userTeamId) return null;
+
+  const player = await pickBestAvailable(leagueId, pickInfo.teamId, rng);
+  if (!player) return null;
+
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: pickInfo.teamId } });
+  await draftPlayer({ leagueId, playerId: player.id, teamId: pickInfo.teamId, seasonYear });
+  return {
+    teamName: `${team.city} ${team.nickname}`,
+    playerName: `${player.firstName} ${player.lastName}`,
+    position: player.position,
+    round: pickInfo.pick?.round ?? pickInfo.state.round,
+  };
+}
+
 async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng) {
   const pool = await prisma.player.findMany({
     where: { leagueId, teamId: null, status: { in: ['FREE_AGENT'] }, OR: [{ isDraftee: true }] },
