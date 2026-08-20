@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { setDepthChartAction } from '@/app/actions/roster';
 import { ratingColor } from '@/lib/ratings';
 import { PlayerAvatar } from './PlayerAvatar';
@@ -13,6 +13,14 @@ export function DepthChartGroup({ teamId, position, players, order }: { teamId: 
   const teamColor = generateTeamLogoParams(teamId).primary;
   const [localOrder, setLocalOrder] = useState(order);
   const [pending, startTransition] = useTransition();
+
+  // useState(order) only seeds from the prop on first mount — React never
+  // re-runs that initializer on later renders, so once mounted this never
+  // noticed the server order actually changing underneath it (e.g. the
+  // Auto-Sort button rewriting every rank server-side, then revalidating).
+  // The button "worked" — the DB was correct — the mounted row list just
+  // kept showing whatever it last displayed.
+  useEffect(() => { setLocalOrder(order); }, [order]);
 
   const move = (idx: number, dir: -1 | 1) => {
     const next = [...localOrder];

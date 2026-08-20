@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { offerContractAction, checkCompetingBidAction } from '@/app/actions/roster';
 import { marketValue, suggestedYears, formatMoney, buildContract, capHit } from '@/lib/cap';
 import { CapMode } from '@/lib/types';
+import { MoneyInput } from './MoneyInput';
 
 export function SignOfferForm({ leagueId, teamId, playerId, ovr, position, age, capSpace, capMode }: {
   leagueId: string; teamId: string; playerId: string; ovr: number; position: string; age: number;
@@ -66,10 +67,7 @@ export function SignOfferForm({ leagueId, teamId, playerId, ovr, position, age, 
           <label className="label-sm">Annual salary</label>
           <span className="text-xs text-muted">Market est. ~{formatMoney(suggested)}/yr</span>
         </div>
-        <input
-          type="number" step={100000} min={1_000_000} className="input w-full font-mono"
-          value={apy} onChange={(e) => setApy(Math.max(0, Number(e.target.value)))}
-        />
+        <MoneyInput value={apy} onChange={setApy} min={1_000_000} />
         <div className="flex gap-1.5 mt-1.5 flex-wrap">
           <button type="button" onClick={() => setApyPct(85)} className="pill border-line text-muted hover:text-chalk">85%</button>
           <button type="button" onClick={() => setApyPct(100)} className="pill border-line text-muted hover:text-chalk">Match Market</button>

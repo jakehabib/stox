@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
@@ -6,6 +7,7 @@ import { buildScoutedView } from '@/lib/scouting';
 import { ratingColor, ratingTier } from '@/lib/ratings';
 import { formatMoney, capHit, remainingValue } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
+import { sortStatEntries, statLabel } from '@/lib/statLabels';
 import { CutButton } from '@/components/CutButton';
 import { ContractActions } from '@/components/ContractActions';
 import { ScoutButton } from '@/components/ScoutButton';
@@ -38,6 +40,18 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
     : Number.MAX_SAFE_INTEGER;
 
   const jerseyColor = player.team ? generateTeamLogoParams(player.team.id).primary : undefined;
+
+  // Your team's current depth at this player's position — the point is
+  // answering "do I need a replacement here" without leaving the card,
+  // whether you're looking at your own player, a free agent, or a trade
+  // target on another roster.
+  const depthChart = userTeam
+    ? await prisma.depthChartSlot.findMany({
+        where: { teamId: userTeam.id, position: player.position },
+        orderBy: { rank: 'asc' },
+        include: { player: true },
+      })
+    : [];
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -102,16 +116,16 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid sm:grid-cols-2 gap-6">
         <div className="card card-pad">
           <h2 className="font-semibold mb-3">Season Stats</h2>
           {Object.keys(seasonStats).length === 0 ? (
             <p className="text-sm text-muted">No stats recorded yet this season.</p>
           ) : (
             <div className="grid grid-cols-2 gap-2 text-sm">
-              {Object.entries(seasonStats).map(([k, v]) => (
+              {sortStatEntries(seasonStats).map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-line/50 py-1">
-                  <span className="text-muted">{k}</span><span className="font-mono">{v}</span>
+                  <span className="text-muted">{statLabel(k)}</span><span className="font-mono">{v}</span>
                 </div>
               ))}
             </div>
@@ -124,28 +138,88 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
             <p className="text-sm text-muted">No career stats on file yet — these accumulate as full seasons complete.</p>
           ) : (
             <div className="grid grid-cols-2 gap-2 text-sm">
-              {Object.entries(careerStats).map(([k, v]) => (
+              {sortStatEntries(careerStats).map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-line/50 py-1">
-                  <span className="text-muted">{k}</span><span className="font-mono">{v}</span>
+                  <span className="text-muted">{statLabel(k)}</span><span className="font-mono">{v}</span>
                 </div>
               ))}
             </div>
           )}
         </div>
 
+        {userTeam && (
+          <div className="card card-pad">
+            <h2 className="font-semibold mb-3">Your Depth at {player.position}</h2>
+            {depthChart.length === 0 ? (
+              <p className="text-sm text-muted">Nobody rostered at {player.position} right now — a clear need.</p>
+            ) : (
+              <div className="space-y-1">
+                {depthChart.map((slot) => {
+                  const isThisPlayer = slot.playerId === player.id;
+                  return (
+                    <Link
+                      key={slot.id}
+                      href={`/league/${league.id}/player/${slot.playerId}`}
+                      className={`flex items-center gap-3 px-2 py-1.5 -mx-2 rounded-lg text-sm ${isThisPlayer ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised'}`}
+                    >
+                      <span className="label-sm w-5 shrink-0">{slot.rank === 0 ? '1' : slot.rank + 1}</span>
+                      <PlayerAvatar seed={slot.playerId} age={slot.player.age} size={22} />
+                      <span className={`flex-1 truncate ${isThisPlayer ? 'font-semibold' : ''}`}>{slot.player.firstName} {slot.player.lastName}{isThisPlayer ? ' (this player)' : ''}</span>
+                      <span className={`font-mono text-xs ${ratingColor(slot.player.trueOvr)}`}>{slot.player.trueOvr}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="card card-pad">
-          <h2 className="font-semibold mb-3">Contract</h2>
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="font-semibold">Contract</h2>
+            {player.contract?.isRookieDeal && <span className="pill border-accent2/30 text-accent2 bg-accent2/10">Rookie Deal</span>}
+            {player.contract?.isFranchiseTag && <span className="pill border-warn/30 text-warn bg-warn/10">Franchise Tag</span>}
+          </div>
           {player.contract ? (
-            <div className="space-y-1.5 text-sm">
-              <div className="flex justify-between"><span className="text-muted">Cap hit (this yr)</span><span className="font-mono">{formatMoney(hit)}</span></div>
-              <div className="flex justify-between"><span className="text-muted">Years remaining</span><span className="font-mono">{player.contract.yearsRemaining}</span></div>
-              <div className="flex justify-between"><span className="text-muted">Remaining value</span><span className="font-mono">{formatMoney(remaining)}</span></div>
-              <div className="flex justify-between"><span className="text-muted">Guaranteed</span><span className="font-mono">{formatMoney(player.contract.guaranteed)}</span></div>
-              {player.contract.voidYears > 0 && (
-                <div className="flex justify-between"><span className="text-muted">Void years</span><span className="font-mono text-warn">+{player.contract.voidYears}</span></div>
-              )}
+            <div className="space-y-4">
+              <div>
+                <div className="text-3xl font-mono font-bold">{formatMoney(hit)}</div>
+                <div className="text-xs text-muted">Cap hit this year</div>
+              </div>
+
+              <div>
+                <div className="flex gap-1">
+                  {Array.from({ length: player.contract.years }, (_, i) => (
+                    <div
+                      key={i}
+                      className={`h-1.5 flex-1 rounded-full ${i < player.contract!.years - player.contract!.yearsRemaining ? 'bg-line' : 'bg-accent'}`}
+                    />
+                  ))}
+                </div>
+                <div className="text-xs text-muted mt-1">
+                  {player.contract.yearsRemaining} yr{player.contract.yearsRemaining === 1 ? '' : 's'} remaining of {player.contract.years}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-sm pt-3 border-t border-line/60">
+                <div>
+                  <div className="label-sm mb-0.5">Remaining Value</div>
+                  <div className="font-mono">{formatMoney(remaining)}</div>
+                </div>
+                <div>
+                  <div className="label-sm mb-0.5">Guaranteed</div>
+                  <div className="font-mono">{formatMoney(player.contract.guaranteed)}</div>
+                </div>
+                {player.contract.voidYears > 0 && (
+                  <div>
+                    <div className="label-sm mb-0.5">Void Years</div>
+                    <div className="font-mono text-warn">+{player.contract.voidYears}</div>
+                  </div>
+                )}
+              </div>
+
               {isOwnRoster && userTeam && (
-                <div className="pt-3 space-y-3">
+                <div className="pt-3 space-y-3 border-t border-line/60">
                   <ContractActions
                     leagueId={league.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age}
                     contract={{

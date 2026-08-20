@@ -77,6 +77,18 @@ export function teamNeeds(players: RosterPlayer[]): Record<string, number> {
   return needs;
 }
 
+/**
+ * Human read on a need score for display — a bare "44%" answers a question
+ * nobody asked ("44% of what?"); a GM wants "how urgent is this," not a
+ * fraction. [TUNE] thresholds chosen against teamNeeds' own scale.
+ */
+export function needSeverity(score: number): { label: string; className: string } {
+  if (score >= 0.6) return { label: 'Urgent', className: 'text-bad' };
+  if (score >= 0.35) return { label: 'High', className: 'text-warn' };
+  if (score >= 0.15) return { label: 'Moderate', className: 'text-warn' };
+  return { label: 'Notable', className: 'text-muted' };
+}
+
 export interface ValueBreakdown {
   base: number;
   upside: number;

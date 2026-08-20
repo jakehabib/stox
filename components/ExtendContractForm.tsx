@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { extendContractAction } from '@/app/actions/roster';
 import { marketValue, suggestedYears, formatMoney, buildContract, capHitSchedule } from '@/lib/cap';
 import { CapMode } from '@/lib/types';
+import { MoneyInput } from './MoneyInput';
 
 /**
  * Extension negotiation for a player already on the roster — the real-NFL
@@ -53,7 +54,7 @@ export function ExtendContractForm({ leagueId, playerId, ovr, position, age, ava
           <label className="label-sm">Annual salary</label>
           <span className="text-xs text-muted">Market est. ~{formatMoney(suggested)}/yr</span>
         </div>
-        <input type="number" step={100000} min={1_000_000} className="input w-full font-mono" value={apy} onChange={(e) => setApy(Math.max(0, Number(e.target.value)))} />
+        <MoneyInput value={apy} onChange={setApy} min={1_000_000} />
         <div className="flex gap-1.5 mt-1.5">
           <button type="button" onClick={() => setApyPct(85)} className="pill border-line text-muted hover:text-chalk">85%</button>
           <button type="button" onClick={() => setApyPct(100)} className="pill border-line text-muted hover:text-chalk">Match Market</button>

@@ -6,7 +6,7 @@ import { formatMoney } from '@/lib/cap';
 import { ratingTier } from '@/lib/ratings';
 import { readJson } from '@/lib/json';
 import { shortResult } from '@/lib/sim/recap';
-import { teamNeeds } from '@/lib/ai/gm';
+import { teamNeeds, needSeverity } from '@/lib/ai/gm';
 import { TeamLogo } from '@/components/TeamLogo';
 import { buildFrontOfficeBrief } from '@/lib/frontOffice';
 import { SeasonAnnouncement, AwardLine } from '@/components/SeasonAnnouncement';
@@ -182,15 +182,18 @@ export default async function TeamDashboard({ params }: { params: { id: string }
               <p className="text-sm text-muted">No glaring holes right now — nice work.</p>
             ) : (
               <div className="space-y-2">
-                {topNeeds.map(([pos, val]) => (
-                  <div key={pos} className="flex items-center gap-3">
-                    <span className="w-12 text-sm font-mono text-muted">{pos}</span>
-                    <div className="flex-1 h-2 bg-raised rounded-full overflow-hidden">
-                      <div className="h-full bg-warn" style={{ width: `${Math.round(val * 100)}%` }} />
+                {topNeeds.map(([pos, val]) => {
+                  const severity = needSeverity(val);
+                  return (
+                    <div key={pos} className="flex items-center gap-3">
+                      <span className="w-12 text-sm font-mono text-muted">{pos}</span>
+                      <div className="flex-1 h-2 bg-raised rounded-full overflow-hidden">
+                        <div className="h-full bg-warn" style={{ width: `${Math.round(val * 100)}%` }} />
+                      </div>
+                      <span className={`text-xs w-16 text-right font-medium ${severity.className}`}>{severity.label}</span>
                     </div>
-                    <span className="text-xs text-muted w-10 text-right">{Math.round(val * 100)}%</span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
