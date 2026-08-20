@@ -88,8 +88,26 @@ export async function advanceWeek(leagueId: string) {
       // so every league dead-ended here permanently after its first draft.
       const state = await prisma.draftState.findUnique({ where: { leagueId } });
       if (!state?.complete) return { summary: 'Draft is in progress — make your picks, then advance.' };
+
+      // Whoever this class's draft left undrafted was never converted back
+      // into an ordinary free agent — isDraftee only ever got cleared inside
+      // draftPlayer() for players actually selected. Left unfixed, a stale
+      // prospect stays isDraftee:true forever: permanently excluded from
+      // normal free agency (which explicitly filters isDraftee out), never
+      // aged (progression only runs on status: 'ACTIVE'), and kept
+      // resurfacing in every future year's draft pool mixed in with the
+      // real new class, since the pool query has no year filter of its own.
+      const undrafted = await prisma.player.updateMany({
+        where: { leagueId, isDraftee: true, draftYear: { lt: league.seasonYear } },
+        data: { isDraftee: false },
+      });
+
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'PRESEASON', week: 1 } });
-      return { summary: 'The draft is complete. On to the new league year.' };
+      return {
+        summary: undrafted.count > 0
+          ? `The draft is complete — ${undrafted.count} undrafted prospect(s) entered free agency. On to the new league year.`
+          : 'The draft is complete. On to the new league year.',
+      };
     }
 
     case 'FANTASY_DRAFT': {

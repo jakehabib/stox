@@ -69,8 +69,14 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
   // --- INV-06/07: draftee eligibility ---
   push(violation('INV-06', 'error', 'isDraftee player is rostered to a team',
     players.filter((p) => p.isDraftee && p.teamId != null).map((p) => p.id)));
-  push(violation('INV-07', 'error', 'isDraftee player has fallen behind the current season year — stale/undrafted prospect never re-entered free agency',
-    players.filter((p) => p.isDraftee && p.draftYear != null && p.draftYear < league.seasonYear).map((p) => p.id)));
+  // The current cycle's not-yet-drafted class always carries
+  // draftYear === league.seasonYear - 1 for a long stretch — it's generated
+  // one game-year before its own draft actually runs (RESET_STANDINGS bumps
+  // seasonYear forward well before that class's DRAFT phase), so comparing
+  // against `< seasonYear` flags every normal, not-yet-drafted class as a
+  // false positive. A GENUINELY stale leftover is at least two years behind.
+  push(violation('INV-07', 'error', 'isDraftee player has fallen at least a full cycle behind the current season year — stale/undrafted prospect never re-entered free agency',
+    players.filter((p) => p.isDraftee && p.draftYear != null && p.draftYear < league.seasonYear - 1).map((p) => p.id)));
 
   // --- INV-08: roster size ceiling ---
   const activeByTeam = new Map<string, number>();
@@ -97,10 +103,19 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
     [...slotCounts.values()].filter((ids) => ids.length > 1).flat()));
 
   // --- INV-12: a completed rookie draft leaves no unused picks for that year ---
-  if (draftState?.complete && draftState.kind === 'ROOKIE') {
-    push(violation('INV-12', 'error', 'Rookie draft marked complete but unused picks remain for the current season year',
-      picks.filter((p) => p.year === league.seasonYear && !p.used).map((p) => p.id)));
-  }
+  // A draft only ever runs for the year matching league.seasonYear AT THE
+  // TIME it happens, and DraftState.complete has no year of its own — it
+  // just stays true (stale) until the next startRookieDraft() call, long
+  // after seasonYear has moved on. Comparing against league.seasonYear
+  // directly (as this used to) produced false positives every single week
+  // of the following season: once RESET_STANDINGS bumps seasonYear forward,
+  // "complete && picks.year === seasonYear" starts matching NEXT year's
+  // draft picks, which are all legitimately still unused because that
+  // draft hasn't happened yet. Checking strictly-past years instead is
+  // unambiguous: any pick from a year before the current one was drafted
+  // in a draft that has definitely already happened, so it must be used.
+  push(violation('INV-12', 'error', "A draft pick from a past season year was never used — that year's draft never finished",
+    picks.filter((p) => p.year < league.seasonYear && !p.used).map((p) => p.id)));
 
   // --- INV-13: contract years bounds ---
   push(violation('INV-13', 'error', 'Contract.yearsRemaining outside [0, years]',

@@ -3,7 +3,7 @@ import { Rng } from './rng';
 import { readJson, writeJson } from './json';
 import { buildContract, rookieScaleApy } from './cap';
 import { parseGmProfile, playerValue, teamNeeds, RosterPlayer, defaultGmProfile } from './ai/gm';
-import { AI, Position } from './tuning';
+import { AI, LEAGUE, Position } from './tuning';
 import { autoDepthChart } from './gen/league';
 
 /**
@@ -22,19 +22,36 @@ import { autoDepthChart } from './gen/league';
 export async function currentPick(leagueId: string) {
   const state = await prisma.draftState.findUnique({ where: { leagueId } });
   if (!state || state.complete) return null;
-  const order = readJson<string[]>(state.order, []);
-  if (order.length === 0) return null;
-  // `order` only ever holds ONE round's worth of teams (the standings-based
-  // turn order, reseeded identically every round — see reseedDraftOrder) but
-  // pickIndex climbs across the WHOLE multi-round draft. Indexing it
-  // directly instead of modulo meant every draft broke the instant round 2
-  // started: order[32] is undefined, so nobody was ever "on the clock" past
-  // round 1. Whichever pick a team actually owns in the current round is
-  // still resolved separately in draftPlayer(), so this only decides turn
-  // order, not which specific pick gets consumed.
-  const teamId = order[state.pickIndex % order.length];
-  if (!teamId) return null;
-  return { state, teamId, order };
+
+  if (state.kind === 'FANTASY') {
+    // The fantasy draft has no DraftPick rows to consult — it's a plain
+    // snake of team turns, so the stored order is the whole story.
+    const order = readJson<string[]>(state.order, []);
+    if (order.length === 0) return null;
+    const teamId = order[state.pickIndex % order.length];
+    if (!teamId) return null;
+    return { state, teamId, pick: null as null };
+  }
+
+  // Rookie draft: resolve the pick on the clock from LIVE DraftPick
+  // ownership every time, instead of a turn-order array computed once at
+  // draft start. That array was always built from round 1's pick ownership
+  // and then reused verbatim for every later round (see reseedDraftOrder),
+  // so it silently ignored any trade involving a round-2+ pick: the team
+  // that traded that pick away still got a turn (and, since it owned no
+  // unused pick that round, drafted the player for free — no contract, no
+  // pick consumed), while the team that acquired it never got an extra turn
+  // to use it. Querying the actual DraftPick row for this exact
+  // (round, slot) is both simpler and correct for every round, since
+  // reseedDraftOrder already reseeds every round's slot from standings, not
+  // just round 1's.
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const roundSize = LEAGUE.TEAM_COUNT;
+  const round = Math.floor(state.pickIndex / roundSize) + 1;
+  const slot = (state.pickIndex % roundSize) + 1;
+  const pick = await prisma.draftPick.findFirst({ where: { leagueId, year: league.seasonYear, round, slot } });
+  if (!pick) return null;
+  return { state, teamId: pick.ownerTeamId, pick };
 }
 
 export async function draftPlayer(opts: {
@@ -52,33 +69,31 @@ export async function draftPlayer(opts: {
       data: { teamId: opts.teamId, status: 'ACTIVE', isDraftee: false },
     });
 
-    if (!isFantasy) {
-      // Find & consume this team's earliest unused pick in the current round.
-      const pick = await tx.draftPick.findFirst({
-        where: { leagueId: opts.leagueId, ownerTeamId: opts.teamId, round: pickInfo.state.round, used: false },
-        orderBy: { slot: 'asc' },
+    if (!isFantasy && pickInfo.pick) {
+      // Consume the exact pick currentPick() resolved as on the clock —
+      // there's only ever one candidate now, not "any unused pick this team
+      // happens to own this round" (which could silently be a different
+      // pick than the one actually on the clock once trades are involved).
+      const pick = pickInfo.pick;
+      const player = await tx.player.findUniqueOrThrow({ where: { id: opts.playerId } });
+      const overall = (pick.round - 1) * LEAGUE.TEAM_COUNT + pick.slot;
+      const apy = rookieScaleApy(overall, LEAGUE.TEAM_COUNT * 7);
+      const contract = buildContract({ apy, years: 4, signedYear: opts.seasonYear, isRookieDeal: true, bonusPct: 0.4 });
+      await tx.draftPick.update({ where: { id: pick.id }, data: { used: true, playerId: opts.playerId } });
+      await tx.contract.deleteMany({ where: { playerId: opts.playerId } });
+      await tx.contract.create({
+        data: {
+          playerId: opts.playerId, teamId: opts.teamId, years: contract.years, yearsRemaining: contract.years,
+          signedYear: contract.signedYear, baseSalaries: writeJson(contract.baseSalaries),
+          signingBonus: contract.signingBonus, guaranteed: contract.guaranteed, isRookieDeal: true,
+        },
       });
-      if (pick) {
-        const player = await tx.player.findUniqueOrThrow({ where: { id: opts.playerId } });
-        const overall = (pick.round - 1) * pickInfo.order.length + pick.slot;
-        const apy = rookieScaleApy(overall, pickInfo.order.length * 7);
-        const contract = buildContract({ apy, years: 4, signedYear: opts.seasonYear, isRookieDeal: true, bonusPct: 0.4 });
-        await tx.draftPick.update({ where: { id: pick.id }, data: { used: true, playerId: opts.playerId } });
-        await tx.contract.deleteMany({ where: { playerId: opts.playerId } });
-        await tx.contract.create({
-          data: {
-            playerId: opts.playerId, teamId: opts.teamId, years: contract.years, yearsRemaining: contract.years,
-            signedYear: contract.signedYear, baseSalaries: writeJson(contract.baseSalaries),
-            signingBonus: contract.signingBonus, guaranteed: contract.guaranteed, isRookieDeal: true,
-          },
-        });
-        await tx.player.update({ where: { id: opts.playerId }, data: { draftYear: opts.seasonYear, draftRound: pick.round, draftPickNo: overall } });
-        await tx.transaction.create({
-          data: { leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: 0, type: 'DRAFT', teamId: opts.teamId,
-            headline: `Round ${pick.round}, Pick ${pick.slot}: ${player.firstName} ${player.lastName} (${player.position})` },
-        });
-      }
-    } else {
+      await tx.player.update({ where: { id: opts.playerId }, data: { draftYear: opts.seasonYear, draftRound: pick.round, draftPickNo: overall } });
+      await tx.transaction.create({
+        data: { leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: 0, type: 'DRAFT', teamId: opts.teamId,
+          headline: `Round ${pick.round}, Pick ${pick.slot}: ${player.firstName} ${player.lastName} (${player.position})` },
+      });
+    } else if (isFantasy) {
       const player = await tx.player.findUniqueOrThrow({ where: { id: opts.playerId } });
       await tx.transaction.create({
         data: { leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: 0, type: 'DRAFT', teamId: opts.teamId,
@@ -96,10 +111,10 @@ export async function draftPlayer(opts: {
 }
 
 async function advancePick(tx: typeof prisma, leagueId: string, state: { pickIndex: number; round: number; order: string }, isFantasy: boolean, rounds: number) {
-  const order = readJson<string[]>(state.order, []);
   const nextIndex = state.pickIndex + 1;
 
   if (isFantasy) {
+    const order = readJson<string[]>(state.order, []);
     const done = nextIndex >= order.length;
     await tx.draftState.update({
       where: { leagueId },
@@ -108,7 +123,7 @@ async function advancePick(tx: typeof prisma, leagueId: string, state: { pickInd
     return;
   }
 
-  const roundSize = order.length;
+  const roundSize = LEAGUE.TEAM_COUNT;
   const nextRound = Math.floor(nextIndex / roundSize) + 1;
   const done = nextRound > rounds;
   await tx.draftState.update({
@@ -185,13 +200,12 @@ export async function reseedDraftOrder(leagueId: string, seasonYear: number) {
 }
 
 export async function startRookieDraft(leagueId: string, seasonYear: number, rng: Rng) {
-  const teams = await prisma.team.findMany({ where: { leagueId }, orderBy: { id: 'asc' } });
-  const round1Picks = await prisma.draftPick.findMany({ where: { leagueId, year: seasonYear, round: 1 }, orderBy: { slot: 'asc' } });
-  const order = round1Picks.length ? round1Picks.map((p) => p.ownerTeamId) : teams.map((t) => t.id);
-
+  // `order` is unused for ROOKIE drafts — currentPick() resolves the team on
+  // the clock from live DraftPick ownership every round instead (see there
+  // for why a fixed turn-order array doesn't work once picks get traded).
   await prisma.draftState.deleteMany({ where: { leagueId } });
   await prisma.draftState.create({
-    data: { leagueId, kind: 'ROOKIE', round: 1, pickIndex: 0, order: writeJson(order), complete: false },
+    data: { leagueId, kind: 'ROOKIE', round: 1, pickIndex: 0, order: writeJson([]), complete: false },
   });
   await prisma.league.update({ where: { id: leagueId }, data: { phase: 'DRAFT' } });
 }

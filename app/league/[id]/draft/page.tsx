@@ -4,6 +4,7 @@ import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { ratingColor } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
+import { LEAGUE } from '@/lib/tuning';
 import { DraftPickButton } from '@/components/DraftPickButton';
 import { SkipToMyPickButton } from '@/components/SkipToMyPickButton';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
@@ -26,25 +27,37 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     );
   }
 
-  const order = readJson<string[]>(state.order, []);
-  // `order` is one round's worth of turn order, reused every round (see
-  // reseedDraftOrder) — pickIndex climbs across the whole multi-round
-  // draft, so it must be taken modulo the order length, not indexed
-  // directly (that was indexing past the array for every pick after round
-  // 1, which silently broke the entire draft beyond round 1).
-  const onClockTeamId = order.length > 0 ? order[state.pickIndex % order.length] : undefined;
+  const isFantasy = state.kind === 'FANTASY';
+  // Fantasy draft has no DraftPick rows — it's a plain snake of team turns,
+  // so the stored order is the whole story there. A rookie draft resolves
+  // the team on the clock from LIVE DraftPick ownership every round instead
+  // of a turn-order array (see lib/draft.ts currentPick() for why a fixed
+  // array silently ignores any trade involving a round-2+ pick).
+  const order = isFantasy ? readJson<string[]>(state.order, []) : [];
+  const roundSize = LEAGUE.TEAM_COUNT;
+  const rookiePicks = !isFantasy && !state.complete
+    ? await prisma.draftPick.findMany({ where: { leagueId: league.id, year: league.seasonYear }, orderBy: [{ round: 'asc' }, { slot: 'asc' }] })
+    : [];
+  const rookiePickByIndex = new Map(rookiePicks.map((p) => [(p.round - 1) * roundSize + (p.slot - 1), p]));
+
+  const totalPicks = isFantasy ? order.length : roundSize * settings.draftRounds;
+  const onClockTeamId = isFantasy
+    ? (order.length > 0 ? order[state.pickIndex % order.length] : undefined)
+    : rookiePickByIndex.get(state.pickIndex)?.ownerTeamId;
   const onClockTeam = onClockTeamId ? await prisma.team.findUnique({ where: { id: onClockTeamId } }) : null;
   const isUserOnClock = onClockTeamId === team.id;
-  const totalPicks = order.length * settings.draftRounds;
 
   const allTeams = state.kind === 'ROOKIE' && !state.complete ? await prisma.team.findMany({ where: { leagueId: league.id } }) : [];
   const teamById = new Map(allTeams.map((t) => [t.id, t]));
-  const upcomingPicks = order.length > 0 && !state.complete
+  const upcomingPicks = totalPicks > 0 && !state.complete
     ? Array.from({ length: Math.min(32, totalPicks - state.pickIndex) }, (_, i) => {
         const idx = state.pickIndex + i;
-        const round = Math.floor(idx / order.length) + 1;
-        const teamId = order[idx % order.length];
-        return { idx, round, team: teamById.get(teamId) };
+        if (isFantasy) {
+          const round = Math.floor(idx / order.length) + 1;
+          return { idx, round, team: teamById.get(order[idx % order.length]) };
+        }
+        const p = rookiePickByIndex.get(idx);
+        return { idx, round: p ? p.round : Math.floor(idx / roundSize) + 1, team: p ? teamById.get(p.ownerTeamId) : undefined };
       })
     : [];
 

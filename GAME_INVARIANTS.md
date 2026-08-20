@@ -42,11 +42,13 @@ other — `lib/invariants.ts` reports violations by ID.
   a phantom cap hit at worst.
 - **INV-06** — `isDraftee === true` implies `teamId == null`. A draft-eligible
   prospect is never simultaneously on an active roster.
-- **INV-07** — A player is draft-eligible only for the draft in the same
-  `seasonYear` as its own `draftYear`. Once a league's `seasonYear` moves past
-  a player's `draftYear` while that player is still `isDraftee: true`, it's a
-  prospect nothing ever drafted, and nothing currently converts it back into
-  an ordinary free agent — see **Known violations** below.
+- **INV-07** — An `isDraftee` player should never fall more than one game-year
+  behind the league's current `seasonYear`. A freshly generated class always
+  carries `draftYear === seasonYear - 1` for a long stretch (it's generated a
+  full game-year before its own draft actually runs, since `RESET_STANDINGS`
+  bumps `seasonYear` forward well before that class reaches its `DRAFT`
+  phase) — that's expected, not a violation. Anything older than that is a
+  prospect nothing ever drafted, still sitting in limbo.
 - **INV-08** — A team's active roster (`status: 'ACTIVE'` players with that
   `teamId`) should not exceed `settings.rosterMax` (default 53). See **Known
   violations** — nothing currently enforces this.
@@ -58,9 +60,16 @@ other — `lib/invariants.ts` reports violations by ID.
 - **INV-11** — No two `DraftPick` rows share the same
   `(leagueId, year, round, slot, originalTeamId)`. A duplicate means pick
   generation ran twice for the same slot.
-- **INV-12** — Once a rookie draft's `DraftState.complete` is `true`, every
-  `DraftPick` for that draft's year is `used === true`. A draft can't finish
-  with picks still on the board.
+- **INV-12** — Any `DraftPick` from a season year strictly before the
+  league's current `seasonYear` is `used === true`. A pick's `year` only ever
+  equals the `seasonYear` at the moment its draft actually runs, so once the
+  league has moved past that year, that draft has definitely already
+  happened — every pick from it must have been consumed. (Deliberately not
+  keyed off `DraftState.complete` — that flag has no year of its own and
+  stays stale-true long after the season it belonged to has passed, which is
+  exactly what made the original version of this check, keyed off the
+  *current* `seasonYear`, a false positive against next year's not-yet-run
+  draft — see **Known violations**.)
 
 ## Contracts & cap
 
@@ -98,61 +107,87 @@ them by comparing state immediately before and after the relevant
   `careerStats` — nothing is lost or double-counted.
 - **INV-T2 (draft turn order)** — Every `draftPlayer()` call consumes exactly
   one `DraftPick` owned by the team taking the turn, for the round currently
-  on the clock. See **Known violations** — this one currently does not hold
-  past round 1.
+  on the clock — checked indirectly by INV-12: if any round's trade were
+  still being ignored, some pick from a finished draft would be left unused.
 
 ## Known violations
 
 Grounding these invariants in the actual code — not just the schema comments
-— surfaced real bugs. They're recorded here so the harness has something
-real to confirm on its first run, and so none of them get lost.
+— surfaced real bugs, and running the harness for real surfaced more,
+including two in the checker itself. Recorded here so none of it gets lost.
 
-### Fixed while writing this document
+### Fixed
 
-**A completed rookie draft never transitioned the league out of `DRAFT`.**
-`draftPlayer()`/`advancePick()` correctly marked `DraftState.complete: true`
-once every pick was made, but nothing anywhere ever read that flag —
-`advanceWeek`'s `case 'DRAFT'` unconditionally returned "Draft is in
-progress" forever, and `'PRESEASON'` was never written as a phase value
-except at league creation. Every league in the game was permanently stuck
-after its first draft, with no way to ever reach a second season — the
-"dynasty" this project is named for was unreachable. Fixed in `lib/season.ts`
-by checking `draftState.complete` in both the `DRAFT` and `FANTASY_DRAFT`
-cases and transitioning to `PRESEASON` when true. Verified with a scripted
-run that auto-drafted every pick and confirmed a league now cycles through
-five consecutive season years without stalling.
+1. **A completed rookie draft never transitioned the league out of `DRAFT`.**
+   `draftPlayer()`/`advancePick()` correctly marked `DraftState.complete:
+   true` once every pick was made, but nothing anywhere ever read that flag —
+   `advanceWeek`'s `case 'DRAFT'` unconditionally returned "Draft is in
+   progress" forever, and `'PRESEASON'` was never written as a phase value
+   except at league creation. Every league was permanently stuck after its
+   first draft, with no way to ever reach a second season — the "dynasty"
+   this project is named for was unreachable. Fixed in `lib/season.ts` by
+   checking `draftState.complete` in the `DRAFT`/`FANTASY_DRAFT` cases and
+   transitioning to `PRESEASON` when true.
+2. **Retirement never deleted the retiring player's `Contract` row.** Every
+   other path off an active roster (cut, trade-away-then-cut, an unresigned
+   expiring deal) deletes the contract; the offseason retirement roll never
+   did. Fixed in `progressAllPlayers`.
+3. **Draft turn order ignored trades past round 1 (INV-T2/INV-12).**
+   `startRookieDraft` built a turn-order array from round 1's pick ownership
+   and then reused that exact same array for every later round via
+   `order[pickIndex % order.length]`. Rounds 2+ therefore always handed the
+   turn to whichever team held that *slot in round 1's order*, regardless of
+   who actually owned that round's pick — and `draftPlayer()` rostered
+   whoever was on the clock unconditionally, so a team with no owned pick
+   left in the round (having traded it away) still got the player for free,
+   no contract, no pick consumed, while the team that acquired that pick
+   never got an extra turn to use it. Fixed by having `currentPick()` resolve
+   the exact `DraftPick` on the clock from live ownership for the current
+   `(round, slot)` every time, and having `draftPlayer()` consume that exact
+   row instead of independently re-searching for "any pick this team owns
+   this round."
+4. **Undrafted prospects never left the draft pool (INV-07).** Nothing ever
+   converted a player who went undrafted back into an ordinary free agent —
+   `isDraftee` was only ever cleared inside `draftPlayer()` for players
+   actually selected, and the pool query in `pickBestAvailable` has no year
+   filter of its own, so a leftover prospect kept resurfacing in every future
+   year's draft board mixed in with the real new class, never aging (offseason
+   progression only touches `status: 'ACTIVE'` players) and permanently
+   excluded from normal free agency (which explicitly filters `isDraftee`
+   out). Fixed by converting every remaining `isDraftee` player from the
+   class that just finished drafting back into an ordinary free agent the
+   moment `DRAFT` transitions to `PRESEASON`.
+5. **Two false positives in the checker itself (INV-07, INV-12).** Both
+   originally compared a stored year against the league's *current*
+   `seasonYear` directly. That's wrong for anything whose year field is set
+   *before* the game-year in which it's actually resolved (a class's
+   `draftYear`, a `DraftPick.year`) — `RESET_STANDINGS` bumps `seasonYear`
+   forward well before that cycle's own `DRAFT` phase runs, so for a long
+   stretch every season both checks flagged the *current*, not-yet-processed
+   cycle as if it were already-stale leftover data. Both now compare against
+   a year that's unambiguously in the past instead (see each rule's text
+   above for the exact reasoning) — a reminder that the verification tooling
+   needs the same scrutiny as the systems it's checking.
+
+Verified together with a `sim:health` run across several leagues, several
+seasons deep each, landing at **0 violations**.
 
 ### Still open, not yet fixed
 
-1. **Draft turn order ignores trades past round 1 (INV-T2).**
-   `startRookieDraft` builds the pick-order array from round 1's actual pick
-   ownership (correct — trades on round 1 picks are respected), but
-   `currentPick()` reuses that exact same array for every later round via
-   `order[pickIndex % order.length]`. Rounds 2+ therefore always hand the
-   turn to whichever team held that *slot in round 1's order*, regardless of
-   who actually owns that round's pick. Worse, `draftPlayer()` rosters
-   whoever's on the clock unconditionally — if the team on the clock doesn't
-   own an unused pick in the current round (e.g. they traded it away), it
-   still gets the player, ACTIVE, with **no contract created and no pick
-   consumed** (violating INV-04 the moment this happens). Meanwhile a team
-   that *acquired* extra picks in a later round never gets an extra turn to
-   use them — those picks just sit `used: false` forever, which INV-12 will
-   catch once a draft with a multi-round pick trade in it runs to
-   completion.
-2. **Undrafted prospects never leave the draft pool (INV-07).** Nothing ever
-   converts a player who goes undrafted back into an ordinary free agent —
-   `isDraftee` is only ever set to `false` inside `draftPlayer()`. The draft
-   pool query in `pickBestAvailable` also doesn't filter by `draftYear`, so
-   a prospect who goes undrafted in year 1 stays eligible — and keeps
-   showing up mixed in with genuinely new rookies — in every future year's
-   draft board, never ages (progression only runs on `status: 'ACTIVE'`
-   players), and is permanently excluded from normal free agency (which
-   explicitly filters out `isDraftee: true`).
-3. **No roster-size ceiling is enforced anywhere (INV-08).**
+1. **No roster-size ceiling is enforced anywhere (INV-08).**
    `LEAGUE.ROSTER_MAX` / `settings.rosterMax` exist and default to 53, but
    they're only ever read at league generation time. Nothing in free agency,
    the draft, or trades checks a team's active roster count before adding to
    it, so a team's roster can grow without bound over a long-running league.
-
-None of these are fixed yet — they're logged here as the harness's first
-real findings, to be triaged and fixed as their own follow-up work.
+   The harness hasn't actually triggered this yet in a short run — flagged
+   here as a gap to watch as `sim:health` gets run for longer stretches.
+2. **The `FANTASY_DRAFT` completion condition looks suspect.**
+   `advancePick`'s fantasy branch marks the draft complete once
+   `pickIndex >= order.length` — i.e. after one single pass through all 32
+   teams' turns — but a fantasy draft is meant to fill every team's entire
+   roster from a shared blank-slate pool
+   (`LEAGUE.TEAM_COUNT * LEAGUE.ROSTER_MAX + 120` players are generated for
+   it), which needs far more than one turn per team. Not yet investigated or
+   fixed — `FANTASY_DRAFT` is an opt-in alternate league-start mode
+   (`RANDOM_ROSTERS` is the default), so it hasn't been exercised by the
+   `sim:health` harness, which always starts leagues with `RANDOM_ROSTERS`.
