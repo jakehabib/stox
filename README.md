@@ -344,3 +344,18 @@ ever force-pushed over, so every state below still exists in git history).
     visually confirmed the ▲/▼ arrows on a league with actual movement.
   - Both surface on the real Dashboard hero/standings now — `TeamHeader`
     got a `tone: 'good' | 'bad'` scenario tag instead of always-gold.
+- **2026-08-20 — Redesign Stage 3: the real Player Page.** Restyled the
+  container/hero around every existing interactive piece — contract
+  extension/restructure/cut, the sign-offer form, the scout button, the
+  fog-of-war reveal logic — without touching any of their behavior. The
+  hero shows a filled `RatingBadge` when the OVR is revealed, or a
+  `ScoutingRange` when it isn't, exactly mirroring the real
+  `view.revealed` branch (same pattern the draft-prospect mockup already
+  established) — potential is always a range regardless, per
+  `ScoutedPlayerView`'s own contract. Added a small "key stats" line in
+  the hero (top 3 season stat entries) — additive, doesn't remove the
+  full Season/Career Stats sections below. Verified against a revealed
+  own-roster player and an unrevealed opposing-roster player in the same
+  real league, confirming both branches render correctly and every
+  button (extension, restructure, release, sign offer, scout/focus
+  report) still works.
