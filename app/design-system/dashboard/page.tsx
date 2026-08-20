@@ -28,7 +28,7 @@ export default function DashboardMockup() {
       <TeamHeader
         teamId={TEAM.id} abbr={TEAM.abbr} city={TEAM.city} nickname={TEAM.nickname}
         wins={8} losses={3} ties={0} standing="1st · AFC East" tenureLabel="Year 4 of your tenure"
-        scenarioTag="Clinch scenario: live at Week 12"
+        scenarioTag={{ label: 'Clinch scenario: live at Week 12', tone: 'good' }}
         stats={[
           { value: '$12.8M', label: 'Cap Space', color: 'text-accent' },
           { value: '53/53', label: 'Roster' },

@@ -123,7 +123,7 @@ export default function DesignSystemPage() {
         <TeamHeader
           teamId={DEMO_TEAM.id} abbr={DEMO_TEAM.abbr} city={DEMO_TEAM.city} nickname={DEMO_TEAM.nickname}
           wins={8} losses={3} ties={0} standing="1st · AFC East" tenureLabel="Year 4 of your tenure"
-          scenarioTag="Clinch scenario: live at Week 12"
+          scenarioTag={{ label: 'Clinch scenario: live at Week 12', tone: 'good' }}
           stats={[{ value: '$12.8M', label: 'Cap Space', color: 'text-accent' }, { value: '53/53', label: 'Roster' }]}
           nextGame={{ teamId: PARTNER_TEAM.id, abbr: PARTNER_TEAM.abbr, city: 'Miami', wins: 6, losses: 5, winProb: 64, home: false }}
         />

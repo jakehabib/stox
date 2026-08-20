@@ -10,6 +10,8 @@ import { buildFrontOfficeBrief } from '@/lib/frontOffice';
 import { buildGmCareerSummary } from '@/lib/gmCareer';
 import { estimateWinProbability } from '@/lib/winProbability';
 import { transactionCategory } from '@/lib/newsCategory';
+import { computeClinchStatus, clinchScenarioTag } from '@/lib/clinchScenario';
+import { computeRankDeltas } from '@/lib/standingsTrend';
 import { SeasonAnnouncement, AwardLine } from '@/components/SeasonAnnouncement';
 import { OffseasonRoadmap } from '@/components/OffseasonRoadmap';
 import { TeamHeader } from '@/components/ds/TeamHeader';
@@ -38,13 +40,19 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
 
-  const [roster, upcomingGames, recentGames, picks, transactions, divisionTeams] = await Promise.all([
+  const [roster, upcomingGames, recentGames, picks, transactions, divisionTeams, conferenceTeams] = await Promise.all([
     prisma.player.findMany({ where: { teamId: team.id }, orderBy: { trueOvr: 'desc' } }),
     prisma.game.findMany({ where: { leagueId: league.id, OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }], played: false }, orderBy: { week: 'asc' }, take: 1, include: { homeTeam: true, awayTeam: true } }),
     prisma.game.findMany({ where: { leagueId: league.id, OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }], played: true }, orderBy: { week: 'desc' }, take: 3, include: { homeTeam: true, awayTeam: true } }),
     prisma.draftPick.count({ where: { ownerTeamId: team.id, used: false } }),
     prisma.transaction.findMany({ where: { leagueId: league.id, OR: [{ teamId: team.id }, { teamId: null }] }, orderBy: { createdAt: 'desc' }, take: 6 }),
     prisma.team.findMany({ where: { leagueId: league.id, conference: team.conference, division: team.division } }),
+    // Only the clinch-scenario math needs the full conference (wildcard
+    // race spans every division) — the standings panel itself stays
+    // division-only.
+    league.phase === 'REGULAR'
+      ? prisma.team.findMany({ where: { leagueId: league.id, conference: team.conference }, select: { id: true, division: true, wins: true, losses: true, ties: true, pointsFor: true, pointsAgnst: true } })
+      : Promise.resolve([]),
   ]);
 
   // --- Season announcement (unchanged from the prior page — a proactive
@@ -125,6 +133,14 @@ export default async function TeamDashboard({ params }: { params: { id: string }
     return { teamId: t.id, results };
   }));
   const lastFiveMap = new Map(lastFiveByTeam.map((r) => [r.teamId, r.results]));
+  const rankDeltas = await computeRankDeltas(league.id, divisionSorted);
+
+  // --- Clinch scenario — real mathematical clinch/elimination, computed by
+  // running the same seeding algorithm lib/season.ts uses (see
+  // lib/clinchScenario.ts). Only meaningful mid-season. ---------------------
+  const scenarioTag = league.phase === 'REGULAR' && conferenceTeams.length > 0
+    ? clinchScenarioTag(computeClinchStatus(team.id, conferenceTeams))
+    : null;
 
   // --- League Wire — real transactions and real recent-game recaps,
   // combined and sorted by recency. No new schema; both already existed.
@@ -210,6 +226,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           wins={team.wins} losses={team.losses} ties={team.ties}
           standing={`${ORDINAL(divisionRank)} · ${team.conference} ${team.division}`}
           tenureLabel={tenure.tenureYears <= 1 ? 'Your first season' : `Year ${tenure.tenureYears} of your tenure`}
+          scenarioTag={scenarioTag ?? undefined}
           stats={[
             cap
               ? { value: formatMoney(cap.capSpace), label: 'Cap Space', color: cap.capSpace >= 0 ? 'text-accent' : 'text-bad' }
@@ -255,7 +272,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
               label="Standings"
               rows={divisionSorted.map((t) => ({
                 teamId: t.id, abbr: t.abbr, city: t.city, wins: t.wins, losses: t.losses, ties: t.ties,
-                isUser: t.id === team.id, lastFive: lastFiveMap.get(t.id),
+                isUser: t.id === team.id, lastFive: lastFiveMap.get(t.id), delta: rankDeltas.get(t.id),
               }))}
             />
           </div>

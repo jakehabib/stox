@@ -319,3 +319,28 @@ ever force-pushed over, so every state below still exists in git history).
   - Verified against three real leagues in different phases (mid-season,
     playoff push, post-draft/offseason with no next game scheduled) via
     Playwright, watching the browser console for client errors on each.
+- **2026-08-20 — Wired up the two deliberately-skipped Dashboard features.**
+  Both genuinely needed new logic, not just presentation — built and
+  verified them properly rather than faking the data:
+  - `lib/clinchScenario.ts` — real mathematical division/playoff
+    clinch and elimination detection. Runs the *exact same* seeding
+    algorithm `lib/season.ts`'s `seedPlayoffs()` uses (a deliberate,
+    documented duplicate of its private `byStanding` comparator — keep
+    them in sync) against a worst-case-for-this-team /
+    best-case-for-everyone-else projection of the remaining schedule.
+    That's the standard definition of "clinched" in real sports, not a
+    heuristic. Verified against synthetic edge cases (a 17-0 team, a
+    0-17 team, week 1) and against every real saved league with a
+    won-or-lost scenario — output matched hand-checked math in every
+    case. Known simplification: future games project win/loss counts
+    only, not point differential, matching the tiebreaker simplification
+    `byStanding` already accepts.
+  - `lib/standingsTrend.ts` — real week-over-week rank deltas, computed
+    from existing `Game` history (no snapshot table) by finding each
+    division team's most recent played game and subtracting its result
+    back out to reconstruct last week's order. Verified the deltas are
+    zero-sum within a division (a rank permutation can't gain or lose
+    positions net) across every real league with a live race, and
+    visually confirmed the ▲/▼ arrows on a league with actual movement.
+  - Both surface on the real Dashboard hero/standings now — `TeamHeader`
+    got a `tone: 'good' | 'bad'` scenario tag instead of always-gold.

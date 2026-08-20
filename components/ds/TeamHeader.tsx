@@ -12,8 +12,8 @@ export function TeamHeader({
   wins: number; losses: number; ties: number; standing: string;
   /** "Year 4 of your tenure" — the franchise's context, not just this season's. */
   tenureLabel?: string;
-  /** A live playoff/record-chase scenario worth flagging, e.g. "Clinch scenario: live at Week 12." */
-  scenarioTag?: string;
+  /** A clinch/elimination scenario worth flagging, e.g. "Clinched the division." */
+  scenarioTag?: { label: string; tone: 'good' | 'bad' };
   stats: StatTile[];
   /** The next matchup, embedded directly rather than a separate card — one hero, one read. */
   nextGame?: NextGame;
@@ -43,7 +43,9 @@ export function TeamHeader({
               <span className="text-xs text-muted">{standing}{tenureLabel ? ` · ${tenureLabel}` : ''}</span>
             </div>
             {scenarioTag && (
-              <span className="pill border-gold/40 text-gold mt-2 inline-block">{scenarioTag}</span>
+              <span className={`pill mt-2 inline-block ${scenarioTag.tone === 'good' ? 'border-gold/40 text-gold' : 'border-bad/40 text-bad'}`}>
+                {scenarioTag.label}
+              </span>
             )}
           </div>
         </div>
