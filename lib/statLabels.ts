@@ -200,13 +200,21 @@ const OFF_LINE_NONE: StatColumn[] = [];
  *                                       pass defended (`isRusher`/`isCover`).
  *   - EDGE/DT `defInt`, `pd`          — max 0, same reason.
  *   - CB/S `sacks`                    — max 0, same reason.
- *   - QB `rushTd`, RB `recTd`         — the key is never written at all.
+ *   - QB `rushTd`, RB `recTd`, RB     — the key is never written at all, for
+ *     `targets`, and `fum` for anyone   anybody, in any game ever played.
  *
  * They are not columns. A column of permanent zeroes carries no information
  * and actively misinforms: it reads as "this linebacker has never had a sack"
  * when the truth is "this game does not record sacks for linebackers". That is
  * the same judgement that leaves the offensive line with no columns at all,
  * applied to a stat rather than a position.
+ *
+ * The fantasy-relevance test these columns are chosen by does not change that.
+ * A defender's sack total IS decision-relevant, and a rushing quarterback's
+ * touchdowns are most of what makes him one — which is why the gap is worth
+ * naming as a SIM gap rather than papering over as a display one. Until
+ * allocateStats() can write those numbers, a column for them would tell a
+ * fantasy manager something false rather than something useful.
  *
  * LB is the thinnest line here as a result, so it gets the one honest extra a
  * tackle total supports — tackles per game, which is a rate on a number the
@@ -220,7 +228,13 @@ export const CAREER_COLUMNS: Record<string, StatColumn[]> = {
     { key: 'passYpa', short: 'Avg', derive: (s) => per(s.passYds, s.passAtt), format: 'avg1' },
     { key: 'passTd', short: 'TD', lead: 2 }, { key: 'int', short: 'Int', lead: 3 },
     { key: 'passerRating', short: 'Rate', derive: passerRating, format: 'rate1' },
-    { key: 'rushYds', short: 'RuYd' },
+    // The rushing half. A running quarterback is a different asset from a
+    // pocket one and the volume is the tell, so the carries come with the
+    // yards rather than the yards standing alone. No rushing-TD column: see
+    // the absent-columns note above — allocateStats() never writes `rushTd`
+    // on a quarterback's line, so the column would be a permanent zero and
+    // would read as "he has never run one in", which is not what it means.
+    { key: 'rushAtt', short: 'RuAtt' }, { key: 'rushYds', short: 'RuYd' },
   ],
   RB: [
     { key: 'gp', short: 'G' }, { key: 'rushAtt', short: 'Att' },

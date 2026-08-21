@@ -217,6 +217,39 @@ These came from the app owner directly and they override any local design
 argument — including a well-reasoned one. If a change conflicts with
 something here, the principle wins and the change is wrong.
 
+0. **THE POINT IS IMMERSION — a universe the player can get lost in.** In the
+   owner's words: *"The design philosophy is trying to create a universe the
+   player can get lost in. There are stories, careers, etc that need to feel
+   like have happened so the player can reach the peak immersion."*
+
+   This is the principle the rest of the list serves, so it comes first. It
+   has a specific and demanding consequence: **the world must have a past,
+   and the past must be legible.** A thirty-year-old on your roster had a
+   career before you met him and the game should be able to show it, season
+   by season, club by club — not collapse it into a summary row. A franchise
+   has titles, droughts, records and rivalries. A season leaves stories
+   behind it. None of that is decoration; it is the difference between
+   managing a database and running a club.
+
+   **And it is the differentiator, not a nice-to-have.** *"No other game has
+   something for that armchair quarterback nerd to dive into like this.
+   that's why i'm a stickler for the cap and stats to have such depth."* So
+   when depth and tidiness conflict on the cap page, the stats page or a
+   player card, depth wins — this is the audience the game is FOR. That does
+   not license clutter (principle 5 still holds: a column that reads the same
+   on every row is noise), and it does not license inventing a number
+   (principle 6). It means the honest, real, hard-won detail stays in, and
+   "this is a lot" is not by itself an argument for cutting it.
+
+   It also sets the bar for what "not enough data" means. Where the world's
+   history is *generated*, generate it in full and **keep** it — the
+   "Before 2026" row existed only because `buildVeteranCareers` computed a
+   veteran's career season by season and then merged it away. The fix for a
+   thin-feeling world is almost always to stop discarding what was already
+   invented, never to invent a second time on top of a summary. See
+   principle 6: a reconstructed split is a different fiction wearing the
+   first one's totals.
+
 1. **It must feel like a game, not a spreadsheet.** *"we dont want this to
    just feel like text — the avatars and graphics add SO much to the feel of
    the game."* and *"it needs to be and feel alive."* Information density is
@@ -252,6 +285,17 @@ something here, the principle wins and the change is wrong.
    reading "Trades 0" beside a tile reading "Trades Made 7"), so it is
    written down: if you display a rank, it must be the rank of the grade you
    displayed.
+
+   The corollary, which principle 0 makes tempting to break: **immersion is
+   never a licence to invent a number.** A metric borrowed from the real
+   sport must be the real metric or it must not carry the name. EPA is the
+   worked example — it is defined per play against down, distance and field
+   position, `DriveResult` records none of those, so the game does not ship
+   an "EPA" column. What it ships instead is the drive-efficiency family it
+   *can* compute honestly (points per drive, drive success rate, three-and-out
+   rate, yards and plays per drive), which is what a real front office runs
+   on anyway. The owner's ruling: *"lets just do what we can reasonably do
+   without reinventing the wheel."*
 
 ## Known simplifications (documented, not bugs)
 
