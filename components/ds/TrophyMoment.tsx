@@ -123,11 +123,14 @@ export function TrophyMoment({ data, onClose, leagueId }: {
 
           {data.finalScore && (
             <div className="stat-value text-stat-md">
-              <span style={{ color: data.finalScore.mine > data.finalScore.theirs ? textColor : undefined }}>
+              <span
+                className={data.finalScore.mine < data.finalScore.theirs ? 'text-muted' : ''}
+                style={{ color: data.finalScore.mine > data.finalScore.theirs ? textColor : undefined }}
+              >
                 {data.finalScore.mine}
               </span>
               <span className="text-muted"> — </span>
-              <span className={data.finalScore.mine > data.finalScore.theirs ? 'text-muted' : ''}>
+              <span className={data.finalScore.theirs < data.finalScore.mine ? 'text-muted' : ''}>
                 {data.finalScore.theirs}
               </span>
               <div className="font-display font-bold uppercase tracking-widest text-xs text-muted mt-2">

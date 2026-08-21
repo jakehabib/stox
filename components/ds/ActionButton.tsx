@@ -53,7 +53,14 @@ export function ActionButton({
   const [doneText, setDoneText] = useState(doneLabel);
   const alive = useRef(true);
 
-  useEffect(() => () => { alive.current = false; }, []);
+  // Re-armed on mount, not only cleared on unmount. React StrictMode mounts,
+  // unmounts and remounts every component in development, so a ref that is
+  // only ever set to false in the cleanup stays false for the rest of the
+  // component's life — and every `done` beat is silently swallowed.
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   useEffect(() => {
     if (phase !== 'done') return;

@@ -51,11 +51,13 @@ export function FullScoutButton({ leagueId, teamId, playerId, compact }: {
   const charges = useDeltaWatch(panel?.remaining ?? 0);
 
   const spend = async () => {
-    charges.arm();
     const r = await fullScoutAction(leagueId, teamId, playerId);
     setMsg(r.message);
+    if (!r.ok) { load(); return false as const; }
+    // Armed only on a spend that actually happened — a refusal must not leave
+    // the chip primed to fire on some later, unrelated change.
+    charges.arm();
     load();
-    if (!r.ok) return false as const;
     setConfirming(false);
     startTransition(() => router.refresh());
     return 'File complete';

@@ -100,31 +100,18 @@ const MARKS: Record<string, TeamMarkFn> = {
     </>
   ),
 
-  // Cleveland Gales — cyclone
+  // Cleveland Gales — funnel
   //
-  // Three wind lines with hooked ends read as scribble at 40px. A two-armed
-  // spiral around an eye reads as weather.
+  // Wind is the hardest of the 32 to draw: three streaked lines read as
+  // scribble, and a spiral reads as the Aviators' propeller. A funnel cloud is
+  // a silhouette, which is what survives at 40px.
   gales: (c, bg) => (
     <>
-      {[0, 180].map((r) => (
-        <path
-          key={r}
-          d="M50 34 C30 34 14 22 12 4 C34 4 50 16 50 34 Z"
-          fill={c}
-          transform={`rotate(${r} 50 41)`}
-        />
-      ))}
-      {[0, 180].map((r) => (
-        <path
-          key={`b${r}`}
-          d="M50 36 C34 40 20 52 18 68 C36 64 48 52 50 36 Z"
-          fill={c}
-          opacity={0.85}
-          transform={`rotate(${r} 50 41)`}
-        />
-      ))}
-      <circle cx={50} cy={41} r={11} fill={c} />
-      <circle cx={50} cy={41} r={4.5} fill={bg} />
+      <path d="M6 8 C30 0 70 0 94 8 C86 26 68 34 62 48 C56 62 56 76 60 90 L48 82 C44 68 46 56 40 46 C32 32 14 24 6 8 Z" fill={c} />
+      <g stroke={bg} strokeWidth={5} fill="none" strokeLinecap="round">
+        <path d="M18 18 Q50 26 80 18" />
+        <path d="M34 36 Q50 42 66 34" />
+      </g>
     </>
   ),
 
@@ -149,14 +136,17 @@ const MARKS: Record<string, TeamMarkFn> = {
 
   // Houston Stingrays — manta gliding
   //
-  // Symmetrical wings over a straight vertical tail is a mushroom. Sweep the
-  // tail off to one side and the animal appears.
+  // Two passes drew this as one continuous dome and both read as a mushroom.
+  // The wings have to be separate swept panels with the tips *below* the body
+  // and a notch between wing and body.
   stingrays: (c, bg) => (
     <>
-      <path d="M50 14 C63 14 78 26 94 42 L88 50 C74 44 60 44 50 48 C40 44 26 44 12 50 L6 42 C22 26 37 14 50 14 Z" fill={c} />
-      <path d="M44 44 C48 62 60 74 78 80 L74 88 C52 82 40 66 36 46 Z" fill={c} />
-      <circle cx={41} cy={28} r={3.6} fill={bg} />
-      <circle cx={59} cy={28} r={3.6} fill={bg} />
+      <path d="M46 18 C30 22 14 38 2 62 C18 54 32 48 44 50 Z" fill={c} />
+      <path d="M54 18 C70 22 86 38 98 62 C82 54 68 48 56 50 Z" fill={c} />
+      <path d="M50 10 C58 10 64 24 64 40 C64 54 58 64 50 66 C42 64 36 54 36 40 C36 24 42 10 50 10 Z" fill={c} />
+      <path d="M47 62 L46 92 L50 84 L54 92 L53 62 Z" fill={c} />
+      <circle cx={44} cy={26} r={3.4} fill={bg} />
+      <circle cx={56} cy={26} r={3.4} fill={bg} />
     </>
   ),
 
@@ -286,11 +276,13 @@ const MARKS: Record<string, TeamMarkFn> = {
   ),
 
   // New Jersey Highlanders — thistle
-  highlanders: (c, bg) => (
+  //
+  // Anything knocked out of the bulb (crosshatch, sepals) turns it into a
+  // face. The bulb stays solid.
+  highlanders: (c) => (
     <>
       <path d="M34 34 L28 10 L40 28 L44 4 L50 26 L56 4 L60 28 L72 10 L66 34 Z" fill={c} />
       <path d="M50 30 C63 30 71 40 71 51 C71 63 62 71 50 71 C38 71 29 63 29 51 C29 40 37 30 50 30 Z" fill={c} />
-      <path d="M38 62 L44 56 L50 62 L56 56 L62 62 L56 68 L50 62 L44 68 Z" fill={bg} />
       <path d="M28 62 L8 70 L26 74 Z M72 62 L92 70 L74 74 Z" fill={c} />
     </>
   ),

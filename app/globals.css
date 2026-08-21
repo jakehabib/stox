@@ -79,7 +79,11 @@
      and it is the whole difference. Additive: no colour, size, padding or
      radius of any existing button changes. */
   .btn {
-    transition-property: color, background-color, border-color, opacity, box-shadow, transform;
+    /* Everything transition-colors already covered, plus transform and
+       box-shadow. Listed in full rather than replaced, so no button loses a
+       transition it had — an icon button's fill still eases exactly as before. */
+    transition-property: color, background-color, border-color, text-decoration-color,
+                         fill, stroke, opacity, box-shadow, transform;
     transition-duration: var(--dur-tick);
     transition-timing-function: var(--ease-out);
   }

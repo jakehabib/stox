@@ -39,6 +39,15 @@ const GATE_PHASES = new Set(['RESIGN', 'DRAFT', 'FANTASY_DRAFT']);
  * at both ends of the run — while the panel itself renders the LAST week,
  * which is where the league actually now stands.
  */
+/** "Weeks 8-10", or "Week 17 - The Final" when the span crosses into January. */
+function spanLabel(first: string, last: string): string {
+  if (first === last) return last;
+  const a = /^Week (\d+)$/.exec(first);
+  const b = /^Week (\d+)$/.exec(last);
+  if (a && b) return `Weeks ${a[1]}\u2013${b[1]}`;
+  return `${first} \u2013 ${last}`;
+}
+
 function foldSpan(reports: WeekReport[]): WeekReportSpan | null {
   if (reports.length < 2) return null;
   const first = reports[0];
@@ -46,7 +55,7 @@ function foldSpan(reports: WeekReport[]): WeekReportSpan | null {
   const withChange = reports.filter((r) => r.changed);
   return {
     weeks: reports.length,
-    label: first.weekLabel === last.weekLabel ? last.weekLabel : `${first.weekLabel} – ${last.weekLabel}`,
+    label: spanLabel(first.weekLabel, last.weekLabel),
     results: reports.map((r) => {
       if (!r.result) return { label: r.weekLabel, outcome: '—' as const, mine: null, theirs: null, oppAbbr: null };
       const me = r.result.userIsHome ? r.result.home : r.result.away;

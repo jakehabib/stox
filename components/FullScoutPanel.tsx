@@ -52,11 +52,13 @@ export function FullScoutPanel({ leagueId, teamId }: { leagueId: string; teamId:
   const charges = useDeltaWatch(panel?.remaining ?? 0);
 
   const commit = async (playerId: string) => {
-    charges.arm();
     const r = await fullScoutAction(leagueId, teamId, playerId);
     setMsg(r.message);
+    if (!r.ok) { load(query); return false as const; }
+    // Armed only on a spend that actually happened, so a refusal can never
+    // leave a chip primed to fire on some later, unrelated change.
+    charges.arm();
     load(query);
-    if (!r.ok) return false as const;
     setStaged(null);
     startTransition(() => router.refresh());
     return 'Evaluated';

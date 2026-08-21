@@ -56,10 +56,12 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
   const nextEffect = maxed ? null : def.ranks[rank].effect;
 
   const buy = async () => {
-    points.arm();
     const r = await purchaseSkillAction(leagueId, def.id as DynastySkillId);
     setMsg(r.message);
     if (!r.ok) return false as const;
+    // Armed only after the purchase is confirmed, so a refusal never leaves
+    // the chip primed to fire on some later, unrelated change.
+    points.arm();
     setJustBought(true);
     startTransition(() => router.refresh());
     return rank + 1 >= def.ranks.length ? 'Fully upgraded' : `Rank ${rank + 1}`;

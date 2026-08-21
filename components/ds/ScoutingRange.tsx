@@ -53,7 +53,11 @@ export function ScoutingRange({ low, high, confidence, label = 'OVR', className 
   const pathname = usePathname();
   const box = useRef<HTMLDivElement>(null);
   const fill = useRef<HTMLDivElement>(null);
-  const seenPath = useRef(pathname);
+  // The full URL, not just the path. Free agency and the draft board filter
+  // by position through a query string (?pos=WR), which is a NAVIGATION to a
+  // different player even though the pathname never changes — and a filter
+  // that animates is the exact thing the restraint half of this brief forbids.
+  const seenUrl = useRef('');
   const seenConf = useRef(confidence);
 
   // The confidence chip is shown only where there is genuinely room for it.
@@ -76,10 +80,13 @@ export function ScoutingRange({ low, high, confidence, label = 'OVR', className 
   // it after React has written the new left/width but before the browser
   // paints, so the new range is simply there.
   useLayoutEffect(() => {
-    if (seenPath.current === pathname) return;
-    seenPath.current = pathname;
+    const href = typeof window === 'undefined' ? pathname : window.location.href;
+    const first = seenUrl.current === '';
+    if (seenUrl.current === href) return;
+    seenUrl.current = href;
+    if (first) return;                                    // nothing to cancel yet
     // A different player's numbers are not a delta on this one's, so the
-    // confidence baseline moves with the route and no chip is owed.
+    // confidence baseline moves with the location and no chip is owed.
     seenConf.current = confidence;
     const el = fill.current;
     if (!el) return;
@@ -87,7 +94,7 @@ export function ScoutingRange({ low, high, confidence, label = 'OVR', className 
     void el.offsetWidth;                                  // flush, cancelling it
     const r = requestAnimationFrame(() => { el.style.transition = ''; });
     return () => cancelAnimationFrame(r);
-  }, [pathname, confidence]);
+  }, [pathname, low, high, confidence]);
 
   // Confidence gained. A rise on a page the user has not navigated away from
   // is, by construction, a scouting pass they just paid for — the one event

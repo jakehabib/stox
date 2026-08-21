@@ -417,6 +417,7 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
     summary,
     trackStandings: true,
     wireWeek: week,
+    wireScope: 'WEEK',
   });
   return { summary, report };
 }
@@ -697,6 +698,7 @@ async function simulatePlayoffRound(leagueId: string, settings: ReturnType<typeo
     summary,
     trackStandings: false,
     wireWeek: pending[0]?.week ?? league.week,
+    wireScope: 'LATEST',
   });
 
   if (kindsPlayed.has('WILDCARD') && !kindsPlayed.has('DIVISIONAL')) {

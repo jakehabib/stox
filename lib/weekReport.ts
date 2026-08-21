@@ -351,6 +351,14 @@ export interface BuildWeekReportOptions {
    * ago as news.
    */
   wireWeek: number;
+  /**
+   * Playoff Game rows are numbered week 1-4, which COLLIDES with regular
+   * season weeks 1-4 in the same season year (lib/rivalry.ts documents the
+   * same trap). So a postseason round cannot filter its wire by week — it
+   * takes the newest rows instead, which during the playoffs are exactly the
+   * rows the round just wrote.
+   */
+  wireScope: 'WEEK' | 'LATEST';
 }
 
 export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOptions): Promise<WeekReport | null> {
@@ -500,9 +508,11 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
   }
 
   const wireRows = await prisma.transaction.findMany({
-    where: { leagueId, seasonYear: league.seasonYear, week: opts.wireWeek },
+    where: opts.wireScope === 'WEEK'
+      ? { leagueId, seasonYear: league.seasonYear, week: opts.wireWeek }
+      : { leagueId, seasonYear: league.seasonYear },
     orderBy: { createdAt: 'desc' },
-    take: 120,
+    take: opts.wireScope === 'WEEK' ? 120 : 24,
     select: { id: true, type: true, headline: true, detail: true, teamId: true, seasonYear: true, week: true, createdAt: true },
   });
   const ranked = rankWire(wireRows, {
@@ -538,10 +548,29 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
       atHome, winChance,
       stakes: await stakesLine(leagueId, userTeam.id, opp.id, league.seasonYear),
     };
-  } else if (league.phase === 'PLAYOFFS') {
-    base.nextNote = userTeam.eliminated
-      ? 'Your season is over. The bracket plays on without you.'
-      : 'Waiting on the rest of the bracket.';
+  } else if (!opts.trackStandings) {
+    // No next game and this was a postseason round: either they were knocked
+    // out (find the round it happened in — `Team.eliminated` only marks teams
+    // that missed the bracket entirely, so it cannot answer this) or they
+    // never made it.
+    const lost = await prisma.game.findFirst({
+      where: {
+        leagueId, seasonYear: league.seasonYear, played: true, kind: { not: 'REGULAR' },
+        OR: [{ homeTeamId: userTeam.id }, { awayTeamId: userTeam.id }],
+      },
+      orderBy: { week: 'desc' },
+      select: { kind: true, homeTeamId: true, homeScore: true, awayScore: true },
+    });
+    if (lost) {
+      const atHome = lost.homeTeamId === userTeam.id;
+      const mine = atHome ? lost.homeScore : lost.awayScore;
+      const theirs = atHome ? lost.awayScore : lost.homeScore;
+      base.nextNote = mine < theirs
+        ? `Your season ended in the ${ROUND_LABEL[lost.kind] ?? lost.kind}.`
+        : 'Waiting on the rest of the bracket.';
+    } else {
+      base.nextNote = 'You are not in this bracket. Next season starts in the offseason.';
+    }
   } else if (opts.trackStandings) {
     base.nextNote = 'Regular season complete.';
   }

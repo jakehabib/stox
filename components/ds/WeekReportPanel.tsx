@@ -104,7 +104,7 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
           <div className="flex items-center justify-between gap-3 pb-3 border-b border-line">
             <h2 className="font-display font-extrabold uppercase tracking-wide text-lg sm:text-xl leading-none">
               {multi ? span!.label : report.weekLabel}
-              <span className="text-muted font-semibold"> {multi ? 'is behind you' : 'is in the books'}</span>
+              <span className="text-muted font-semibold"> {multi ? 'are behind you' : 'is in the books'}</span>
             </h2>
             <div className="flex items-center gap-3 shrink-0">
               <span className="label-sm hidden sm:inline">{report.seasonYear} · {report.phaseLabel}</span>
@@ -149,6 +149,9 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
                   <div className="font-mono text-[11px] text-muted mt-1">
                     {r.outcome === 'T' ? 'tied' : marginPhrase(r.margin)}
                     {r.overtime && <span className="text-accent2"> · OT</span>}
+                  </div>
+                  <div className="label-sm mt-0.5">
+                    {r.userIsHome ? 'at home' : 'on the road'}
                   </div>
                   <div className="mt-1.5 flex flex-col items-center gap-1">
                     {r.upset && r.winChancePre !== null && (
@@ -197,7 +200,10 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
           )}
 
           {/* --- bands 2-4 ---------------------------------------------- */}
-          <div className="grid md:grid-cols-2 gap-3">
+          {/* One column when there is no standings band — a postseason round
+              does not move the standings, and a half-empty two-column grid
+              reads as a rendering failure. */}
+          <div className={`grid gap-3 ${report.changed ? 'md:grid-cols-2' : ''}`}>
             {report.changed && <ChangedBand report={report} />}
             <div className="panel p-4 space-y-3">
               {report.gameBall && (
@@ -225,7 +231,7 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
                       <span className="ml-2 text-[10px] font-extrabold tracking-wider text-muted border border-line rounded px-1 py-px align-middle">
                         {report.gameBall.position}
                       </span>
-                      <div className="font-mono text-[11px] text-muted mt-1 truncate">{report.gameBall.line}</div>
+                      <div className="font-mono text-[11px] text-muted mt-1 leading-snug">{report.gameBall.line}</div>
                     </div>
                   </div>
                 </div>
@@ -324,9 +330,13 @@ function ScoreSide({ side, align }: { side: ReportSide; align: 'left' | 'right' 
         </div>
         <div className="font-mono text-[11px] text-muted mt-1">{side.record}</div>
       </div>
+      {/* The winner carries the team colour, the beaten side drops back to
+          muted — the same margin-weight rule the schedule rows use, so the
+          result reads before the digits do. Several curated primaries are
+          dark, hence the lightening mix rather than the raw hex. */}
       <span
-        className="stat-value text-stat-lg sm:text-stat-xl shrink-0"
-        style={{ color: side.won ? textColor : undefined }}
+        className={`stat-value text-stat-lg sm:text-stat-xl shrink-0 ${side.won ? '' : 'text-muted'}`}
+        style={side.won ? { color: textColor } : undefined}
       >
         {side.score}
       </span>
@@ -360,7 +370,15 @@ function ChangedBand({ report }: { report: WeekReport }) {
           {c.gamesBack !== null && <span className="text-muted"> · {c.gamesBack.toFixed(1)} GB</span>}
         </>}
       />
-      <Kv k="Point differential" v={<span className={c.pointDiff > 0 ? 'text-accent' : c.pointDiff < 0 ? 'text-bad' : ''}>{c.pointDiff > 0 ? '+' : ''}{c.pointDiff}</span>} />
+      <Kv
+        k="Point differential"
+        v={<>
+          <span className="text-muted">{c.pointDiffBefore > 0 ? '+' : ''}{c.pointDiffBefore}</span> →{' '}
+          <b className={c.pointDiff > c.pointDiffBefore ? 'text-accent' : c.pointDiff < c.pointDiffBefore ? 'text-bad' : ''}>
+            {c.pointDiff > 0 ? '+' : ''}{c.pointDiff}
+          </b>
+        </>}
+      />
       {(c.streakBefore || c.streakAfter) && (
         <Kv k="Streak" v={<><span className="text-muted">{c.streakBefore ?? '—'}</span> → <b className={c.streakAfter?.startsWith('W') ? 'text-accent' : 'text-bad'}>{c.streakAfter ?? '—'}</b></>} />
       )}
