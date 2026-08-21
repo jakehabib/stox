@@ -5,6 +5,7 @@ import { TEAM_SEEDS } from '@/lib/gen/names';
 import { PHASE_LABELS } from '@/lib/season';
 import { TeamLogo } from '@/components/TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { CreateLeagueForm } from '@/components/CreateLeagueForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -93,50 +94,7 @@ export default async function HomePage() {
           <div className="section-head">
             <h2 className="section-title">Start a New League</h2>
           </div>
-          <div className="panel p-6 max-w-2xl">
-            <p className="text-sm text-muted mb-5">32 teams, generated from scratch — no real NFL data. Playable immediately.</p>
-            <form action={createLeagueAction} className="space-y-4">
-              <div>
-                <label className="label-sm block mb-1.5">League name</label>
-                <input name="name" className="input w-full" placeholder="My League" defaultValue="Founders League" required />
-              </div>
-              <div>
-                <label className="label-sm block mb-1.5">Your team</label>
-                <select name="userTeamAbbr" className="input w-full">
-                  {TEAM_SEEDS.map((t) => (
-                    <option key={t.abbr} value={t.abbr}>{t.city} {t.nickname} — {t.conference} {t.division}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="label-sm block mb-1.5">Start type</label>
-                  <select name="leagueStart" className="input w-full">
-                    <option value="RANDOM_ROSTERS">32 rosters, randomized</option>
-                    <option value="FANTASY_DRAFT">Fantasy draft (blank rosters)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="label-sm block mb-1.5">Salary cap</label>
-                  <select name="capMode" className="input w-full">
-                    <option value="REALISTIC">Realistic</option>
-                    <option value="SIMPLIFIED">Simplified</option>
-                    <option value="OFF">Off</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="label-sm block mb-1.5">Difficulty</label>
-                  <select name="difficulty" className="input w-full">
-                    <option value="ROOKIE">Rookie</option>
-                    <option value="PRO">Pro</option>
-                    <option value="ALL_PRO">All-Pro</option>
-                    <option value="LEGEND">Legend</option>
-                  </select>
-                </div>
-              </div>
-              <button type="submit" className="btn-primary w-full">Create League</button>
-            </form>
-          </div>
+          <CreateLeagueForm seeds={TEAM_SEEDS} action={createLeagueAction} />
         </section>
       </main>
     </div>

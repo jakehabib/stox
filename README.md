@@ -658,3 +658,52 @@ ever force-pushed over, so every state below still exists in git history).
     both. Still a pure function of (seed, age) with nothing stored, so
     every existing player's face changed appearance but kept its
     identity; no schema or data migration.
+- **2026-08-21 — Trade bonus acceleration + one shared page masthead.**
+  Checkpoint before this change: `0dfebcb`. Commit: `a13c406`.
+  - **Closed the trade half of the void-year hole** (the gap the previous
+    entry flagged as deliberately left open). Trading a player now
+    accelerates his remaining signing-bonus proration onto the cap of
+    the team giving him up, and the contract that travels carries base
+    salary only — his bonus does not follow him. Dumping a bonus-heavy
+    deal is no longer a way to escape it. **This is a game-balance
+    change and affects existing saves.** Concretely, on a 4-year deal
+    with a $20M bonus and 3 years left, trading the player away now
+    *costs* $7M of cap room instead of freeing $8M, while the acquiring
+    team picks him up for base salary alone — which is exactly why
+    rebuilding teams absorb contracts in real football.
+  - The trade builder's live "cap space after" readout was silently
+    wrong under that rule: it assumed sending a player out frees his
+    full cap hit. It now models the two sides asymmetrically
+    (`freedIfSent` vs `addedIfAcquired`) and shows the dead money you'd
+    eat as its own figure, since a single net number hides it.
+  - Verified end-to-end against real saved data, not just in theory: an
+    executed trade put a charge of exactly the expected amount on the
+    correct team and stripped the bonus from the moved contract.
+  - **New `components/ds/PageMasthead`**, applied to Roster, Depth
+    Chart, Re-sign, Cap, Free Agency, Trade and the Draft hub. Seven
+    pages previously introduced themselves seven different ways — some
+    with a hand-rolled team-tinted hero, some with a bare `<h1>`. They
+    now share one band plus a strip of that page's own real metrics.
+    The hero pattern already existed and had been copy-pasted three
+    times; this is that pattern pulled into one place.
+  - Building those metric strips surfaced three stats that were wrong or
+    meaningless, all now fixed: the draft hub's "Your Picks" queried the
+    *current season* rather than the upcoming draft year (it showed 0
+    while you held 7), "Scouted" counted `confidence > 0` which is true
+    for every prospect in the class (so it always read 300 of 300, and
+    now means high-confidence), and the class was labelled a year
+    earlier than the picks you'd actually spend on it.
+- **2026-08-21 — Landing / league-creation screen rebuilt.** The first
+  screen anyone sees was a hero followed by a stack of four dropdowns,
+  one of which was a 32-item `<select>` for the single most
+  consequential choice on the page. Replaced with a two-step layout
+  (`components/CreateLeagueForm.tsx`): a browsable franchise picker
+  with crests, city/nickname and division — filterable by conference —
+  beside a settings panel using segmented controls so every option is
+  visible and comparable without opening anything. Deliberately **not**
+  shown: a projected team strength. Rosters don't exist until the league
+  is generated, so before that every franchise is statistically
+  identical and any strength number here would be invented. Doing it
+  honestly means running real generation against a seed and passing that
+  same seed to `createLeague` (which already accepts one) so the preview
+  and the league match — tracked as follow-up rather than faked.
