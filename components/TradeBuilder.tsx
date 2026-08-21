@@ -18,6 +18,8 @@ import type { TradePartnerSuggestion } from '@/lib/trade';
 
 interface RosterP {
   id: string; name: string; position: string; ovr: number; age: number; capHit: number; yearsRemaining: number;
+  /** Listed body — portrait proportions only, never a trade input. */
+  weightLb?: number; heightIn?: number;
   /** Cap actually freed by sending him out — his hit minus the bonus that accelerates onto you. */
   freedIfSent: number;
   /** Cap actually taken on by acquiring him — base salary only; his bonus stays with his old team. */
@@ -489,7 +491,7 @@ function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks,
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(p.id); } }}
             className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm cursor-pointer ${selected.has(p.id) ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised border border-transparent'}`}
           >
-            <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} />
+            <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />
             <span className={`text-xs font-semibold w-8 shrink-0 ${positionBadgeClass(p.position)}`}>{p.position}</span>
             <span className={`stat-value text-xs w-8 shrink-0 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
             <div className="flex-1 min-w-0">

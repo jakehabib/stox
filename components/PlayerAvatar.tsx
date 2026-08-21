@@ -62,16 +62,27 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
   const chy = S.chinY;
   const ty = S.topY;
 
-  // The three that carry the read at 22px: neck thickness, how far the pads
-  // reach into the corners of the frame, and how high they sit.
-  const nw = 16 + 7 * d;
-  const ox = 8 - 9 * d;
-  const sy = 84 - 10 * d + 2 * f;
+  // The four that carry the read at 22px, where no facial detail survives:
+  // neck thickness, how far the pads reach into the corners of the frame, how
+  // high they sit, and how far the shoulder drops away from the neck — a
+  // heavy man's traps run almost straight out to the pad, a light one's
+  // clavicle falls away from it.
+  const nw = 16 + 8 * d;
+  const ox = 8 - 11 * d;
+  const sy = 84 - 12 * d + 2 * f;
+  const rise = 4 - 4 * d;
 
   // How much the skull grew or shrank against its own baseline. Ears and hair
   // ride on it, so at d === 0 it is exactly 1 and they sit exactly where they
   // always did — for all three face shapes, not just the square one.
   const skullK = sw / S.sw;
+
+  // Hairline recession is cut OUT of the hair with a mask rather than painted
+  // over it in skin: a skin-coloured wedge only lines up with the hair on some
+  // styles, and where it overhung it left a spur of skin sticking out of the
+  // side of his head. Subtracting can't do that on any style, at any size.
+  const receding = p.recede > 0.12 && RECEDING_STYLES.has(p.hairStyle);
+  const templeW = 10 + 16 * p.recede;
 
   const showFolds = age >= 33;
   const showFeet = age >= 30;
@@ -98,6 +109,13 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
           <stop offset="0%" stopColor={shade(teamColor, 0.06)} />
           <stop offset="100%" stopColor={shade(teamColor, -0.24)} />
         </linearGradient>
+        {receding && (
+          <mask id={`pa-hair-${uid}`}>
+            <rect x={0} y={0} width={120} height={120} fill="#fff" />
+            <Temple side={-1} sw={sw} topY={ty} w={templeW} />
+            <Temple side={1} sw={sw} topY={ty} w={templeW} />
+          </mask>
+        )}
       </defs>
 
       <g clipPath={`url(#pa-clip-${uid})`}>
@@ -111,12 +129,12 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
             How far they reach (ox) and how high they sit (sy) are the two
             biggest mass cues in the whole portrait at table size. */}
         <path
-          d={`M${n(ox)} 120 Q${n(ox + 2)} ${n(sy + 8)} ${n(ox + 20)} ${n(sy)} L${n(60 - nw)} ${n(sy - 4)} Q60 ${n(sy + 7)} ${n(60 + nw)} ${n(sy - 4)} L${n(100 - ox)} ${n(sy)} Q${n(118 - ox)} ${n(sy + 8)} ${n(120 - ox)} 120 Z`}
+          d={`M${n(ox)} 120 Q${n(ox + 2)} ${n(sy + 8)} ${n(ox + 20)} ${n(sy)} L${n(60 - nw)} ${n(sy - rise)} Q60 ${n(sy + 7)} ${n(60 + nw)} ${n(sy - rise)} L${n(100 - ox)} ${n(sy)} Q${n(118 - ox)} ${n(sy + 8)} ${n(120 - ox)} 120 Z`}
           fill={`url(#pa-jersey-${uid})`}
         />
         {/* Pad seam + collar give the jersey structure at a glance. */}
         <path d={`M${n(ox + 20)} ${n(sy)} Q60 ${n(sy + 14)} ${n(100 - ox)} ${n(sy)}`} stroke={shade(teamColor, -0.4)} strokeWidth={1.5} fill="none" opacity={0.7} />
-        <path d={`M${n(60 - nw)} ${n(sy - 4)} Q60 ${n(sy + 8)} ${n(60 + nw)} ${n(sy - 4)} L${n(60 + nw - 5)} ${n(sy - 8)} Q60 ${n(sy - 2)} ${n(60 - nw + 5)} ${n(sy - 8)} Z`} fill={shade(teamColor, -0.42)} />
+        <path d={`M${n(60 - nw)} ${n(sy - rise)} Q60 ${n(sy + 8)} ${n(60 + nw)} ${n(sy - rise)} L${n(60 + nw - 5)} ${n(sy - rise - 4)} Q60 ${n(sy - 2)} ${n(60 - nw + 5)} ${n(sy - rise - 4)} Z`} fill={shade(teamColor, -0.42)} />
 
         {/* --- Neck, set behind the jaw with a cast shadow. Thick on
             purpose — a trained neck is one of the strongest masculinity
@@ -181,9 +199,10 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
             <path d="M46 39 Q60 36.5 74 39" />
           </g>
         )}
-        <g transform={xScale(skullK)}>
-          <HairTop style={p.hairStyle} color={p.hairColor} />
-          <Hairline recede={p.recede} style={p.hairStyle} skinTone={p.skinTone} />
+        <g mask={receding ? `url(#pa-hair-${uid})` : undefined}>
+          <g transform={xScale(skullK)}>
+            <HairTop style={p.hairStyle} color={p.hairColor} />
+          </g>
         </g>
       </g>
     </svg>
@@ -330,20 +349,30 @@ function HairTop({ style, color }: { style: HairStyle; color: string }) {
 }
 
 /**
- * Hairline recession — two skin-toned wedges eaten out of the temples, painted
- * over whichever hair style he already has. Deliberately separate from the
- * `bald` style: a 34-year-old with a `short` cut should get a receding `short`
- * cut, not swapped for a different man. Skipped where there is no front
- * hairline to recede (bald, mohawk).
+ * Hairline recession — the temples go first, so this is the shape bitten out of
+ * the hair at each corner: full height at the skull's edge, tapering inward and
+ * down to the brow. It leaves the centre where it was, which is what makes it
+ * read as a receding hairline rather than a smaller hat. Deliberately separate
+ * from the `bald` style: a 34-year-old with a `short` cut gets a receding
+ * `short` cut, not swapped for a different man.
+ *
+ * Only the tight cuts get it. On the styles with real volume down the sides
+ * (medium, long, curly, dreads) a temple bite doesn't read as a hairline at
+ * all — it reads as a chunk missing from the side of his head — and a man
+ * keeping that much hair at 35 is not the one you'd draw receding anyway.
  */
-function Hairline({ recede, style, skinTone }: { recede: number; style: HairStyle; skinTone: string }) {
-  if (recede <= 0.06 || style === 'bald' || style === 'mohawk') return null;
-  const dd = 6 + recede * 11;
+const RECEDING_STYLES: ReadonlySet<HairStyle> = new Set<HairStyle>(['buzz', 'short', 'part', 'flattop', 'ponytail']);
+
+function Temple({ side, sw, topY, w }: { side: -1 | 1; sw: number; topY: number; w: number }) {
+  // `side` is -1 for the left temple; the bite runs from the skull's edge
+  // inward, i.e. against `side`.
+  const edge = 60 + side * (sw + 2);
+  const base = 42;
   return (
-    <g fill={skinTone} opacity={Math.min(1, recede * 1.25)}>
-      <path d={`M30 ${n(18 + dd)} Q34 14 47 13 Q38 18 34 ${n(22 + dd)} Z`} />
-      <path d={`M90 ${n(18 + dd)} Q86 14 73 13 Q82 18 86 ${n(22 + dd)} Z`} />
-    </g>
+    <path
+      d={`M${n(edge)} ${base} L${n(edge)} ${topY} Q${n(edge - side * w * 0.5)} ${n(topY + (base - topY) * 0.3)} ${n(edge - side * w)} ${base} Z`}
+      fill="#000"
+    />
   );
 }
 

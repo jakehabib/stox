@@ -13,7 +13,7 @@ interface KeyStat { value: string; label: string }
  * two or three numbers that actually define this player at a glance.
  */
 export function PlayerHero({
-  playerId, name, position, jersey, age, ovr, potentialLow, potentialHigh, confidence, contract, keyStats, tags, teamColor,
+  playerId, name, position, jersey, age, ovr, potentialLow, potentialHigh, confidence, contract, keyStats, tags, teamColor, weightLb, heightIn,
 }: {
   playerId: string; name: string; position: string; jersey?: number; age: number; ovr: number;
   potentialLow: number; potentialHigh: number; confidence: number;
@@ -21,6 +21,8 @@ export function PlayerHero({
   keyStats?: KeyStat[];
   tags?: string[];
   teamColor?: string;
+  /** Optional — without a weight the portrait falls back to this position's average build. */
+  weightLb?: number; heightIn?: number;
 }) {
   return (
     <div
@@ -32,7 +34,7 @@ export function PlayerHero({
     >
       <div className="flex flex-wrap items-center gap-6 p-6">
         <div className="relative shrink-0 rounded-lg p-3" style={{ background: teamColor ? `color-mix(in srgb, ${teamColor} 14%, transparent)` : undefined }}>
-          <PlayerAvatar seed={playerId} age={age} size={112} teamColor={teamColor} />
+          <PlayerAvatar seed={playerId} age={age} size={112} teamColor={teamColor} weightLb={weightLb} heightIn={heightIn} position={position} />
         </div>
 
         <div className="flex-1 min-w-[240px]">

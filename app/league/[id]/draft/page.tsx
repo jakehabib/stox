@@ -370,7 +370,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     <td className="font-medium">
                       <div className="flex items-center gap-2">
                         <a href={`/league/${league.id}/player/${p.id}`} className="flex items-center gap-2 hover:text-accent2">
-                          <PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
+                          <PlayerAvatar seed={p.id} age={p.age} size={26} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
                         </a>
                         {rankBadge(p.id) && (
                           <span className={`pill text-[10px] px-1.5 py-0.5 border-current ${rankBadge(p.id)!.className}`}>{rankBadge(p.id)!.label}</span>

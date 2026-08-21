@@ -210,7 +210,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
           </td>
           <td>
             <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2.5">
-              <PlayerAvatar seed={p.id} age={p.age} size={30} teamColor={teamColor} />
+              <PlayerAvatar seed={p.id} age={p.age} size={30} teamColor={teamColor} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className={isStarter ? 'font-semibold' : 'font-medium'}>{p.firstName} {p.lastName}</span>

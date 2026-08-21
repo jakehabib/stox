@@ -279,7 +279,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
       >
         <div className="flex flex-wrap items-start gap-6 p-6">
           <div className="relative shrink-0 rounded-lg p-3" style={{ background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 14%, transparent)` : undefined }}>
-            <PlayerAvatar seed={player.id} age={player.age} size={128} teamColor={jerseyColor} />
+            <PlayerAvatar seed={player.id} age={player.age} size={128} teamColor={jerseyColor} weightLb={player.weightLb} heightIn={player.heightIn} position={player.position} />
           </div>
 
           <div className="flex-1 min-w-[280px]">
@@ -542,7 +542,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
                         className={`flex items-center gap-3 px-2 py-1.5 -mx-2 rounded-lg text-sm ${isThisPlayer ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised'}`}
                       >
                         <span className="label-sm w-5 shrink-0">{slot.rank === 0 ? '1' : slot.rank + 1}</span>
-                        <PlayerAvatar seed={slot.playerId} age={slot.player.age} size={22} />
+                        <PlayerAvatar seed={slot.playerId} age={slot.player.age} size={22} weightLb={slot.player.weightLb} heightIn={slot.player.heightIn} position={slot.player.position} />
                         <span className={`flex-1 truncate ${isThisPlayer ? 'font-semibold' : ''}`}>{slot.player.firstName} {slot.player.lastName}{isThisPlayer ? ' (this player)' : ''}</span>
                         <span className={`font-mono text-xs ${ratingColor(slot.player.trueOvr)}`}>{slot.player.trueOvr}</span>
                       </Link>

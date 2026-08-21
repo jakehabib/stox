@@ -4,18 +4,20 @@ import { IconStar } from './icons';
 import { positionBadgeClass } from './positionColor';
 
 export function ProspectRow({
-  playerId, rank, position, name, college, ovrLow, ovrHigh, confidence, potentialTag, shortlisted, topN, onClock,
+  playerId, rank, position, name, college, ovrLow, ovrHigh, confidence, potentialTag, shortlisted, topN, onClock, weightLb, heightIn,
 }: {
   playerId: string; rank: number; position: string; name: string; college: string;
   ovrLow: number; ovrHigh: number; confidence: number; potentialTag: string;
   shortlisted?: boolean; topN?: boolean;
+  /** Optional — without a weight the portrait falls back to this position's average build. */
+  weightLb?: number; heightIn?: number;
   /** Show the Draft action — only meaningful during a live draft, not the year-round board. */
   onClock?: boolean;
 }) {
   return (
     <div className="flex items-center gap-4 py-2.5 border-b border-line/60 last:border-0">
       <div className="stat-value text-stat-sm text-muted w-8 text-right shrink-0">{rank}</div>
-      <PlayerAvatar seed={playerId} age={21} size={40} />
+      <PlayerAvatar seed={playerId} age={21} size={40} weightLb={weightLb} heightIn={heightIn} position={position} />
       <div className="min-w-0 flex-1">
         {/* Name gets its own full-width line — tags/position/college live
             below rather than fighting the name for horizontal space, which

@@ -79,6 +79,7 @@ export default async function ResignPage({ params }: { params: { id: string } })
             <ResignRow
               key={p.id}
               leagueId={league.id} playerId={p.id} name={`${p.firstName} ${p.lastName}`} position={p.position} age={p.age} ovr={p.trueOvr}
+              weightLb={p.weightLb} heightIn={p.heightIn}
               currentApy={p.contract ? capHit(p.contract, settings.capMode) : 0}
               availableSpace={summary ? summary.capSpace + (p.contract ? capHit(p.contract, settings.capMode) : 0) : Number.MAX_SAFE_INTEGER}
               capMode={settings.capMode}

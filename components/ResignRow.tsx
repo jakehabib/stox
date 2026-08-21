@@ -10,9 +10,10 @@ import { positionBadgeClass } from './ds/positionColor';
 import { CapMode } from '@/lib/types';
 import { cutPlayerAction, applyFranchiseTagAction } from '@/app/actions/roster';
 
-export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, availableSpace, capMode, yearsRemaining, canTag }: {
+export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, availableSpace, capMode, yearsRemaining, canTag, weightLb, heightIn }: {
   leagueId: string; playerId: string; name: string; position: string; age: number; ovr: number;
   currentApy: number; availableSpace: number; capMode: CapMode; yearsRemaining: number; canTag?: boolean;
+  weightLb?: number; heightIn?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [confirmingWalk, setConfirmingWalk] = useState(false);
@@ -46,7 +47,7 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   return (
     <div className="panel overflow-hidden">
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-raised transition-colors">
-        <PlayerAvatar seed={playerId} age={age} size={30} />
+        <PlayerAvatar seed={playerId} age={age} size={30} weightLb={weightLb} heightIn={heightIn} position={position} />
         <div className="flex-1 min-w-0">
           <div className="font-semibold truncate">{name}</div>
           <div className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap">

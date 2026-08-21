@@ -7,7 +7,7 @@ import { PlayerAvatar } from './PlayerAvatar';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { positionBadgeClass } from './ds/positionColor';
 
-interface P { id: string; name: string; ovr: number; age: number; injured: boolean }
+interface P { id: string; name: string; ovr: number; age: number; injured: boolean; weightLb?: number; heightIn?: number }
 
 export function DepthChartGroup({ teamId, position, players, order }: { teamId: string; position: string; players: P[]; order: string[] }) {
   const byId = new Map(players.map((p) => [p.id, p]));
@@ -49,7 +49,7 @@ export function DepthChartGroup({ teamId, position, players, order }: { teamId: 
               style={idx === 0 ? { borderColor: teamColor, background: `${teamColor}14` } : { borderColor: 'transparent' }}
             >
               <span className="text-xs text-muted w-4">{idx + 1}</span>
-              <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} />
+              <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} weightLb={p.weightLb} heightIn={p.heightIn} position={position} />
               <span className={`stat-value text-xs w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
               <span className="text-sm flex-1 truncate">{p.name}</span>
               {p.injured && <span className="text-[10px] text-bad">INJ</span>}

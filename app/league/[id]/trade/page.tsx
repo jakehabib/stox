@@ -59,6 +59,7 @@ export default async function TradePage({ params, searchParams }: { params: { id
     const off = settings.capMode === 'OFF';
     return {
       id: p.id, name: `${p.firstName} ${p.lastName}`, position: p.position, ovr: p.trueOvr, age: p.age,
+      weightLb: p.weightLb, heightIn: p.heightIn,
       capHit: off ? 0 : capHit(p.contract, settings.capMode),
       freedIfSent: off ? 0 : capSavingsOnCut(p.contract, settings.capMode),
       addedIfAcquired: off ? 0 : capHit(p.contract, settings.capMode) - (settings.capMode === 'REALISTIC' && p.contract ? proration(p.contract) : 0),

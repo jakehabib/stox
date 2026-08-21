@@ -127,7 +127,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
       {topAvailable && topView && (
         <div className="panel p-4 flex items-center gap-4 flex-wrap">
           <div className="label-sm shrink-0">Top Available</div>
-          <PlayerAvatar seed={topAvailable.id} age={topAvailable.age} size={44} />
+          <PlayerAvatar seed={topAvailable.id} age={topAvailable.age} size={44} weightLb={topAvailable.weightLb} heightIn={topAvailable.heightIn} position={topAvailable.position} />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`font-semibold text-xs ${positionBadgeClass(topAvailable.position)}`}>{topAvailable.position}</span>
@@ -168,7 +168,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
             {sorted.map(({ p, view, market }) => (
               <tr key={p.id}>
                 <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
-                <td><a href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName}</a></td>
+                <td><a href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={26} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} /> {p.firstName} {p.lastName}</a></td>
                 <td className="text-muted">{p.age}</td>
                 <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
                 <td className="font-mono text-muted">{formatMoney(market)}/yr</td>
