@@ -82,7 +82,7 @@
   .scoreline{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:20px;padding:26px 4px 20px}
   .side{display:flex;align-items:center;gap:14px}
   .side.away{justify-content:flex-start}
-  .side.home{justify-content:flex-end;flex-direction:row-reverse}
+  .side.home{justify-content:flex-start;flex-direction:row-reverse}  /* row-reverse: flex-start packs against the right edge */
   .side .nm{font-family:var(--display);font-weight:700;text-transform:uppercase;letter-spacing:.02em;font-size:17px;line-height:1.05}
   .side .rec{color:var(--muted);font-size:12px;font-family:var(--mono)}
   .side .sc{font-size:62px}

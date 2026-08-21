@@ -462,7 +462,7 @@ function avatarSvg(seed,opts){
   const S=SHAPES[p.faceShape];
   const sw=S.sw*(1+.055*m), jw=S.jw*(1+.32*m), cy=S.cheekY, chy=S.chinY, ty=S.topY;
   const nw=16*(1+.42*m);                       // neck half-width
-  const ox=8-8*m;                              // shoulder outer x
+  const ox=legacy?8:12-12*m;                    // shoulder outer x
   const sy=84-11*m;                            // shoulder top y
   const ex=14;                                 // eye offset from centre
   const showLines=!legacy&&age>=31, showFeet=!legacy&&age>=30, showFold=!legacy&&age>=33;
@@ -638,8 +638,8 @@ function crestSvg(seed,abbr,size,forceLegacy){
       for(let i=0;i<8;i++){s+=`<rect x="46" y="6" width="8" height="12" rx="2" transform="rotate(${i*45} 50 42)"/>`;}
       s+=`</g><circle cx="50" cy="42" r="11" fill="${p.primary}"/>`;
     } else {
-      s+=`<path d="${EMBLEMS[p.emblem]}" fill="${p.accent}" transform="translate(0,-4)"/>`;
-      s+=`<path d="${EMBLEMS[p.emblem]}" fill="#000" opacity=".18" transform="translate(0,-1)"/>`;
+      /* soft drop shadow under the mark, then the mark itself */
+      s+=`<path d="${EMBLEMS[p.emblem]}" fill="#000" opacity=".22" transform="translate(0,-1)"/>`;
       s+=`<path d="${EMBLEMS[p.emblem]}" fill="${p.accent}" transform="translate(0,-4)"/>`;
     }
     s+=`</g>`;
