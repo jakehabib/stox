@@ -247,15 +247,53 @@ async function advanceWeekStep(leagueId: string) {
           prisma.contract.count({ where: { teamId: userTeam.id, yearsRemaining: 0, player: { status: 'ACTIVE' } } }),
         ]);
         const after = active - walking;
-        if (walking > 0 && after < rosterMin) {
+        // AND THE MEN HE SET ASIDE. The re-sign list grew a "not now" control
+        // (NegotiationTalks.dismissedAt, app/actions/resign.ts) so a twenty-deep
+        // list can be triaged — which opens exactly one trap: park twelve men,
+        // advance, and they all walk having done what the button implied was
+        // safe. So the SAME warning is widened rather than duplicated, because
+        // it is the same "you are about to lose people" moment and two blocking
+        // messages competing for one Advance would be worse than none: it now
+        // also fires when anybody parked is one step from free agency, and it
+        // NAMES them. Nothing here writes to a negotiation — this is a read.
+        const setAside = await prisma.negotiationTalks.findMany({
+          where: {
+            teamId: userTeam.id, seasonYear: league.seasonYear, dismissedAt: { not: null },
+            player: { status: 'ACTIVE', teamId: userTeam.id, contract: { yearsRemaining: 0 } },
+          },
+          select: { player: { select: { id: true, firstName: true, lastName: true, position: true, trueOvr: true } } },
+        });
+        const parked = setAside.map((r) => r.player).sort((a, b) => b.trueOvr - a.trueOvr);
+        // "Starter" is the depth chart's own answer (rank 0), not a rating
+        // guess — the same table the Depth Chart screen renders.
+        const starters = parked.length === 0 ? 0 : await prisma.depthChartSlot.count({
+          where: { teamId: userTeam.id, rank: 0, playerId: { in: parked.map((p) => p.id) } },
+        });
+        if (walking > 0 && (after < rosterMin || parked.length > 0)) {
           await prisma.league.update({ where: { id: leagueId }, data: { resignWarnedYear: league.seasonYear } });
+          const named = parked.slice(0, 3).map((p) => `${p.firstName} ${p.lastName} (${p.position}, ${p.trueOvr})`).join(', ');
+          const asideLine = parked.length === 0 ? '' : (
+            `${parked.length === 1 ? 'One of them is a man' : `${parked.length} of them are men`} you set aside`
+            + `${starters > 0 ? `, including ${starters} ${starters === 1 ? 'starter' : 'starters'}` : ''}`
+            + ` — ${named}${parked.length > 3 ? ` and ${parked.length - 3} more` : ''}. `
+            + `"Not now" was never "let him go", and this is the last screen where that is still true. `
+          );
           return {
-            summary: `Hold on — advancing now lets ${walking} of your ${active} players walk, leaving the `
-              + `${userTeam.abbr} with ${after} under contract against a ${rosterMin}-man minimum. `
-              + `Re-sign whoever you mean to keep first; anyone you don't will be available in free agency, `
-              + `where you can also sign replacements. Advance again to let them go.`,
+            summary: after < rosterMin
+              ? `Hold on — advancing now lets ${walking} of your ${active} players walk, leaving the `
+                + `${userTeam.abbr} with ${after} under contract against a ${rosterMin}-man minimum. `
+                + asideLine
+                + `Re-sign whoever you mean to keep first; anyone you don't will be available in free agency, `
+                + `where you can also sign replacements. Advance again to let them go.`
+              : `Hold on — advancing now lets ${walking} of your ${active} players walk. `
+                + asideLine
+                + `Bring back anyone you still mean to keep, or re-sign him now. Advance again to let them go.`,
             blocked: true,
-            block: { title: 'Your roster is about to collapse', href: 'resign', linkLabel: 'Open Re-sign Window' },
+            block: {
+              title: after < rosterMin ? 'Your roster is about to collapse' : 'The players you set aside are about to walk',
+              href: 'resign',
+              linkLabel: 'Open Re-sign Window',
+            },
           };
         }
       }

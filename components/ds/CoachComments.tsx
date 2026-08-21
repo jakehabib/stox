@@ -4,10 +4,10 @@ import { useRef, useState } from 'react';
 import Link from 'next/link';
 import type { CoachPayload, CoachLine, CoachTeamContext } from '@/lib/weekReport';
 import {
-  gradeLine, playedEnough, statLine, findConcerns, addStats,
+  gradeLine, playedEnough, statLine, findConcerns, addStats, hasDistinguishingEvent,
   UNIT_OF, UNIT_ORDER, UNIT_LABEL, UnitKey,
-  MENTION_BAR, SECOND_FROM_UNIT_BAR, MAX_MENTIONS,
-} from '@/lib/gamePerformance';
+  mentionBar, SECOND_FROM_UNIT_BAR, MAX_MENTIONS,
+} from '@/lib/coachRoom';
 import type { SeasonStats } from '@/lib/types';
 import { Rng } from '@/lib/rng';
 import { PlayerAvatar } from '../PlayerAvatar';
@@ -32,7 +32,7 @@ import { PlayerAvatar } from '../PlayerAvatar';
  *
  * 2. POSITION-DIVERSE BY CONSTRUCTION, not by luck. Selection takes the best
  *    man from each UNIT and never re-ranks across units, because
- *    lib/gamePerformance.ts's grades are only comparable inside one. Measured
+ *    lib/coachRoom.ts's grades are only comparable inside one. Measured
  *    over 933 real user-team weeks in this database the mentions come out
  *    18.8% running back, 17.5% receiver, 12.6% defensive tackle, 11.7% edge,
  *    11.5% corner, 6.8% tight end, 6.6% safety, 5.9% quarterback, 5.5%
@@ -64,7 +64,12 @@ interface Mention {
   name: string;
   position: string;
   unit: UnitKey;
-  /** 0-100 percentile among games at his position. */
+  /**
+   * 0-100. For one week it is a percentile: the share of games at his position
+   * that were worse. For a span it is the MEAN of his weekly percentiles,
+   * which is a different quantity — the badge and its tooltip say which, and
+   * never print an average as though it were a percentile of the stretch.
+   */
   grade: number;
   line: string;
   clause: string;
@@ -112,9 +117,9 @@ function fold(payloads: CoachPayload[]): Map<string, Folded> {
       const next: Folded = cur
         ? { ...cur, stats: addStats(cur.stats, l.stats), games: cur.games + 1 }
         : { line: l, stats: l.stats, games: 1, gradeSum: 0, gradeGames: 0, best: 0 };
-      // Graded PER GAME and averaged. The ladders in lib/gamePerformance.ts
-      // are per-game distributions, so handing them a seven-game total would
-      // put every starter past the 99th percentile and mean nothing.
+      // Graded PER GAME and averaged. The yardstick in lib/coachRoom.ts is a
+      // per-game distribution, so handing it a seven-game total would put
+      // every starter past the 99th percentile and mean nothing.
       if (playedEnough(l.position, l.stats)) {
         const g = gradeLine(l.position, l.stats);
         if (g) { next.gradeSum += g.score; next.gradeGames += 1; next.best = Math.max(next.best, g.score); }
@@ -134,27 +139,39 @@ function fold(payloads: CoachPayload[]): Map<string, Folded> {
 function pickTop(folded: Map<string, Folded>, weeks: number, voice: Voice): Mention[] {
   const minGames = weeks > 1 ? Math.ceil(weeks / 2) : 1;
   const eligible = [...folded.values()]
-    .filter((f) => f.gradeGames >= Math.min(minGames, f.games) && f.gradeGames > 0 && UNIT_OF[f.line.position])
+    .filter((f) => f.gradeGames > 0 && UNIT_OF[f.line.position])
+    // A defender needs something the engine only writes when something
+    // actually happened — see hasDistinguishingEvent() in lib/coachRoom.ts.
+    // Tackles are a flat roll between four and seven, so "seven tackles, that
+    // is the tape we show the room" would be praising dice in a coach's voice.
+    .filter((f) => hasDistinguishingEvent(f.line.position, f.stats))
     .map((f) => ({ f, unit: UNIT_OF[f.line.position], avg: f.gradeSum / f.gradeGames }))
     .filter((x) => weeks === 1 || x.f.gradeGames >= minGames)
     .sort((a, b) => b.avg - a.avg);
+
+  // Both bars scale with the length of the stretch — see mentionBar() in
+  // lib/coachRoom.ts. Averaging seven weekly percentiles is a far quieter
+  // number than any one of them, so a flat bar silently triples its own demand
+  // on a seven-week advance and answers "who carried this" with "nobody".
+  const bar = mentionBar(weeks);
+  const secondBar = mentionBar(weeks, SECOND_FROM_UNIT_BAR);
 
   const takenUnits = new Set<UnitKey>();
   const chosen: typeof eligible = [];
   for (const x of eligible) {
     if (chosen.length >= MAX_MENTIONS) break;
-    if (takenUnits.has(x.unit) || x.avg < MENTION_BAR) continue;
+    if (takenUnits.has(x.unit) || x.avg < bar) continue;
     takenUnits.add(x.unit);
     chosen.push(x);
   }
   // A second man from the same unit, but only when he did something DIFFERENT.
-  // Defensive ladders saturate — five tackles and a sack is a top-5% edge game
+  // Defensive grades saturate — a sack and five tackles is a top-5% edge game
   // and three men can post it in the same afternoon — so without this check a
   // report could print two identical rows with two identical sentences, which
   // is the clearest possible signal that a template wrote them.
   for (const x of eligible) {
     if (chosen.length >= MAX_MENTIONS) break;
-    if (chosen.includes(x) || x.avg < SECOND_FROM_UNIT_BAR) continue;
+    if (chosen.includes(x) || x.avg < secondBar) continue;
     const phrase = headlinePhrase(x.f, weeks);
     if (chosen.some((c) => c.unit === x.unit && headlinePhrase(c.f, weeks) === phrase)) continue;
     chosen.push(x);
@@ -206,7 +223,12 @@ const VOICE_SOLID = [
   'He gave us what we needed.',
 ];
 
-/** "an interception", "two sacks". A coach does not say "1 sacks". */
+/**
+ * "an interception", "two sacks". A coach does not say "1 sacks" — and the
+ * plural is a parameter because the default of singular + "s" is wrong the
+ * moment the noun is a phrase: "three trip to the end zones" is exactly the
+ * kind of seam that tells a reader a template wrote the sentence.
+ */
 const COUNT_WORD = ['no', 'a', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'];
 function count(n: number, singular: string, plural = `${singular}s`): string {
   if (n === 1) return `${/^[aeiou]/i.test(singular) ? 'an' : 'a'} ${singular}`;
@@ -229,14 +251,14 @@ function headlinePhrase(f: Folded, weeks: number): string {
   if (pos === 'QB') {
     if ((s.passTd ?? 0) > 0) push(count(s.passTd ?? 0, 'touchdown throw'));
     if ((s.passYds ?? 0) > 0) push(`${s.passYds} through the air`);
-    if ((s.rushTd ?? 0) > 0) push(count(s.rushTd ?? 0, 'score with his legs'));
+    if ((s.rushTd ?? 0) > 0) push(count(s.rushTd ?? 0, 'score with his legs', 'scores with his legs'));
   } else if (pos === 'RB') {
     if ((s.rushYds ?? 0) > 0) push(`${s.rushYds} on the ground off ${s.rushAtt ?? 0} carries`);
     if ((s.rushTd ?? 0) > 0) push(count(s.rushTd ?? 0, 'score'));
     if ((s.rec ?? 0) >= 3) push(count(s.rec ?? 0, 'catch', 'catches'));
   } else if (pos === 'WR' || pos === 'TE') {
     if ((s.recYds ?? 0) > 0) push(`${s.recYds} on ${count(s.rec ?? 0, 'catch', 'catches')}`);
-    if ((s.recTd ?? 0) > 0) push(count(s.recTd ?? 0, 'trip to the end zone'));
+    if ((s.recTd ?? 0) > 0) push(count(s.recTd ?? 0, 'trip to the end zone', 'trips to the end zone'));
   } else if (pos === 'EDGE' || pos === 'DT') {
     if ((s.sacks ?? 0) > 0) push(count(s.sacks ?? 0, 'sack'));
     if ((s.ff ?? 0) > 0) push(count(s.ff ?? 0, 'forced fumble'));
@@ -279,13 +301,19 @@ function praise(f: Folded, grade: number, weeks: number, voice: Voice): string {
  * The careful half. A player appears here ONLY for something that measurably
  * cost the team, on a workload big enough for the rate to mean anything —
  * never for a quiet game, and never for a bench player's four snaps. See
- * findConcerns() in lib/gamePerformance.ts for every gate.
+ * findConcerns() in lib/coachRoom.ts for every gate.
  *
  * One row per man, however many things went wrong. Three separate lines about
  * the same quarterback is a pile-on, not a report.
  */
-function pickConcerns(folded: Map<string, Folded>, weeks: number, voice: Voice): ConcernRow[] {
+function pickConcerns(folded: Map<string, Folded>, weeks: number, voice: Voice, praised: Set<string>): ConcernRow[] {
   const rows = [...folded.values()]
+    // Never a man the same sheet just praised. A receiver can genuinely have
+    // both a good afternoon and a poor catch rate, but printing "72 on six
+    // catches and a trip to the end zone — we'll take that every week" three
+    // inches above "six of fourteen thrown his way — not good enough" reads as
+    // a bug, not as nuance, and the section only works if a reader trusts it.
+    .filter((f) => !praised.has(f.line.playerId))
     .map((f) => ({ f, list: findConcerns(f.line.position, f.stats, f.games) }))
     .filter((x) => x.list.length > 0)
     .map((x) => ({ ...x, worst: Math.max(...x.list.map((c) => c.severity)) }))
@@ -307,6 +335,13 @@ function pickConcerns(folded: Map<string, Folded>, weeks: number, voice: Voice):
     };
   });
 }
+
+const INJURY_TAIL = [
+  'Next man up.',
+  'Somebody else has that job now.',
+  'We plan around it.',
+  'That changes the week.',
+];
 
 const CONCERN_HEAVY = ['That is where the game went.', 'We cannot win giving it away like that.', 'That has to be cleaned up.'];
 const CONCERN_LIGHT = ['Not good enough.', 'We need more than that.', 'That is on him and on us.'];
@@ -347,7 +382,7 @@ function sumTeam(payloads: CoachPayload[]): CoachTeamContext | null {
   }));
 }
 
-function buildNotes(payloads: CoachPayload[], folded: Map<string, Folded>, weeks: number): string[] {
+function buildNotes(payloads: CoachPayload[], folded: Map<string, Folded>, weeks: number, voice: Voice): string[] {
   const notes: string[] = [];
   const t = sumTeam(payloads);
   const last = payloads[payloads.length - 1];
@@ -371,7 +406,7 @@ function buildNotes(payloads: CoachPayload[], folded: Map<string, Folded>, weeks
           ? `We took it away ${times(t.oppTurnovers)} and gave it back ${t.turnovers}. Plus ${diff} in that column.`
           : diff < 0
             ? `We gave it away ${times(t.turnovers)} and took ${t.oppTurnovers}. Minus ${-diff} in that column, and that is where games go.`
-            : `${t.turnovers} giveaway${t.turnovers === 1 ? '' : 's'} each. Even in that column.`,
+            : `${count(t.turnovers, 'giveaway')} each. Even in that column.`,
       );
     }
     if (t.sacksFor > 0 || t.sacksAgainst > 0) {
@@ -398,10 +433,14 @@ function buildNotes(payloads: CoachPayload[], folded: Map<string, Folded>, weeks
     notes.push(`${capitalise(bits.join(', '))}.`);
   }
 
-  // Who is not available next week. This is the line that changes a lineup.
+  // Who is not available next week. This is the line that changes a lineup,
+  // so it is the only place in the section that names a man for something he
+  // had no say in — and it says nothing about how he played.
   const hurt = payloads.flatMap((p) => p.injuries);
   for (const i of hurt.slice(0, 2)) {
-    notes.push(`${i.name}${i.position ? ` (${i.position})` : ''} — ${i.type.toLowerCase()}, out ${i.weeks} week${i.weeks === 1 ? '' : 's'}. Next man up.`);
+    notes.push(
+      `${i.name}${i.position ? ` (${i.position})` : ''} — ${i.type.toLowerCase()}, out ${i.weeks} week${i.weeks === 1 ? '' : 's'}. ${voice.pick(INJURY_TAIL)}`,
+    );
   }
 
   if (weeks > 1) notes.push(...spanNotes(payloads, folded, hurt.map((h) => h.playerId)));
@@ -451,8 +490,14 @@ function spanNotes(payloads: CoachPayload[], folded: Map<string, Folded>, hurtId
   return out;
 }
 
-const OPENER_WIN = ['Here is what stood up.', 'Here is what travelled.', 'Here is what I liked.'];
-const OPENER_LOSS = ['Here is what has to change.', 'Here is where it went.', 'Here is the honest read.'];
+const OPENER_WIN = [
+  'Here is what stood up.', 'Here is what travelled.', 'Here is what I liked.',
+  'Here is what we keep.', 'Here is what won it.',
+];
+const OPENER_LOSS = [
+  'Here is what has to change.', 'Here is where it went.', 'Here is the honest read.',
+  'Here is what I saw.', 'Here is what we fix.',
+];
 
 function buildOpener(payloads: CoachPayload[], weeks: number, voice: Voice): string {
   const t = sumTeam(payloads);
@@ -487,7 +532,7 @@ export function buildCoachModel(payloadsIn: (CoachPayload | null | undefined)[])
 
   const folded = fold(payloads);
   const top = pickTop(folded, weeks, voice);
-  const concerns = pickConcerns(folded, weeks, voice);
+  const concerns = pickConcerns(folded, weeks, voice, new Set(top.map((m) => m.playerId)));
   const t = sumTeam(payloads);
 
   return {
@@ -500,7 +545,7 @@ export function buildCoachModel(payloadsIn: (CoachPayload | null | undefined)[])
       : null,
     concerns,
     concernsEmpty: concerns.length === 0 ? 'Nothing on the sheet worth calling out. Nobody gave it away.' : null,
-    notes: buildNotes(payloads, folded, weeks),
+    notes: buildNotes(payloads, folded, weeks, voice),
   };
 }
 
@@ -682,9 +727,11 @@ function MentionRow({ m, leagueId, onNavigate, teamColor, gameBall }: {
           )}
           <span
             className="ml-auto font-mono text-[10px] text-muted shrink-0"
-            title={`Better than ${m.grade.toFixed(0)}% of games played at ${m.position} across every box score in the sim. ${UNIT_LABEL[m.unit]}.`}
+            title={m.games > 1
+              ? `His average week over the stretch ranked ahead of ${m.grade.toFixed(0)}% of games played at ${m.position} across every box score in the sim, over ${m.games} games. ${UNIT_LABEL[m.unit]}.`
+              : `Better than ${m.grade.toFixed(0)}% of games played at ${m.position} across every box score in the sim. ${UNIT_LABEL[m.unit]}.`}
           >
-            TOP {Math.max(1, Math.round(100 - m.grade))}% AT {m.position}
+            {m.games > 1 ? 'AVG ' : ''}TOP {Math.max(1, Math.round(100 - m.grade))}% AT {m.position}
           </span>
         </div>
         <p className="text-[13px] leading-snug text-chalk/85 mt-1">{m.clause}</p>

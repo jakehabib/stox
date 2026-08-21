@@ -35,3 +35,6 @@ scripts/_pt_tmp_*/
 .vercel
 scripts/_tmp_*
 scripts/_*
+
+# Scratch Playwright drivers written by tooling at the repo root
+.pw*.js

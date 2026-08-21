@@ -1,6 +1,6 @@
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
-import { CAP, LEAGUE, FREE_AGENCY, ROSTER_TARGETS, Position, rosterMinFor } from './tuning';
+import { AI, CAP, LEAGUE, FREE_AGENCY, ROSTER_TARGETS, Position, rosterMinFor } from './tuning';
 import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { buildContract, marketValue, suggestedYears, capHit, capSavingsOnCut, formatMoney, maxYearsForAge } from './cap';
@@ -61,30 +61,119 @@ import { assertCapRoom } from './capEnforcement';
 export type CompetingBid = Suitor;
 
 /**
- * The "auction" side of free agency: what's the single best offer an AI
- * team would actually put on this player RIGHT NOW, using the exact same
- * need/cap-space/aggression logic that decides their real sealed-bid wave —
- * so what the user sees here is a real threat, not flavor text. Seeded off
- * (player, team) rather than the clock, so re-checking the same matchup
- * mid-negotiation returns a stable number instead of re-rolling every call.
+ * ---------------------------------------------------------------------------
+ * IS THERE A BIDDER AT ALL?
+ * ---------------------------------------------------------------------------
+ * This function answers "who is the leading rival for this man", and for a
+ * long time it was also being asked "is anybody bidding" — which it could
+ * only ever answer yes to. It scanned all 31 AI clubs and returned the best
+ * offer from any of them whose need at the position cleared 0.15, and across
+ * 31 rosters SOMEBODY always scores over 0.15 somewhere. Measured: of the top
+ * 40 free agents in a real league, 38 carried a competing bid, and both of the
+ * two that did not were punters. Every position that still exists had a
+ * guaranteed rival, in every league, in every week.
+ *
+ * A market is not that. It is crowded at the top and thin underneath, and it
+ * thins further as the window runs and clubs spend their room and their roster
+ * spots. So the test is no longer "does one club have a need" — it is the
+ * question the sealed-bid wave itself answers: WOULD THIS CLUB ACTUALLY GET TO
+ * HIM? Three gates, all of them the wave's own:
+ *
+ *   1. HE IS ON THE BOARD. The wave only ever looks at the top
+ *      FREE_AGENCY.WAVE_BOARD_SIZE free agents. A man below that line is
+ *      genuinely never bid on by anybody, and saying "nobody is circling" about
+ *      him is a fact rather than a threshold. (An incumbent is not in the pool
+ *      at all, so he is inserted as the hypothetical entrant he is: the re-sign
+ *      rumour has always been "if he reached the market".)
+ *   2. THEY REACH HIM. Each club walks its own board in its own order — the
+ *      same `planTeamBids` the wave runs — spending its real roster slots and
+ *      its real budget on the men it wants MORE. If it runs out of either
+ *      before it gets to him, it is not chasing him, whatever its need score
+ *      says. This is what makes an elite player universally wanted and a
+ *      67-overall backup guard, sitting behind eleven better guards on
+ *      everybody's board, ignored.
+ *   3. THEIR NUMBER IS A REAL BID. What their GM would actually put on him has
+ *      to clear MARKET_FLOOR — the same line the wave's resolution throws bids
+ *      out under. A club named at a number the wave would discard is a rumour
+ *      about nothing.
+ *
+ * WHAT DID NOT CHANGE, because it is the property that makes the rumour
+ * honest: the club named still genuinely has the room and the need, both read
+ * off the same `teamCapSummary` and `teamNeeds` its own AI bids on, and the
+ * figure quoted is still `maxOffer` at the stable `fa-bid-<player>-<team>`
+ * seed. Nothing here is a fresh roll: every input is a fact in the database,
+ * so the same matchup re-read on every render, every keystroke and every
+ * submit returns the same club at the same number.
+ *
+ * The reachability walk is priced at the MARKET FLOOR rather than at each
+ * rival's own random draw, and that is deliberate in the club's favour: the
+ * floor is the cheapest bid that could possibly win, so charging the men ahead
+ * of him no more than that only ever rules a club out when it plainly could
+ * not have afforded to get down to him. A forecast that errs toward "yes, they
+ * would be there" cannot manufacture a suitor out of nothing.
  */
 export async function leadingCompetingBid(
-  leagueId: string, playerId: string, excludeTeamId: string, seasonYear: number, capMode: LeagueSettings['capMode'],
+  leagueId: string, playerId: string, excludeTeamId: string, seasonYear: number, settings: LeagueSettings,
 ): Promise<CompetingBid | null> {
+  const capMode = settings.capMode;
   const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId } });
+
+  // The board the wave actually reads, and nothing wider. `take` is the same
+  // WAVE_BOARD_SIZE, the same order.
+  const pool = await prisma.player.findMany({
+    where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+    orderBy: [{ trueOvr: 'desc' }, { id: 'asc' }],
+    take: FREE_AGENCY.WAVE_BOARD_SIZE,
+    select: { id: true, position: true, trueOvr: true, age: true, potential: true },
+  });
+  const onBoard = pool.some((p) => p.id === playerId);
+  if (!onBoard && player.status === 'FREE_AGENT') {
+    // He is on the market and below every club's board. Nobody is bidding on
+    // him — not in this function, and not in the wave either.
+    return null;
+  }
+  const board: BoardPlayer[] = onBoard
+    ? pool
+    : [...pool, { id: player.id, position: player.position, trueOvr: player.trueOvr, age: player.age, potential: player.potential }]
+        .sort((a, b) => b.trueOvr - a.trueOvr || a.id.localeCompare(b.id));
+
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false, id: { not: excludeTeamId } } });
+  const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
+  const rookieReserve = Math.ceil(settings.draftRounds * LEAGUE.ROOKIE_ROSTER_HIT_RATE);
+  const playerMarket = marketValue({
+    ovr: player.trueOvr, position: player.position as Position, age: player.age, potential: player.potential,
+  });
 
   let best: CompetingBid | null = null;
   for (const team of teams) {
-    const roster = await prisma.player.findMany({ where: { teamId: team.id }, select: { id: true, position: true, trueOvr: true, age: true, potential: true } });
+    const roster = await prisma.player.findMany({
+      where: { teamId: team.id, status: 'ACTIVE' },
+      select: { id: true, position: true, trueOvr: true, age: true, potential: true, contract: true },
+      orderBy: [{ trueOvr: 'asc' }, { id: 'asc' }],
+    });
     const needs = teamNeeds(roster as RosterPlayer[]);
     if ((needs[player.position] ?? 0) < 0.15) continue; // no real interest — wouldn't actually bid
 
     const summary = await teamCapSummary(team.id, seasonYear, capMode);
+    const state = bidderState({ roster: roster as RosterPlayer[], needs, capSpace: summary.capSpace, capMode, rosterMax, rookieReserve });
+    // WOULD THEY GET TO HIM. Same walk, same order, same slots and budget the
+    // wave spends — priced at the floor, so this only ever says no when the
+    // club could not have afforded to reach him even paying the minimum that
+    // counts. Deterministic: no draw, nothing to re-roll between renders.
+    const plan = planTeamBids(board, state, (fa, capSpace) => Math.min(
+      marketValue({ ovr: fa.trueOvr, position: fa.position as Position, age: fa.age, potential: fa.potential }) * MARKET_FLOOR,
+      Math.max(0, capSpace - AI.CAP_RESERVE),
+    ));
+    if (!plan.some((b) => b.playerId === playerId)) continue;
+
+    // What their GM would actually put on him, at the seed this has always
+    // used — stable per matchup, so the number does not move under the user.
     const rng = new Rng(`fa-bid-${playerId}-${team.id}`);
     const profile = parseGmProfile(team.gmProfile, rng);
-    const offer = maxOffer(player as unknown as RosterPlayer, { profile, needs, capSpace: Math.max(0, summary.capSpace - 4_000_000), rng });
-    if (offer >= CAP.MIN_SALARY && (!best || offer > best.apy)) {
+    const offer = maxOffer(player as unknown as RosterPlayer, { profile, needs, capSpace: Math.max(0, summary.capSpace - AI.CAP_RESERVE), rng });
+    // A bid the wave's own resolution would throw out is not a bid.
+    if (offer < CAP.MIN_SALARY || offer < playerMarket * MARKET_FLOOR) continue;
+    if (!best || offer > best.apy) {
       // The evidence travels with the bid. A club is only ever NAMED on screen
       // out of one of these, and the two figures beside its name are the two
       // figures its own AI bid on: the room it really has and the need it
@@ -493,20 +582,21 @@ export async function restructureContract(opts: {
  */
 export async function signFreeAgentWithCompetition(opts: {
   leagueId: string; playerId: string; teamId: string; apy: number; years: number;
-  seasonYear: number; capMode: LeagueSettings['capMode']; week: number;
+  seasonYear: number; settings: LeagueSettings; week: number;
   escalation?: number; voidYears?: number; bonusPct?: number; guaranteedPct?: number;
 }) {
-  const competing = await leadingCompetingBid(opts.leagueId, opts.playerId, opts.teamId, opts.seasonYear, opts.capMode);
+  const capMode = opts.settings.capMode;
+  const competing = await leadingCompetingBid(opts.leagueId, opts.playerId, opts.teamId, opts.seasonYear, opts.settings);
   if (competing && competing.apy > opts.apy) {
     const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId } });
     await signFreeAgent({
       leagueId: opts.leagueId, playerId: opts.playerId, teamId: competing.teamId,
       apy: competing.apy, years: suggestedYears(player.trueOvr, player.age),
-      seasonYear: opts.seasonYear, capMode: opts.capMode, week: opts.week,
+      seasonYear: opts.seasonYear, capMode, week: opts.week,
     }).catch(() => { /* rival couldn't actually close it either — player just stays in free agency */ });
     throw new Error(`Outbid — the ${competing.teamName} swooped in at ~$${(competing.apy / 1_000_000).toFixed(1)}M/yr before you closed the deal.`);
   }
-  return signFreeAgent(opts);
+  return signFreeAgent({ ...opts, capMode });
 }
 
 export async function cutPlayer(opts: {
@@ -582,6 +672,156 @@ export async function cutPlayer(opts: {
  */
 export const MARKET_FLOOR = 0.85;
 
+/**
+ * ---------------------------------------------------------------------------
+ * ONE CLUB'S BIDS, IN ITS OWN ORDER
+ * ---------------------------------------------------------------------------
+ * The walk down a front office's board: highest-need positions first, best
+ * player first inside a position, spending roster slots and cap room as it
+ * goes, stopping when either runs out. It is the whole of the AI's free-agency
+ * behaviour and it now has exactly one implementation, because two things ask
+ * the same question and may never answer it differently:
+ *
+ *   `runAiFreeAgencyWave` — what the club actually bids, this week, for real.
+ *   `leadingCompetingBid` — whether the club named in a negotiation panel as
+ *                           chasing this player would in fact get to him.
+ *
+ * They differ only in `price`, which is what that club would put on a man
+ * given the room it has left: the wave prices with `maxOffer` off its GM
+ * profile and the wave's own seeded rng, the rumour prices at MARKET_FLOOR
+ * (see leadingCompetingBid for why the forecast is deliberately the cheap,
+ * deterministic one). Everything that decides WHETHER a bid happens — the
+ * order, the need threshold, the roster-slot rule, the upgrade-and-displace
+ * rule, the market floor — is here, once.
+ */
+interface BoardPlayer {
+  id: string;
+  position: string;
+  trueOvr: number;
+  age: number;
+  potential: number;
+}
+
+interface BidderState {
+  needs: Record<string, number>;
+  /** Room to spend this league year, already net of the AI's reserve. */
+  budget: number;
+  openSlots: number;
+  displacesLeft: number;
+  /** Worst man at each position, and what releasing him would free. */
+  worstAtPosition: Map<string, { id: string; trueOvr: number; frees: number }>;
+  countAtPosition: Map<string, number>;
+  alreadyDisplaced: Set<string>;
+}
+
+interface PlannedBid { playerId: string; offer: number; displacePlayerId?: string }
+
+/** The club's snapshot, read the same way on both sides. */
+function bidderState(opts: {
+  roster: (RosterPlayer & { contract?: unknown })[];
+  needs: Record<string, number>;
+  capSpace: number;
+  capMode: LeagueSettings['capMode'];
+  rosterMax: number;
+  rookieReserve: number;
+}): BidderState {
+  const worstAtPosition = new Map<string, { id: string; trueOvr: number; frees: number }>();
+  const countAtPosition = new Map<string, number>();
+  // `roster` arrives worst-first, so the first hit per position is the answer.
+  for (const p of opts.roster) {
+    if (!worstAtPosition.has(p.position)) {
+      worstAtPosition.set(p.position, {
+        id: p.id, trueOvr: p.trueOvr,
+        // Releasing him frees this year's hit less the dead money he leaves
+        // behind. Sizing the offer WITHOUT it (as this first did) prices
+        // every upgrade as if the roster spot were free but the money were
+        // not, which is exactly backwards.
+        frees: capSavingsOnCut((p as { contract?: Parameters<typeof capSavingsOnCut>[0] }).contract ?? null, opts.capMode),
+      });
+    }
+    countAtPosition.set(p.position, (countAtPosition.get(p.position) ?? 0) + 1);
+  }
+  return {
+    needs: opts.needs,
+    budget: Math.max(0, opts.capSpace - AI.CAP_RESERVE),
+    // Leave room for the rookie class. This wave only ever runs during
+    // FREE_AGENCY, and the draft lands immediately after it, so filling all
+    // the way to rosterMax here just means cutting those same players again
+    // on cut-down day (see trimRostersToLimit in lib/season.ts). Reserve only
+    // the share of the class that realistically sticks, not the whole class.
+    openSlots: Math.max(0, opts.rosterMax - opts.roster.length - opts.rookieReserve),
+    displacesLeft: FREE_AGENCY.MAX_DISPLACE_PER_TEAM_PER_WAVE,
+    worstAtPosition,
+    countAtPosition,
+    alreadyDisplaced: new Set<string>(),
+  };
+}
+
+/**
+ * Pure. Mutates only the state object it is handed, and only in the ways the
+ * wave already did (slots, budget, displacements spent).
+ */
+function planTeamBids(
+  board: BoardPlayer[],
+  state: BidderState,
+  price: (fa: BoardPlayer, capSpace: number) => number,
+): PlannedBid[] {
+  // Bid on the highest-need positions among top available talent.
+  const ranked = [...board].sort(
+    (a, b) => (state.needs[b.position] ?? 0) - (state.needs[a.position] ?? 0) || b.trueOvr - a.trueOvr,
+  );
+  const out: PlannedBid[] = [];
+  for (const fa of ranked) {
+    if (state.openSlots <= 0 && state.displacesLeft <= 0) break;
+    if (state.budget <= 0) break;
+
+    let displace: { id: string; trueOvr: number; frees: number } | null = null;
+    if (state.openSlots <= 0) {
+      // No room — this only happens if he beats somebody already here.
+      const worst = state.worstAtPosition.get(fa.position);
+      if (!worst || state.alreadyDisplaced.has(worst.id)) continue;
+      if (fa.trueOvr - worst.trueOvr < FREE_AGENCY.MIN_UPGRADE_DELTA) continue;
+      // Only depth BEYOND what the position spec asks for is displaceable,
+      // so an upgrade can never open a hole the roster is required to fill.
+      // Structural on purpose: a rating threshold stops meaning anything the
+      // moment league-wide ratings move.
+      if ((state.countAtPosition.get(fa.position) ?? 0) <= (ROSTER_TARGETS[fa.position as Position]?.min ?? 1)) continue;
+      displace = worst;
+    } else if ((state.needs[fa.position] ?? 0) <= 0.15) {
+      continue; // no real need and no upgrade case — not a bid
+    }
+
+    // A displacement pays for part of itself: the man going out stops
+    // counting against the cap the moment he is released.
+    const freed = displace?.frees ?? 0;
+    const offer = price(fa, state.budget + freed);
+    if (offer < CAP.MIN_SALARY) continue;
+    // Don't commit budget to a bid that cannot possibly win. The price is
+    // capped at what the team can afford, and the resolution step throws out
+    // anything under 85% of market — so a team facing a free agent it cannot
+    // afford used to bid its entire remaining budget on him, have that bid
+    // rejected, and then `break` on an exhausted budget without having signed
+    // anyone. Because the board is sorted best-first once needs flatten out,
+    // every team in the league did this to the same unaffordable player, every
+    // week: measured 17 signings league-wide in the final year of a 13-season
+    // run while 350 free agents rated 80+ sat unsigned. Applying the same
+    // floor here, before the money is committed, lets a team walk down the
+    // board to somebody it can actually sign.
+    const market = marketValue({ ovr: fa.trueOvr, position: fa.position as Position, age: fa.age, potential: fa.potential });
+    if (offer < market * MARKET_FLOOR) continue;
+
+    out.push({ playerId: fa.id, offer, displacePlayerId: displace?.id });
+    state.budget -= offer - freed;
+    if (displace) {
+      state.alreadyDisplaced.add(displace.id);
+      state.displacesLeft--;
+    } else {
+      state.openSlots--;
+    }
+  }
+  return out;
+}
+
 export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, week: number, settings: LeagueSettings, rng: Rng) {
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
   // isDraftee players aren't real free agents yet — they're this year's
@@ -598,6 +838,9 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
   interface Bid { playerId: string; teamId: string; offer: number; displacePlayerId?: string }
   const bids: Bid[] = [];
 
+  const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
+  const rookieReserve = Math.ceil(settings.draftRounds * LEAGUE.ROOKIE_ROSTER_HIT_RATE);
+
   for (const team of teams) {
     const roster = await prisma.player.findMany({
       where: { teamId: team.id, status: 'ACTIVE' },
@@ -608,86 +851,16 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
     const summary = await teamCapSummary(team.id, seasonYear, settings.capMode);
     const profile = parseGmProfile(team.gmProfile, rng);
 
-    // Leave room for the rookie class. This wave only ever runs during
-    // FREE_AGENCY, and the draft lands immediately after it, so filling all
-    // the way to rosterMax here just means cutting those same players again
-    // on cut-down day (see trimRostersToLimit in lib/season.ts). Reserve only
-    // the share of the class that realistically sticks, not the whole class.
-    const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
-    const rookieReserve = Math.ceil(settings.draftRounds * LEAGUE.ROOKIE_ROSTER_HIT_RATE);
-    let openSlots = Math.max(0, rosterMax - roster.length - rookieReserve);
-    let displacesLeft = FREE_AGENCY.MAX_DISPLACE_PER_TEAM_PER_WAVE;
-
-    // The worst man at each position — the one a genuine upgrade would push
-    // off the roster. `roster` is already sorted worst-first, so the first
-    // hit per position is the answer.
-    const worstAtPosition = new Map<string, { id: string; trueOvr: number; frees: number }>();
-    const countAtPosition = new Map<string, number>();
-    for (const p of roster) {
-      if (!worstAtPosition.has(p.position)) {
-        worstAtPosition.set(p.position, {
-          id: p.id, trueOvr: p.trueOvr,
-          // Releasing him frees this year's hit less the dead money he leaves
-          // behind. Sizing the offer WITHOUT it (as this first did) prices
-          // every upgrade as if the roster spot were free but the money were
-          // not, which is exactly backwards.
-          frees: capSavingsOnCut(p.contract, settings.capMode),
-        });
-      }
-      countAtPosition.set(p.position, (countAtPosition.get(p.position) ?? 0) + 1);
-    }
-    const alreadyDisplaced = new Set<string>();
-
-    // Bid on the highest-need positions among top available talent.
-    const ranked = [...freeAgents].sort((a, b) => (needs[b.position] ?? 0) - (needs[a.position] ?? 0) || b.trueOvr - a.trueOvr);
-    let budget = Math.max(0, summary.capSpace - 4_000_000);
-    for (const fa of ranked) {
-      if (openSlots <= 0 && displacesLeft <= 0) break;
-      if (budget <= 0) break;
-
-      let displace: { id: string; trueOvr: number; frees: number } | null = null;
-      if (openSlots <= 0) {
-        // No room — this only happens if he beats somebody already here.
-        const worst = worstAtPosition.get(fa.position);
-        if (!worst || alreadyDisplaced.has(worst.id)) continue;
-        if (fa.trueOvr - worst.trueOvr < FREE_AGENCY.MIN_UPGRADE_DELTA) continue;
-        // Only depth BEYOND what the position spec asks for is displaceable,
-        // so an upgrade can never open a hole the roster is required to fill.
-        // Structural on purpose: a rating threshold stops meaning anything the
-        // moment league-wide ratings move.
-        if ((countAtPosition.get(fa.position) ?? 0) <= (ROSTER_TARGETS[fa.position as Position]?.min ?? 1)) continue;
-        displace = worst;
-      } else if ((needs[fa.position] ?? 0) <= 0.15) {
-        continue; // no real need and no upgrade case — not a bid
-      }
-
-      // A displacement pays for part of itself: the man going out stops
-      // counting against the cap the moment he is released.
-      const freed = displace?.frees ?? 0;
-      const offer = maxOffer(fa as any, { profile, needs, capSpace: budget + freed, rng });
-      if (offer < CAP.MIN_SALARY) continue;
-      // Don't commit budget to a bid that cannot possibly win. maxOffer caps
-      // the offer at what the team can afford, and the resolution step below
-      // throws out anything under 85% of market — so a team facing a free
-      // agent it cannot afford used to bid its entire remaining budget on him,
-      // have that bid rejected, and then `break` on an exhausted budget
-      // without having signed anyone. Because the board is sorted best-first
-      // once needs flatten out, every team in the league did this to the same
-      // unaffordable player, every week: measured 17 signings league-wide in
-      // the final year of a 13-season run while 350 free agents rated 80+ sat
-      // unsigned. Applying the same floor here, before the money is committed,
-      // lets a team walk down the board to somebody it can actually sign.
-      const market = marketValue({ ovr: fa.trueOvr, position: fa.position as any, age: fa.age, potential: fa.potential });
-      if (offer < market * MARKET_FLOOR) continue;
-
-      bids.push({ playerId: fa.id, teamId: team.id, offer, displacePlayerId: displace?.id });
-      budget -= offer - freed;
-      if (displace) {
-        alreadyDisplaced.add(displace.id);
-        displacesLeft--;
-      } else {
-        openSlots--;
-      }
+    // The walk down this club's board — order, slots, budget, the upgrade
+    // rule, the market floor. Shared with `leadingCompetingBid`, which is how
+    // a suitor named in a negotiation panel is the club that actually comes
+    // for him here. See planTeamBids.
+    const state = bidderState({
+      roster: roster as RosterPlayer[], needs, capSpace: summary.capSpace,
+      capMode: settings.capMode, rosterMax, rookieReserve,
+    });
+    for (const bid of planTeamBids(freeAgents, state, (fa, capSpace) => maxOffer(fa as unknown as RosterPlayer, { profile, needs, capSpace, rng }))) {
+      bids.push({ ...bid, teamId: team.id });
     }
   }
 
@@ -960,7 +1133,7 @@ export async function resolveNegotiationSession(opts: {
   const resignWindow: ResignWindow | null = mode === 'RESIGN'
     ? (controlYears <= 0 ? 'FINAL_CALL' : 'WALK_YEAR')
     : null;
-  const suitor = await leadingCompetingBid(leagueId, playerId, teamId, seasonYear, capMode);
+  const suitor = await leadingCompetingBid(leagueId, playerId, teamId, seasonYear, settings);
   const rawCompetition = suitor ? clamp(suitor.apy / Math.max(1, trueMarketApy), 0.3, 1) : 0;
   // How much of that rival's interest actually reaches this table. Nobody may
   // sign a man who is under contract, so on both incumbent screens it is
@@ -1191,7 +1364,7 @@ export async function negotiateOffer(opts: {
         // is not something the user's click may override.
         await signFreeAgentWithCompetition({
           leagueId, playerId, teamId, apy: offer.apy, years: offer.years, seasonYear,
-          capMode: settings.capMode, week, escalation: structure.escalation, voidYears: structure.voidYears,
+          settings, week, escalation: structure.escalation, voidYears: structure.voidYears,
           bonusPct: shape.bonusPct, guaranteedPct: shape.guaranteedPct,
         });
       }
@@ -1279,7 +1452,7 @@ export async function negotiateOffer(opts: {
     // reloading — the pips that got you here are in the database, so the
     // counter is real pacing and the loss is a real consequence of it.
     const lost = await loseToCompetingBid({
-      leagueId, playerId, teamId, seasonYear, capMode: settings.capMode, week,
+      leagueId, playerId, teamId, seasonYear, settings, week,
     });
     if (lost) {
       return {
@@ -1314,16 +1487,17 @@ export async function negotiateOffer(opts: {
  */
 async function loseToCompetingBid(opts: {
   leagueId: string; playerId: string; teamId: string; seasonYear: number;
-  capMode: LeagueSettings['capMode']; week: number;
+  settings: LeagueSettings; week: number;
 }): Promise<{ teamName: string; apy: number } | null> {
-  const competing = await leadingCompetingBid(opts.leagueId, opts.playerId, opts.teamId, opts.seasonYear, opts.capMode);
+  const capMode = opts.settings.capMode;
+  const competing = await leadingCompetingBid(opts.leagueId, opts.playerId, opts.teamId, opts.seasonYear, opts.settings);
   if (!competing) return null;
   const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId } });
   try {
     await signFreeAgent({
       leagueId: opts.leagueId, playerId: opts.playerId, teamId: competing.teamId,
       apy: competing.apy, years: suggestedYears(player.trueOvr, player.age),
-      seasonYear: opts.seasonYear, capMode: opts.capMode, week: opts.week,
+      seasonYear: opts.seasonYear, capMode, week: opts.week,
     });
   } catch {
     return null; // rival couldn't fit it either — he stays on the market

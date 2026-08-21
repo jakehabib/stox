@@ -1,5 +1,5 @@
 import { Rng, clamp } from '../rng';
-import { Position } from '../tuning';
+import { GENERATION, Position } from '../tuning';
 import { AttrMap } from '../ratings';
 import { POSITION_GROUPS, PositionGroup } from '../positionGroups';
 
@@ -75,10 +75,29 @@ function normGame(rng: Rng, mean: number, sd: number, min = 0): number {
   return Math.max(min, Math.round(rng.normal(mean, sd)));
 }
 
+/**
+ * 0..1 quality dial for a draft prospect, spanning the range a draft class is
+ * actually generated across rather than a pair of hardcoded numbers.
+ *
+ * This used to be `(trueOvr - 40) / 55` — endpoints that matched the old
+ * class range of 38..95. The rating recalibration (docs/rating-distribution.md)
+ * moved that range to DRAFT_OVR_MIN..DRAFT_OVR_MAX, and the literals did not
+ * follow, so the dial only ever traversed 0.25..0.87 and every college stat
+ * line below it compressed toward the middle: measured over 1,200 prospects,
+ * the dial's 1st-to-99th-percentile span fell from 0.96 to 0.62 and receiving
+ * production spread narrowed 15%. Reading the constants means it cannot go
+ * stale again the next time the curve moves.
+ */
+export function prospectQuality(trueOvr: number): number {
+  const lo = GENERATION.DRAFT_OVR_MIN;
+  const hi = GENERATION.DRAFT_OVR_MAX;
+  return clamp((trueOvr - lo) / (hi - lo), 0, 1);
+}
+
 /** Generates one full college season's worth of per-game stat lines, shaped by position and true attributes. [TUNE] */
 export function generateCollegeProfile(rng: Rng, position: Position, trueAttrs: AttrMap, trueOvr: number): CollegeProfile {
   // 0..1 quality dial from true overall — drives every stat mean below.
-  const q = clamp((trueOvr - 40) / 55, 0, 1);
+  const q = prospectQuality(trueOvr);
   const games: CollegeGameLine[] = [];
 
   for (let w = 0; w < COLLEGE_WEEKS; w++) {
@@ -300,8 +319,12 @@ export function generateCombineTesting(rng: Rng, position: Position, trueAttrs: 
     : clamp(Math.round(14 + (proxy - 50) / 3.5 + rng.float(-3, 3)), 2, 44);
 
   // Higher-rated prospects test at the combine more consistently; the rest
-  // more often only get a pro day.
-  const combineOdds = clamp(0.35 + (trueOvr - 50) / 90, 0.15, 0.92);
+  // more often only get a pro day. Expressed through prospectQuality for the
+  // same reason the college dial is: this was `0.35 + (trueOvr - 50) / 90`,
+  // which spanned 0.22..0.85 across the OLD class range and 0.39..0.77 across
+  // the new one — the invitation had quietly stopped discriminating. The
+  // endpoints below are the old formula's real endpoints.
+  const combineOdds = clamp(0.22 + prospectQuality(trueOvr) * 0.63, 0.15, 0.92);
   const venue: CombineTesting['venue'] = rng.bool(combineOdds) ? 'COMBINE' : 'PRO_DAY';
 
   return { venue, fortyYard: Number(fortyYard.toFixed(2)), vertical: Math.round(vertical), broadJump: Math.round(broadJump), threeCone: Number(threeCone.toFixed(2)), shuttle: Number(shuttle.toFixed(2)), benchReps };

@@ -22,6 +22,22 @@ export default async function ResignPage({ params }: { params: { id: string } })
   });
   const trulyExpiringCount = expiring.filter((p) => p.contract?.yearsRemaining === 0).length;
 
+  // WHO HAS BEEN PARKED. "Not now" rather than "let him walk" — see
+  // setAsideResignAction. Read off NegotiationTalks, which is already keyed on
+  // team + player + league year, so this is this year's triage and nothing
+  // carries into the next one.
+  const setAsideRows = await prisma.negotiationTalks.findMany({
+    where: { teamId: team.id, seasonYear: league.seasonYear, dismissedAt: { not: null } },
+    select: { playerId: true },
+  });
+  const setAsideIds = new Set(setAsideRows.map((r) => r.playerId));
+  const onTheList = expiring.filter((p) => !setAsideIds.has(p.id));
+  const parked = expiring.filter((p) => setAsideIds.has(p.id));
+  // The half of the trap that is this page's to close: the men parked here who
+  // are one Advance from free agency. The other half — refusing to advance
+  // until they have been named — is in lib/season.ts.
+  const parkedExpiring = parked.filter((p) => p.contract?.yearsRemaining === 0).length;
+
   const summary = settings.capMode === 'OFF' ? null : await teamCapSummary(team.id, league.seasonYear, settings.capMode);
 
   // WHAT IS BEHIND EACH OF THEM. "Do I pay this man" cannot be answered without
@@ -99,7 +115,7 @@ export default async function ResignPage({ params }: { params: { id: string } })
         subtitle="Players whose deals are up or about to be. Nobody else may sign them while they are still yours — but somebody is already watching, and open talks will tell you who, what room they have and what they would pay. The hometown discount is real and it is on a clock: it is at its biggest while a contract still has a season to run and mostly gone once it has expired. Whoever you leave undecided is released to free agency when this phase ends, and the rest of the league can call."
         action={expiring.length > 0 ? <LetAiResignButton leagueId={league.id} /> : undefined}
         facts={[
-          { label: 'Decisions', value: String(expiring.length), detail: 'contracts on the clock' },
+          { label: 'Decisions', value: String(onTheList.length), detail: parked.length > 0 ? `${parked.length} more set aside` : 'contracts on the clock' },
           {
             label: 'Already Expired',
             value: String(trulyExpiringCount),
@@ -126,7 +142,13 @@ export default async function ResignPage({ params }: { params: { id: string } })
         <div className="panel p-4 text-sm text-muted">Nobody's contract is expiring soon — nothing to do here. Advance whenever you're ready.</div>
       ) : (
         <div className="space-y-2">
-          {expiring.map((p) => (
+          {onTheList.length === 0 && (
+            <div className="panel p-4 text-sm text-muted">
+              Every expiring contract is set aside. They are below, and none of them has been released — bring
+              anyone back before you advance.
+            </div>
+          )}
+          {onTheList.map((p) => (
             <ResignRow
               key={p.id}
               leagueId={league.id} playerId={p.id} name={`${p.firstName} ${p.lastName}`} position={p.position} age={p.age} ovr={p.trueOvr}
@@ -139,6 +161,35 @@ export default async function ResignPage({ params }: { params: { id: string } })
               depth={depthFor(p.id, p.position)}
             />
           ))}
+
+          {/* THE PILE, AND WHAT IT COSTS. Set aside is reversible and says so
+              with a count and a control on every row — but a man parked here
+              with an expired deal still walks when the phase ends, so this
+              states that in front of the decision rather than after it. The
+              advance itself refuses once and names them (lib/season.ts). */}
+          {parked.length > 0 && (
+            <div className="pt-3 space-y-2">
+              <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <span className="label-sm">Set aside · {parked.length}</span>
+                <span className="text-xs text-muted">
+                  {parkedExpiring > 0
+                    ? `Not released — but ${parkedExpiring} of them ${parkedExpiring === 1 ? 'has an expired deal and walks' : 'have expired deals and walk'} when this phase ends.`
+                    : 'Not released. Their deals still have a season to run.'}
+                </span>
+              </div>
+              {parked.map((p) => (
+                <ResignRow
+                  key={p.id}
+                  setAside
+                  leagueId={league.id} playerId={p.id} name={`${p.firstName} ${p.lastName}`} position={p.position} age={p.age} ovr={p.trueOvr}
+                  weightLb={p.weightLb} heightIn={p.heightIn}
+                  currentApy={p.contract ? capHit(p.contract, settings.capMode) : 0}
+                  capMode={settings.capMode}
+                  yearsRemaining={p.contract?.yearsRemaining ?? 0}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

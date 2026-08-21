@@ -48,6 +48,13 @@ const TYPE_WEIGHT: Record<string, number> = {
   // page, which is the whole excitement of the thing, while the other
   // seventy-odd stay out of the way.
   ALL_STAR: 18,
+  // A hair under a selection, on purpose: when it exists at all the user's own
+  // roster was shut out (lib/allStars.ts writes it under no other condition),
+  // so the user-team bonus makes it the All-Star news he has — but it must
+  // never read as louder than actually making it. Below the CUT threshold, so
+  // it stays off the ticker: "he just missed" is a consolation, not something
+  // a GM has to catch as it scrolls past.
+  ALL_STAR_SNUB: 16,
   DEV_MILESTONE: 10,
   INJURY: 5,
 };

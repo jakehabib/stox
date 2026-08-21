@@ -4,7 +4,7 @@ import { readJson, writeJson } from './json';
 import { buildContract, rookieScaleApy } from './cap';
 import { parseGmProfile, playerValue, teamNeeds, RosterPlayer, defaultGmProfile } from './ai/gm';
 import { AI, LEAGUE, Position } from './tuning';
-import { autoDepthChart } from './gen/league';
+import { reconcileDepthChart } from './gen/league';
 
 /**
  * ===========================================================================
@@ -172,7 +172,13 @@ export async function draftPlayer(opts: {
     await advancePick(tx as any, opts.leagueId, pickInfo.state, isFantasy, rounds);
   });
 
-  await autoDepthChart(opts.teamId);
+  /**
+   * The rookie takes a slot on merit — behind the last man on the chart who
+   * out-rates him — instead of the whole chart being rebuilt by rating, which
+   * is what `autoDepthChart` did here and which threw away the user's hand-set
+   * order on every single pick they made.
+   */
+  await reconcileDepthChart(opts.teamId);
 }
 
 async function advancePick(tx: typeof prisma, leagueId: string, state: { pickIndex: number; round: number; order: string }, isFantasy: boolean, rounds: number) {

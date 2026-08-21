@@ -1,71 +1,68 @@
 import type { SeasonStats } from './types';
-import { careerColumns, StatColumn } from './statLabels';
+import { careerColumns } from './statLabels';
+import { canonicalPosition } from './tuning';
+import { positionRelativeScore, isRankablePosition, PositionDistribution } from './performanceScore';
 
 /**
  * ===========================================================================
- * GAME PERFORMANCE — how good was that, for a player at HIS position, in ONE
- * afternoon?
+ * THE COACH ROOM — who gets mentioned, who gets called out, how it is read
  * ===========================================================================
- * A second, deliberately different answer to "who played well" from
- * lib/news.ts's `statScore`, and a different YARDSTICK from the one
- * lib/performanceScore.ts uses. Both distinctions are load-bearing.
+ * This file does NOT rank players. lib/performanceScore.ts does, and it is the
+ * only thing in this project that does: All-Star selection ranks a season with
+ * it and the Week Report's Coach's Comments ranks a week with it, and the two
+ * are not allowed to disagree about who is good. Everything here is the part
+ * that ranker deliberately leaves to its caller.
  *
- * --------------------------------------------------------------------------
- * WHY NOT `statScore`
- * --------------------------------------------------------------------------
- * lib/news.ts answers "how newsworthy is this line?" in a single
- * cross-position currency: a passing yard is 1, a passing touchdown is 50.
- * That is the right shape for a headline feed — a 400-yard afternoon IS the
- * league story — and it is left completely untouched here, because it decides
- * which performances become news and quietly changing it would change the
- * news.
+ * ---------------------------------------------------------------------------
+ * 1. THE YARDSTICK (`NORMS`)
+ * ---------------------------------------------------------------------------
+ * `positionRelativeScore` takes the distribution as a parameter, on purpose:
+ * 4,800 passing yards is an extraordinary season and an impossible afternoon.
+ * A season caller builds it from season totals. This is the WEEK caller, so
+ * the population is single-game outings — and not this week's thirty-two, but
+ * every game the simulation has ever played, because a week contains one
+ * quarterback per club and a distribution of one is not a distribution.
  *
- * It is the wrong shape for a LIST. Measured over this database's 16,025
- * played games, a starting quarterback's MEDIAN line already scores
- * 231 + 2*50 = 331, while a median running back's entire day scores about 80.
- * Rank a roster by that and every top-performers list is four quarterbacks and
- * a receiver, every week, forever. That is worse than not building the list —
- * and it is measured, not asserted: the single-player game ball, which is
- * ranked by `statScore`, went to the starting quarterback in four of six
- * reports.
+ * Measured, not guessed: every played game in this Postgres, the 1,515,626
+ * box lines among them that cleared `playedEnough` below, mean and standard
+ * deviation of every stat `scoredStats` scores. Baked as literals so grading the report
+ * costs no round trip and no measurable time — the Week Report must paint no
+ * slower than it did before this section existed. Regenerate with
+ * `scripts/_coachNorms.ts` if the engine's stat allocation ever changes; a
+ * stale yardstick makes the grades wrong, not merely imprecise.
  *
- * --------------------------------------------------------------------------
- * WHY NOT lib/performanceScore.ts's YARDSTICK
- * --------------------------------------------------------------------------
- * That module (All-Star selection) scores a player in standard deviations
- * against a population the CALLER supplies, which is exactly right for a
- * season: a thousand season lines make a real distribution.
+ * The population is gated to men who actually played. Ungated, the mean back
+ * is a third-stringer with two carries and every starter looks historic.
  *
- * One game is not that population. A team's box score contains three running
- * backs and one quarterback; a whole league week contains thirty-two. Worse,
- * the engine deals a defender's whole afternoon in integers between four and
- * seven, so the standard deviation of linebacker tackles is 0.57 — and a
- * seven-tackle game becomes +4.2 standard deviations, which arithmetic will
- * happily call the best performance in football. A z-score needs a smooth
- * distribution and this one has five distinct values.
+ * ---------------------------------------------------------------------------
+ * 2. THE READABLE UNIT (`COMPOSITE_LADDER`)
+ * ---------------------------------------------------------------------------
+ * The ranker's output is standard deviations, which is the right unit for
+ * comparing two men and the wrong one to print. Worse, it is not equally hard
+ * to earn everywhere. Measured, the 90th percentile of a receiver's afternoon
+ * is +1.13 standard deviations and a corner's is +0.59, because a receiver's
+ * line has four moving numbers and a corner's has two coin flips. A flat bar
+ * across that is not a position-relative standard; it is the old bias wearing
+ * a new coat.
  *
- * So this module grades against BAKED PERCENTILE LADDERS instead, and reads
- * off them by mid-rank, which is exactly what a lumpy integer distribution
- * needs. It also costs no query, which matters: the Week Report must paint no
- * slower than it does today, and loading a league-week of box scores to build
- * a distribution would be measurable.
+ * So each position's composite is passed through its OWN measured percentile
+ * ladder. After that, one number means exactly one thing everywhere: "better
+ * than N% of games played at this position". A bar of 78 is then the same
+ * demand of a corner as of a quarterback. This is a calibration of the shared
+ * ranker's output, not a second opinion about it — the ordering inside a
+ * position is the ranker's, untouched.
  *
- * WHERE THE LADDERS COME FROM. Not intuition — the box scores already in the
- * database. Every played game in this Postgres was read (16,025 games,
- * 781,420 individual box lines) and the 1/5/10/25/50/75/90/95/99th percentile
- * of every stat taken, per position. Baked in as literals so grading costs no
- * round trip and no measurable time.
+ * The flat-run rule in `ladderPercentile` is the trick that makes it honest.
+ * The engine deals a defender's whole afternoon in integers between four and
+ * seven, so half of a linebacker's ladder is the same number repeated. A plain
+ * interpolation would call one ordinary five-tackle game 50th percentile and
+ * an identical one 95th, purely from where the ladder was sampled. Landing on
+ * a run returns the MIDDLE of it — the mid-rank percentile, the answer a full
+ * sort of all 179,940 linebacker lines gives.
  *
- * WHICH STATS COUNT is not re-decided here. It is read straight off
- * lib/statLabels.ts's CAREER_COLUMNS — the one place that answers "which
- * numbers define this position?" — including its `lead` ranking, which
- * becomes the weight. This module adds only what a stat page has no reason to
- * know: a stat's DIRECTION (an interception thrown is not an achievement) and
- * whether it is a result or merely volume (attempts are not either).
- *
- * --------------------------------------------------------------------------
- * HONESTY LIMITS
- * --------------------------------------------------------------------------
+ * ---------------------------------------------------------------------------
+ * 3. HONESTY LIMITS
+ * ---------------------------------------------------------------------------
  * Read off lib/sim/engine.ts's allocateStats() and enforced here rather than
  * papered over, because the standing rule against lying metrics applies to
  * prose as hard as it applies to a table:
@@ -79,138 +76,96 @@ import { careerColumns, StatColumn } from './statLabels';
  *  - `teamStats.passYards`/`rushYards` are a flat 60/40 split of total yards;
  *    the player lines carry the real split, so unit yardage is summed from
  *    the lines.
- *  - A punter's yards are `punts * rng.int(40, 50)` — pure dice, with no
- *    input from his rating. Praising a punt average would be praising a coin
- *    flip, so P is excluded from grading entirely.
+ *  - A punter's yards are `punts * rng.int(40, 50)` — pure dice, with no input
+ *    from his rating. Praising a punt average would be praising a coin flip,
+ *    so P is left out of `UNIT_OF` and can never be mentioned.
  *  - Offensive linemen get no box line at all, which is exactly why
  *    CAREER_COLUMNS gives them no columns. They cannot be graded and are not.
  * ===========================================================================
  */
 
 // ---------------------------------------------------------------------------
-// The ladders
+// The measured yardstick
 // ---------------------------------------------------------------------------
 
 /** The percentile each slot of a ladder stands for. */
-const LEVELS = [1, 5, 10, 25, 50, 75, 90, 95, 99] as const;
+const LEVELS = [1, 2, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 98, 99] as const;
 
-/**
- * Per-position, per-stat percentile ladders over every played game in the
- * database. Regenerate if the engine's allocation ever changes — a stale
- * ladder makes the grades wrong, not merely imprecise.
- *
- * Read the flatness as information rather than noise. A linebacker's entire
- * ladder is 4-4-4-4-5-5-5-5-6, because the engine hands every linebacker
- * between four and seven tackles and nothing else but a 6% forced-fumble
- * roll. That is a real and severe ceiling on how far a linebacker can
- * distinguish himself in this simulation, and `UNIT_OF` below is what stops
- * it from being read as "the linebacker had the best game on the field".
- */
-const NORMS: Record<string, Record<string, number[]>> = {
+const NORMS: Record<string, PositionDistribution> = {
   QB: {
-    passYds: [105, 135, 153, 187, 231, 279, 326, 356, 416],
-    passTd: [0, 0, 1, 1, 2, 3, 3, 4, 5],
-    int: [0, 0, 0, 0, 1, 1, 2, 2, 3],
-    rushYds: [-18, -10, -5, 2, 10, 18, 25, 30, 38],
-    cmpPct: [0.519, 0.551, 0.568, 0.596, 0.627, 0.659, 0.686, 0.702, 0.731],
-    ypa: [2.94, 3.605, 3.971, 4.621, 5.409, 6.25, 7.08, 7.621, 8.744],
+    position: 'QB', n: 59978,
+    mean: { gp: 1, passCmp: 27.743, passYds: 236.308, passTd: 1.841, int: -0.719, rushYds: 9.944 },
+    sd:   { gp: 0, passCmp: 6.017, passYds: 66.902, passTd: 1.137, int: 0.708, rushYds: 11.994 },
   },
   RB: {
-    rushYds: [14, 20, 24, 34, 53, 82, 113, 131, 168],
-    rushTd: [0, 0, 0, 0, 0, 1, 1, 2, 3],
-    rec: [0, 0, 0, 0, 1, 2, 3, 4, 4],
-    recYds: [0, 0, 1, 3, 6, 10, 16, 19, 22],
-    ypc: [2.727, 3.412, 3.818, 4.5, 5.364, 6.308, 7.25, 7.882, 9.167],
+    position: 'RB', n: 160278,
+    mean: { gp: 1, rushYds: 64.846, rushTd: 0.408, rec: 1.416, recYds: 7.326 },
+    sd:   { gp: 0, rushYds: 37.602, rushTd: 0.734, rec: 1.278, recYds: 5.89 },
   },
   WR: {
-    recYds: [14, 19, 22, 29, 41, 57, 73, 83, 102],
-    rec: [2, 2, 3, 3, 5, 6, 8, 9, 11],
-    recTd: [0, 0, 0, 0, 0, 1, 1, 1, 1],
-    targets: [3, 4, 4, 6, 8, 10, 13, 14, 17],
-    catchRate: [0.4, 0.5, 0.5, 0.556, 0.6, 0.667, 0.75, 0.778, 0.833],
+    position: 'WR', n: 239920,
+    mean: { gp: 1, rec: 5.064, recYds: 44.62, recTd: 0.297 },
+    sd:   { gp: 0, rec: 2.086, recYds: 19.583, recTd: 0.457 },
   },
   TE: {
-    recYds: [11, 14, 16, 21, 28, 39, 48, 54, 65],
-    rec: [1, 2, 2, 2, 3, 4, 5, 6, 7],
-    recTd: [0, 0, 0, 0, 0, 0, 1, 1, 1],
-    targets: [3, 3, 3, 4, 5, 7, 8, 9, 10],
-    catchRate: [0.4, 0.5, 0.5, 0.5, 0.6, 0.714, 0.75, 0.778, 0.833],
+    position: 'TE', n: 117007,
+    mean: { gp: 1, rec: 3.466, recYds: 30.419, recTd: 0.105 },
+    sd:   { gp: 0, rec: 1.298, recYds: 12.215, recTd: 0.307 },
   },
   EDGE: {
-    tackles: [3, 4, 4, 4, 4, 5, 5, 5, 6],
-    sacks: [0, 0, 0, 0, 0, 1, 1, 1, 1],
-    ff: [0, 0, 0, 0, 0, 0, 0, 1, 1],
+    position: 'EDGE', n: 175162,
+    mean: { gp: 1, tackles: 4.485, sacks: 0.351, ff: 0.06 },
+    sd:   { gp: 0, tackles: 0.588, sacks: 0.477, ff: 0.237 },
   },
   DT: {
-    tackles: [3, 4, 4, 4, 4, 5, 5, 5, 6],
-    sacks: [0, 0, 0, 0, 0, 0, 1, 1, 1],
-    ff: [0, 0, 0, 0, 0, 0, 0, 1, 1],
+    position: 'DT', n: 175544,
+    mean: { gp: 1, tackles: 4.478, sacks: 0.21, ff: 0.059 },
+    sd:   { gp: 0, tackles: 0.594, sacks: 0.408, ff: 0.236 },
   },
   LB: {
-    tackles: [4, 4, 4, 4, 5, 5, 5, 5, 6],
-    ff: [0, 0, 0, 0, 0, 0, 0, 1, 1],
+    position: 'LB', n: 177670,
+    mean: { gp: 1, tackles: 4.638, ff: 0.06 },
+    sd:   { gp: 0, tackles: 0.633, ff: 0.237 },
   },
   CB: {
-    tackles: [3, 4, 4, 4, 4, 5, 5, 5, 6],
-    defInt: [0, 0, 0, 0, 0, 0, 0, 1, 1],
-    pd: [0, 0, 0, 0, 0, 1, 3, 3, 3],
-    ff: [0, 0, 0, 0, 0, 0, 0, 1, 1],
+    position: 'CB', n: 179066,
+    mean: { gp: 1, tackles: 4.501, defInt: 0.081, pd: 0.699, ff: 0.06 },
+    sd:   { gp: 0, tackles: 0.603, defInt: 0.273, pd: 1.07, ff: 0.238 },
   },
   S: {
-    tackles: [4, 4, 4, 4, 5, 5, 5, 5, 6],
-    defInt: [0, 0, 0, 0, 0, 0, 1, 1, 1],
-    pd: [0, 0, 0, 0, 0, 1, 3, 3, 3],
-    ff: [0, 0, 0, 0, 0, 0, 0, 1, 1],
+    position: 'S', n: 120243,
+    mean: { gp: 1, tackles: 4.588, defInt: 0.222, pd: 0.704, ff: 0.06 },
+    sd:   { gp: 0, tackles: 0.62, defInt: 0.415, pd: 1.072, ff: 0.237 },
   },
   K: {
-    fgm: [0, 0, 0, 1, 1, 2, 3, 4, 5],
-    xpm: [0, 0, 1, 2, 3, 4, 5, 6, 7],
-    fgPct: [0, 0.333, 0.5, 0.667, 1, 1, 1, 1, 1],
+    position: 'K', n: 54309,
+    mean: { gp: 1, fgm: 1.587, xpm: 2.833, fgPct: 0.805 },
+    sd:   { gp: 0, fgm: 1.151, xpm: 1.61, fgPct: 0.304 },
   },
 };
 
-/**
- * The same ladder treatment applied to the FINISHED composite, per position.
- *
- * Without this the composite is only comparable inside a position. Measured:
- * a raw score of 72 is cleared by 20.3% of receiver games and by 2.9% of
- * corner games, because a receiver's line has four moving numbers and a
- * corner's has two coin flips. One bar across that is not a position-relative
- * standard; it is the old bias with different favourites.
- *
- * Calibrating through this ladder makes `Grade.score` mean exactly one thing
- * everywhere: "better than N% of games played at this position". A bar of 78
- * is then the same demand of a corner as of a quarterback. Measured over the
- * same 781,420 box lines, gated by `playedEnough`.
- */
-const COMPOSITE_NORMS: Record<string, number[]> = {
-  QB: [12.9, 20.1, 25, 35.3, 49.1, 63.5, 74.4, 79.5, 87.4],
-  RB: [15.3, 19.2, 22, 29.1, 44.4, 65.2, 80.4, 85.5, 91.9],
-  WR: [6.1, 11.3, 19.5, 31, 48.6, 68.4, 80.2, 85, 92.2],
-  TE: [11.8, 15.1, 19.3, 34.1, 52.2, 68.6, 78.9, 82.9, 89.9],
-  EDGE: [29.5, 29.5, 29.5, 29.5, 48.7, 60.3, 79.4, 79.4, 84.4],
-  DT: [26.9, 35.8, 35.8, 35.8, 54.9, 54.9, 72.6, 83.2, 87.8],
-  LB: [26, 26, 26, 26, 61.7, 61.7, 61.7, 77.6, 82.3],
-  CB: [36.9, 36.9, 36.9, 36.9, 45.4, 57.4, 65.9, 68.3, 83],
-  S: [25.9, 25.9, 25.9, 33.2, 52.3, 59.6, 69.1, 74.8, 80.8],
-  K: [6.6, 10.4, 16.6, 30.4, 50, 70.7, 77.3, 78.8, 84.8],
+const COMPOSITE_LADDER: Record<string, number[]> = {
+  QB: [-1.3398390620812184, -1.2242889407037683, -1.0178371543746743, -0.8310952874700033, -0.6936597283444598, -0.5819916029220273, -0.48173165564050424, -0.39032746498358406, -0.3034699605971898, -0.21706348866691558, -0.133856649547468, -0.050056007383780875, 0.03651436060832969, 0.1257193483577375, 0.21888654277677488, 0.3201715914484962, 0.429966169643881, 0.5549984632040803, 0.709233055671103, 0.8951913788884873, 1.1871448237250015, 1.530047956808456, 1.7630601163079944], // n=60747
+  RB: [-0.870028869136381, -0.8373005355949205, -0.788057313214039, -0.7318043177111537, -0.6832906172155614, -0.6347822495221342, -0.5865486619552617, -0.5302956664523762, -0.47112458340833535, -0.40638677260637257, -0.33800135237796525, -0.26523346803565934, -0.18326724491548266, -0.08141863645816057, 0.061643120839699646, 0.2586106596141646, 0.4655007441965187, 0.6651009247812544, 0.8733445869823763, 1.1250954118848184, 1.4890774656133714, 1.9304318362339545, 2.263354702202575], // n=162471
+  WR: [-1.2500276171535722, -1.1793226493439728, -1.0614810363279739, -0.9375458557229723, -0.8257978102959759, -0.7254309522941742, -0.6372512294703776, -0.5482655588937708, -0.44261108105577673, -0.34224422305397506, -0.24187736505217353, -0.12403575203617455, -0.006194139020175558, 0.11224105264507386, 0.23617623325007525, 0.37758616886927404, 0.5305896610172274, 0.6955679192396259, 0.8847080787144747, 1.1250853459334145, 1.4625349563692747, 1.8518152531984762, 2.122447989258869], // n=243000
+  TE: [-1.144217443583806, -1.0960891841010711, -0.9827354890854851, -0.8693817940698991, -0.7938126640595082, -0.7078998395715781, -0.6048898390335314, -0.5189770145456013, -0.4434078845352106, -0.33005418951962445, -0.25448505950923367, -0.14113136449364752, -0.017433975000522035, 0.09591972001506412, 0.23671428555830626, 0.3604116750514317, 0.5115499350722132, 0.6730318895705341, 0.8516110201189717, 1.078318410150144, 1.4012823191467854, 1.7787124666118157, 2.016179053707451], // n=118486
+  EDGE: [-0.6323648601106039, -0.6323648601106039, -0.6323648601106039, -0.6323648601106039, -0.6323648601106039, -0.6323648601106039, -0.6323648601106039, -0.6323648601106039, -0.109078622538652, -0.109078622538652, -0.109078622538652, -0.109078622538652, -0.109078622538652, -0.109078622538652, 0.33522101313564673, 0.33522101313564673, 0.33522101313564673, 0.41420761503329984, 0.8585072507075986, 0.8585072507075986, 0.8585072507075986, 0.9843609027818656, 1.5076471403538174], // n=177426
+  DT: [-1.041622865152277, -0.5236223471517588, -0.5236223471517588, -0.5236223471517588, -0.5236223471517588, -0.5236223471517588, -0.5236223471517588, -0.5236223471517588, -0.5236223471517588, -0.005621829151240825, -0.005621829151240825, -0.005621829151240825, -0.005621829151240825, -0.005621829151240825, -0.005621829151240825, -0.005621829151240825, 0.12826813524719818, 0.6075993723052548, 0.6075993723052548, 1.125599890305773, 1.125599890305773, 1.125599890305773, 1.643600408306291], // n=177796
+  LB: [-0.6418228720706373, -0.6418228720706373, -0.6418228720706373, -0.6418228720706373, -0.6418228720706373, -0.6418228720706373, -0.6418228720706373, -0.6418228720706373, -0.6418228720706373, 0.21987467209136186, 0.21987467209136186, 0.21987467209136186, 0.21987467209136186, 0.21987467209136186, 0.21987467209136186, 0.21987467209136186, 0.21987467209136186, 0.21987467209136186, 0.21987467209136186, 0.8925077761840615, 1.0815722162533612, 1.7542053203460606, 1.7542053203460606], // n=179940
+  CB: [-0.45050687678528606, -0.45050687678528606, -0.45050687678528606, -0.45050687678528606, -0.45050687678528606, -0.45050687678528606, -0.45050687678528606, -0.21359619211340738, -0.21359619211340738, -0.21359619211340738, -0.21359619211340738, -0.21359619211340738, -0.18348417985604712, -0.1533721675986868, 0.05342650481583159, 0.0835385170731919, 0.26022517723035005, 0.3505612140024308, 0.3505612140024308, 0.5874718986743096, 1.3562625206024481, 1.6533972297890476, 1.9204199267182864], // n=181380
+  S: [-0.6711913578266187, -0.6711913578266187, -0.6711913578266187, -0.6711913578266187, -0.6711913578266187, -0.6711913578266187, -0.5379290976986869, -0.36980498049087424, -0.10328046023501071, 0.017276800521057796, 0.020052881804717742, 0.020052881804717742, 0.020052881804717742, 0.020052881804717742, 0.020052881804717742, 0.1533151419326495, 0.2865774020605813, 0.41983966218851304, 0.7085210401523943, 0.7085210401523943, 0.9750455604082578, 1.1083078205361896, 1.3997652797837308], // n=121783
+  K: [-1.6263023193944868, -1.5307457020987392, -1.3396324675072435, -0.8961503154756658, -0.7581240904929191, -0.6236837211422042, -0.48207164052742574, -0.22835257228263411, -0.1495602738107018, -0.11761084664827709, -0.02205422935252938, 0.07350238794321834, 0.09226502522283522, 0.18782164251858297, 0.2833782598143307, 0.36017223983046154, 0.3789348771100784, 0.49325413168544296, 0.6224441636214704, 0.7799239835726861, 0.9784839402377231, 1.1809130900352938, 1.3907889619064062], // n=55005
 };
 
 /**
- * Where a value sits in its ladder, 0-100.
- *
- * The flat-run rule is the whole trick. Half of every ladder above is a run
- * of identical integers, because the engine deals in small whole numbers. A
- * plain interpolation would call a linebacker's utterly ordinary 5 tackles a
- * 50th-percentile game at one end of that run and a 95th-percentile game at
- * the other, purely from where the ladder happened to be sampled. Landing on
- * a run returns the MIDDLE of it — the mid-rank percentile, which is the same
- * answer a full sort of all 94,009 linebacker lines would give.
+ * Where a value sits in its ladder, 0-100. See the header's flat-run note —
+ * that rule is why a linebacker's five tackles reads as the ordinary game it
+ * is instead of whichever percentile the sampling happened to land on.
  */
 function ladderPercentile(ladder: number[] | undefined, value: number): number | null {
-  if (!ladder) return null;
-  if (value < ladder[0]) return 0;
-  if (value > ladder[ladder.length - 1]) return 100;
+  if (!ladder || ladder.length === 0) return null;
+  if (value <= ladder[0]) return value < ladder[0] ? 0 : LEVELS[0];
+  if (value >= ladder[ladder.length - 1]) return value > ladder[ladder.length - 1] ? 100 : LEVELS[LEVELS.length - 1];
   let first = -1;
   let last = -1;
   for (let i = 0; i < ladder.length; i++) {
@@ -226,60 +181,6 @@ function ladderPercentile(ladder: number[] | undefined, value: number): number |
   return 50;
 }
 
-export function positionPercentile(position: string, key: string, value: number): number | null {
-  return ladderPercentile(NORMS[position]?.[key], value);
-}
-
-// ---------------------------------------------------------------------------
-// Direction and role
-// ---------------------------------------------------------------------------
-
-/** Stats that are worse the higher they go. */
-const NEGATIVE = new Set(['int', 'fum']);
-/**
- * Stats that measure how often a player was ASKED to do something, not how
- * well he did it. They still gate everything below — a rate on four snaps is
- * not a performance — but they never earn a grade. Without this a kicker who
- * went 1-for-5 would out-grade one who went 2-for-2, because CAREER_COLUMNS
- * quite correctly ranks `fga` as a kicker's second-most defining number.
- */
-const VOLUME_ONLY = new Set(['gp', 'passAtt', 'passCmp', 'rushAtt', 'targets', 'fga', 'xpa', 'punts', 'puntYds']);
-
-/** [TUNE] Weight from CAREER_COLUMNS' `lead` rank. Unranked columns still count. */
-const LEAD_WEIGHT: Record<number, number> = { 1: 3, 2: 2, 3: 1 };
-const UNRANKED_WEIGHT = 0.75;
-
-/**
- * Efficiency terms, on top of the columns. These exist because a rate is the
- * only part of some lines the engine varies per PLAYER rather than per team:
- * a quarterback's completion rate is rolled off his own rating
- * (allocateStats, line 318) and a receiver's catch rate off his own noise
- * draw. Each carries the minimum volume below which the rate means nothing.
- */
-interface EffTerm { key: string; num: keyof SeasonStats; den: keyof SeasonStats; gate: number; weight: number }
-const EFFICIENCY: Record<string, EffTerm[]> = {
-  QB: [
-    { key: 'cmpPct', num: 'passCmp', den: 'passAtt', gate: 15, weight: 1.5 },
-    { key: 'ypa', num: 'passYds', den: 'passAtt', gate: 15, weight: 1.0 },
-  ],
-  RB: [{ key: 'ypc', num: 'rushYds', den: 'rushAtt', gate: 8, weight: 1.0 }],
-  WR: [{ key: 'catchRate', num: 'rec', den: 'targets', gate: 4, weight: 1.0 }],
-  TE: [{ key: 'catchRate', num: 'rec', den: 'targets', gate: 4, weight: 1.0 }],
-  K: [{ key: 'fgPct', num: 'fgm', den: 'fga', gate: 2, weight: 2.0 }],
-};
-
-// ---------------------------------------------------------------------------
-// Grading
-// ---------------------------------------------------------------------------
-
-export interface GradePart {
-  key: string;
-  /** 0-100 percentile among this position's games, already signed. */
-  pct: number;
-  weight: number;
-  value: number;
-}
-
 export interface Grade {
   /**
    * 0-100, and it means one thing only: the share of games at this position
@@ -287,63 +188,26 @@ export interface Grade {
    * top-15% game for a quarterback.
    */
   score: number;
-  /** The uncalibrated weighted mean. Kept for tie-breaks and for debugging. */
-  raw: number;
-  parts: GradePart[];
-  /** The single stat that carried the grade — what the comment leads with. */
-  headline: GradePart | null;
+  /** The shared ranker's own output, in standard deviations. Kept for ties. */
+  z: number;
 }
 
 /**
- * Grade ONE game. For a multi-week span the caller grades each week
- * separately and averages: the ladders are per-game distributions, so handing
- * them a seven-game total would put every starter past the 99th percentile
- * and mean nothing at all.
+ * Grade ONE game, through lib/performanceScore.ts.
+ *
+ * For a multi-week span the caller grades each week separately and averages.
+ * The yardstick is a per-game distribution, so handing it a seven-game total
+ * would put every starter several standard deviations clear of a normal
+ * afternoon and mean nothing at all.
  */
 export function gradeLine(position: string, stats: SeasonStats): Grade | null {
-  const cols = careerColumns(position) as StatColumn[];
-  if (cols.length === 0 || !NORMS[position]) return null;
-
-  const parts: GradePart[] = [];
-  let sum = 0;
-  let weightSum = 0;
-
-  const add = (key: string, value: number, pctRaw: number | null, weight: number, negative: boolean) => {
-    if (pctRaw === null) return;
-    const pct = negative ? 100 - pctRaw : pctRaw;
-    parts.push({ key, pct, weight, value });
-    sum += pct * weight;
-    weightSum += weight;
-  };
-
-  for (const c of cols) {
-    if (VOLUME_ONLY.has(c.key)) continue;
-    const value = (stats as Record<string, number | undefined>)[c.key] ?? 0;
-    add(c.key, value, positionPercentile(position, c.key, value), c.lead ? LEAD_WEIGHT[c.lead] : UNRANKED_WEIGHT, NEGATIVE.has(c.key));
-  }
-
-  for (const e of EFFICIENCY[position] ?? []) {
-    const den = (stats[e.den] as number | undefined) ?? 0;
-    if (den < e.gate) continue;
-    const num = (stats[e.num] as number | undefined) ?? 0;
-    add(e.key, num / den, positionPercentile(position, e.key, num / den), e.weight, false);
-  }
-
-  if (weightSum === 0) return null;
-  const raw = sum / weightSum;
-  const score = ladderPercentile(COMPOSITE_NORMS[position], raw) ?? raw;
-
-  // Sorted by PERCENTILE, not by percentile x weight. A safety's five tackles
-  // carry more weight than his interception does, but the pick is what
-  // happened — leading the sentence with the tackles, because they are the
-  // position's headline column, would bury the only rare thing in the line.
-  // Negative stats can never be the headline: "he threw the fewest
-  // interceptions" is not why anybody gets singled out.
-  const headline = parts
-    .filter((p) => !NEGATIVE.has(p.key) && p.pct >= 60 && p.weight >= 1)
-    .sort((a, b) => (b.pct - a.pct) || (b.weight - a.weight))[0] ?? null;
-
-  return { score, raw, parts, headline };
+  const pos = canonicalPosition(position);
+  const dist = NORMS[pos];
+  if (!dist || !isRankablePosition(pos)) return null;
+  const z = positionRelativeScore(pos, stats, dist);
+  const score = ladderPercentile(COMPOSITE_LADDER[pos], z);
+  if (score === null) return null;
+  return { score, z };
 }
 
 // ---------------------------------------------------------------------------
@@ -362,13 +226,13 @@ export const UNIT_OF: Record<string, UnitKey> = {
 };
 
 /**
- * Coach-room order. The list is ordered by UNIT, not by grade, and that is a
- * refusal rather than an oversight: grades are only comparable INSIDE a unit.
- * A linebacker's ladder tops out at six tackles and a forced fumble, which
- * the arithmetic quite correctly calls a 98th-percentile linebacker game —
- * but printing him above a 400-yard quarterback because 98 > 71 would invent
- * a cross-position comparison the numbers cannot support. One mention per
- * unit, in the order a coach walks the room.
+ * Coach-room order. The list is ordered by UNIT rather than by grade, and
+ * takes one man from each before it takes a second from any: that is what
+ * makes the mix position-diverse by construction instead of by luck. The
+ * grades are genuinely comparable across positions — that is the whole point
+ * of calibrating through each position's own ladder — but a list SORTED by
+ * them would still read as a leaderboard, and a coach does not walk the room
+ * in leaderboard order.
  */
 export const UNIT_ORDER: UnitKey[] = ['QB', 'BACKS', 'RECEIVERS', 'PASS_RUSH', 'BACK_SEVEN', 'KICKING'];
 
@@ -382,12 +246,10 @@ export const UNIT_LABEL: Record<UnitKey, string> = {
 };
 
 /**
- * [TUNE] A unit earns a mention only when its best line cleared this
- * percentile FOR THE POSITION. 78 is "better than roughly four games in five
- * at his job" — measured across 933 real user-team weeks it produces 2.9
- * mentions a week and leaves 3.4% of weeks with nobody to single out, which
- * is the right answer on those weeks. A mention manufactured to fill a slot
- * is exactly the noise this section exists to avoid.
+ * [TUNE] A unit earns a mention only when its best man cleared this percentile
+ * FOR HIS POSITION. A mention manufactured to fill a slot is exactly the noise
+ * this section exists to avoid, so some weeks name three men and some name
+ * one.
  */
 export const MENTION_BAR = 78;
 /**
@@ -399,6 +261,49 @@ export const SECOND_FROM_UNIT_BAR = 92;
 /** [TUNE] Never more than this many, however good the week was. */
 export const MAX_MENTIONS = 5;
 
+/**
+ * The same bar, asked of a STRETCH rather than an afternoon.
+ *
+ * A span mention is the average of a man's weekly percentiles, and an average
+ * is a much quieter number than any of the games in it: percentiles are
+ * uniform by construction, so seven of them average out with a standard error
+ * of 28.9/sqrt(7) — about 11 points instead of 29. Holding the flat bar of 78
+ * against that demanded a two-and-a-half-sigma stretch, and a seven-week
+ * advance answered "who carried this" with "nobody" nearly every time. It was
+ * not that nobody carried it; it was that the bar had quietly become three
+ * times harder without anybody choosing to make it so.
+ *
+ * Dividing the DISTANCE from the middle by sqrt(weeks) tracks that standard
+ * error exactly, so the bar goes on meaning one thing however long the stretch
+ * is: "further above ordinary than chance would put a man". Identical at one
+ * week, by construction.
+ */
+export function mentionBar(weeks: number, bar = MENTION_BAR): number {
+  return 50 + (bar - 50) / Math.sqrt(Math.max(1, weeks));
+}
+
+/**
+ * A defender may not be singled out on tackle count alone.
+ *
+ * Not a ranking rule — a truthfulness rule, and it is about this simulation
+ * rather than about football. `allocateStats` hands every front-seven player
+ * an integer between four and seven tackles off a flat roll, so the difference
+ * between a five-tackle afternoon and a seven-tackle one is dice, not play.
+ * Any honest ranker will still put the seven on top, and printing "seven
+ * tackles — that's the tape we show the room" would be praising a coin flip in
+ * a coach's voice. A sack, a takeaway, a forced fumble or a multi-breakup
+ * afternoon are events the engine only writes when something actually
+ * happened, so those are the only things a defender can be mentioned for.
+ */
+export function hasDistinguishingEvent(position: string, stats: SeasonStats): boolean {
+  const unit = UNIT_OF[canonicalPosition(position)];
+  if (unit !== 'PASS_RUSH' && unit !== 'BACK_SEVEN') return true;
+  return (stats.sacks ?? 0) > 0
+    || (stats.defInt ?? 0) > 0
+    || (stats.ff ?? 0) > 0
+    || (stats.pd ?? 0) >= 2;
+}
+
 // ---------------------------------------------------------------------------
 // Eligibility
 // ---------------------------------------------------------------------------
@@ -406,10 +311,10 @@ export const MAX_MENTIONS = 5;
 /**
  * Minimum workload, per game, before a line may be graded at all.
  *
- * The third-string tight end who ran four routes is not a top performer and
- * is emphatically not a worst performer; he is a man who did not play.
- * Defenders carry no gate because the engine writes a box line only for the
- * defenders who were actually on the field.
+ * The third-string tight end who ran four routes is not a top performer and is
+ * emphatically not a worst performer; he is a man who did not play. Defenders
+ * carry no gate because the engine writes a box line only for the defenders
+ * who were actually on the field.
  */
 const TOUCH_GATE: Record<string, (s: SeasonStats, games: number) => boolean> = {
   QB: (s, g) => (s.passAtt ?? 0) >= 12 * g,
@@ -420,13 +325,16 @@ const TOUCH_GATE: Record<string, (s: SeasonStats, games: number) => boolean> = {
 };
 
 export function playedEnough(position: string, stats: SeasonStats, games = 1): boolean {
-  const gate = TOUCH_GATE[position];
+  const gate = TOUCH_GATE[canonicalPosition(position)];
   return gate ? gate(stats, Math.max(1, games)) : true;
 }
 
 // ---------------------------------------------------------------------------
 // Stat-line rendering
 // ---------------------------------------------------------------------------
+
+/** Stats that are worse the higher they go. Mirrors performanceScore's set. */
+const NEGATIVE = new Set(['int', 'fum']);
 
 /** Numerator/denominator pairs a box score prints as one figure. */
 const RATIOS: [string, string, string][] = [
@@ -459,7 +367,8 @@ const UNIT_WORD_BY_POS: Record<string, Record<string, string>> = {
  * the player page's career table ever disagreeing about a position.
  */
 export function statLine(position: string, stats: SeasonStats): string {
-  const cols = careerColumns(position);
+  const pos = canonicalPosition(position);
+  const cols = careerColumns(pos);
   const s = stats as Record<string, number | undefined>;
   const used = new Set<string>(['gp']);
   const parts: string[] = [];
@@ -485,7 +394,7 @@ export function statLine(position: string, stats: SeasonStats): string {
     // is not.
     const keepZero = NEGATIVE.has(c.key) && (s.passAtt ?? 0) > 0;
     if (v === 0 && !keepZero) continue;
-    parts.push(`${v} ${UNIT_WORD_BY_POS[position]?.[c.key] ?? UNIT_WORD[c.key] ?? c.short}`);
+    parts.push(`${v} ${UNIT_WORD_BY_POS[pos]?.[c.key] ?? UNIT_WORD[c.key] ?? c.short}`);
   }
   return parts.join(' · ') || 'took the field';
 }
@@ -504,87 +413,130 @@ export interface Concern {
 }
 
 /**
+ * [TUNE] The line below which a rate is genuinely bad, per position — each one
+ * the 10th-percentile figure among players who cleared the same volume gate
+ * the rule uses, measured over every played game in the database. Not numbers
+ * picked because they sounded low: "worse than nine games in ten at this
+ * position, on this much work".
+ *
+ * The catch rate is compared STRICTLY below rather than at-or-below, and alone
+ * among these it matters: the engine's receptions and targets are small
+ * integers, so an exact 0.500 (four of eight, five of ten) is the single
+ * commonest value at the position and sits precisely on the 10th-percentile
+ * line. At-or-below swept all of them in and called out men with a touchdown
+ * on the same sheet that praised them. Strictly below leaves 4.4% of receiver
+ * games and 4.8% of tight end games, which is what "worse than nine in ten"
+ * was supposed to mean.
+ */
+const BAD_CMP_PCT = 0.577;
+/**
+ * Kicking, where the honest threshold depends on how much kicking is in the
+ * sample. Per game the 10th-percentile field-goal day is one made in two;
+ * across a seven-game stretch (n=822 real stretches in this database) the
+ * 10th-percentile rate is 64.7% and the 10th-percentile extra-point rate is
+ * 85.2%. The league kicks 79.6% from the field and 93.3% on extra points.
+ */
+const GAME_BAD_FG_PCT = 0.5;
+const SPAN_BAD_FG_PCT = 0.647;
+const SPAN_BAD_XP_PCT = 0.852;
+const BAD_YPA = 4.0;
+const BAD_YPC = 3.824;
+const BAD_CATCH_RATE = 0.5;
+
+/**
  * What actually went wrong, and nothing else.
  *
  * Every rule here has two halves: a VOLUME gate and a BAD OUTCOME. A quiet
  * game is not a bad game, and a backup's four snaps are not a game at all —
  * naming a third-string receiver for catching nothing is noise at best and,
- * since a real person is managing that roster, a small unfairness at worst.
- * So nothing appears in this list for what a player failed to accumulate,
- * only for something that measurably cost the team, on a workload big enough
- * for the rate to mean anything.
+ * since a real person is managing that roster, a small unfairness at worst. So
+ * nothing appears in this list for what a player failed to accumulate, only
+ * for something that measurably cost the team, on a workload big enough for
+ * the rate to mean anything.
  *
- * The thresholds are the 10th-percentile lines from the same 781,420-line
- * sample the ladders come from — "worse than nine games in ten at this
- * position", not a number picked because it sounded bad. There is no fumble
- * rule because the engine never writes a fumble.
+ * There is no fumble rule because the engine never writes a fumble, and no
+ * penalty rule because the penalty figure is `plays/12`.
  */
 export function findConcerns(position: string, stats: SeasonStats, games = 1): Concern[] {
+  const pos = canonicalPosition(position);
   const s = stats;
   const g = Math.max(1, games);
   const out: Concern[] = [];
 
-  if (position === 'QB') {
+  if (pos === 'QB') {
     const att = s.passAtt ?? 0;
     const ints = s.int ?? 0;
-    // Two in a game is a bad afternoon by any standard, and the ladder agrees:
-    // it puts 2 at the 90th percentile of interceptions thrown.
+    // Two in a game is a bad afternoon by any standard, and the sample agrees:
+    // 2 sits at the 90th percentile of interceptions thrown.
     if (ints >= 2 * g) {
       out.push({ kind: 'TURNOVERS', fact: `${ints} interception${ints === 1 ? '' : 's'}`, severity: 60 + ints * 12 });
     }
     if (att >= 25 * g) {
       const cmpPct = (s.passCmp ?? 0) / att;
-      if (cmpPct <= 0.568) {
+      if (cmpPct <= BAD_CMP_PCT) {
         out.push({
           kind: 'ACCURACY',
           fact: `${s.passCmp ?? 0} of ${att}, ${(cmpPct * 100).toFixed(0)}%`,
-          severity: 40 + (0.568 - cmpPct) * 200,
+          severity: 40 + (BAD_CMP_PCT - cmpPct) * 200,
         });
       }
       const ypa = (s.passYds ?? 0) / att;
-      if (ypa <= 3.971) {
+      if (ypa <= BAD_YPA) {
         out.push({
           kind: 'EFFICIENCY',
           fact: `${s.passYds ?? 0} yards on ${att} throws, ${ypa.toFixed(1)} a drop-back`,
-          severity: 40 + (3.971 - ypa) * 15,
+          severity: 40 + (BAD_YPA - ypa) * 15,
         });
       }
     }
   }
 
-  if (position === 'RB' && (s.rushAtt ?? 0) >= 12 * g) {
+  if (pos === 'RB' && (s.rushAtt ?? 0) >= 12 * g) {
     const att = s.rushAtt ?? 0;
     const ypc = (s.rushYds ?? 0) / att;
-    if (ypc <= 3.818) {
+    if (ypc <= BAD_YPC) {
       out.push({
         kind: 'EFFICIENCY',
         fact: `${att} carries for ${s.rushYds ?? 0}, ${ypc.toFixed(1)} a pop`,
-        severity: 35 + (3.818 - ypc) * 18,
+        severity: 35 + (BAD_YPC - ypc) * 18,
       });
     }
   }
 
-  if ((position === 'WR' || position === 'TE') && (s.targets ?? 0) >= 7 * g) {
+  if ((pos === 'WR' || pos === 'TE') && (s.targets ?? 0) >= 7 * g) {
     const tgt = s.targets ?? 0;
     const rate = (s.rec ?? 0) / tgt;
-    if (rate <= 0.5) {
+    if (rate < BAD_CATCH_RATE) {
       out.push({
         kind: 'HANDS',
         fact: `${s.rec ?? 0} of ${tgt} thrown his way`,
-        severity: 35 + (0.5 - rate) * 120,
+        severity: 35 + (BAD_CATCH_RATE - rate) * 120,
       });
     }
   }
 
-  if (position === 'K') {
+  // A kicker is the one place a rule has to be written twice, because his
+  // mistakes are COUNTS and everybody else's are rates. One missed extra point
+  // is a bad afternoon and a real point off the board; one missed extra point
+  // across seven games is a 91% stretch, which is ordinary, and calling a man
+  // out for it — as this did, on a kicker who had also gone 11 of 12 from the
+  // field — is exactly the unfairness the list exists to refuse. So a span is
+  // judged on the rate over the stretch instead.
+  if (pos === 'K') {
     const fga = s.fga ?? 0;
-    const missedFg = fga - (s.fgm ?? 0);
-    const missedXp = (s.xpa ?? 0) - (s.xpm ?? 0);
-    if (fga >= 2 * g && (missedFg >= 2 || (missedFg === 1 && (s.fgm ?? 0) / fga <= 0.5))) {
-      out.push({ kind: 'KICKING', fact: `${s.fgm ?? 0} of ${fga} from the field`, severity: 45 + missedFg * 15 });
+    const fgm = s.fgm ?? 0;
+    const xpa = s.xpa ?? 0;
+    const xpm = s.xpm ?? 0;
+    const missedFg = fga - fgm;
+    const missedXp = xpa - xpm;
+    const badFg = g > 1 ? SPAN_BAD_FG_PCT : GAME_BAD_FG_PCT;
+    if (fga >= 2 * g && (fgm / fga <= badFg || (g === 1 && missedFg >= 2))) {
+      out.push({ kind: 'KICKING', fact: `${fgm} of ${fga} from the field`, severity: 45 + missedFg * 15 });
     }
-    if (missedXp >= 1) {
+    if (g === 1 && missedXp >= 1) {
       out.push({ kind: 'KICKING', fact: `${missedXp} extra point${missedXp === 1 ? '' : 's'} missed`, severity: 38 + missedXp * 14 });
+    } else if (g > 1 && xpa >= 2 * g && xpm / xpa <= SPAN_BAD_XP_PCT) {
+      out.push({ kind: 'KICKING', fact: `${xpm} of ${xpa} on extra points`, severity: 38 + missedXp * 6 });
     }
   }
 

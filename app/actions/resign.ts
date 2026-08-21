@@ -112,3 +112,52 @@ export async function submitResignOfferAction(
   // read back off the contract row after it was written.
   return outcome;
 }
+
+/**
+ * ===========================================================================
+ * SET ASIDE — "not now", on the re-sign list
+ * ===========================================================================
+ * The app owner: *"On the re-sign page have a dismiss button also that players
+ * can dismiss a player (and re visit during the offseason re-sign phase)"*.
+ *
+ * Triage, so a twenty-deep list can be worked top to bottom. Three things
+ * about it are load-bearing and none of them are cosmetic:
+ *
+ *   IT IS NOT "LET HIM WALK". That decision already exists on the row, it is
+ *     confirmed, and it releases him on the spot. This one parks him where he
+ *     can be found again, and every word on screen says so.
+ *   IT COSTS NO PATIENCE. Nothing in lib/negotiation.ts reads `dismissedAt`;
+ *     it is not in the session, not in the fingerprint and not in
+ *     `decideOffer`. Setting a man aside and picking him back up leaves him
+ *     wanting exactly what he wanted before, with exactly the pips he had.
+ *     `patienceSpent` is written by ONE function (chargePatience, in
+ *     lib/freeagency.ts) and this action is not it — the upsert below
+ *     writes a zero only when there is no row at all, which is the same zero
+ *     `readPatienceSpent` already returns for a missing row.
+ *   IT EXPIRES BY ITSELF. The row is keyed on the league year, so next
+ *     offseason's re-sign window opens with nobody set aside. That is exactly
+ *     "revisit during the offseason re-sign phase" and nothing beyond it.
+ *
+ * The trap this could have been — set twelve men aside, advance, and they all
+ * walk having done what the button implied was safe — is closed in
+ * lib/season.ts, which counts and NAMES them in the advance warning before
+ * anybody is released.
+ */
+export async function setAsideResignAction(leagueId: string, playerId: string, aside: boolean) {
+  await assertLeagueOwner(leagueId);
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const team = await prisma.team.findFirstOrThrow({ where: { leagueId, isUser: true } });
+  const key = { teamId_playerId_seasonYear: { teamId: team.id, playerId, seasonYear: league.seasonYear } };
+  const dismissedAt = aside ? new Date() : null;
+  await prisma.negotiationTalks.upsert({
+    where: key,
+    // patienceSpent is DELIBERATELY absent from the update. An upsert that
+    // wrote it would be a second author for the one number the whole minigame
+    // rests on, and "I parked him" would quietly become "I gave him back a
+    // pip" — or taken one away.
+    create: { leagueId, teamId: team.id, playerId, seasonYear: league.seasonYear, patienceSpent: 0, dismissedAt },
+    update: { dismissedAt },
+  });
+  revalidatePath(`/league/${leagueId}/resign`);
+  return { ok: true, aside };
+}

@@ -127,9 +127,9 @@ export interface ReportGameBall {
  *    into a summary of the stretch, but seven weeks of stat lines can — the
  *    same player's seven rows add up, and only then does "who carried the
  *    stretch" have an answer.
- * 3. Grading is position-relative (see lib/gamePerformance.ts) and the
- *    ladders it grades against are baked constants, so doing it on the
- *    client costs a database nothing.
+ * 3. Grading is position-relative — lib/performanceScore.ts, the same ranker
+ *    All-Star selection uses — against a yardstick lib/coachRoom.ts bakes in
+ *    as constants, so doing it on the client costs a database nothing.
  * ===========================================================================
  */
 
@@ -588,7 +588,7 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
     // than a lottery. Ranked by the same statScore lib/news.ts uses to pick
     // which performances become headlines, so the two never disagree.
     //
-    // Deliberately NOT re-pointed at lib/gamePerformance.ts. The game ball
+    // Deliberately NOT re-pointed at lib/performanceScore.ts. The game ball
     // is the league's answer to "who had the loudest afternoon", the same
     // question the wire answers, and the two agreeing is the point of it.
     // Coach's Comments below asks a different question — "who beat what is

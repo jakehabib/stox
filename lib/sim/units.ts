@@ -83,15 +83,64 @@ export function schemeFit(depth: Record<string, SimPlayer[]>, scheme: string): n
   return total / emphasis.length;
 }
 
+/**
+ * Order one position group against a depth chart that may not mention
+ * everybody in it.
+ *
+ * THE RULE FOR A PLAYER THE CHART DOES NOT NAME: he goes immediately behind
+ * the last named player who out-rates him, and ahead of everyone he out-rates.
+ *
+ * This used to be "behind all of them", via a rank of `1000 + (99 - rating)`,
+ * and that was a silent failure mode rather than a policy. A depth chart is
+ * written by exactly two things — league creation and an explicit auto-sort —
+ * and for a long time nothing wrote one when a player ARRIVED. So a player
+ * acquired by trade was on the roster, absent from the chart, and therefore
+ * ranked behind every man at his position: a 97-overall receiver lined up
+ * behind a 57 and recorded nothing at all for his new club, with no error and
+ * nothing in the UI to show for it. The arrival paths are fixed at source now
+ * (see reconcileDepthChart in lib/gen/league.ts, called from every one of
+ * them), but "unlisted means worst on the roster" is not a safe default to
+ * leave lying under a sim that plays every game in the league. An omission is
+ * an absence of information, not a demotion, and the only information actually
+ * available about an unlisted player is his rating.
+ *
+ * What it deliberately does NOT do is re-sort the named players, or let an
+ * unlisted player leapfrog one. A GM who ranks a 74-overall rookie ahead of a
+ * 78-overall veteran means it, and an unlisted 76 arriving does not overrule
+ * him: that 76 lands behind the veteran, because the veteran is the last named
+ * man who out-rates him. Explicit intent still beats rating every time; rating
+ * only decides what intent never spoke to.
+ *
+ * `reconcileDepthChart` writes charts using this same rule, so repairing the
+ * data can never change who the sim was already going to play.
+ */
+export function mergeUnnamed(players: SimPlayer[], override: string[]): SimPlayer[] {
+  const rank = new Map(override.map((id, i) => [id, i]));
+  const named = players.filter((p) => rank.has(p.id)).sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
+  // Best first, so several unnamed players also come out in rating order
+  // relative to each other.
+  const unnamed = players.filter((p) => !rank.has(p.id)).sort((a, b) => effectiveRating(b) - effectiveRating(a));
+  if (unnamed.length === 0) return named;
+
+  const order = named;
+  for (const p of unnamed) {
+    let at = 0;
+    for (let i = 0; i < order.length; i++) if (effectiveRating(order[i]) > effectiveRating(p)) at = i + 1;
+    order.splice(at, 0, p);
+  }
+  return order;
+}
+
 export function computeUnits(
   players: SimPlayer[],
   staff: SimStaff[],
   offScheme: string,
   defScheme: string,
   /**
-   * User-set depth chart: position -> ordered player ids. Any player not named
-   * in the override falls in behind, sorted by rating. Injured players are
-   * skipped regardless of where the chart puts them.
+   * User-set depth chart: position -> ordered player ids. A player the chart
+   * does not name is slotted in ON MERIT rather than dumped at the bottom —
+   * see the sort below. Injured players are skipped regardless of where the
+   * chart puts them.
    */
   depthOrder?: Record<string, string[]>,
 ): UnitRatings {
@@ -103,12 +152,7 @@ export function computeUnits(
   for (const key of Object.keys(depth)) {
     const override = depthOrder?.[key];
     if (override && override.length > 0) {
-      const rank = new Map(override.map((id, i) => [id, i]));
-      depth[key].sort((a, b) => {
-        const ra = rank.has(a.id) ? rank.get(a.id)! : 1000 + (99 - effectiveRating(a));
-        const rb = rank.has(b.id) ? rank.get(b.id)! : 1000 + (99 - effectiveRating(b));
-        return ra - rb;
-      });
+      depth[key] = mergeUnnamed(depth[key], override);
     } else {
       depth[key].sort((a, b) => effectiveRating(b) - effectiveRating(a));
     }

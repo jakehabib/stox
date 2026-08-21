@@ -101,7 +101,8 @@ export const ALL_STAR_ANNOUNCEMENT_TYPE = 'ALL_STAR_ROSTER';
  * January — the near-miss has to be frozen at the same instant the selection
  * was, or a page would quietly change its mind about who was snubbed. Only
  * the user's club gets one: "somebody in the league just missed" is not a
- * story, and seventy-six of them would be a directory.
+ * story, and seventy-six of them would be a directory. Written only when he
+ * had nobody selected at all — see recordAllStars.
  */
 export const ALL_STAR_SNUB_TYPE = 'ALL_STAR_SNUB';
 
@@ -354,6 +355,15 @@ export async function recordAllStars(
         .filter((c): c is AllStarCandidate => c !== null && c.teamId === userTeam.id)
         .sort((a, b) => b.score - a.score)[0] ?? null
     : null;
+  // ...and only when he had NOBODY selected. A first man out is a consolation
+  // for a shut-out roster; next to two players who actually made it he is a
+  // footnote, and a footnote that is a Transaction row does not stay a
+  // footnote — every generic reader in the app (the League Wire, the week
+  // report) picks rows up by type and lifts the user's own to the top, so a
+  // GM with six All-Stars got "and this one just missed" ranked above his
+  // selections. Not writing it is the fix, because it is the same condition
+  // the dashboard panel already reads it under.
+  const snubToRecord = mine.length === 0 ? mySnub : null;
 
   const detail = !userTeam
     ? `${selection.selected.length} players honored.`
@@ -367,12 +377,12 @@ export async function recordAllStars(
     await tx.transaction.deleteMany({
       where: { leagueId, seasonYear, type: { in: [ALL_STAR_TYPE, ALL_STAR_ANNOUNCEMENT_TYPE, ALL_STAR_SNUB_TYPE] } },
     });
-    if (mySnub) {
+    if (snubToRecord) {
       await tx.transaction.create({
         data: {
-          leagueId, seasonYear, week, type: ALL_STAR_SNUB_TYPE, teamId: mySnub.teamId,
-          headline: `${mySnub.name} (${mySnub.position})`,
-          detail: `${mySnub.statLine}${SNUB_DETAIL_SEP}first man out at ${mySnub.position} in the ${mySnub.conference}`,
+          leagueId, seasonYear, week, type: ALL_STAR_SNUB_TYPE, teamId: snubToRecord.teamId,
+          headline: `${snubToRecord.name} (${snubToRecord.position})`,
+          detail: `${snubToRecord.statLine}${SNUB_DETAIL_SEP}first man out at ${snubToRecord.position} in the ${snubToRecord.conference}`,
         },
       });
     }

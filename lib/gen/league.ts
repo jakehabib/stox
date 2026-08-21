@@ -460,6 +460,95 @@ export async function autoDepthChart(teamId: string) {
   if (rows.length) await prisma.depthChartSlot.createMany({ data: rows });
 }
 
+/** The subset of PrismaClient reconcileDepthChart uses — lets it run inside an interactive $transaction. */
+type DepthChartClient = Pick<typeof prisma, 'player' | 'depthChartSlot'>;
+
+/**
+ * ===========================================================================
+ * RECONCILE A DEPTH CHART WITH THE ROSTER IT IS SUPPOSED TO DESCRIBE
+ * ===========================================================================
+ * Every roster player gets a slot; every slot names a roster player. What it
+ * does NOT do is re-sort — the order the user (or a previous auto-sort) put
+ * the listed players in survives untouched.
+ *
+ * This exists because a depth chart was only ever written in two places:
+ * league creation and `autoDepthChart` above. Nothing wrote one when a player
+ * ARRIVED. A traded-for player was therefore on the roster and absent from the
+ * chart, and lib/sim/units.ts ranks an unlisted man behind every listed one —
+ * so a 97-overall receiver acquired at the deadline sat behind a 57 and
+ * recorded nothing at all for his new club. No error, no warning: the trade
+ * silently did nothing. Measured on a fresh league one offseason deep, 229
+ * roster players were missing from their own depth chart and 31 of them
+ * out-rated every man listed at their position.
+ *
+ * `autoDepthChart` cannot be the fix on its own, because it deletes the whole
+ * chart and rebuilds it by rating: using it on every arrival would mean every
+ * signing, every trade, and every draft pick wiped the user's hand-set order.
+ * A GM who benched a 78-overall veteran for a 74-overall rookie he is
+ * developing would find that undone by a waiver claim at another position.
+ *
+ * WHERE AN ARRIVING PLAYER GOES. Immediately behind the last listed player who
+ * out-rates him, ahead of everyone he out-rates. That is the same rule
+ * lib/sim/units.ts applies to an unlisted player, deliberately: the chart the
+ * sim would have improvised is the chart that gets written down, so repairing
+ * the data never changes who plays. It also means the acquisition is placed on
+ * merit — a 90 does not land behind a 60 — while never leapfrogging a listed
+ * player the GM deliberately ranked above better talent.
+ *
+ * Idempotent, so callers can run it after any roster move without checking
+ * whether anything actually changed.
+ */
+export async function reconcileDepthChart(teamId: string, client: DepthChartClient = prisma) {
+  const [players, slots] = await Promise.all([
+    client.player.findMany({ where: { teamId }, select: { id: true, position: true, trueOvr: true } }),
+    client.depthChartSlot.findMany({ where: { teamId }, orderBy: { rank: 'asc' } }),
+  ]);
+  const onRoster = new Map(players.map((p) => [p.id, p]));
+
+  // Listed players who are still here, in the order the chart already has
+  // them. A slot naming somebody who was traded, cut or retired is dropped —
+  // otherwise it holds a rank forever against a man who is gone.
+  const listed: Record<string, { id: string; trueOvr: number }[]> = {};
+  const listedIds = new Set<string>();
+  for (const slot of slots) {
+    const p = onRoster.get(slot.playerId);
+    // Trust the roster's position, not the slot's: a slot written before a
+    // position change would otherwise file him under the old one.
+    if (!p || p.position !== slot.position || listedIds.has(p.id)) continue;
+    (listed[slot.position] ??= []).push(p);
+    listedIds.add(p.id);
+  }
+
+  // Everyone the chart doesn't mention, best first, so that when several
+  // arrive at once they land in rating order relative to each other too.
+  const unlisted: Record<string, { id: string; trueOvr: number }[]> = {};
+  for (const p of players) if (!listedIds.has(p.id)) (unlisted[p.position] ??= []).push(p);
+  for (const group of Object.values(unlisted)) group.sort((a, b) => b.trueOvr - a.trueOvr);
+
+  const rows: { teamId: string; playerId: string; position: string; rank: number }[] = [];
+  for (const position of new Set([...Object.keys(listed), ...Object.keys(unlisted)])) {
+    const order = [...(listed[position] ?? [])];
+    for (const p of unlisted[position] ?? []) {
+      // One past the last listed man who is better than he is.
+      let at = 0;
+      for (let i = 0; i < order.length; i++) if (order[i].trueOvr > p.trueOvr) at = i + 1;
+      order.splice(at, 0, p);
+    }
+    order.forEach((p, rank) => rows.push({ teamId, playerId: p.id, position, rank }));
+  }
+
+  // Nothing to write is the common case — reconciling is cheap to call after
+  // any roster move precisely because the no-op costs one comparison.
+  const key = (r: { position: string; rank: number }) => `${r.position}#${r.rank}`;
+  const existing = new Map(slots.map((s) => [key(s), s.playerId]));
+  if (rows.length === slots.length && rows.every((r) => existing.get(key(r)) === r.playerId)) return;
+
+  // Rewritten wholesale rather than patched: `@@unique([teamId, position,
+  // rank])` makes any in-place shuffle a minefield of transient collisions.
+  await client.depthChartSlot.deleteMany({ where: { teamId } });
+  if (rows.length) await client.depthChartSlot.createMany({ data: rows });
+}
+
 /**
  * Give the user team a starting scouting book on every player in the league.
  * AI teams don't get rows — they evaluate on true ratings, which is a

@@ -11,7 +11,8 @@ import { CapMode } from '@/lib/types';
 import type { DealStructure, NegotiationSession } from '@/lib/negotiation';
 import { DealStructureControls, DEFAULT_ESCALATION } from './DealStructureControls';
 import { cutPlayerAction, applyFranchiseTagAction } from '@/app/actions/roster';
-import { openResignNegotiationAction, submitResignOfferAction } from '@/app/actions/resign';
+import { openResignNegotiationAction, submitResignOfferAction, setAsideResignAction } from '@/app/actions/resign';
+import { ActionButton } from './ds/ActionButton';
 import { SuitorRumour, LoyaltyLine } from './ds/SuitorRumour';
 import { DepthAtPosition, type DepthEntry } from './ds/DepthAtPosition';
 
@@ -47,9 +48,16 @@ const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidY
  * behaviour once patience is server state: a negotiation you walked out of has
  * to still be the negotiation you walked out of when you come back to it.
  */
-export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, canTag, weightLb, heightIn, depth }: {
+export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, canTag, weightLb, heightIn, depth, setAside }: {
   leagueId: string; playerId: string; name: string; position: string; age: number; ovr: number;
   currentApy: number; capMode: CapMode; yearsRemaining: number; canTag?: boolean;
+  /**
+   * He is parked — "not now" rather than "let him walk". The row draws itself
+   * closed, with the one control that undoes it, and nothing about his
+   * negotiation has changed: same asking price, same pips, same everything.
+   * See setAsideResignAction.
+   */
+  setAside?: boolean;
   /**
    * Your depth chart at his position, in the depth chart's own order, with him
    * marked. Resolved by the page from DepthChartSlot — the same rows the Depth
@@ -119,6 +127,51 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
     });
   };
 
+  /**
+   * Park him, or pick him back up. Deliberately NOT wired through
+   * `confirmingWalk` — that control releases a player and asks first, because
+   * it cannot be undone. This one is undone by the button that replaces it, so
+   * asking would be theatre. Nothing is refunded and nothing is spent: see
+   * setAsideResignAction.
+   */
+  const toggleAside = async (aside: boolean) => {
+    await setAsideResignAction(leagueId, playerId, aside);
+    router.refresh();
+    return aside ? 'Set aside' : 'Back on the list';
+  };
+
+  // SET ASIDE, DRAWN AS PARKED — not as gone. He keeps his avatar, his rating
+  // and his money (design principle 2: identity is not ornament), because the
+  // point of the pile is that you can look at it and pick somebody back out.
+  if (setAside) {
+    return (
+      <div className="panel overflow-hidden opacity-70">
+        <div className="w-full flex items-center gap-3 px-4 py-2.5">
+          <PlayerAvatar seed={playerId} age={age} size={26} weightLb={weightLb} heightIn={heightIn} position={position} />
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold truncate text-sm">{name}</div>
+            <div className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap">
+              <span className={`font-semibold ${positionBadgeClass(position)}`}>{position}</span>
+              <span className="text-muted">Age {age}</span>
+              <span className="text-muted">·</span>
+              <span className="text-muted">~{formatMoney(currentApy)}/yr</span>
+              {isTrulyExpiring
+                ? <span className="pill border-bad/40 text-bad text-[10px]">Expired</span>
+                : <span className="pill border-warn/40 text-warn text-[10px]">Walk Year</span>}
+            </div>
+          </div>
+          <span className={`stat-value text-stat-sm ${ratingColor(ovr)}`}>{ovr}</span>
+          <ActionButton
+            className="btn-secondary text-xs px-3 py-1.5"
+            idleLabel="Bring back"
+            workingLabel="Bringing back…"
+            onAction={() => toggleAside(false)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="panel overflow-hidden">
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-raised transition-colors">
@@ -182,6 +235,23 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
               }
             />
           )}
+          {/* TRIAGE, NOT A DECISION. It sits apart from "Not Re-sign" on purpose:
+              one of these two buttons releases a player to free agency and the
+              other only moves him down the page. The copy has to make that
+              impossible to confuse, so it says what it does and what it does
+              not do. */}
+          <div className="flex items-center gap-3 flex-wrap border-t border-line/50 pt-3">
+            <ActionButton
+              className="btn-secondary text-xs px-3 py-1.5"
+              idleLabel="Not now — set aside"
+              workingLabel="Setting aside…"
+              onAction={() => toggleAside(true)}
+            />
+            <span className="text-xs text-muted flex-1 min-w-[14rem]">
+              Moves him to the bottom of this page so you can work the list. He is not released, nothing is
+              offered, and it costs him no patience — bring him back any time before this phase ends.
+            </span>
+          </div>
           {isTrulyExpiring && (
             <div className="flex items-center justify-between gap-3 flex-wrap">
               {confirmingWalk ? (

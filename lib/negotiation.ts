@@ -144,6 +144,12 @@ export interface NegotiationContext {
   /** Share of the deal he wants guaranteed, 0..1. */
   desiredGuarantee: number;
   /**
+   * The share he will not go BELOW, 0..1 — the mirror of the money insult.
+   * See `guaranteeFloorFor`. Always at or under `desiredGuarantee`: it is the
+   * point at which he stops negotiating, not the point at which he is happy.
+   */
+  guaranteeFloor: number;
+  /**
    * How many rejected offers before he stops taking calls. How many he has
    * ALREADY had is not here — it is on the session, because it is a fact about
    * the save rather than about the man, and it is read from the database
@@ -234,6 +240,12 @@ export interface OfferEvaluation {
   accepted: boolean;
   /** Costs patience — an offer this far below is remembered. */
   insulting: boolean;
+  /**
+   * Less guaranteed than he will sign for. Caps interest below the band, so
+   * no salary closes this offer — see `guaranteeFloorFor`. It is a refusal of
+   * the STRUCTURE, not an insult, and it costs one pip rather than two.
+   */
+  underGuaranteed: boolean;
 }
 
 // --- Context construction (server side, once) -------------------------------
@@ -388,6 +400,7 @@ export function buildNegotiationContext(opts: {
     reservationApy,
     desiredYears: desiredYearsFor(opts.age, personality),
     desiredGuarantee: personality === 'MERCENARY' ? 0.6 : personality === 'PROVE_IT' ? 0.35 : 0.5,
+    guaranteeFloor: guaranteeFloorFor(opts.ovr, personality),
     patience,
     competition: opts.competition,
     incumbent: opts.incumbent,
@@ -402,6 +415,88 @@ export function buildNegotiationContext(opts: {
     loyaltyDiscount,
   };
 }
+
+/**
+ * ===========================================================================
+ * GUARANTEED MONEY HAS A FLOOR
+ * ===========================================================================
+ * The app owner: *"guaranteed money seems to not really impact player favor
+ * which it does in real life. It's fine if it's lower or higher for some but
+ * it should have sooome impact"*.
+ *
+ * It already moved the meter — 18 to 30 points across a 0-to-100% sweep. The
+ * problem was never the slope, it was the BASELINE. Measured at his exact
+ * asking price with the term matched and NOTHING guaranteed, four
+ * personalities read 70, 80, 82 and 88: comfortably signable. So guaranteeing
+ * nothing was the optimal play and the slider was decoration, which is
+ * backwards from the sport — a star does not put his name to a big deal with
+ * no money locked in, at any salary.
+ *
+ * The fix is the mirror of the one money already had. A lowball is capped at
+ * 44 interest however good the other terms are (`insulting`, below); a deal
+ * with less locked in than he will accept is capped the same way, and for the
+ * same reason: term and salary may not buy their way past a term he has
+ * refused outright. Below his floor there is no price that signs him, which
+ * `minimumAcceptableApy` reports honestly as "no price closes this" rather
+ * than by quoting a number.
+ *
+ * WHOSE FLOOR IS WHAT. Two things move it, both of them the real ones:
+ *
+ *   QUALITY. Nobody guarantees a backup anything, and everybody guarantees a
+ *     star something. It is zero up to GUARANTEE_FLOOR_DEPTH_OVR — which is 72
+ *     because that is already this codebase's line for "an acceptable
+ *     starter" (lib/ai/gm.ts, teamNeeds) rather than a number invented here —
+ *     and climbs to GUARANTEE_FLOOR_ELITE by GUARANTEE_FLOOR_ELITE_OVR. So a
+ *     67-overall depth guard has no floor at all and will still sign a deal
+ *     with nothing locked in, and a 90 wants half of it in writing.
+ *   PERSONALITY. A business-first player wants it in writing; a man betting on
+ *     himself is the one who genuinely does not care, because his whole plan
+ *     is to play this deal out and re-price himself. PROVE_IT caring least is
+ *     the point.
+ *
+ * It is always at or below `desiredGuarantee` — the floor is where he stops
+ * listening, not where he is happy — and never above GUARANTEE_FLOOR_CAP, so
+ * an even split always clears it.
+ *
+ * AND THE COUNTERWEIGHT STAYS. `contractShapeFor` still turns guarantee into
+ * signing bonus, which still prorates, which still becomes real dead money if
+ * you cut him. Guarantee mattering MORE to him while costing MORE to you is
+ * the tension a real contract has; making it matter more without the cost
+ * would just move the dominant strategy rather than remove it.
+ * ===========================================================================
+ */
+const GUARANTEE_FLOOR_ELITE = 0.45;
+const GUARANTEE_FLOOR_ELITE_OVR = 85;
+const GUARANTEE_FLOOR_DEPTH_OVR = 72;
+const GUARANTEE_FLOOR_CAP = 0.5;
+const GUARANTEE_FLOOR_PERSONALITY: Record<Personality, number> = {
+  MERCENARY: 1.15,
+  LOYAL: 0.9,
+  WINNER: 1,
+  PROVE_IT: 0.55,
+};
+
+/** The share he will not go below, 0..1. Pure, so the sweep can walk it. */
+export function guaranteeFloorFor(ovr: number, personality: Personality): number {
+  const quality = Math.max(0, Math.min(1,
+    (ovr - GUARANTEE_FLOOR_DEPTH_OVR) / (GUARANTEE_FLOOR_ELITE_OVR - GUARANTEE_FLOOR_DEPTH_OVR)));
+  const raw = quality * GUARANTEE_FLOOR_ELITE * GUARANTEE_FLOOR_PERSONALITY[personality];
+  // Rounded to whole percent: the guarantee control is whole percent on both
+  // the slider and the typed field, so a floor of 0.3162 would be a boundary
+  // no control in the game can actually sit on.
+  return Math.min(GUARANTEE_FLOOR_CAP, Math.round(raw * 100) / 100);
+}
+
+/**
+ * What a deal under his floor is capped at, in interest points. [TUNE]
+ *
+ * Below the "he might sign" band at every scouting confidence
+ * (ACCEPT_INTEREST - BAND_MAX_HALF_WIDTH = 70), because the claim is that no
+ * salary signs this, and the meter may not imply otherwise. Above the money
+ * insult's 44, because it is a smaller failing: the offer is real, the
+ * structure is not.
+ */
+const UNDER_GUARANTEED_CAP = 62;
 
 /**
  * Loyalty discount tuning. [TUNE]
@@ -534,6 +629,11 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   // stops negotiating and starts taking offence.
   const insulting = moneyRatio < 0.7;
 
+  // Less locked in than he will sign for. Not an insult — the money may be
+  // perfectly good — but a refusal no salary answers. See the GUARANTEED
+  // MONEY HAS A FLOOR block above.
+  const underGuaranteed = offer.guaranteePct < ctx.guaranteeFloor;
+
   // An insulted player reads INSULTED, whatever the other two sliders say.
   // Without this cap, seven years and a 100% guarantee could drag a
   // 60%-of-asking offer up to a gold "Close" — with "his agent stopped
@@ -543,7 +643,7 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   // salary slider a real edge to find: the bar jumps the moment his agent
   // starts listening again.
   const interest = Math.min(
-    insulting ? 44 : 100,
+    insulting ? 44 : underGuaranteed ? UNDER_GUARANTEED_CAP : 100,
     Math.round(Math.max(0, Math.min(100, raw * 100))),
   );
 
@@ -571,18 +671,29 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
           : 'The term is not what he had in mind.',
     );
   }
-  if (guaranteeScore < 0.85) demands.push('He wants more of it guaranteed.');
+  // The floor first, because it is a different sentence: not "more would
+  // help" but "not without this". A player under his floor always gets it,
+  // however good the guarantee score reads against what he WANTS.
+  if (underGuaranteed) {
+    demands.push('He will not sign a deal this size on a promise — a real share of it has to be guaranteed.');
+  } else if (guaranteeScore < 0.85) {
+    demands.push('He wants more of it guaranteed.');
+  }
   if (ctx.competition > 0.5 && interest < 82) demands.push('Other teams are calling. This will not sit on the table long.');
   if (demands.length === 0 && interest < 82) demands.push('He is close. Something small is still missing.');
 
   const headline =
     verdict === 'ACCEPT' ? `${ctx.playerName} will sign this.`
+      : verdict === 'INSULTED' ? 'His agent asked if you were serious.'
+      // In HIS voice, and it is the whole reason this offer cannot be signed —
+      // so it is said instead of the generic line for the verdict, which would
+      // read as "not excited" about a deal he has actually refused.
+      : underGuaranteed ? 'His agent wants it in writing. He is not signing this on a handshake.'
       : verdict === 'CLOSE' ? 'His agent says they are one small step away.'
       : verdict === 'CONSIDERING' ? 'They will take it to him, but they are not excited.'
-      : verdict === 'INSULTED' ? 'His agent asked if you were serious.'
       : 'They are not engaging with this.';
 
-  return { interest, verdict, headline, demands, accepted: verdict === 'ACCEPT', insulting };
+  return { interest, verdict, headline, demands, accepted: verdict === 'ACCEPT', insulting, underGuaranteed };
 }
 
 /**
@@ -1033,7 +1144,8 @@ export interface NegotiationSession {
 export function sessionFingerprint(s: NegotiationSession): string {
   return [
     s.ctx.playerId, s.ctx.personality, s.ctx.reservationApy, s.ctx.desiredYears,
-    s.ctx.desiredGuarantee.toFixed(3), s.ctx.patience, s.ctx.resignWindow ?? '-',
+    s.ctx.desiredGuarantee.toFixed(3), s.ctx.guaranteeFloor.toFixed(3),
+    s.ctx.patience, s.ctx.resignWindow ?? '-',
     // Everything the band and the term refusal are computed from. All four
     // are stable facts about the man and the year — but they decide answers
     // now, so a session where any of them moved is a session that moved.

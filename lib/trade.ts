@@ -6,6 +6,7 @@ import { projectedDraftOrder, imminentDraftYear } from './draft';
 import { CapMode } from './types';
 import { recordTrade } from './tradeRetro';
 import { deadMoneyOnCut } from './cap';
+import { reconcileDepthChart } from './gen/league';
 import { assertCapRoom, tradeCapDeltas } from './capEnforcement';
 
 /**
@@ -249,6 +250,18 @@ export async function executeTrade(opts: {
     };
     await move(opts.aToB, opts.teamA, opts.teamB);
     await move(opts.bToA, opts.teamB, opts.teamA);
+
+    /**
+     * Moving the roster spot is only half of arriving. Nothing here used to
+     * touch either club's depth chart, and lib/sim/units.ts ranks a player his
+     * chart doesn't name behind every player it does — so the man you traded
+     * for lined up behind the entire position group and took no snaps at all
+     * for the rest of the season, while the man you traded away kept a rank on
+     * the chart he had left. Both sides are reconciled, in the same
+     * transaction as the move, so a trade can never half-land.
+     */
+    await reconcileDepthChart(opts.teamA, tx);
+    await reconcileDepthChart(opts.teamB, tx);
 
     await tx.transaction.create({
       data: {

@@ -794,6 +794,22 @@ model NegotiationTalks {
   /// Pips burned so far. Never decreases within a league year.
   patienceSpent Int @default(0)
 
+  /// SET ASIDE — "not now", on the re-sign list. Null means he is still on the
+  /// list to be worked; a timestamp means the GM has parked him so a twenty-deep
+  /// list can be triaged top to bottom.
+  ///
+  /// It is NOT "let him walk" (that decision is its own control on the row, and
+  /// it releases him), and it costs no patience — nothing in lib/negotiation.ts
+  /// reads this column, so parking a man cannot change what he will sign for.
+  /// It lives here rather than in its own table because the key this model
+  /// already has — team + player + league year — is exactly the scope of the
+  /// decision, so it expires on its own when the year rolls over, which is what
+  /// "revisit during the offseason re-sign phase" means and nothing more.
+  ///
+  /// Whoever is still set aside when the RESIGN phase ends is named and counted
+  /// in the advance warning (lib/season.ts) before anybody is allowed to walk.
+  dismissedAt DateTime?
+
   updatedAt DateTime @updatedAt
 
   @@unique([teamId, playerId, seasonYear])
