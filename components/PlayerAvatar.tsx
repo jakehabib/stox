@@ -54,7 +54,7 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
   // Skull barely moves — heads don't grow much with bodyweight. The jaw does,
   // and asymmetrically: a heavy man's jaw is where the weight shows, while a
   // light man's chin must not narrow to the point it reads soft (that failure
-  // mode is the reason every shape squares off at the chin — see HeadShape).
+  // mode is the reason every shape squares off at the chin — see FACE_METRICS).
   const sw = S.sw * (1 + 0.09 * d) - 0.7 * f;
   const jw = Math.max(12.5, S.jw * (1 + (d >= 0 ? 0.6 : 0.34) * d));
   const cy = S.cheekY;
