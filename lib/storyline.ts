@@ -269,13 +269,20 @@ const MILESTONE_WINDOW: Record<RecordCategory, number> = {
   passYds: 150, passTd: 2, rushYds: 100, recYds: 100, tackles: 15, sacks: 1, defInt: 1,
 };
 
+// [TUNE] Unlike a record chase (one shared target, so only the closest
+// chaser is kept), each player here is closing on his OWN threshold, so
+// there's no single duplicate fact to dedupe — but several teammates
+// legitimately landing near a round number in the same week is still more
+// than a digest needs at once. Keep only the closest few, most-imminent first.
+const MILESTONE_SLOTS = 4;
+
 async function milestoneStorylines(leagueId: string, teamId: string): Promise<Storyline[]> {
   const players = await prisma.player.findMany({
     where: { leagueId, teamId, status: 'ACTIVE' },
     select: { id: true, firstName: true, lastName: true, seasonStats: true },
   });
 
-  const out: Storyline[] = [];
+  const candidates: { gap: number; storyline: Storyline }[] = [];
   for (const p of players) {
     const season = readJson<SeasonStats>(p.seasonStats, {});
     const name = `${p.firstName} ${p.lastName}`;
@@ -287,16 +294,19 @@ async function milestoneStorylines(leagueId: string, teamId: string): Promise<St
       const gap = nextMilestone - value;
       if (gap > MILESTONE_WINDOW[cat]) continue;
 
-      out.push({
-        category: 'MILESTONE',
-        headline: `${name} is ${gap.toLocaleString()} ${CATEGORY_LABEL[cat]} from ${nextMilestone.toLocaleString()} this season`,
-        detail: `Sits at ${value.toLocaleString()} through this season's games.`,
-        teamId, playerId: p.id,
-        fact: { label: CATEGORY_LABEL[cat], value },
+      candidates.push({
+        gap,
+        storyline: {
+          category: 'MILESTONE',
+          headline: `${name} is ${gap.toLocaleString()} ${CATEGORY_LABEL[cat]} from ${nextMilestone.toLocaleString()} this season`,
+          detail: `Sits at ${value.toLocaleString()} through this season's games.`,
+          teamId, playerId: p.id,
+          fact: { label: CATEGORY_LABEL[cat], value },
+        },
       });
     }
   }
-  return out;
+  return candidates.sort((a, b) => a.gap - b.gap).slice(0, MILESTONE_SLOTS).map((c) => c.storyline);
 }
 
 // ---------------------------------------------------------------------------
