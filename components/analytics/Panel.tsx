@@ -102,11 +102,14 @@ export function Note({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * The honest-absence line. A panel that cannot compute something says so here,
- * in one plain sentence, rather than drawing an empty axis or quietly dropping
- * the category. See docs/design-research/analytics/data-inventory.md — the
- * things this screen cannot know are a fact about the database, and hiding
- * them would be the one failure mode this page is not allowed to have.
+ * The honest-absence line. A panel that cannot show something says so here, in
+ * one plain sentence, rather than drawing an empty axis or quietly dropping the
+ * category — quiet omission is the one failure mode this page is not allowed to
+ * have (README principle 6).
+ *
+ * The sentence inside it is written the way a scout would say it — "we don't
+ * track linemen's snaps" — never the way the schema would. What is missing is
+ * useful to a GM; WHY it is missing, in storage terms, is not.
  */
 export function NotOnRecord({ children }: { children: React.ReactNode }) {
   return (

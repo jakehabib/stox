@@ -953,18 +953,6 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
  * and every one of these deals expires immediately so it costs the franchise
  * nothing beyond this season. User teams are never touched — filling the
  * human's roster is the "Fill Roster" button's job, on his own click.
- *
- * WHAT A MINIMUM-SALARY DEAL MAY BUY. This was the one signing path in the
- * game that ignored MARKET_FLOOR — it offered CAP.MIN_SALARY and took whoever
- * was best, so a short club bought the best free agent in football for the
- * league minimum. Because it also runs BEFORE the wave and before the user
- * ever sees the free-agency screen, it emptied the market from the top down:
- * measured, the first offseason's pool went 91 players to 15 and its best
- * available went 85 OVR to 57 in a single step, with nothing on screen in
- * between. Now it shops the tier a one-year minimum actually reaches
- * (FREE_AGENCY.FILL_MAX_MARKET_MULT), and only if that tier is exhausted does
- * it fall back to the CHEAPEST man left rather than the best — so no club is
- * ever stranded below the minimum, and no club ever gets a starter for free.
  */
 export async function fillTeamsToRosterMinimum(
   leagueId: string, seasonYear: number, week: number, settings: LeagueSettings, rng: Rng,
@@ -986,24 +974,15 @@ export async function fillTeamsToRosterMinimum(
     const pool = await prisma.player.findMany({
       where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
       orderBy: [{ trueOvr: 'desc' }, { id: 'asc' }],
-      take: (rosterMin - roster.length) * 8 + 400,
+      take: (rosterMin - roster.length) * 8 + 120,
     });
-    // Who would actually put his name on a one-year league-minimum deal.
-    // Everyone else stays on the board for the wave and for the user.
-    const affordable = pool.filter((c) => marketValue({
-      ovr: c.trueOvr, position: c.position as Position, age: c.age, potential: c.potential,
-    }) <= CAP.MIN_SALARY * FREE_AGENCY.FILL_MAX_MARKET_MULT);
-    // Last resort only, and cheapest-first: a club may not stay illegal, but
-    // it does not get to raid the top of the market to avoid it.
-    const fallback = [...pool].sort((a, b) => a.trueOvr - b.trueOvr || a.id.localeCompare(b.id));
 
     while (roster.length < rosterMin) {
       const needs = teamNeeds(roster as RosterPlayer[]);
       const wanted = Object.entries(needs).sort((a, b) => b[1] - a[1]).map(([pos]) => pos);
-      const pick = affordable.find((c) => !taken.has(c.id) && c.position === wanted[0])
-        ?? affordable.find((c) => !taken.has(c.id) && wanted.slice(0, 5).includes(c.position))
-        ?? affordable.find((c) => !taken.has(c.id))
-        ?? fallback.find((c) => !taken.has(c.id));
+      const pick = pool.find((c) => !taken.has(c.id) && c.position === wanted[0])
+        ?? pool.find((c) => !taken.has(c.id) && wanted.slice(0, 5).includes(c.position))
+        ?? pool.find((c) => !taken.has(c.id));
       if (!pick) break; // the market is genuinely empty
 
       const ok = await signFreeAgent({

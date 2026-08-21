@@ -79,8 +79,7 @@ export default async function AnalyticsPage({ params, searchParams }: {
   params: { id: string };
   searchParams: { view?: string };
 }) {
-  const startedAt = Date.now();
-  const { league, settings, userTeam } = await getLeagueContext(params.id);
+  const { league, settings, userTeam, phaseLabel } = await getLeagueContext(params.id);
   // Same param, same vocabulary and same pills as the Cap and Stats screens —
   // ?view=advanced. Simple is the default because most of what a player wants
   // from this page is four questions, and the war room behind the switch is
@@ -92,7 +91,7 @@ export default async function AnalyticsPage({ params, searchParams }: {
       <div className="space-y-4">
         <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Analytics Department</h1>
         <div className="panel p-4 text-muted text-sm">
-          This save has no club assigned to you, so there is nothing for the department to analyse.
+          You are not running a club in this league, so there is nothing for us to look at.
         </div>
       </div>
     );
@@ -143,8 +142,8 @@ export default async function AnalyticsPage({ params, searchParams }: {
       <div className="space-y-4">
         <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Analytics Department</h1>
         <div className="panel p-4 text-muted text-sm">
-          Your club could not be rated against this league, so none of the comparisons on this page would mean
-          anything. Nothing has been rendered rather than rendering something wrong.
+          We cannot rate your club against the rest of the league, so none of the comparisons on this page
+          would mean anything.
         </div>
       </div>
     );
@@ -354,17 +353,17 @@ export default async function AnalyticsPage({ params, searchParams }: {
   if (topOL && !board.includes(topOL)) board.push(topOL);
 
   const basisYear = ageBasisYear(league);
-  let syncedFromTable = true;
   const men: ProductionMan[] = await Promise.all(board.map(async (r) => {
     const pos = canonicalPosition(r.position);
     const key = isRankablePosition(r.position) ? (leadColumnKey(pos) ?? null) : null;
 
     let lines: SeasonLine[] | null = await loadPlayerSeasons(league.id, r.id);
     if (lines === null) {
-      // The table has never been synced for this save. Replaying the box
-      // scores gives the identical numbers with a slower read, which is the
-      // right trade for a page that would otherwise show an empty panel.
-      syncedFromTable = false;
+      // No stored season rows for this league yet. Replaying gives the
+      // identical numbers off a slower read, which is the right trade for a
+      // page that would otherwise show an empty panel. Which of the two paths
+      // served them used to be named in the panel's eyebrow; a player cannot
+      // act on that, so it went and the flag went with it.
       lines = await reconstructPlayerSeasons(league.id, r.id);
     }
     const player = roster.find((p) => p.id === r.id)!;
@@ -593,8 +592,6 @@ export default async function AnalyticsPage({ params, searchParams }: {
     });
   }
 
-  const elapsedMs = Date.now() - startedAt;
-
   // --- the sentence under each war-room board ------------------------------
   const ppd = driveMetrics.find((m) => m.key === 'ppd');
   const ppdAllowed = driveMetrics.find((m) => m.key === 'ppdAllowed');
@@ -605,10 +602,10 @@ export default async function AnalyticsPage({ params, searchParams }: {
       That is {ordinal(ppd.rank)} of {ppd.clubs} with the ball and {ordinal(ppdAllowed.rank)} without it, over
       {' '}{myDriveOffense.drives} drives run and {myDriveDefense.drives} faced.
       {threeOut && <> {threeOut.value.toFixed(1)}% of your possessions end inside three plays, {ordinal(threeOut.rank)} of {threeOut.clubs}.</>}
-      {' '}Points per drive is the measure a front office argues about because it removes pace: a club that runs
+      {' '}Points per drive is the number to argue about because it takes pace out of it: a club that runs
       twelve possessions a game and one that runs nine are finally comparable.
     </>
-  ) : <>Not enough drives on record yet to rank this club against the league.</>;
+  ) : <>Not enough drives yet to rank this club against the league.</>;
 
   const bestRate = [...rateBoards]
     .filter((b) => b.mine.length > 0)
@@ -625,8 +622,7 @@ export default async function AnalyticsPage({ params, searchParams }: {
           {' '}{bestRate.label.toLowerCase()} of {bestRate.mine[0].value.toFixed(bestRate.decimals)}{bestRate.unit}
           {' '}({ordinal(bestRate.mine[0].rank)} of {bestRate.mine[0].qualified}) against
           {' '}{worstRate.label.toLowerCase()} of {worstRate.mine[0].value.toFixed(worstRate.decimals)}{worstRate.unit}
-          {' '}({ordinal(worstRate.mine[0].rank)}). One man, two very different readings — which is the argument for
-          {' '}reading rates in a set rather than one at a time.
+          {' '}({ordinal(worstRate.mine[0].rank)}). One man, two very different readings.
         </>
       ) : (
         <>
@@ -640,9 +636,9 @@ export default async function AnalyticsPage({ params, searchParams }: {
           )}
         </>
       )}
-      {' '}A rate is a claim about a player; the volume beside it in the tooltip is how much that claim is worth.
+      {' '}A rate is a claim about a player. The volume behind it is how much the claim is worth.
     </>
-  ) : <>Nobody on this roster has cleared a volume qualifier yet, so there is no per-play claim to make.</>;
+  ) : <>Nobody here has the attempts yet to be judged on a rate.</>;
 
   /** Every link rebuilds the whole query string, so no pill drops another's state. */
   const href = (wantAdvanced: boolean) =>
@@ -653,7 +649,7 @@ export default async function AnalyticsPage({ params, searchParams }: {
       <PageMasthead
         teamId={me.id}
         teamAbbr={me.abbr}
-        eyebrow={`${league.seasonYear} · ${league.phase.toLowerCase()} · week ${league.week}`}
+        eyebrow={`${league.seasonYear} · ${phaseLabel} · Week ${league.week}`}
         title="Analytics Department"
         // IN-WORLD VOICE. This said "Everything below is read-only arithmetic
         // over what this save already produced — no projection the sim does not
@@ -805,7 +801,6 @@ export default async function AnalyticsPage({ params, searchParams }: {
                 teamAccent={accent}
                 teamAbbr={me.abbr}
                 seasonYear={league.seasonYear}
-                syncedFromTable={syncedFromTable}
               />
             </PanelBoundary>
           </>

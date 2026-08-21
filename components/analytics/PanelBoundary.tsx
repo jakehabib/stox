@@ -56,13 +56,12 @@ export class PanelBoundary extends React.Component<Props, { failed: boolean }> {
       <section className={`card card-pad col-span-12 ${SPAN[this.props.span]} min-w-0`}>
         <div className="section-head items-end">
           <div className="min-w-0">
-            <div className="label-sm text-[10px] tracking-[0.1em]">Not computed</div>
+            <div className="label-sm text-[10px] tracking-[0.1em]">Nothing to report</div>
             <h2 className="section-title text-[15px] mt-0.5">{this.props.title}</h2>
           </div>
         </div>
         <p className="text-xs text-muted leading-relaxed mt-2.5">
-          This panel could not be computed from what this save currently holds, so it is showing nothing rather
-          than showing something wrong. Every other panel on the page is unaffected.
+          We could not put this board together. Nothing else on the page is affected.
         </p>
       </section>
     );

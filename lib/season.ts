@@ -24,7 +24,7 @@ import { checkAndUpdateRecords, recordBreakHeadline } from './records';
 import { syncPlayerSeasons } from './playerSeasons';
 import { reseedDraftOrder, startRookieDraft } from './draft';
 import { ensureSeasonSchedule } from './scheduleSeason';
-import { autoDepthChartAll, generateFringeFreeAgents, fringeShortfall } from './gen/league';
+import { autoDepthChartAll } from './gen/league';
 import { observe } from './scouting';
 import { applyShortlistAttention } from './shortlistAttention';
 import { resetWorkoutSlots } from './workouts';
@@ -299,12 +299,6 @@ async function advanceWeekStep(leagueId: string) {
       }
 
       await releaseUnresignedExpiringContracts(leagueId, league.seasonYear);
-      // The wire, before anybody shops it. This league's own expiring
-      // contracts are the market's real names; the fringe population is the
-      // several hundred camp bodies underneath them that a real offseason
-      // always has and this one never did. Runs BEFORE the roster-filling
-      // below on purpose — that is what the short clubs are meant to sign.
-      const minted = await addFringeFreeAgents(leagueId, rng);
       // Every AI team that came out of that below a legal roster fills back up
       // immediately, at the league minimum, from the players who just hit the
       // market. Without this a team that had a bad re-sign year stayed 20
@@ -315,7 +309,6 @@ async function advanceWeekStep(leagueId: string) {
       return {
         summary: [
           releasedBefore > 0 ? `${releasedBefore} unsigned player(s) hit free agency.` : null,
-          minted > 0 ? `${minted} veteran(s) and camp bodies worked out for clubs and are on the wire.` : null,
           refilled > 0 ? `${refilled} minimum-salary signing(s) got short-handed rosters back to a legal size.` : null,
           'Free agency is open.',
         ].filter(Boolean).join(' '),
@@ -1532,51 +1525,6 @@ async function runAiResignWave(leagueId: string, seasonYear: number, week: numbe
   for (const team of teams) {
     await resignDecisionsForTeam(leagueId, team.id, seasonYear, week, capMode, rng);
   }
-}
-
-/**
- * ---------------------------------------------------------------------------
- * THE WIRE — topping the unsigned pool back up to a market
- * ---------------------------------------------------------------------------
- * A beta tester reported no free agents after year one and he was right: the
- * league minted 140 spare players at creation, nothing ever replenished them,
- * and year one's contracts were written fresh with multi-year terms so almost
- * nothing expired into the first offseason. Measured, the 2027 free-agency
- * screen showed 15 players for four straight weeks with a 57 OVR at the top of
- * it — the screen a GM has waited a whole season for, blank.
- *
- * So the market has a floor under it. This is a TOP-UP, not an injection: it
- * counts what is really on the wire after the re-sign window has emptied and
- * mints only the difference, which from the second offseason on is zero — the
- * league's own expired contracts and undrafted rookies carry the pool to
- * 300-470 on their own and `fringeShortfall` returns nothing.
- *
- * What it mints is fringe by construction, not by hope — see
- * generateFringeFreeAgents in lib/gen/league.ts and GENERATION.FRINGE_OVR_MEAN
- * for the caps. Nobody here is a hidden star, and none of them displaces the
- * real story of the market, which is still whose contract ran out.
- */
-async function addFringeFreeAgents(leagueId: string, rng: Rng): Promise<number> {
-  const pool = await prisma.player.count({
-    where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
-  });
-  const count = fringeShortfall(pool);
-  if (count <= 0) return 0;
-
-  // Seed the ledger from everyone already in the league, exactly as
-  // addDraftClass does, so a camp body can't be handed a sitting starter's
-  // name. Names are unique league-wide by construction everywhere else and
-  // this is the only way an in-memory batch can know that.
-  const existing = await prisma.player.findMany({
-    where: { leagueId },
-    select: { firstName: true, lastName: true },
-  });
-  const names = new NameRegistry(existing.map((p) => `${p.firstName} ${p.lastName}`));
-  const rows = generateFringeFreeAgents(rng, count, names)
-    .map((p) => toPlayerCreate(p, leagueId, { status: 'FREE_AGENT', teamId: null }));
-  const CHUNK = 400;
-  for (let i = 0; i < rows.length; i += CHUNK) await prisma.player.createMany({ data: rows.slice(i, i + CHUNK) });
-  return rows.length;
 }
 
 async function addDraftClass(leagueId: string, seasonYear: number, rng: Rng) {

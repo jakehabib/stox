@@ -33,16 +33,15 @@ export function SpendVsRatingPanel({ rows, capEnabled }: { rows: UnitSpendRow[];
       title="Are You Paying For What You're Getting?"
       aside="Bubble size = share of team quality that unit carries"
       why={<>
-        Right of the centre line you are spending more of your own cap at that unit than the league does;
-        above it you are fielding a better one than the league fields. The rating and the rank come straight from
-        <span className="text-chalk"> buildLeagueRatings()</span> — the same numbers the dashboard, the schedule
-        screen and every win estimate read — rather than a second opinion computed here.
+        Right of the centre line you are spending more of your own cap at that unit than the league does; above it
+        you are fielding a better one than the league fields. The bottom right is where money goes in and nothing
+        comes out; the top left is a unit carrying the club on the cheap.
       </>}
     >
       {!capEnabled ? (
         <p className="text-sm text-muted py-4">
           Cap mode is <strong className="text-chalk">off</strong> in this league, so there is no salary share to
-          plot against the ratings. The unit table below still stands.
+          plot against the ratings. The unit table beside it still stands.
         </p>
       ) : null}
 
@@ -120,7 +119,7 @@ export function SpendVsRatingPanel({ rows, capEnabled }: { rows: UnitSpendRow[];
       </div>
 
       <TableTwin
-        caption="Table view — this panel's chart, in full"
+        caption="The chart, as numbers"
         columns={['Unit', 'Side', 'Cap $', 'Share %', 'League share %', 'Diff pp', 'Rating', 'League mean', 'Diff', 'Rank', 'Bodies', 'On field', 'Weight %']}
         rows={rows.map((g) => [
           g.group, g.side, formatMoney(g.spend), (100 * g.share).toFixed(1), (100 * g.leagueMeanShare).toFixed(1),

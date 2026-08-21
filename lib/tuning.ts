@@ -132,38 +132,6 @@ export const FREE_AGENCY = {
    * the ordinary depth it actually needs.
    */
   WAVE_BOARD_SIZE: 140,
-
-  /**
-   * ---------------------------------------------------------------------
-   * THE FLOOR UNDER THE MARKET
-   * ---------------------------------------------------------------------
-   * The unsigned pool is topped up to this many players at league creation
-   * and again at the top of every offseason's free agency, with the fringe
-   * population described at GENERATION.FRINGE_OVR_MEAN. It is a FLOOR, not a
-   * target: from the second offseason on the league's own expiring contracts
-   * and undrafted rookies carry the pool well past it (measured 300-470), so
-   * the top-up does nothing at all and mints nobody.
-   *
-   * Sized against the league it serves: 32 clubs x 53 = 1,696 roster spots,
-   * and roughly a sixth of that again unsigned is what a real offseason wire
-   * looks like. Small enough that the AI's roster-filling cannot drain it,
-   * large enough that every position has several names under it. [TUNE]
-   */
-  POOL_FLOOR: 260,
-  /**
-   * `fillTeamsToRosterMinimum` signs at CAP.MIN_SALARY for one year, and it
-   * was the ONE signing path in the game that ignored MARKET_FLOOR — so a
-   * short-handed club could buy the best free agent in football for the
-   * league minimum, and did: the 2027 market went 91 players to 15 in a
-   * single step, top man 85 OVR to 57, before the user ever saw the screen.
-   *
-   * A minimum-salary one-year deal buys a camp body. This is the ceiling on
-   * what such a deal may buy, as a multiple of CAP.MIN_SALARY — anyone
-   * pricier stays on the board for the wave and for the user. A club with no
-   * minimum-tier body left still falls back to the cheapest man available
-   * rather than staying illegal; see fillTeamsToRosterMinimum. [TUNE]
-   */
-  FILL_MAX_MARKET_MULT: 1.5,
 };
 
 // ---------------------------------------------------------------------------
@@ -356,57 +324,6 @@ export const GENERATION = {
   FREE_AGENT_OVR_SD: 8,
   FREE_AGENT_OVR_MIN: 52,
   FREE_AGENT_OVR_MAX: 88,
-  /**
-   * ---------------------------------------------------------------------
-   * HOW BIG A ROSTER A GENERATED CLUB STARTS WITH
-   * ---------------------------------------------------------------------
-   * `generateRoster` rolls `rng.int(min, ideal)` bodies per position. Summed
-   * over ROSTER_TARGETS that is 35 at the low end and 51 at the high, so the
-   * MEAN generated club carried 43 men against a 46-man legal minimum: 31 of
-   * 32 clubs began life illegal, which is the whole of the standing INV-20
-   * "below the roster minimum" warning and — because
-   * `fillTeamsToRosterMinimum` then buys ~90 bodies off the market to fix it
-   * — the reason the first offseason's free agency was empty.
-   *
-   * So a generated club is topped up to a legal size before it is written.
-   * The band stops short of ROSTER_MAX on purpose: a club needs open slots
-   * for its rookie class and for free agency, or cut-down day just deletes
-   * whatever it signed. [TUNE]
-   */
-  INITIAL_ROSTER_MIN: 47,
-  INITIAL_ROSTER_MAX: 50,
-  /**
-   * ---------------------------------------------------------------------
-   * THE FRINGE POPULATION — camp bodies, recent cuts, career backups
-   * ---------------------------------------------------------------------
-   * Real football always has hundreds of unsigned players in it. This league
-   * only ever minted 140 at creation and nothing replenished them, so once
-   * the first offseason's roster-filling had eaten the pool the free-agency
-   * screen was blank for four straight weeks (measured: pool 15, best
-   * available 57 OVR, in a league whose rostered mean is 77).
-   *
-   * These men exist to make the market a market. They are DELIBERATELY not
-   * talent: capped below the roster floor's useful band, potential pinned
-   * close to the overall they already have, and never a Star or Superstar
-   * development trait. A GM should recognise them for what they are — a
-   * fourth tight end, a camp arm, a 31-year-old special-teamer — and the
-   * signing that matters should still be the veteran whose contract actually
-   * expired. See generateFringeFreeAgents in lib/gen/league.ts.
-   *
-   * They are also self-clearing: sitting far below the league's mean active
-   * rating puts them under UNSIGNED_ATTRITION_FLOOR_BELOW_MEAN, so ~42% of
-   * any that go unsigned are out of football a year later and the pool tops
-   * up rather than accumulating. [TUNE]
-   */
-  FRINGE_OVR_MEAN: 59,
-  FRINGE_OVR_SD: 4,
-  FRINGE_OVR_MIN: 50,
-  FRINGE_OVR_MAX: 66,
-  /** Share of the fringe population that is a 22-25 year old camp body rather than an ageing depth veteran. */
-  FRINGE_YOUNG_SHARE: 0.55,
-  /** The most room above his current rating a fringe player may ever carry — young, then old. */
-  FRINGE_POTENTIAL_BONUS_YOUNG: 6,
-  FRINGE_POTENTIAL_BONUS_OLD: 2,
   DRAFT_CLASS_SIZE: 224, // 7 rounds x 32 — exactly the number of picks
   /** Extra prospects generated beyond the pick count, so a real share of the class goes undrafted into UDFA free agency instead of every prospect getting picked. */
   DRAFT_CLASS_EXTRA_UDFA: 176,

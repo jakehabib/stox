@@ -1,6 +1,6 @@
 import { prisma } from '../db';
 import { Rng, clamp } from '../rng';
-import { LEAGUE, CAP, OFF_SCHEMES, DEF_SCHEMES, Position, POSITIONS, ROSTER_TARGETS, SCOUTING, GENERATION, FREE_AGENCY } from '../tuning';
+import { LEAGUE, CAP, OFF_SCHEMES, DEF_SCHEMES, Position, SCOUTING, GENERATION } from '../tuning';
 import { LeagueSettings, serializeSettings, DEFAULT_SETTINGS } from '../settings';
 import { TEAM_SEEDS, COACH_FIRST, COACH_LAST, FIRST_NAMES, LAST_NAMES, NameRegistry } from './names';
 import { generateRoster, generatePlayer, toPlayerCreate, GeneratedPlayer } from './players';
@@ -59,115 +59,6 @@ export interface LeagueImportPlan {
  */
 export const plannedContractKey = (firstName: string, lastName: string) =>
   `${firstName} ${lastName}`.toLowerCase();
-
-/**
- * ---------------------------------------------------------------------------
- * THE FRINGE POPULATION
- * ---------------------------------------------------------------------------
- * Camp bodies, recent cuts and career backups — the several hundred unsigned
- * men real football always has in it, and which this league had no source of.
- * See GENERATION.FRINGE_OVR_MEAN for why they exist and why they are capped
- * where they are.
- *
- * Deliberately NOT a talent faucet, enforced three ways rather than hoped for:
- * the overall roll tops out at GENERATION.FRINGE_OVR_MAX, the potential is
- * pinned within a few points of the overall he already has, and the
- * development trait is drawn from Slow/Normal only so none of them is a
- * hidden Superstar waiting for a coaching staff. A GM signing one of these is
- * signing depth, on purpose, and the market's real names still have to come
- * from contracts that actually expired.
- *
- * `rng` must be the caller's seeded Rng — this runs at league creation and at
- * every offseason, and both have to reproduce from the league seed.
- */
-export function generateFringeFreeAgents(rng: Rng, count: number, names: NameRegistry): GeneratedPlayer[] {
-  const out: GeneratedPlayer[] = [];
-  for (let i = 0; i < count; i++) {
-    // Two populations, not one bell curve: the wire is undrafted 23-year-olds
-    // and 31-year-old special-teamers, and almost nobody in between — a man
-    // in his prime who can play is on a roster.
-    const young = rng.bool(GENERATION.FRINGE_YOUNG_SHARE);
-    const age = young ? rng.int(22, 25) : rng.int(28, GENERATION.AGE_MAX);
-    const p = generatePlayer(rng, {
-      ovrTarget: rng.normalClamped(
-        GENERATION.FRINGE_OVR_MEAN, GENERATION.FRINGE_OVR_SD,
-        GENERATION.FRINGE_OVR_MIN, GENERATION.FRINGE_OVR_MAX,
-      ),
-      ageOverride: age,
-      names,
-    });
-    const headroom = young ? GENERATION.FRINGE_POTENTIAL_BONUS_YOUNG : GENERATION.FRINGE_POTENTIAL_BONUS_OLD;
-    out.push({
-      ...p,
-      // generatePlayer's own potential roll gives a 22-year-old up to +15.
-      // That is right for a draft pick and wrong for a man nobody drafted.
-      potential: Math.min(p.potential, p.trueOvr + headroom),
-      devTrait: rng.weighted({ Slow: 0.55, Normal: 0.45 }),
-    });
-  }
-  return out;
-}
-
-/**
- * How many fringe players the market is short of FREE_AGENCY.POOL_FLOOR.
- * Shared by league creation and by the offseason top-up in lib/season.ts so
- * the floor is one number in one place, and so neither can mint on a market
- * that is already full — from the second offseason on this returns 0.
- */
-export function fringeShortfall(poolSize: number): number {
-  return Math.max(0, FREE_AGENCY.POOL_FLOOR - poolSize);
-}
-
-/**
- * ---------------------------------------------------------------------------
- * WHY A GENERATED ROSTER NEEDS TOPPING UP
- * ---------------------------------------------------------------------------
- * `generateRoster` rolls `rng.int(min, ideal)` men per position, which sums to
- * a MEAN of 43 against a 46-man legal minimum — so 31 of 32 brand-new clubs
- * were born illegal. Nothing noticed until the first offseason, when
- * `fillTeamsToRosterMinimum` bought ~90 bodies to fix it and emptied the free
- * agent pool doing it. Both symptoms are this one shortfall.
- *
- * The depth-penalty maths is generateRoster's, repeated here rather than
- * shared because the extra men are appended to a roster that already exists:
- * each one is the NEXT man down his position's chart, so he takes the decay
- * for the slot he is actually filling and lands as ordinary depth rather than
- * as a surprise starter.
- */
-function topUpRoster(rng: Rng, roster: GeneratedPlayer[], teamStrength: number, names: NameRegistry): GeneratedPlayer[] {
-  const target = rng.int(GENERATION.INITIAL_ROSTER_MIN, GENERATION.INITIAL_ROSTER_MAX);
-  const counts = new Map<Position, number>();
-  for (const p of roster) counts.set(p.position, (counts.get(p.position) ?? 0) + 1);
-
-  while (roster.length < target) {
-    // Least-covered position first, measured against what the spec asks for.
-    // POSITIONS order breaks ties, so this is deterministic.
-    let pos: Position = POSITIONS[0];
-    let worst = -Infinity;
-    for (const candidate of POSITIONS) {
-      const spec = ROSTER_TARGETS[candidate];
-      const held = counts.get(candidate) ?? 0;
-      if (held >= spec.max) continue; // never carry more of anyone than the spec allows
-      const deficit = spec.ideal - held;
-      if (deficit > worst) { worst = deficit; pos = candidate; }
-    }
-    if (worst === -Infinity) break; // every position is at its ceiling — nothing legal left to add
-
-    const slot = counts.get(pos) ?? 0;
-    const jitter = GENERATION.DEPTH_DECAY_JITTER;
-    const depthPenalty = GENERATION.DEPTH_DECAY_MAX
-      * (1 - Math.exp(-slot / GENERATION.DEPTH_DECAY_TAU))
-      * rng.float(1 - jitter, 1 + jitter);
-    const specialist = (pos === 'K' || pos === 'P') ? GENERATION.SPECIALIST_OVR_PENALTY : 0;
-    const ovrTarget = clamp(
-      Math.round(rng.normal(GENERATION.VETERAN_OVR_MEAN + teamStrength - depthPenalty - specialist, GENERATION.VETERAN_OVR_SD * 0.8)),
-      GENERATION.ROSTER_OVR_FLOOR, 99,
-    );
-    roster.push(generatePlayer(rng, { position: pos, ovrTarget, names }));
-    counts.set(pos, slot + 1);
-  }
-  return roster;
-}
 
 /**
  * Creates a complete, playable league from nothing:
@@ -333,26 +224,14 @@ export async function createLeague(opts: {
     for (const team of teams) {
       // [TUNE] team strength spread: -6 .. +6 rating points around league mean.
       const strength = rng.normal(0, 4);
-      // Topped up to a legal roster before it is written — see topUpRoster.
-      for (const p of topUpRoster(rng, generateRoster(rng, strength, names), strength, names)) {
+      for (const p of generateRoster(rng, strength, names)) {
         registerPlayer(p, { teamId: team.id, status: 'ACTIVE' }, true);
       }
     }
-    // Free agent pool, in two layers that mean different things.
-    //
-    // LEFTOVERS: real unsigned football players — a 26-year-old the market
-    // just hasn't got to, the occasional genuine starter still on the wire.
-    // [TUNE] 140 of them, the number this league has always minted.
-    const leftovers = 140;
-    for (let i = 0; i < leftovers; i++) {
+    // Free agent pool — leftovers, mostly replacement level with a few real
+    // players still unsigned. [TUNE] 140 free agents at league start.
+    for (let i = 0; i < 140; i++) {
       const p = generatePlayer(rng, { ovrTarget: rng.normalClamped(GENERATION.FREE_AGENT_OVR_MEAN, GENERATION.FREE_AGENT_OVR_SD, GENERATION.FREE_AGENT_OVR_MIN, GENERATION.FREE_AGENT_OVR_MAX), names });
-      registerPlayer(p, { status: 'FREE_AGENT', teamId: null }, false);
-    }
-    // FRINGE: the camp bodies and career backups underneath them, up to the
-    // floor the market is never allowed to fall below. Same function, same
-    // floor and the same "only if short" rule as the offseason top-up in
-    // lib/season.ts, so a league is born with the market it will keep.
-    for (const p of generateFringeFreeAgents(rng, fringeShortfall(leftovers), names)) {
       registerPlayer(p, { status: 'FREE_AGENT', teamId: null }, false);
     }
   }
