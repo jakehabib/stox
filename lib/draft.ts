@@ -156,12 +156,14 @@ export async function draftPlayer(opts: {
       await tx.player.update({ where: { id: opts.playerId }, data: { draftYear: opts.seasonYear, draftRound: pick.round, draftPickNo: overall } });
       await tx.transaction.create({
         data: { leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: 0, type: 'DRAFT', teamId: opts.teamId,
+          playerId: opts.playerId,
           headline: `Round ${pick.round}, Pick ${pick.slot}: ${player.firstName} ${player.lastName} (${player.position})` },
       });
     } else if (isFantasy) {
       const player = await tx.player.findUniqueOrThrow({ where: { id: opts.playerId } });
       await tx.transaction.create({
         data: { leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: 0, type: 'DRAFT', teamId: opts.teamId,
+          playerId: opts.playerId,
           headline: `Fantasy draft: ${player.firstName} ${player.lastName} (${player.position})` },
       });
     }

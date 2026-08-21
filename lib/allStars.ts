@@ -390,6 +390,7 @@ export async function recordAllStars(
       await tx.transaction.create({
         data: {
           leagueId, seasonYear, week, type: ALL_STAR_SNUB_TYPE, teamId: snubToRecord.teamId,
+          playerId: snubToRecord.playerId,
           headline: `${snubToRecord.name} (${snubToRecord.position})`,
           detail: `${snubToRecord.statLine}${SNUB_DETAIL_SEP}first man out at ${snubToRecord.position} in the ${snubToRecord.conference}`,
         },
@@ -405,6 +406,7 @@ export async function recordAllStars(
     await tx.transaction.createMany({
       data: selection.selected.map((c) => ({
         leagueId, seasonYear, week, type: ALL_STAR_TYPE, teamId: c.teamId,
+        playerId: c.playerId,
         // The same "Name (POS)" shape every award row uses, because the player
         // page matches a man's honours by that prefix. The honour's NAME is
         // not in here: it is the row's `type`, and every reader derives it.

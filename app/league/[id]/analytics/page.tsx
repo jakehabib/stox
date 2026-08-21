@@ -655,13 +655,19 @@ export default async function AnalyticsPage({ params, searchParams }: {
         teamAbbr={me.abbr}
         eyebrow={`${league.seasonYear} · ${league.phase.toLowerCase()} · week ${league.week}`}
         title="Analytics Department"
+        // IN-WORLD VOICE. This said "Everything below is read-only arithmetic
+        // over what this save already produced — no projection the sim does not
+        // make... Nothing on this screen feeds the simulation back", which is
+        // an engineer reassuring another engineer, on the screen a player opens
+        // to feel like a front office. README principle 0: the point is a
+        // universe you can get lost in, and nothing breaks that faster than the
+        // game explaining its own implementation. Say what the room is for.
         subtitle={
           <>
-            Everything below is read-only arithmetic over what this save already produced — no projection the sim
-            does not make, no number the game does not use. Nothing on this screen feeds the simulation back.
-            {' '}<Link href={`/league/${league.id}/cap`} className="text-accent2 hover:underline">The cap sheet</Link> and
-            {' '}<Link href={`/league/${league.id}/stats`} className="text-accent2 hover:underline">the stats page</Link> remain
-            the places to act on any of it.
+            What the numbers say about this football team. Bring it to
+            {' '}<Link href={`/league/${league.id}/cap`} className="text-accent2 hover:underline">the cap sheet</Link> or
+            {' '}<Link href={`/league/${league.id}/stats`} className="text-accent2 hover:underline">the stats page</Link> when
+            you want to act on it.
           </>
         }
         action={
@@ -806,49 +812,35 @@ export default async function AnalyticsPage({ params, searchParams }: {
         )}
       </AnalyticsShell>
 
-      <NotBuilt elapsedMs={elapsedMs} groups={groups} advanced={advanced} />
+      <NotBuilt advanced={advanced} />
     </div>
   );
 }
 
 /**
- * What this department deliberately does not have, stated once at the bottom
- * rather than eight times in eight panels. A screen that quietly omits what it
- * cannot compute is worse than one that has nothing to say.
+ * WHAT WE DON'T MEASURE — a short, in-world note, in Advanced only.
+ *
+ * This used to be six paragraphs headed "What the department cannot tell you,
+ * and why", explaining the database to the player: "the database stores no
+ * historical rating at unit granularity", "a stat line only exists for a
+ * player who recorded a statistic", plus a render timing readout. All true,
+ * all engineer-to-engineer, and all of it on a screen whose whole job is to
+ * feel like a room in a football club. A real analytics department says "we
+ * don't track that" and moves on; it does not apologise for its schema.
+ *
+ * Honesty is kept, because the alternative is a screen that quietly omits
+ * what it cannot compute — see README principle 6. It is just said the way a
+ * person would say it.
  */
-function NotBuilt({ elapsedMs, groups, advanced }: { elapsedMs: number; groups: ReturnType<typeof buildUnitSpendTable>; advanced: boolean }) {
-  const worst = [...groups].sort((a, b) => a.ratingDelta - b.ratingDelta)[0];
+function NotBuilt({ advanced }: { advanced: boolean }) {
+  if (!advanced) return null;
   return (
     <div className="panel p-4 mt-4 text-[11.5px] text-muted leading-relaxed">
-      <div className="label-sm text-[10px] mb-2">What the department cannot tell you, and why</div>
+      <div className="label-sm text-[10px] mb-2">What we don&apos;t measure</div>
       <p>
-        <span className="text-chalk font-semibold">Unit strength over time.</span> The database stores no historical
-        rating at unit granularity, and it is not reconstructable — ratings drift every offseason and nothing logs
-        the change. So this screen can say {worst ? `${worst.group} rates ${worst.rating} today, ${ordinal(worst.rank)} of 32` : 'where each unit rates today'},
-        and it cannot say whether that has been true for four years. Drawing that line would mean inventing it.
-      </p>
-      <p className="mt-2">
-        <span className="text-chalk font-semibold">Snap counts and participation.</span> Nothing records who was on
-        the field: a stat line only exists for a player who recorded a statistic, so an offensive lineman produces
-        no row at all. That is why the production panel has men with no line.
-      </p>
-      <p className="mt-2">
-        <span className="text-chalk font-semibold">Anything below the drive.</span> A stored drive keeps its result,
-        points, plays and yards — no down, no distance, no field position. Expected points added, success rate,
-        red-zone efficiency and third-and-long conversion are therefore not computable, and none of them is
-        approximated here.
-      </p>
-      <p className="mt-2">
-        <span className="text-chalk font-semibold">What the board believed at the pick.</span> Scouting reports are
-        re-centred in place as confidence rises, so the projection that was actually made is gone by the time the
-        player has a season behind him.
-      </p>
-      <p className="mt-3 pt-2 border-t border-line/60">
-        Computed live from the database in <span className="tabular-nums text-chalk">{elapsedMs}ms</span>
-        {advanced
-          ? ', including one full read of every played box score in the league — the only expensive query on this screen, and the Simple view never makes it.'
-          : '. The Simple view makes no league-wide box-score read at all.'} Nothing on this page is cached, and
-        nothing on it is stored.
+        No snap counts, so a lineman&apos;s week leaves no trace and his page stays blank. No play-by-play, so
+        nothing here is per-play in the modern sense — drives are the smallest unit we keep. And no archive of
+        what a unit rated in past seasons, so every rating on this screen is today&apos;s.
       </p>
     </div>
   );

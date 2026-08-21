@@ -123,7 +123,7 @@ export async function applyInSeasonProgression(
   }
 
   const updates: { id: string; attrs: string; ovr: number; potential: number }[] = [];
-  const leaders: { name: string; categories: string[] }[] = [];
+  const leaders: { id: string; name: string; categories: string[] }[] = [];
 
   for (const p of players) {
     const attrs = readJson<AttrMap>(p.trueAttrs, {});
@@ -139,7 +139,7 @@ export async function applyInSeasonProgression(
     if (categories) {
       const milestone = bumpForMilestone(p.position as Position, rolled, p.potential, PROGRESSION.STAT_LEADER_OVR_BUMP, PROGRESSION.STAT_LEADER_POTENTIAL_BUMP);
       updates.push({ id: p.id, attrs: writeJson(milestone.attrs), ovr: milestone.ovr, potential: milestone.potential });
-      leaders.push({ name: `${p.firstName} ${p.lastName}`, categories });
+      leaders.push({ id: p.id, name: `${p.firstName} ${p.lastName}`, categories });
     } else {
       updates.push({ id: p.id, attrs: writeJson(rolled), ovr: rolledOvr, potential: p.potential });
     }
@@ -166,6 +166,7 @@ export async function applyInSeasonProgression(
     await prisma.transaction.createMany({
       data: leaders.map((l) => ({
         leagueId, seasonYear, week, type: 'DEV_MILESTONE',
+        playerId: l.id,
         headline: `${l.name} is pacing the league in ${l.categories.join(' and ')}`,
         detail: 'Sustained production like that is starting to show up in his game.',
       })),

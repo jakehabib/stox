@@ -24,31 +24,40 @@ import type { BoxScore, SeasonStats } from './types';
  * club. So the true decomposition — year, team, games, stats — is
  * reconstructable by replaying the box scores, and it is reconstructable for
  * saves that predate this feature too, because nothing in the codebase ever
- * deletes a Game. That is what buildSeasonLines() below does, and it is the
- * ONLY source this module will accept for a season row.
+ * deletes a Game. That is what buildSeasonLines() below does. It is one of
+ * exactly two sources this module accepts for a season row; the other is the
+ * generator — see below.
  *
  * WHAT IS NOT KNOWABLE, and is therefore never invented
  * -----------------------------------------------------
- * Two kinds of career predate any box score:
+ * A save that rolled seasons over before PlayerSeason existed still has its
+ * Games, so those years DO decompose — the sweep below picks them up the
+ * first time such a save advances.
  *
- *   1. A save that rolled seasons over before PlayerSeason existed and whose
- *      Games were... still there, actually — so those DO decompose. Good.
- *   2. Careers seeded at league creation. lib/gen/leagueHistory.ts gives every
- *      veteran on a roster the career he "would have had", walking backward
- *      one fictional season at a time — but it persists only the merged
- *      total. The per-season walk is gone the moment generation returns (the
- *      Rng stream is not stored), and that module's own comment is explicit
- *      that "nothing in the schema records where a generated veteran was in
- *      2019". The team-that-year — the entire point of this table — was
- *      never decided, for any of those seasons, by anything.
+ * Careers SEEDED at league creation are the other kind, and the rule about
+ * them has not changed: this module will not split a merged career total into
+ * yearly rows. That would be inventing history — a different fiction from the
+ * one that produced the total, forced to sum to it, attached to clubs picked
+ * out of the air.
  *
- * So a 33-year-old at league creation has a true career total and no
- * recoverable seasons. Splitting it into plausible-looking yearly rows would
- * be inventing history: a different fiction from the one that produced the
- * total, forced to sum to it, attached to clubs picked out of the air. This
- * module refuses. Everything that cannot be attributed to a real played
- * season collapses into ONE row, labelled for what it is — "Before 2026" —
- * carrying the true merged remainder. See residualBeforeRow().
+ * What changed is upstream, and it makes the refusal cost nothing.
+ * lib/gen/leagueHistory.ts always walked a seeded veteran's career one season
+ * at a time and then threw the walk away; it now PERSISTS each of those
+ * seasons as a PlayerSeason row — the real year, the real games, the real
+ * line, and a club decided at generation from the same seeded Rng
+ * (clubHistory()). Those rows are not a reconstruction of the total; they are
+ * what the total was summed from, so nothing here has to guess and the
+ * residual comes out at exactly zero.
+ *
+ * A save created before that landed genuinely cannot be repaired: its
+ * per-season walk is gone and the Rng stream was never stored. Those veterans
+ * keep the single honest row they have always had — and so does any remainder
+ * that survives on a new league, a rounding difference or a season the
+ * generator skipped, because a residual it cannot attribute is still a
+ * residual. Everything unattributable collapses into ONE row, labelled for
+ * what it is — "Before 2026" — carrying the true merged remainder. It is
+ * simply empty, and therefore absent, for a league this version created. See
+ * residualBeforeRow().
  *
  * (The seeded FRANCHISE backstory is a different case and stays as it is:
  * TeamSeasonRecord rows, titles and award winners are persisted as league
@@ -85,7 +94,7 @@ import type { BoxScore, SeasonStats } from './types';
  * ===========================================================================
  */
 
-/** One real, played, attributable season with one club. */
+/** One attributable season with one club — replayed from box scores, or seeded at league creation. */
 export interface SeasonLine {
   seasonYear: number;
   /** Null only if the club row has since been deleted; `teamAbbr` still stands. */

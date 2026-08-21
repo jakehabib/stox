@@ -316,6 +316,9 @@ model Player {
   @@index([leagueId])
   @@index([teamId])
   @@index([position])
+
+  /// Every league-wire row about him — signings, releases, draft day, awards.
+  transactions Transaction[]
 }
 
 // ---------------------------------------------------------------------------
@@ -520,11 +523,36 @@ model Transaction {
   // | CHAMPION | FIRE (coordinator fired for a poor record)
   type       String
   teamId     String?
+
+  /// The man this row is ABOUT, when it is about one.
+  ///
+  /// Every player-shaped transaction — a signing, a release, a draft pick, an
+  /// award, an All-Star selection — used to carry his name in `headline` and
+  /// nothing else. So the trophy screen had to match the Championship MVP back
+  /// to a box line BY NAME to recover a portrait, and the History page, the GM
+  /// honours list and the league wire could name a player they could not link
+  /// to. A name is not an identity: two men can share one, and a rename or a
+  /// format change silently breaks every reader at once.
+  ///
+  /// Nullable because plenty of rows are not about a player at all (CHAMPION,
+  /// FIRE, NEWS, TRADE — which is about two clubs and a package), and because
+  /// rows written before this column existed genuinely do not know. Null means
+  /// "not known / not applicable", never "no player".
+  ///
+  /// SetNull rather than Cascade, deliberately: a transaction is a historical
+  /// record and must survive the player being deleted. Losing the link is
+  /// acceptable; losing the fact that the signing happened is not.
+  playerId   String?
+  player     Player?  @relation(fields: [playerId], references: [id], onDelete: SetNull)
+
   headline   String
   detail     String   @default("")
   createdAt  DateTime @default(now())
 
   @@index([leagueId, seasonYear, week])
+  /// "Everything that ever happened to this man", which is the read the column
+  /// exists to serve — his page, and the provenance panel behind it.
+  @@index([playerId])
 }
 
 // ---------------------------------------------------------------------------
