@@ -199,36 +199,52 @@ const VOICE_SOLID = [
   'He gave us what we needed.',
 ];
 
-/** The specific thing he did, named. Falls back to the whole line. */
+/** "a", "two", "three"... A coach says "two sacks", not "2 sacks". */
+const COUNT_WORD = ['no', 'a', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'];
+function count(n: number, singular: string, plural = `${singular}s`): string {
+  return `${COUNT_WORD[n] ?? n} ${n === 1 ? singular : plural}`;
+}
+
+/**
+ * The specific things he did, named — up to two of them, because a strip-sack
+ * is one afternoon and printing only the sack undersells it while printing
+ * the whole box line is not a sentence. Every clause is a restatement of a
+ * figure that is also printed underneath it.
+ */
 function headlinePhrase(f: Folded, weeks: number): string {
   const s = f.stats as Record<string, number | undefined>;
   const pos = f.line.position;
   const over = weeks > 1 ? ` over ${f.games} game${f.games === 1 ? '' : 's'}` : '';
+  const bits: string[] = [];
+  const push = (b: string) => { if (bits.length < 2) bits.push(b); };
 
   if (pos === 'QB') {
-    if ((s.passTd ?? 0) >= 3) return `${s.passTd} touchdown throws${over}.`;
-    if ((s.passYds ?? 0) > 0) return `${s.passYds} through the air${over}, ${s.passTd ?? 0} of them scores.`;
+    if ((s.passTd ?? 0) > 0) push(count(s.passTd ?? 0, 'touchdown throw'));
+    if ((s.passYds ?? 0) > 0) push(`${s.passYds} through the air`);
+    if ((s.rushTd ?? 0) > 0) push(count(s.rushTd ?? 0, 'score with his legs'));
+  } else if (pos === 'RB') {
+    if ((s.rushYds ?? 0) > 0) push(`${s.rushYds} on the ground off ${s.rushAtt ?? 0} carries`);
+    if ((s.rushTd ?? 0) > 0) push(count(s.rushTd ?? 0, 'score'));
+    if ((s.rec ?? 0) >= 3) push(count(s.rec ?? 0, 'catch', 'catches'));
+  } else if (pos === 'WR' || pos === 'TE') {
+    if ((s.recYds ?? 0) > 0) push(`${s.recYds} on ${count(s.rec ?? 0, 'catch', 'catches')}`);
+    if ((s.recTd ?? 0) > 0) push(count(s.recTd ?? 0, 'trip to the end zone'));
+  } else if (pos === 'EDGE' || pos === 'DT') {
+    if ((s.sacks ?? 0) > 0) push(count(s.sacks ?? 0, 'sack'));
+    if ((s.ff ?? 0) > 0) push(count(s.ff ?? 0, 'forced fumble'));
+    if (bits.length === 0) push(`${s.tackles ?? 0} tackles`);
+  } else if (pos === 'LB' || pos === 'CB' || pos === 'S') {
+    if ((s.defInt ?? 0) > 0) push(count(s.defInt ?? 0, 'interception'));
+    if ((s.ff ?? 0) > 0) push(count(s.ff ?? 0, 'forced fumble'));
+    if ((s.pd ?? 0) > 0) push(`${s.pd} ball${(s.pd ?? 0) === 1 ? '' : 's'} broken up`);
+    if (bits.length === 0) push(`${s.tackles ?? 0} tackles`);
+  } else if (pos === 'K') {
+    push(`${s.fgm ?? 0} of ${s.fga ?? 0} from the field`);
+    if ((s.xpm ?? 0) > 0) push(`${s.xpm} of ${s.xpa ?? 0} on extra points`);
   }
-  if (pos === 'RB') {
-    if ((s.rushTd ?? 0) >= 2) return `${s.rushTd} on the ground${over}.`;
-    if ((s.rushYds ?? 0) > 0) return `${s.rushYds} rushing on ${s.rushAtt ?? 0} carries${over}.`;
-  }
-  if (pos === 'WR' || pos === 'TE') {
-    if ((s.recTd ?? 0) >= 2) return `${s.recTd} in the end zone${over}.`;
-    if ((s.recYds ?? 0) > 0) return `${s.recYds} receiving on ${s.rec ?? 0} catches${over}.`;
-  }
-  if (pos === 'EDGE' || pos === 'DT') {
-    if ((s.sacks ?? 0) > 0) return `${s.sacks} sack${(s.sacks ?? 0) === 1 ? '' : 's'}${over}.`;
-    return `${s.tackles ?? 0} tackles${over}.`;
-  }
-  if (pos === 'LB' || pos === 'CB' || pos === 'S') {
-    if ((s.defInt ?? 0) > 0) return `${s.defInt} interception${(s.defInt ?? 0) === 1 ? '' : 's'}${over}.`;
-    if ((s.ff ?? 0) > 0) return `${s.ff} forced fumble${(s.ff ?? 0) === 1 ? '' : 's'}${over}.`;
-    if ((s.pd ?? 0) >= 2) return `${s.pd} balls broken up${over}.`;
-    return `${s.tackles ?? 0} tackles${over}.`;
-  }
-  if (pos === 'K') return `${s.fgm ?? 0} of ${s.fga ?? 0} from the field${over}.`;
-  return statLine(pos, f.stats) + '.';
+
+  if (bits.length === 0) return `${statLine(pos, f.stats)}${over}.`;
+  return `${capitalise(bits.join(' and '))}${over}.`;
 }
 
 function praise(f: Folded, grade: number, weeks: number, rng: Rng): string {
@@ -333,7 +349,7 @@ function buildNotes(payloads: CoachPayload[], folded: Map<string, Folded>, weeks
       );
     }
     if (t.sacksFor > 0 || t.sacksAgainst > 0) {
-      notes.push(`The front got home ${times(t.sacksFor)}; they got to our passer ${t.sacksAgainst} time${t.sacksAgainst === 1 ? '' : 's'}.`);
+      notes.push(`The front got home ${times(t.sacksFor)}; they got to our passer ${times(t.sacksAgainst)}.`);
     }
   }
 
