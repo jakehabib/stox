@@ -18,8 +18,8 @@ export function MatchupCard({ away, home, weekLabel, score }: {
       </div>
       {/* Split identity bar — each side's own team color, not a shared accent. */}
       <div className="h-[3px] w-full flex">
-        <div className="flex-1" style={{ background: generateTeamLogoParams(away.teamId).primary }} />
-        <div className="flex-1" style={{ background: generateTeamLogoParams(home.teamId).primary }} />
+        <div className="flex-1" style={{ background: generateTeamLogoParams(away.abbr).primary }} />
+        <div className="flex-1" style={{ background: generateTeamLogoParams(home.abbr).primary }} />
       </div>
     </div>
   );
@@ -30,7 +30,7 @@ function MatchupSide({ side, score, align }: { side: Side; score?: number; align
   // Curated team colors are deliberately dark for use as fills/borders —
   // several fail contrast as small text on this near-black background, so
   // lighten at render time rather than using the raw primary hex.
-  const textColor = `color-mix(in srgb, ${generateTeamLogoParams(side.teamId).primary} 60%, white 40%)`;
+  const textColor = `color-mix(in srgb, ${generateTeamLogoParams(side.abbr).primary} 60%, white 40%)`;
   const row = (
     <>
       <TeamLogo seed={side.teamId} abbr={side.abbr} size={36} className="shrink-0" />

@@ -219,7 +219,7 @@ function ReturningView({
 }) {
   const lead = leagues[0];
   const leadTeam = lead?.teams[0];
-  const accent = leadTeam ? generateTeamLogoParams(leadTeam.id).primary : undefined;
+  const accent = leadTeam ? generateTeamLogoParams(leadTeam.abbr).primary : undefined;
 
   return (
     <>
@@ -293,7 +293,7 @@ function ReturningView({
       <div className="panel divide-y divide-line/60">
         {leagues.map((l) => {
           const team = l.teams[0];
-          const teamAccent = team ? generateTeamLogoParams(team.id).primary : undefined;
+          const teamAccent = team ? generateTeamLogoParams(team.abbr).primary : undefined;
           return (
             <div
               key={l.id}

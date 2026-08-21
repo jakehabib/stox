@@ -91,7 +91,7 @@ export default async function StartPage({ params }: { params: { id: string } }) 
   const ratings = fantasy ? null : await buildLeagueRatings(league.id);
   const mine = ratings?.get(me.id);
 
-  const accent = generateTeamLogoParams(me.id).primary;
+  const accent = generateTeamLogoParams(me.abbr).primary;
   const rivals = teams.filter(
     (t) => t.conference === me.conference && t.division === me.division && t.id !== me.id,
   );

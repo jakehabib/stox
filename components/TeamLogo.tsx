@@ -48,7 +48,18 @@ const GEOM: Record<LogoShape, { cy: number; scale: number; plateY: number; plate
 };
 
 export function TeamLogo({ seed, abbr, nickname, size = 40, className }: Props) {
-  const p = generateTeamLogoParams(seed);
+  // Seeded off the ABBREVIATION, not the team row's id. A franchise has
+  // colours; it does not re-roll them every time somebody starts a new save.
+  // The id is a cuid minted inside league generation, so the Boston Minutemen
+  // came out crimson in one league and olive in the next — and, worse, no
+  // screen that exists BEFORE a league is generated could show the crest the
+  // player was about to get. The team picker on /new showed one crest and the
+  // handover screen showed a different one for the same club.
+  //
+  // `seed` stays in the signature and stays the fallback, so a caller with no
+  // abbreviation (or a future custom club) still gets a stable crest of its
+  // own rather than nothing.
+  const p = generateTeamLogoParams(abbr || seed);
   const clipId = `logo-clip-${seed}`;
   const path = SHAPE_PATH[p.shape];
   const letters = abbr.slice(0, 4).toUpperCase();

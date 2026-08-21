@@ -139,7 +139,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
       default: return (positionSortKey(a.p.position) - positionSortKey(b.p.position)) * dir || b.p.trueOvr - a.p.trueOvr;
     }
   });
-  const teamColor = generateTeamLogoParams(team.id).primary;
+  const teamColor = generateTeamLogoParams(team.abbr).primary;
 
   // Own roster is fully revealed unless the settings specifically fog it —
   // the header should say what's actually shown, not always claim "Scouted".

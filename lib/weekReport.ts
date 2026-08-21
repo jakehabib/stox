@@ -369,7 +369,7 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
 
   const userTeam = await prisma.team.findUnique({ where: { id: userTeamId } });
   if (!userTeam) return null;
-  const teamColor = generateTeamLogoParams(userTeam.id).primary;
+  const teamColor = generateTeamLogoParams(userTeam.abbr).primary;
 
   const base: WeekReport = {
     seasonYear: league.seasonYear,
@@ -421,12 +421,12 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
       home: {
         teamId: game.homeTeam.id, abbr: game.homeTeam.abbr, city: game.homeTeam.city, nickname: game.homeTeam.nickname,
         score: game.homeScore, record: homeAfter ? recordString(homeAfter) : '', won: game.homeScore > game.awayScore,
-        color: generateTeamLogoParams(game.homeTeam.id).primary,
+        color: generateTeamLogoParams(game.homeTeam.abbr).primary,
       },
       away: {
         teamId: game.awayTeam.id, abbr: game.awayTeam.abbr, city: game.awayTeam.city, nickname: game.awayTeam.nickname,
         score: game.awayScore, record: awayAfter ? recordString(awayAfter) : '', won: game.awayScore > game.homeScore,
-        color: generateTeamLogoParams(game.awayTeam.id).primary,
+        color: generateTeamLogoParams(game.awayTeam.abbr).primary,
       },
     };
   }
@@ -715,7 +715,7 @@ export async function buildTrophyMoment(leagueId: string, seasonYear: number, ro
     city: userTeam.city,
     nickname: userTeam.nickname,
     abbr: userTeam.abbr,
-    color: generateTeamLogoParams(userTeam.id).primary,
+    color: generateTeamLogoParams(userTeam.abbr).primary,
     roundLabel: ROUND_LABEL[last.kind] ?? last.kind,
     finalScore: {
       mine: lastLeg.myScore, theirs: lastLeg.theirScore,

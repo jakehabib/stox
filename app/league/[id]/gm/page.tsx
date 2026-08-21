@@ -56,7 +56,7 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
       <div
         className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
         style={{
-          ['--team-accent' as never]: generateTeamLogoParams(team.id).primary,
+          ['--team-accent' as never]: generateTeamLogoParams(team.abbr).primary,
           borderColor: 'var(--team-accent)',
           background: 'radial-gradient(ellipse 120% 140% at 0% 0%, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 70%)',
         }}

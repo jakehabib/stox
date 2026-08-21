@@ -30,7 +30,7 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
   action?: React.ReactNode;
   facts?: MastheadFact[];
 }) {
-  const accent = teamId ? generateTeamLogoParams(teamId).primary : undefined;
+  const accent = teamId ? generateTeamLogoParams(teamAbbr ?? teamId).primary : undefined;
 
   return (
     <div

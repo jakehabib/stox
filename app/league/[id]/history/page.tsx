@@ -240,7 +240,7 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
         <div
           className="relative overflow-hidden rounded-lg border-2 shadow-elevated flex items-center gap-4 px-6 py-5"
           style={{
-            ['--team-accent' as never]: generateTeamLogoParams(team.id).primary,
+            ['--team-accent' as never]: generateTeamLogoParams(team.abbr).primary,
             borderColor: 'var(--team-accent)',
             background: 'radial-gradient(ellipse 120% 140% at 100% 0%, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 70%)',
           }}

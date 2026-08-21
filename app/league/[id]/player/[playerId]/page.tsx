@@ -100,7 +100,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
     : null;
   const capSpace = capSummary ? capSummary.capSpace : Number.MAX_SAFE_INTEGER;
 
-  const jerseyColor = player.team ? generateTeamLogoParams(player.team.id).primary : undefined;
+  const jerseyColor = player.team ? generateTeamLogoParams(player.team.abbr).primary : undefined;
   const label = playerLabel({
     ovr: view.scoutedOvr,
     potential: view.revealed ? player.potential : (view.potLow + view.potHigh) / 2,

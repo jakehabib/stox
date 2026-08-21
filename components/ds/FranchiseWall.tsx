@@ -19,16 +19,15 @@ export interface FranchiseSeed {
  * screens one stable seed instead of several, so the landing wall, the picker
  * and the setup panel all draw the SAME crest for a given club.
  *
- * KNOWN LIMITATION, stated here because it is visible to a player: the colour
- * pair and shape this produces are not the ones the generated league will
- * give that club. The MARK is — teamMarks.tsx keys off the nickname, so
- * Boston is a tricorn hat in the picker and a tricorn hat in the league — but
- * the field colour is re-rolled per save. Fixing it properly means giving
- * TeamLogo's ~40 call sites a franchise-stable seed rather than the row id,
- * which is outside this change's file ownership. See the handoff notes.
+ * The seed IS the abbreviation, which is what makes this a preview rather
+ * than a guess. Crest colour and shape used to derive from the team row's
+ * cuid, minted during league generation — so the club you picked was drawn
+ * in one colour here and a different one in the league, and no pre-league
+ * screen could have known. A franchise has colours; it does not re-roll them
+ * every time somebody starts a save. See components/TeamLogo.tsx.
  */
 export function previewCrestSeed(abbr: string): string {
-  return `preview-${abbr}`;
+  return abbr;
 }
 
 /** The colour a pre-league franchise is drawn in. Same seed as its crest. */

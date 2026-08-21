@@ -138,7 +138,7 @@ export default async function SchedulePage({
           </div>
           <div
             className="panel divide-y divide-line/50"
-            style={{ ['--team-accent' as never]: generateTeamLogoParams(userTeam.id).primary }}
+            style={{ ['--team-accent' as never]: generateTeamLogoParams(userTeam.abbr).primary }}
           >
             {myGames.map((g) => {
               const home = g.homeTeamId === userTeam.id;

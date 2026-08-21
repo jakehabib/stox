@@ -189,7 +189,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     return `/league/${league.id}/draft?${posP}${shortlistOnly ? '' : 'shortlist=1&'}${suffix}`;
   };
 
-  const onClockColor = onClockTeam ? generateTeamLogoParams(onClockTeam.id).primary : undefined;
+  const onClockColor = onClockTeam ? generateTeamLogoParams(onClockTeam.abbr).primary : undefined;
 
   // How much of this class you actually have a read on, and how much draft
   // capital you hold — the two things that decide whether the board in front

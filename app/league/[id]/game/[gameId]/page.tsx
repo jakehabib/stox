@@ -23,7 +23,7 @@ export default async function GamePage({ params }: { params: { id: string; gameI
   const perspective: 'home' | 'away' = userTeam && game.awayTeamId === userTeam.id ? 'away' : 'home';
   const shape = computeGameShape(box, perspective);
   const perspectiveTeam = perspective === 'home' ? game.homeTeam : game.awayTeam;
-  const shapeColor = generateTeamLogoParams(perspectiveTeam.id).primary;
+  const shapeColor = generateTeamLogoParams(perspectiveTeam.abbr).primary;
   const overtime = wentToOvertime(box);
   const margin = Math.abs(game.homeScore - game.awayScore);
 

@@ -121,7 +121,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   const injured = roster.filter((p) => p.injuryWeeks > 0);
   const next = upcomingGames[0];
   const tenure = await buildGmCareerSummary(league.id, team, league.seasonYear);
-  const teamColor = generateTeamLogoParams(team.id).primary;
+  const teamColor = generateTeamLogoParams(team.abbr).primary;
 
   // --- Next matchup + a display-only win probability read (see lib/winProbability.ts) ---
   // League-wide ratings: one query set, reused by the matchup read below and

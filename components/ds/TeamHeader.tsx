@@ -23,7 +23,7 @@ export function TeamHeader({
   /** The next matchup, embedded directly rather than a separate card — one hero, one read. */
   nextGame?: NextGame;
 }) {
-  const { primary, accent } = generateTeamLogoParams(teamId);
+  const { primary, accent } = generateTeamLogoParams(abbr);
 
   return (
     <div
