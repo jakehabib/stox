@@ -201,16 +201,30 @@ seasons deep each, landing at **0 violations**.
    fixed — `FANTASY_DRAFT` is an opt-in alternate league-start mode
    (`RANDOM_ROSTERS` is the default), so it hasn't been exercised by the
    `sim:health` harness, which always starts leagues with `RANDOM_ROSTERS`.
-3. **The salary cap never actually grows, so contracts outrun it (INV-19).**
-   `CAP.CAP_GROWTH_PER_YEAR` is 7%/yr and `capForYear(seasonYear,
-   leagueStartYear)` implements it correctly — but its only real caller,
-   `teamCapSummary` (`lib/cap-summary.ts`), passes the league's *current*
-   `seasonYear` as `leagueStartYear`, so `elapsed` is always 0 and the
-   ceiling is pinned at `CAP.BASE_CAP` ($255.0M) forever. Meanwhile
-   `buildContract` escalates base salaries ~12% per year, so every roster's
-   committed cap climbs against a frozen ceiling and teams drift over it a
-   few seasons in — which is what INV-19 reports in a multi-season
-   `sim:health` run. Not fixed here because `League` has no start-year column
-   to read: the schema needs a `startYear Int` (defaulted from the row's
-   creation-time `seasonYear`) before `teamCapSummary` can pass the right
-   argument, and that is a migration rather than a code change.
+3. ~~**The salary cap never actually grows, so contracts outrun it
+   (INV-19).**~~ **FIXED.** `League.startYear` now records the founding
+   season (nullable in the schema so `prisma db push` can add it to an
+   existing database without a force-reset), and everything reads it through
+   `resolveStartYear()` in `lib/leagueYear.ts`, which derives and persists a
+   value for saves created before the column existed — from
+   `MIN(Transaction.seasonYear)`, since `createLeague` writes a week-0
+   "founded" transaction and nothing ever deletes transactions. Both call
+   sites (`lib/cap-summary.ts` and this file's INV-19 check) now pass it, so
+   the ceiling actually compounds at 7%/yr and the two can never disagree.
+4. **Nothing enforces the roster *floor* either (the mirror of item 1).**
+   `LEAGUE.ROSTER_MIN` (46) is read by no signing, cut, draft or advance
+   path. The contract-economy repair got AI rosters from a measured ~25
+   players back to ~48 at their annual low point, but a handful of teams
+   still sit under 46 at the trough, and nothing in the game says so. A
+   phase-aware invariant (only meaningful once free agency has run) and an
+   AI "sign minimum-salary bodies up to the floor" pass are the two obvious
+   next steps.
+5. **Undrafted prospects accumulate in the free agent pool forever.**
+   Each draft class adds `DRAFT_CLASS_SIZE + DRAFT_CLASS_EXTRA_UDFA` players
+   and only ~224 are drafted; the remainder have `isDraftee` cleared at the
+   end of DRAFT and become ordinary free agents. `progressAllPlayers` only
+   ages `status: 'ACTIVE'` players, so they never age, never retire and never
+   leave. A nine-season measured run ends with ~2,500 free agents. This is a
+   progression/aging gap rather than a contract one, so it was left alone
+   here, but it is what makes the free agent list unreadable late in a
+   dynasty.

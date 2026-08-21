@@ -91,7 +91,26 @@ export async function draftPlayer(opts: {
       const team = await prisma.team.findUniqueOrThrow({ where: { id: opts.teamId }, select: { isUser: true } });
 
       if (team.isUser) {
-        await assertCapRoom({ action: 'Rookie deal', seasonYear: opts.seasonYear, capMode, charges: [{ teamId: opts.teamId, delta: hit }] });
+        // The draft is the one transaction a team cannot decline, and DRAFT is
+        // the one phase where "advance the week" is not an action the user can
+        // take (advanceWeek answers "make your picks, then advance" and moves
+        // nothing). So a user whose dead money alone exceeds the ceiling used
+        // to be deadlocked on the clock with no exit at all: the pick was
+        // blocked, the week would not move, and there is no pass/forfeit
+        // action. The same escape valve lib/season.ts's compliance block
+        // already uses applies here — block only while a way out still
+        // exists; if no combination of cuts can cover the bill, the pick goes
+        // through and the standing over-cap warning carries it, exactly like
+        // the AI's autoClearCapRoom fallback below.
+        const { capComplianceReport } = await import('./capEnforcement');
+        const summary = await teamCapSummary(opts.teamId, opts.seasonYear, capMode);
+        const shortfall = hit - summary.capSpace;
+        if (shortfall > 0) {
+          const report = await capComplianceReport(opts.teamId, opts.seasonYear, capMode, { alwaysRelief: true });
+          if (report.maxCutRelief >= shortfall) {
+            await assertCapRoom({ action: 'Rookie deal', seasonYear: opts.seasonYear, capMode, charges: [{ teamId: opts.teamId, delta: hit }] });
+          }
+        }
       } else {
         const summary = await teamCapSummary(opts.teamId, opts.seasonYear, capMode);
         const shortfall = hit - summary.capSpace;

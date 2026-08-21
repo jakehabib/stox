@@ -356,6 +356,13 @@ export async function capComplianceReport(
     path.push(c);
     cleared += c.frees;
   }
+  // `path` means "cuts that, taken together, clear the shortfall". When no
+  // combination of cuts can (dead money alone can exceed the ceiling), it
+  // walked the whole roster and handed back a route that does not arrive —
+  // and callers presented it as one, telling a permanently stuck user to make
+  // a cut that cannot fix anything. An empty path is the honest answer, and
+  // every caller already renders that case as "a trade is the way back".
+  const fixable = maxCutRelief >= shortfall;
 
   return {
     ...base,
@@ -367,9 +374,9 @@ export async function capComplianceReport(
     rosterSize: summary.rosterSize,
     shortfall,
     maxCutRelief,
-    fixable: maxCutRelief >= shortfall,
+    fixable,
     relief,
-    path,
+    path: fixable ? path : [],
   };
 }
 

@@ -10,7 +10,10 @@ const TYPE_LABELS: Record<string, string> = {
   AWARD_MVP: 'MVP', AWARD_OPOY: 'OPOY', AWARD_DPOY: 'DPOY', AWARD_ROTY: 'ROTY', AWARD_SBMVP: 'SB MVP',
   DEV_MILESTONE: 'Development',
 };
-const FILTERS = ['ALL', 'NEWS', 'TRADE', 'SIGN', 'CUT', 'DRAFT', 'INJURY', 'CHAMPION', 'FIRE', 'DEV_MILESTONE'];
+// RESIGN belongs here now that something actually writes one — the label,
+// badge style and relevance weight for it already existed, but the type had
+// no producer, so the filter chip was left off.
+const FILTERS = ['ALL', 'NEWS', 'TRADE', 'SIGN', 'RESIGN', 'CUT', 'DRAFT', 'INJURY', 'CHAMPION', 'FIRE', 'DEV_MILESTONE'];
 
 const TYPE_STYLE: Record<string, string> = {
   NEWS: 'border-accent2/30 text-accent2 bg-accent2/10',

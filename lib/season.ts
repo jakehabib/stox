@@ -10,7 +10,7 @@ import { SimPlayer, SimStaff } from './sim/units';
 import { retirementChance, bumpForMilestone } from './progression';
 import { AttrMap } from './ratings';
 import { applyInSeasonProgression } from './development';
-import { proration } from './cap';
+import { proration, deadMoneyOnCut } from './cap';
 import { runAiFreeAgencyWave } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
 import { mergeStats } from './stats';
@@ -217,11 +217,21 @@ async function advanceWeekStep(leagueId: string) {
         data: { isDraftee: false },
       });
 
+      // Final cuts. Free agency and the draft both add bodies and neither
+      // has ever read LEAGUE.ROSTER_MAX, so a team could roll into the season
+      // carrying 57 players (INV-08). Nobody notices while the re-sign wave
+      // is leaking 400 players a year into free agency; once rosters actually
+      // recover, cut-down day has to exist.
+      const trimmed = await trimRostersToLimit(leagueId, league.seasonYear, settings);
+
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'PRESEASON', week: 1 } });
       return {
-        summary: undrafted.count > 0
-          ? `The draft is complete — ${undrafted.count} undrafted prospect(s) entered free agency. On to the new league year.`
-          : 'The draft is complete. On to the new league year.',
+        summary: [
+          'The draft is complete.',
+          undrafted.count > 0 ? `${undrafted.count} undrafted prospect(s) entered free agency.` : null,
+          trimmed > 0 ? `${trimmed} player(s) released in final cuts to get every roster to ${settings.rosterMax}.` : null,
+          'On to the new league year.',
+        ].filter(Boolean).join(' '),
       };
     }
 
@@ -879,6 +889,56 @@ async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: 
 }
 
 /**
+ * Cut-down day. Free agency and the rookie draft both add players and
+ * neither checks LEAGUE.ROSTER_MAX / settings.rosterMax — that limit was
+ * only ever read at league generation, which is exactly what INV-08 flags.
+ * Run once, when the draft closes, so every roster enters the new league
+ * year legal.
+ *
+ * The worst players go, by true rating. Their dead money is booked like any
+ * other cut, because over-signing has to cost something — but the players at
+ * the bottom of a 57-man roster are on small deals, so the bill is small.
+ * One transaction per team rather than one per player: 100+ individual CUT
+ * rows a year would bury the wire.
+ */
+async function trimRostersToLimit(leagueId: string, seasonYear: number, settings: LeagueSettings): Promise<number> {
+  const limit = settings.rosterMax || LEAGUE.ROSTER_MAX;
+  const teams = await prisma.team.findMany({ where: { leagueId }, select: { id: true, abbr: true } });
+  let total = 0;
+
+  for (const team of teams) {
+    const roster = await prisma.player.findMany({
+      where: { teamId: team.id, status: 'ACTIVE' },
+      include: { contract: true },
+      orderBy: [{ trueOvr: 'asc' }, { id: 'asc' }],
+    });
+    const overflow = roster.length - limit;
+    if (overflow <= 0) continue;
+
+    const cuts = roster.slice(0, overflow);
+    for (const p of cuts) {
+      const dead = deadMoneyOnCut(p.contract, settings.capMode);
+      if (dead > 0) {
+        await prisma.capCharge.create({
+          data: { teamId: team.id, year: seasonYear, amount: dead, label: `Dead money — ${p.firstName} ${p.lastName}` },
+        });
+      }
+      if (p.contract) await prisma.contract.delete({ where: { playerId: p.id } });
+      await prisma.player.update({ where: { id: p.id }, data: { teamId: null, status: 'FREE_AGENT' } });
+    }
+    await prisma.transaction.create({
+      data: {
+        leagueId, seasonYear, week: 1, type: 'CUT', teamId: team.id,
+        headline: `Final cuts — ${cuts.length} released`,
+        detail: `${cuts.map((p) => `${p.firstName} ${p.lastName} (${p.position})`).join(', ')} waived to reach the ${limit}-man limit.`,
+      },
+    });
+    total += cuts.length;
+  }
+  return total;
+}
+
+/**
  * Decide re-sign outcomes for one team's pending players — both the
  * truly-expired (0-years-remaining) and the walk-year (1-remaining, this is
  * their contract's last season) ones. Shared between the AI-only offseason
@@ -1000,8 +1060,11 @@ export async function resignDecisionsForTeam(
     // would actually walk, so it takes both a star and an eager GM.
     const worthExtendingEarly = expired
       || (p.trueOvr >= RESIGN.PREMIUM_OVR && willingness >= RESIGN.EARLY_EXTENSION_WILLINGNESS);
+    // Don't re-sign past a legal roster — free agency and the draft still
+    // have to fit, and anyone over the limit gets waived on cut-down day.
+    const roomOnRoster = !expired || projected < LEAGUE.ROSTER_MAX;
 
-    if (!worthKeeping || !worthExtendingEarly) {
+    if (!worthKeeping || !worthExtendingEarly || !roomOnRoster) {
       if (expired) released++;
       continue;
     }

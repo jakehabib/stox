@@ -1,6 +1,6 @@
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
-import { CAP } from './tuning';
+import { CAP, LEAGUE } from './tuning';
 import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { buildContract, marketValue, suggestedYears, capHit, formatMoney } from './cap';
@@ -144,6 +144,10 @@ export async function extendContract(opts: {
    * RESIGN, but until now nothing in the codebase ever produced one, so
    * "kept his own guy" and "extended a player under contract" were
    * indistinguishable on the wire.
+   *
+   * Defaults to whether the current deal is actually expiring, so the user's
+   * own re-signs read the same way on the wire as the AI's without every
+   * call site having to remember to say so.
    */
   reSign?: boolean;
 }) {
@@ -155,6 +159,7 @@ export async function extendContract(opts: {
   const teamId = player.teamId;
 
   const oldHit = player.contract ? capHit(player.contract, capMode) : 0;
+  const reSign = opts.reSign ?? (player.contract ? player.contract.yearsRemaining <= 1 : false);
   const contract = buildContract({ apy, years, signedYear: seasonYear, escalation: opts.escalation, bonusPct: opts.bonusPct });
   const newHit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries) }, capMode);
   // The old deal is torn up the instant this one is signed, so its hit is
@@ -183,11 +188,11 @@ export async function extendContract(opts: {
     await tx.transaction.create({
       data: {
         leagueId: opts.leagueId, seasonYear, week,
-        type: opts.reSign ? 'RESIGN' : 'SIGN', teamId,
-        headline: opts.reSign
+        type: reSign ? 'RESIGN' : 'SIGN', teamId,
+        headline: reSign
           ? `Re-signed ${player.firstName} ${player.lastName}`
           : `Extended ${player.firstName} ${player.lastName}`,
-        detail: opts.reSign
+        detail: reSign
           ? `${years}-yr deal, ~$${(apy / 1_000_000).toFixed(1)}M/yr`
           : `${years}-yr extension, ~$${(apy / 1_000_000).toFixed(1)}M/yr`,
       },
@@ -415,10 +420,22 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
     const summary = await teamCapSummary(team.id, seasonYear, settings.capMode);
     const profile = parseGmProfile(team.gmProfile, rng);
 
+    // Nothing in the game reads LEAGUE.ROSTER_MAX outside league generation,
+    // so AI rosters had no ceiling at all — they simply never reached one
+    // while the re-sign wave was leaking 400 players a year into free agency.
+    // With retention repaired they do, so the frenzy stops at a legal roster
+    // instead of running to 56+ bodies.
+    // Leave room for the rookie class. This wave only ever runs during
+    // FREE_AGENCY, and the draft lands immediately after it, so filling all
+    // the way to rosterMax here just means cutting those same players again
+    // on cut-down day (see trimRostersToLimit in lib/season.ts).
+    const openSlots = Math.max(0, (settings.rosterMax ?? LEAGUE.ROSTER_MAX) - summary.rosterSize - settings.draftRounds);
+    if (openSlots <= 0) continue;
+
     // Bid on the 3 highest-need positions among top available talent.
     const ranked = [...freeAgents].sort((a, b) => (needs[b.position] ?? 0) - (needs[a.position] ?? 0) || b.trueOvr - a.trueOvr);
     let budget = Math.max(0, summary.capSpace - 4_000_000);
-    for (const fa of ranked.slice(0, 8)) {
+    for (const fa of ranked.slice(0, Math.min(8, openSlots))) {
       if (budget <= 0) break;
       const offer = maxOffer(fa as any, { profile, needs, capSpace: budget, rng });
       if (offer >= CAP.MIN_SALARY && (needs[fa.position] ?? 0) > 0.15) {
@@ -477,12 +494,14 @@ export async function fillRosterForTeam(opts: {
 
   const roster = await prisma.player.findMany({ where: { teamId }, select: { id: true, position: true, trueOvr: true, age: true, potential: true } });
   const needs = teamNeeds(roster as RosterPlayer[]);
+  let openSlots = Math.max(0, (settings.rosterMax ?? LEAGUE.ROSTER_MAX) - roster.length);
   const neededPositions = Object.entries(needs)
     .filter(([, v]) => v >= 0.15) // same "Notable" floor as the Roster Needs widget
     .sort((a, b) => b[1] - a[1]);
 
   const takenIds = new Set<string>();
   for (const [position, needScore] of neededPositions) {
+    if (openSlots <= 0) break; // a legal roster tops out at rosterMax
     const summary = await teamCapSummary(teamId, seasonYear, settings.capMode);
     const budget = Math.max(0, summary.capSpace - 3_000_000);
     if (budget < CAP.MIN_SALARY) break; // no room left at all — stop trying
@@ -503,6 +522,7 @@ export async function fillRosterForTeam(opts: {
     try {
       await signFreeAgent({ leagueId, playerId: pick.id, teamId, apy, years, seasonYear, capMode: settings.capMode, week });
       takenIds.add(pick.id);
+      openSlots--;
       signed.push({ name: `${pick.firstName} ${pick.lastName}`, position, apy });
     } catch {
       /* cap edge case — try the next position */

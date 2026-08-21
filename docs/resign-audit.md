@@ -81,3 +81,49 @@ this out either.
   the current wave gets right and must not regress.
 - The wire should show re-signings, since from the user's side an AI team
   keeping its franchise quarterback is news.
+
+---
+
+## Correction to the causes above (measured after the fact)
+
+Two numbers in this document were misread, and it matters because they point
+at the wrong clause:
+
+1. **564 is not "the players who clear the AI's floor."** `worthKeeping` was
+   `trueOvr >= 62 && (trueOvr >= 74 || need[pos] > 0.3)`. 564 clears only the
+   first half of that conjunction; 386 of those 564 are 62-73 OVR at a
+   position scoring `need <= 0.3` and are dropped with no die roll and no
+   price check. Only **178 of 1,046** ever reach a price check, so the
+   effective floor was 74, not 62 — and the need gate cost ~386 players a
+   year where the willingness roll cost ~76. The gate was also circular:
+   `teamNeeds()` ran over the full roster, which still contained every
+   expiring player, so a team about to lose its starting corner read
+   `need[CB]` as ~0 *because that corner was still on the books*.
+2. **"52 extensions"** is 49 rows headlined `Extended …` plus 3 ordinary free
+   agent `Signed …` rows — 52 `SIGN` rows in total, not 52 extensions.
+
+Everything else in this document reproduces exactly.
+
+## Resolution
+
+Fixed in the contract-economy repair:
+
+- `suggestedYears()` no longer bottoms out at 2 years; league generation puts
+  every player with `experience <= CAP.ROOKIE_EXPERIENCE_MAX` on a real
+  `CAP.ROOKIE_DEAL_YEARS` contract, staggered by his actual experience rather
+  than a coin flip. Measured over 32 generated rosters, mean contract length
+  goes 2.63 -> 3.65 years and steady-state expiry 38% -> 27.4%/yr.
+- `resignDecisionsForTeam()` was rewritten: one cap summary per team with a
+  running local budget, candidates in value order (would-actually-walk first),
+  needs computed on the roster *minus* the expiring class, no willingness die
+  roll — willingness now sets price, term and how far down the roster a GM
+  will go — and a depth comparison in place of the need gate.
+- Re-signings write a `RESIGN` transaction with a `Re-signed …` headline. Both
+  consumers (the news-wire type filter and `lib/newsCategory.ts`) already
+  handled the type; nothing had ever produced one.
+- The salary cap now actually grows (see `lib/leagueYear.ts`).
+
+Measured over a five-season all-AI run, before -> after: AI re-sign retention
+3-18% -> 46-64%, players hitting free agency per year ~450 -> ~170, mean roster
+size at the annual post-release trough 24-29 -> 37-48, teams over the cap
+0/32 -> 0/32.

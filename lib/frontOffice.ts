@@ -127,7 +127,11 @@ export async function buildFrontOfficeBrief(
     const { capComplianceDueNow } = await import('./season');
     const report = await capComplianceReport(teamId, seasonYear, capMode);
     if (!report.compliant) {
-      const best = report.path[0] ?? report.relief.find((r) => r.kind === 'CUT');
+      // Only ever suggest a cut that is part of a route that actually
+      // arrives. capComplianceReport returns an empty path when no set of
+      // cuts clears the shortfall, and in that state the honest advice is
+      // "trade salary away", not "cut your third-best player".
+      const best = report.fixable ? (report.path[0] ?? report.relief.find((r) => r.kind === 'CUT')) : null;
       const { phase } = await prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { phase: true } });
       const blocks = capMode === 'REALISTIC' && report.fixable && capComplianceDueNow(phase);
       items.push({
@@ -136,7 +140,11 @@ export async function buildFrontOfficeBrief(
         detail: [
           blocks ? 'The week will not advance until you\'re compliant.' : null,
           !capComplianceDueNow(phase) ? 'Expiring contracts come off the books when free agency opens — be under the ceiling by then.' : null,
-          best ? `Cutting ${best.name} would clear ${formatMoney(best.frees)}.` : 'No easy cuts — a trade that sends salary out may be the only way back.',
+          best
+            ? `Cutting ${best.name} would clear ${formatMoney(best.frees)}.`
+            : report.fixable
+              ? 'No easy cuts — a trade that sends salary out may be the only way back.'
+              : `No combination of cuts gets you under the ceiling — cutting everyone who frees anything clears only ${formatMoney(report.maxCutRelief)}. A trade that sends salary out is the way back.`,
         ].filter(Boolean).join(' '),
         action: 'Open Cap',
         href: '/cap',
