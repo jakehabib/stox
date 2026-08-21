@@ -6,6 +6,7 @@ import { formatMoney } from '@/lib/cap';
 import { TeamLogo } from '@/components/TeamLogo';
 import { LeagueNav } from '@/components/LeagueNav';
 import { LeagueWireTicker } from '@/components/ds/LeagueWireTicker';
+import { isBreakingNews } from '@/lib/wireRank';
 import { CapAlertBanner } from '@/components/ds/CapAlertBanner';
 import { capComplianceDueNow } from '@/lib/season';
 import { capComplianceReport } from '@/lib/capEnforcement';
@@ -34,7 +35,11 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   const [compliance, tickerTx] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : capComplianceReport(userTeam.id, league.seasonYear, ctx.settings.capMode),
     prisma.transaction.findMany({
-      where: { leagueId: league.id, type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'INJURY', 'DRAFT', 'FIRE', 'CHAMPION', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] } },
+      // 'INJURY' is deliberately absent. The sim writes one injury row per game
+      // per week — sixteen a week — so including the type here spent the whole
+      // window on other clubs' training rooms and left mid-season leagues with
+      // no ticker-eligible news at all within reach.
+      where: { leagueId: league.id, type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'DRAFT', 'FIRE', 'CHAMPION', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] } },
       orderBy: { createdAt: 'desc' },
       take: 120,
     }),
@@ -43,7 +48,12 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // straight "most recent 14" is a wall of identical injury lines. Round-robin
   // across categories instead — recency still orders within each category.
   const byCategory = new Map<string, typeof tickerTx>();
-  for (const t of tickerTx) {
+  // Breaking news only. Round-robin alone still admitted injury reports and
+  // "pacing the league" filler, which is what made the ticker read as a wall
+  // of identical lines late in a season — one lane counted fourteen items in
+  // week 17, every one of them an injury report for a team the player had no
+  // relationship with.
+  for (const t of tickerTx.filter((x) => isBreakingNews(x.type, x.headline))) {
     const cat = transactionCategory(t.type, t.headline);
     if (!byCategory.has(cat)) byCategory.set(cat, []);
     byCategory.get(cat)!.push(t);

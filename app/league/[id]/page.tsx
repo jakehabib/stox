@@ -10,6 +10,7 @@ import { buildFrontOfficeBrief } from '@/lib/frontOffice';
 import { buildGmCareerSummary } from '@/lib/gmCareer';
 import { estimateWinProbability } from '@/lib/winProbability';
 import { transactionCategory } from '@/lib/newsCategory';
+import { rankWire } from '@/lib/wireRank';
 import { computeClinchStatus, clinchScenarioTag } from '@/lib/clinchScenario';
 import { computeRankDeltas } from '@/lib/standingsTrend';
 import { SeasonAnnouncement, AwardLine } from '@/components/SeasonAnnouncement';
@@ -50,7 +51,11 @@ export default async function TeamDashboard({ params }: { params: { id: string }
     prisma.game.findMany({ where: { leagueId: league.id, OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }], played: false }, orderBy: { week: 'asc' }, take: 1, include: { homeTeam: true, awayTeam: true } }),
     prisma.game.findMany({ where: { leagueId: league.id, OR: [{ homeTeamId: team.id }, { awayTeamId: team.id }], played: true }, orderBy: { week: 'desc' }, take: 3, include: { homeTeam: true, awayTeam: true } }),
     prisma.draftPick.count({ where: { ownerTeamId: team.id, used: false } }),
-    prisma.transaction.findMany({ where: { leagueId: league.id, OR: [{ teamId: team.id }, { teamId: null }] }, orderBy: { createdAt: 'desc' }, take: 6 }),
+    // Deliberately wide: the wire is RANKED, not taken by recency (see
+    // lib/wireRank.ts). Fetching six most-recent rows and ranking them
+    // would rank six injury reports against each other. 90% of this pool is
+    // injuries, so the window has to be wide enough to reach real news.
+    prisma.transaction.findMany({ where: { leagueId: league.id, OR: [{ teamId: team.id }, { teamId: null }] }, orderBy: { createdAt: 'desc' }, take: 200 }),
     prisma.team.findMany({ where: { leagueId: league.id, conference: team.conference, division: team.division } }),
     // Only the clinch-scenario math needs the full conference (wildcard
     // race spans every division) — the standings panel itself stays
@@ -155,14 +160,20 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   // combined and sorted by recency. No new schema; both already existed.
   // A transaction's team can be anyone in the league, not just this
   // division, so resolve abbrs from exactly the teams referenced here. ---
-  const txTeamIds = Array.from(new Set(transactions.map((t) => t.teamId).filter((id): id is string => !!id)));
+  const { items: rankedTx, collapsedInjuries } = rankWire(transactions, {
+    userTeamId: team.id,
+    currentWeek: league.week,
+    limit: 6,
+  });
+
+  const txTeamIds = Array.from(new Set(rankedTx.map((t) => t.teamId).filter((id): id is string => !!id)));
   const wireTeams = txTeamIds.length > 0
     ? await prisma.team.findMany({ where: { id: { in: txTeamIds } }, select: { id: true, abbr: true } })
     : [];
   const wireTeamAbbr = new Map(wireTeams.map((t) => [t.id, t.abbr]));
 
   interface WireEntry { key: string; seasonYear: number; week: number; render: (featured: boolean) => React.ReactNode }
-  const wireFromTx: WireEntry[] = transactions.map((t) => ({
+  const wireFromTx: WireEntry[] = rankedTx.map((t) => ({
     key: t.id, seasonYear: t.seasonYear, week: t.week,
     render: (featured) => (
       <NewsRow
@@ -188,6 +199,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           detail={g.recap || undefined}
           meta={`WK ${g.week}`}
           metric={box ? shortResult(box) : `${g.homeScore}-${g.awayScore}`}
+          href={`/league/${league.id}/game/${g.id}`}
         />
       ),
     };
@@ -249,9 +261,28 @@ export default async function TeamDashboard({ params }: { params: { id: string }
     }];
   });
 
-  const wire = [...wireFromGames, ...wireFromTx]
-    .sort((a, b) => b.seasonYear - a.seasonYear || b.week - a.week)
-    .slice(0, 6)
+  // Your own results lead, then transactions in RELEVANCE order — not
+  // re-sorted by week, which would undo the ranking and push a title or a
+  // trade below whatever happened most recently.
+  const injuryRow: WireEntry[] = collapsedInjuries
+    ? [{
+        key: 'injuries-collapsed',
+        seasonYear: league.seasonYear,
+        week: collapsedInjuries.representative.week,
+        render: () => (
+          <NewsRow
+            key="injuries-collapsed"
+            category="INJURY"
+            headline={`${collapsedInjuries.count} injury report${collapsedInjuries.count === 1 ? '' : 's'} around the league`}
+            detail="Your own injuries are in the Injury Report on the right; these belong to other clubs."
+            meta={`WK ${collapsedInjuries.representative.week}`}
+          />
+        ),
+      }]
+    : [];
+
+  const wire = [...wireFromGames, ...wireFromTx, ...injuryRow]
+    .slice(0, 7)
     .map((w, i) => w.render(i === 0));
 
   return (

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { TeamLogo } from '../TeamLogo';
 
 export type NewsCategory = 'TRADE' | 'SIGNING' | 'INJURY' | 'RECORD' | 'AWARD' | 'DRAFT' | 'GAME' | 'LEAGUE';
@@ -14,14 +15,21 @@ export const CATEGORY_COLOR: Record<NewsCategory, string> = {
  * gives the lead story in a list more visual weight than what follows it,
  * the way a real front page does.
  */
-export function NewsRow({ teamId, abbr, category, headline, detail, meta, metric, featured }: {
+export function NewsRow({ teamId, abbr, category, headline, detail, meta, metric, featured, href }: {
   teamId?: string; abbr?: string; category: NewsCategory; headline: string; detail?: string; meta: string;
+  /**
+   * Where this dispatch leads. A game recap should open its box score — that
+   * page existed for weeks and was linked from exactly one file in the whole
+   * codebase, so playtesters variously called it "the best screen in the app"
+   * and concluded it did not exist.
+   */
+  href?: string;
   /** The concrete number the story is actually about — "+81 rating", "24 sacks", "1 yr $5.1M" — so the row carries its own payoff instead of just a timestamp. */
   metric?: string;
   featured?: boolean;
 }) {
-  return (
-    <div className={`flex items-start gap-3 ${featured ? 'py-4' : 'py-2.5'}`}>
+  const body = (
+    <div className={`flex items-start gap-3 ${featured ? 'py-4' : 'py-2.5'}${href ? ' -mx-2 px-2 rounded hover:bg-raised/40 transition-colors' : ''}`}>
       <div className={`${featured ? 'w-10' : 'w-8'} pt-0.5 shrink-0`}>
         {teamId && abbr ? <TeamLogo seed={teamId} abbr={abbr} size={featured ? 36 : 28} /> : <div className={`${featured ? 'w-9 h-9' : 'w-7 h-7'} rounded-full bg-raised`} />}
       </div>
@@ -36,4 +44,6 @@ export function NewsRow({ teamId, abbr, category, headline, detail, meta, metric
       </div>
     </div>
   );
+
+  return href ? <Link href={href} className="block">{body}</Link> : body;
 }
