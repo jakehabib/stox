@@ -39,6 +39,7 @@ import { CollegeStatLine } from '@/components/CollegeStatLine';
 import { CareerHonors, HonorAward } from '@/components/ds/CareerHonors';
 import { CareerStatTable } from '@/components/ds/CareerStatTable';
 import { ringYearsFor } from '@/lib/gen/leagueHistory';
+import { allStarYearsFor } from '@/lib/allStars';
 
 /** Transaction types lib/season.ts writes one of per award, per season. */
 const AWARD_LABEL: Record<string, string> = {
@@ -235,7 +236,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
   // nothing for a save created before any of this existed, and the block
   // simply doesn't render.
   const careerStartYear = league.seasonYear - player.experience;
-  const [awardTxs, titleSeasons] = await Promise.all([
+  const [awardTxs, titleSeasons, allStarYears] = await Promise.all([
     prisma.transaction.findMany({
       where: {
         leagueId: league.id, type: { in: Object.keys(AWARD_LABEL) },
@@ -249,6 +250,12 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           select: { year: true }, orderBy: { year: 'asc' },
         })
       : Promise.resolve([]),
+    // Read back rather than listed among the awards above: a selection is not
+    // a trophy with a name, it is a season he was one of the best at his
+    // position, and CareerHonors counts them ("4x All-Star") instead of
+    // printing four identical rows. Matched by name, like the awards, because
+    // Transaction has no player relation — see lib/allStars.ts.
+    allStarYearsFor(league.id, player.firstName, player.lastName),
   ]);
   const honorAwards: HonorAward[] = awardTxs.map((t) => ({
     year: t.seasonYear, label: AWARD_LABEL[t.type] ?? t.type, statLine: t.detail,
@@ -497,6 +504,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           position={player.position}
           ringYears={ringYears}
           awards={honorAwards}
+          allStarYears={allStarYears}
           careerHighlights={careerHighlights}
           seasons={player.experience}
         />
