@@ -34,7 +34,7 @@ export interface DynastyActionResult {
  */
 function safeRevalidate(leagueId: string) {
   try {
-    safeRevalidate(leagueId);
+    revalidatePath(`/league/${leagueId}`, 'layout');
   } catch (e) {
     if (e instanceof Error && e.message.includes('static generation store')) return;
     throw e;
@@ -405,12 +405,22 @@ export async function insiderReadAction(
   return { ok: true, remaining, report, message: `Insider — ${remaining}/${DYNASTY.INSIDER_USES_PER_SEASON} remaining.` };
 }
 
-/** Translate a raw trade-value gap into something a GM can act on. */
+/**
+ * Translate a raw trade-value gap into something a GM can act on.
+ *
+ * [TUNE] Calibrated against the actual scale lib/ai/gm.ts's pickValue emits
+ * (measured, not assumed: a mid-round-1 pick prices around 680, R2 ~300,
+ * R3 ~135, R4 ~60, R5 ~26, R6 ~12, R7 ~5). If AI.PICK_VALUE_BIAS or the
+ * 0.30 chart scalar in gm.ts moves, these move with it.
+ */
 function describeValue(v: number): string {
   if (v <= 0) return 'nothing';
-  if (v < 120) return 'a late-round pick';
-  if (v < 350) return 'a third-rounder';
-  if (v < 700) return 'a second-rounder';
-  if (v < 1400) return 'a late first';
-  return 'a premium first-round pick, or a starter';
+  if (v < 8) return 'a seventh-rounder';
+  if (v < 20) return 'a sixth-rounder';
+  if (v < 45) return 'a fifth-rounder';
+  if (v < 100) return 'a fourth-rounder';
+  if (v < 220) return 'a third-rounder';
+  if (v < 480) return 'a second-rounder';
+  if (v < 900) return 'a first-round pick';
+  return 'more than a first-round pick — a starter has to be in this';
 }
