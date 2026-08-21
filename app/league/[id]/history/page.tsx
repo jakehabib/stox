@@ -5,6 +5,7 @@ import { HistoryTeamSelect } from '@/components/HistoryTeamSelect';
 import { statLabel } from '@/lib/statLabels';
 import { buildDynastyLeaderboard } from '@/lib/dynastyScore';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { PageMasthead } from '@/components/ds/PageMasthead';
 
 const RESULT_LABEL: Record<string, string> = {
   MISSED: 'Missed Playoffs', WILDCARD: 'Lost Wild Card', DIVISIONAL: 'Lost Divisional',
@@ -39,12 +40,23 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
   const seasonRecords = leagueRecords.filter((r) => r.scope === 'SEASON');
   const careerRecords = leagueRecords.filter((r) => r.scope === 'CAREER');
 
+  const champCount = await prisma.teamSeasonRecord.count({
+    where: { team: { leagueId: league.id }, playoffResult: 'CHAMPION' },
+  });
+
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Ring of Honor</h1>
-        <p className="text-muted text-sm mt-1">League-wide records and award winners — every franchise's story feeds into this one.</p>
-      </div>
+      <PageMasthead
+        eyebrow={`${league.seasonYear} · League Archive`}
+        title="Ring of Honor"
+        subtitle="League-wide records and award winners — every franchise's story feeds into this one."
+        facts={[
+          { label: 'Champions Crowned', value: String(champCount), detail: champCount > 0 ? 'seasons completed' : 'no title decided yet', color: champCount > 0 ? 'text-gold' : undefined },
+          { label: 'Records On The Books', value: String(leagueRecords.length), detail: `${seasonRecords.length} season · ${careerRecords.length} career` },
+          { label: 'Awards Handed Out', value: String(awardWinners.length), detail: 'across every season' },
+          { label: 'Franchises', value: String(allTeams.length), detail: 'all tracked here' },
+        ]}
+      />
 
       <div className="panel overflow-hidden">
         <div className="px-4 py-3 border-b border-line/70">

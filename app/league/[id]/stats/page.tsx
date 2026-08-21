@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
+import { PageMasthead } from '@/components/ds/PageMasthead';
 import { readJson } from '@/lib/json';
 import { SeasonStats } from '@/lib/types';
 import { TeamLogo } from '@/components/TeamLogo';
@@ -173,12 +174,14 @@ export default async function StatsPage({ params, searchParams }: { params: { id
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">{myTeam ? 'My Team Stats' : 'League Stats'} — {league.seasonYear}</h1>
-          <p className="text-muted text-sm mt-1">{myTeam ? 'Your full roster, every efficiency stat on the books.' : 'League leaders and team production, season-to-date.'}</p>
-        </div>
-        <div className="flex flex-col items-end gap-1.5">
+      <PageMasthead
+        teamId={myTeam ? userTeam?.id : undefined}
+        teamAbbr={myTeam ? userTeam?.abbr : undefined}
+        eyebrow={`${league.seasonYear} · Week ${league.week}`}
+        title={myTeam ? 'My Team Stats' : 'League Stats'}
+        subtitle={myTeam ? 'Your full roster, every efficiency stat on the books.' : 'League leaders and team production, season-to-date.'}
+        action={
+          <div className="flex flex-col items-end gap-1.5">
           <div className="flex gap-1.5">
             <Link href={`/league/${league.id}/stats${advanced ? '?view=advanced' : ''}`} className={`pill ${!myTeam ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>League</Link>
             {userTeam && (
@@ -189,8 +192,14 @@ export default async function StatsPage({ params, searchParams }: { params: { id
             <Link href={`/league/${league.id}/stats${myTeam ? '?scope=myteam' : ''}`} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
             <Link href={`/league/${league.id}/stats?view=advanced${myTeam ? '&scope=myteam' : ''}`} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
           </div>
-        </div>
-      </div>
+          </div>
+        }
+        facts={[
+          { label: 'Scope', value: myTeam ? (userTeam?.abbr ?? 'Team') : 'League', detail: myTeam ? 'your roster only' : `all ${teams.length} teams` },
+          { label: 'View', value: advanced ? 'Advanced' : 'Basic', detail: advanced ? 'efficiency and rate stats' : 'counting stats' },
+          { label: 'Players Ranked', value: withStats.length.toLocaleString(), detail: 'with recorded stats' },
+        ]}
+      />
 
       {withStats.length === 0 ? (
         <div className="panel p-4 text-sm text-muted">No stats recorded yet this season — check back after Week 1.</div>
