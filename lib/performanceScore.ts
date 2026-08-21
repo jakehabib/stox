@@ -421,7 +421,7 @@ export function statLine(position: string, stats: SeasonStats): string {
     if (v === 0 && !keepZero) continue;
     parts.push(`${v} ${unitWord(position, c.key, c.short)}`);
   }
-  return parts.join(' \u00b7 ') || 'took the field';
+  return parts.join(' · ') || 'took the field';
 }
 
 // ---------------------------------------------------------------------------
