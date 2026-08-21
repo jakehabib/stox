@@ -65,7 +65,8 @@ export function TrophyMoment({ data, onClose, leagueId }: {
         ['--team-accent' as never]: accent,
         background: '#0b0708',
         backgroundImage: [
-          `radial-gradient(ellipse 70% 55% at 50% -8%, color-mix(in srgb, var(--team-accent) 30%, transparent), transparent 70%)`,
+          `radial-gradient(ellipse 70% 55% at 50% -8%, color-mix(in srgb, var(--team-accent) 38%, transparent), transparent 72%)`,
+          `radial-gradient(ellipse 34% 26% at 50% 2%, color-mix(in srgb, var(--team-accent) 26%, transparent), transparent 76%)`,
           'repeating-linear-gradient(to bottom, rgba(255,255,255,.02) 0, rgba(255,255,255,.02) 1px, transparent 1px, transparent 84px)',
         ].join(', '),
       }}

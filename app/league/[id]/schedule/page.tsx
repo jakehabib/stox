@@ -11,6 +11,14 @@ import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { GameShapePath } from '@/components/ds/GameShapePath';
 import { WeightedScore, MarginTag, ResultRule } from '@/components/ds/ResultWeight';
 
+/** Short round labels for the week column, in the postseason. */
+const ROUND_SHORT: Record<string, string> = {
+  WILDCARD: 'WC', DIVISIONAL: 'DIV', CONFERENCE: 'CONF', FINAL: 'FINAL',
+};
+const ROUND_LONG: Record<string, string> = {
+  WILDCARD: 'Wild Card Round', DIVISIONAL: 'Divisional Round', CONFERENCE: 'Conference Championship', FINAL: 'The Final',
+};
+
 /**
  * The schedule used to render every week of every game in one flat column —
  * 272 matchups and roughly sixteen thousand pixels of page. Nobody scrolls
@@ -37,8 +45,15 @@ export default async function SchedulePage({
     : weeks.includes(league.week) ? league.week : weeks[weeks.length - 1] ?? 1;
 
   const weekGames = games.filter((g) => g.week === activeWeek);
+  // Postseason Game rows are numbered week 1-4, which collides with regular
+  // season weeks 1-4, so a plain week sort scattered a wild card game between
+  // weeks 1 and 2 of the regular season and labelled it "Wk 1". Ordered by
+  // round first here, and labelled by round below.
+  const KIND_RANK: Record<string, number> = { REGULAR: 0, WILDCARD: 1, DIVISIONAL: 2, CONFERENCE: 3, FINAL: 4 };
   const myGames = userTeam
-    ? games.filter((g) => g.homeTeamId === userTeam.id || g.awayTeamId === userTeam.id)
+    ? games
+        .filter((g) => g.homeTeamId === userTeam.id || g.awayTeamId === userTeam.id)
+        .sort((a, b) => (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9) || a.week - b.week)
     : [];
 
   const myPlayed = myGames.filter((g) => g.played);
@@ -148,7 +163,9 @@ export default async function SchedulePage({
                       results get an invisible spacer of the same width so
                       every row still lines up exactly as before. */}
                   {g.played ? <ResultRule margin={margin} /> : <span aria-hidden className="w-[3px] shrink-0" />}
-                  <span className="label-sm w-14 shrink-0">Wk {g.week}</span>
+                  <span className="label-sm w-14 shrink-0" title={g.kind === 'REGULAR' ? `Week ${g.week}` : ROUND_LONG[g.kind] ?? g.kind}>
+                    {g.kind === 'REGULAR' ? `Wk ${g.week}` : ROUND_SHORT[g.kind] ?? g.kind}
+                  </span>
                   <span className="text-[11px] w-7 shrink-0 text-muted">{home ? 'vs' : '@'}</span>
                   <TeamLogo seed={opp.id} abbr={opp.abbr} size={20} />
                   <span className="flex-1 min-w-0 truncate text-sm text-chalk">{opp.city} {opp.nickname}</span>
@@ -244,11 +261,15 @@ export default async function SchedulePage({
                 {g.played && (
                   <div className="flex items-center justify-center gap-2 pt-1.5">
                     <MarginTag margin={Math.abs(g.homeScore - g.awayScore)} />
-                    <span className="text-[10px] text-muted uppercase tracking-wider">
-                      {Math.abs(g.homeScore - g.awayScore) === 0 ? 'tie'
-                        : Math.abs(g.homeScore - g.awayScore) <= 8 ? 'one score'
-                        : Math.abs(g.homeScore - g.awayScore) >= 28 ? 'decisive' : 'margin'}
-                    </span>
+                    {/* The word only appears when it says something. A neutral
+                        result just shows its margin. */}
+                    {(() => {
+                      const m = Math.abs(g.homeScore - g.awayScore);
+                      const word = m === 0 ? 'tie' : m <= 8 ? 'one score' : m >= 28 ? 'decisive' : null;
+                      return word
+                        ? <span className={`text-[10px] uppercase tracking-wider ${m <= 8 ? 'text-warn' : 'text-muted'}`}>{word}</span>
+                        : null;
+                    })()}
                   </div>
                 )}
               </Link>

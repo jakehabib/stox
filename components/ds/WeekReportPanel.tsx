@@ -144,7 +144,7 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
             <>
               <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-5 pt-2">
                 <ScoreSide side={r.away} align="left" />
-                <div className="text-center min-w-[92px]">
+                <div className="text-center min-w-[72px] sm:min-w-[92px]">
                   {r.shape && <ArchetypeTag shape={r.shape} />}
                   <div className="font-mono text-[11px] text-muted mt-1">
                     {r.outcome === 'T' ? 'tied' : marginPhrase(r.margin)}
@@ -322,20 +322,24 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
 function ScoreSide({ side, align }: { side: ReportSide; align: 'left' | 'right' }) {
   const textColor = `color-mix(in srgb, ${side.color} 60%, white 40%)`;
   return (
-    <div className={`flex items-center gap-2.5 sm:gap-3.5 min-w-0 ${align === 'right' ? 'flex-row-reverse text-right' : ''}`}>
+    <div className={`flex items-center gap-2 sm:gap-3.5 min-w-0 ${align === 'right' ? 'flex-row-reverse text-right' : ''}`}>
       <TeamLogo seed={side.teamId} abbr={side.abbr} size={46} className="shrink-0" />
-      <div className="min-w-0 hidden sm:block">
-        <div className="font-display font-bold uppercase tracking-wide leading-none truncate" style={{ color: textColor }}>
-          {side.city} {side.nickname}
+      {/* The club is named at every width — the abbreviation is the franchise
+          at phone size, not a placeholder for it, and the record travels with
+          it either way. Nothing here is dropped to save space. */}
+      <div className="min-w-0">
+        <div className="font-display font-bold uppercase tracking-wide leading-none truncate text-xs sm:text-base" style={{ color: textColor }}>
+          <span className="sm:hidden">{side.abbr}</span>
+          <span className="hidden sm:inline">{side.city} {side.nickname}</span>
         </div>
-        <div className="font-mono text-[11px] text-muted mt-1">{side.record}</div>
+        <div className="font-mono text-[10px] sm:text-[11px] text-muted mt-1">{side.record}</div>
       </div>
       {/* The winner carries the team colour, the beaten side drops back to
           muted — the same margin-weight rule the schedule rows use, so the
           result reads before the digits do. Several curated primaries are
           dark, hence the lightening mix rather than the raw hex. */}
       <span
-        className={`stat-value text-stat-lg sm:text-stat-xl shrink-0 ${side.won ? '' : 'text-muted'}`}
+        className={`stat-value text-stat-md sm:text-stat-xl shrink-0 ${side.won ? '' : 'text-muted'}`}
         style={side.won ? { color: textColor } : undefined}
       >
         {side.score}
