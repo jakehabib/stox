@@ -57,13 +57,31 @@ export async function resolveStartYear(league: LeagueYearFields): Promise<number
   const cached = cache.get(league.id);
   if (cached != null) return cached;
 
-  const [tx, rec] = await Promise.all([
+  // Games are the primary signal, and this is not a stylistic preference.
+  // League creation now seeds up to 24 years of FICTIONAL franchise backstory
+  // — TeamSeasonRecord rows and championship/award Transactions dated decades
+  // before the save begins. Those used to be the derivation inputs, so a save
+  // with a null startYear would have been read as founded ~24 years early and
+  // had its salary cap compounded at 7%/yr over phantom seasons: 1.07^24 is
+  // more than a fivefold ceiling. A Game row only exists for a season that was
+  // actually scheduled and playable, so it is the one artefact backstory never
+  // produces.
+  const [game, tx, rec] = await Promise.all([
+    prisma.game.aggregate({ where: { leagueId: league.id }, _min: { seasonYear: true } }),
     prisma.transaction.aggregate({ where: { leagueId: league.id }, _min: { seasonYear: true } }),
     prisma.teamSeasonRecord.aggregate({ where: { leagueId: league.id }, _min: { year: true } }),
   ]);
 
-  const candidates = [tx._min.seasonYear, rec._min.year].filter((v): v is number => typeof v === 'number');
-  let derived = candidates.length > 0 ? Math.min(...candidates) : league.seasonYear;
+  let derived: number;
+  if (typeof game._min.seasonYear === 'number') {
+    derived = game._min.seasonYear;
+  } else {
+    // No games at all: a save that has never been scheduled. Fall back to the
+    // old inputs, which are still right for any league predating seeded
+    // history, and let the clamp below catch anything absurd.
+    const candidates = [tx._min.seasonYear, rec._min.year].filter((v): v is number => typeof v === 'number');
+    derived = candidates.length > 0 ? Math.min(...candidates) : league.seasonYear;
+  }
 
   // A start year in the future, or absurdly far in the past, is a corrupt
   // read — a wrong start year is worse than none, because it compounds at

@@ -190,26 +190,16 @@ export const GENERATION = {
   POTENTIAL_BONUS_MEAN: 8,
   POTENTIAL_BONUS_SD: 7,
   /**
-   * [FRAGILE] Rookies have more room than a veteran of the same rating — but
-   * this number, not the veteran one, is what sets where the WHOLE LEAGUE
-   * settles, and the two were calibrated independently and disagreed badly.
+   * [TUNE] Rookies have more room than a veteran of the same rating.
    *
-   * Initial rosters are generated around VETERAN_OVR_MEAN with a depth penalty
-   * (see lib/gen/league.ts), which lands a real league at a mean ACTIVE rating
-   * of ~65 and a mean potential of ~69. Every player who ever replaces one of
-   * them comes out of a draft class instead, and a class's best 224 prospects
-   * are picked out of 400 — so the league's long-run rating is the mean
-   * potential of the top half of a draft class, not the mean of the rosters it
-   * started with. At +14 that figure was ~12 points higher than the league it
-   * was replacing, and the result was measured monotonic inflation: over 13
-   * simulated seasons mean ACTIVE potential climbed 69 -> 88 and mean ACTIVE
-   * rating 65 -> 81, still rising +0.5/yr at the end, with GENERATION's own
-   * comment calling 65-80 "the bulk of a pro roster" and MARKET.PIVOT (70) and
-   * teamNeeds' "acceptable starter" (72) both left describing nobody.
-   *
-   * The SD is deliberately untouched: the spread is what makes scouting worth
-   * doing, and roughly one prospect in five still rolls a +14 or better
-   * ceiling. It is the CENTRE that has to agree with the rest of the tables.
+   * Deliberately left at 14 after being measured as a suspect in league-wide
+   * rating inflation and cleared. Dropping it to 6 pulled mean ACTIVE
+   * POTENTIAL down hard (87.7 -> 84.1 by season 9) and moved mean ACTIVE
+   * RATING by 0.2 (78.6 -> 78.4) — players just sat closer to a lower ceiling
+   * (share of the league at or above its own potential went 7% -> 20%).
+   * Ratings are pinned by AGE_CURVE and by where the draft class is generated,
+   * not by the ceiling; see the note on AGE_CURVE. Lowering this would have
+   * been a real nerf to draft upside bought with nothing.
    */
   ROOKIE_POTENTIAL_BONUS_MEAN: 14,
   ROOKIE_POTENTIAL_BONUS_SD: 9,

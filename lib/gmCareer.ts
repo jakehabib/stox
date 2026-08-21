@@ -1,4 +1,5 @@
 import { prisma } from './db';
+import { resolveStartYear } from './leagueYear';
 
 /**
  * ===========================================================================
@@ -88,17 +89,30 @@ export async function buildGmCareerSummary(
   team: { id: string; abbr: string; wins: number; losses: number; ties: number },
   currentSeasonYear: number,
 ): Promise<GmCareerSummary> {
+  // Everything on this page is the GM's OWN record, and league creation now
+  // seeds two decades of franchise history before the user existed. Without
+  // this bound a brand-new save opened on "On the job since 2002 — 25 seasons
+  // and counting" and handed out a Champion badge for a title won before the
+  // player was hired. Franchise history is a real and separate thing — the
+  // Ring of Honor and the dynasty leaderboard are correct to count all of it —
+  // but a GM career is not the franchise's career.
+  const league = await prisma.league.findUniqueOrThrow({
+    where: { id: leagueId },
+    select: { id: true, seasonYear: true, startYear: true },
+  });
+  const hiredIn = await resolveStartYear(league);
+
   const [seasons, tradeTx, draftPicks, capCharges, tagCount, awardTx] = await Promise.all([
-    prisma.teamSeasonRecord.findMany({ where: { teamId: team.id }, orderBy: { year: 'asc' } }),
+    prisma.teamSeasonRecord.findMany({ where: { teamId: team.id, year: { gte: hiredIn } }, orderBy: { year: 'asc' } }),
     prisma.transaction.findMany({ where: { leagueId, type: 'TRADE' }, select: { headline: true } }),
     prisma.draftPick.findMany({
       where: { leagueId, ownerTeamId: team.id, used: true, playerId: { not: null } },
       select: { round: true, player: { select: { trueOvr: true } } },
     }),
-    prisma.capCharge.findMany({ where: { teamId: team.id }, select: { year: true, amount: true } }),
+    prisma.capCharge.findMany({ where: { teamId: team.id, year: { gte: hiredIn } }, select: { year: true, amount: true } }),
     prisma.transaction.count({ where: { leagueId, type: 'TAG', teamId: team.id } }),
     prisma.transaction.findMany({
-      where: { leagueId, type: { in: Object.keys(AWARD_LABEL) }, teamId: team.id },
+      where: { leagueId, type: { in: Object.keys(AWARD_LABEL) }, teamId: team.id, seasonYear: { gte: hiredIn } },
       orderBy: [{ seasonYear: 'desc' }],
     }),
   ]);
@@ -114,7 +128,9 @@ export async function buildGmCareerSummary(
   // "Seasons on the job" counts the one in progress too — you're the GM
   // this year whether or not a game's been played yet.
   const tenureYears = seasons.length + (currentSeasonLogged ? 0 : 1);
-  const firstYear = seasons[0]?.year ?? currentSeasonYear;
+  // The hire date, not the earliest season on file — a GM who has not
+  // finished a season yet still started this year.
+  const firstYear = hiredIn;
   const wins = seasons.reduce((s, r) => s + r.wins, 0) + (includeCurrent ? team.wins : 0);
   const losses = seasons.reduce((s, r) => s + r.losses, 0) + (includeCurrent ? team.losses : 0);
   const ties = seasons.reduce((s, r) => s + r.ties, 0) + (includeCurrent ? team.ties : 0);

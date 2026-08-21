@@ -21,7 +21,7 @@ import { writeJson } from '../json';
  *
  * This module synthesises the missing decades, once, at league creation:
  *
- *   - 15-25 prior seasons of TeamSeasonRecord for all 32 clubs, with win
+ *   - 16-24 prior seasons of TeamSeasonRecord for all 32 clubs, with win
  *     totals that sum exactly against the schedule and a playoff bracket
  *     actually played out round by round (so exactly one CHAMPION and one
  *     RUNNER_UP per year, and the labels below them match a real bracket).
@@ -39,9 +39,9 @@ import { writeJson } from '../json';
  * seeded Rng, and everything cross-references: the record holder is a player
  * who appears in the award tables, his record season is a season he actually
  * had, the team he set it for is the team he played for that year, and no
- * champion ever has a losing record. The verification harness for this lives
- * in the task notes rather than a test file, but the assertions it checks are
- * enforced here (see assertHistoryConsistency).
+ * champion ever has a losing record. assertHistoryConsistency at the bottom
+ * of this file audits every one of those claims against the output before it
+ * is handed back, and anything it returns is a bug, not a warning.
  *
  * SHAPE COMPATIBILITY. Generated stat lines use exactly the keys that
  * lib/sim/engine.ts's allocateStats emits for that position and nothing else
@@ -57,8 +57,13 @@ import { writeJson } from '../json';
 // ---------------------------------------------------------------------------
 
 export const HISTORY = {
-  /** [TUNE] How many prior seasons to invent. Minimum stays >= 15 so every */
-  /** veteran's whole career (experience caps at 15) fits inside the era. */
+  /**
+   * [TUNE] How many prior seasons to invent. The minimum stays at or above 15
+   * deliberately: Player.experience caps at 15 (lib/gen/players.ts), so a
+   * shorter era would leave the league's oldest veterans with careers that
+   * began before the history does — a player whose first six seasons happened
+   * in a period the league has no record of.
+   */
   MIN_SEASONS: 16,
   MAX_SEASONS: 24,
 

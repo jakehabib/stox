@@ -4,6 +4,7 @@ import type { Position } from './tuning';
 import { ATTRIBUTE_BY_KEY, AttrMap, attrsForPosition, computeOverall } from './ratings';
 import { readJson } from './json';
 import { LeagueSettings, DIFFICULTY_MODS } from './settings';
+import type { DynastyScoutMods } from './dynasty';
 
 /**
  * ===========================================================================
@@ -22,6 +23,20 @@ import { LeagueSettings, DIFFICULTY_MODS } from './settings';
  * Attributes carry a scoutDifficulty (ratings.ts). A 4.4 forty is measurable;
  * "decision making" is not. So physical attributes converge fast and mental
  * ones stay foggy — that's the whole texture of the system.
+ *
+ * DYNASTY SKILLS (lib/dynasty.ts) plug in HERE and nowhere else. They pass an
+ * optional `dynasty` bundle of multipliers that shrink the half-width of the
+ * range this file already computes. They do not add a second ratings system,
+ * do not touch confidence, and do not change the observation the report
+ * stored — a better GM quotes a tighter range around the same read. Omitting
+ * the argument reproduces today's numbers exactly, which is why every call
+ * site that has not been taught about Dynasty still behaves correctly.
+ *
+ * The one sanctioned hole in the fog is ScoutingReport.fullyRevealed, set
+ * only by the Dynasty "Scout Now" ability. That collapses a player to his
+ * true ratings. NOTHING ELSE MAY DO THAT: for every other player, at every
+ * confidence level and every skill rank, potential comes back as a genuine
+ * range (see DYNASTY.MIN_BAND_HALF_WIDTH, the floor that guarantees it).
  * ===========================================================================
  */
 
@@ -122,15 +137,25 @@ export function buildScoutedView(args: {
     potConfidence?: number | null;
     /** JSON array of attribute keys an evaluation locked to their true value. */
     attrsRevealed?: string | null;
+    /** Set only by Dynasty's Scout Now — the player's file is complete and exact. */
+    fullyRevealed?: boolean | null;
   } | null;
   settings: LeagueSettings;
   /** True for players on the viewing team (they get a confidence floor). */
   isOwnRoster?: boolean;
   isUserView?: boolean;
+  /**
+   * Dynasty GM skill effects (lib/dynasty.ts scoutingModsFor). Optional on
+   * purpose: undefined means "no skills", which is byte-identical to the
+   * pre-Dynasty behaviour.
+   */
+  dynasty?: DynastyScoutMods;
 }): ScoutedPlayerView {
   const { position, trueAttrs, trueOvr, settings } = args;
 
+  const scoutNow = args.report?.fullyRevealed === true;
   const fullyRevealed =
+    scoutNow ||
     settings.revealTrueRatings ||
     !settings.scoutingEnabled ||
     (args.isOwnRoster && !settings.fogOnOwnRoster);
@@ -144,7 +169,9 @@ export function buildScoutedView(args: {
       potHigh: args.potential,
       confidence: 100,
       revealed: true,
-      notes: 'Full ratings visible (scouting fog disabled for this player).',
+      notes: scoutNow
+        ? 'Scout Now: your staff dropped everything and put a complete, exact file together on this player.'
+        : 'Full ratings visible (scouting fog disabled for this player).',
       attrs: attrsForPosition(position).map((key) => ({
         key,
         label: ATTRIBUTE_BY_KEY[key]?.label ?? key,
@@ -165,6 +192,14 @@ export function buildScoutedView(args: {
   // range at all — you sent people to measure it and now you know.
   const locked = new Set(readJson<string[]>(args.report?.attrsRevealed ?? null, []));
 
+  // Dynasty range multipliers. Applied to the half-width AFTER errorBand has
+  // done its confidence/difficulty work, then floored so a range can never
+  // collapse to a point no matter how many ranks are bought.
+  const attrMult = args.dynasty?.attrBandMult ?? 1;
+  const potMult = args.dynasty?.potBandMult ?? 1;
+  const minHalf = args.dynasty?.minHalfWidth ?? 0.5;
+  const tighten = (band: number, mult: number) => Math.max(minHalf, band * mult);
+
   const attrs: ScoutedAttr[] = attrsForPosition(position).map((key) => {
     const def = ATTRIBUTE_BY_KEY[key];
     const diff = def?.scoutDifficulty ?? 0.5;
@@ -172,7 +207,7 @@ export function buildScoutedView(args: {
       const truth = clamp(Math.round(trueAttrs[key] ?? 62), 20, 99);
       return { key, label: def?.label ?? key, observed: truth, low: truth, high: truth, certainty: 1, actual: truth, locked: true };
     }
-    const band = errorBand(confidence, diff, penalty);
+    const band = tighten(errorBand(confidence, diff, penalty), attrMult);
     // If we have no observation yet, fall back to a blurred league-average read
     // rather than leaking the true value.
     const center = observed[key] ?? 62;
@@ -197,7 +232,7 @@ export function buildScoutedView(args: {
   // one of its own. Never collapses to a point: errorBand's floor plus
   // POTENTIAL_DIFFICULTY keeps a several-point spread even at 99 confidence.
   const potConfidence = Math.max(confidence, args.report?.potConfidence ?? 0);
-  const potBand = errorBand(potConfidence, SCOUTING.POTENTIAL_DIFFICULTY, penalty);
+  const potBand = tighten(errorBand(potConfidence, SCOUTING.POTENTIAL_DIFFICULTY, penalty), potMult);
   const potCenter = observed[POTENTIAL_OBS_KEY] ?? SCOUTING.POTENTIAL_DEFAULT_CENTER;
 
   return {

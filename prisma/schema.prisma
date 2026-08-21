@@ -70,6 +70,7 @@ model League {
   seasonRecords TeamSeasonRecord[]
   leagueRecords LeagueRecord[]
   tradeRecords  TradeRecord[]
+  dynasty       DynastyProfile?
 }
 
 model DraftState {
@@ -291,6 +292,16 @@ model ScoutingReport {
   attrsRevealed String @default("[]")
   // True once a Deep Dive surfaced the player's hidden development trait.
   devRevealed  Boolean @default(false)
+  // Set ONLY by the Dynasty "Scout Now" ability (lib/dynasty.ts). When true,
+  // buildScoutedView returns the player's TRUE attributes and an exact
+  // potential — the one sanctioned hole in the fog of war, paid for with a
+  // per-season charge that is persisted on DynastyProfile so a page reload
+  // cannot restore it. Nothing else in the codebase writes this column.
+  fullyRevealed Boolean @default(false)
+  // League year the Scout Now reveal was bought in — display only ("Fully
+  // evaluated, 2027"), never gates the reveal itself: a perfect evaluation
+  // you paid for does not expire.
+  revealedYear Int @default(0)
 
   @@unique([playerId, teamId])
   @@index([teamId])
@@ -544,4 +555,57 @@ model TradeRecord {
   createdAt DateTime @default(now())
 
   @@index([leagueId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// DYNASTY / GM PROGRESSION  (see lib/dynasty.ts)
+// ---------------------------------------------------------------------------
+/// The only PERSISTED half of the Dynasty system. Dynasty XP and level are
+/// NOT stored: they are recomputed on every read as a pure function of
+/// history the database already holds (TeamSeasonRecord, CHAMPION/AWARD_*
+/// Transaction rows, DraftPick -> Player). That keeps XP self-healing for
+/// saves that predate this feature, impossible to farm by repeating an
+/// action, and — the reason it is worth doing this way — requires no hook in
+/// lib/season.ts at all.
+///
+/// What genuinely cannot be derived, and therefore lives here:
+///   - which skills the GM chose to buy (`skills`)
+///   - how many Scout Now charges have been burned this league year
+///
+/// OWNER SHAPE. Today there is exactly one row per league and `ownerKind` is
+/// always "LEAGUE". The pair (ownerKind, ownerKey) is the real key; leagueId
+/// is a convenience relation that a future account-wide mode would simply
+/// leave null. Nothing reads leagueId except the lookup helper, so switching
+/// to per-account progression later is a resolver change, not a rewrite.
+model DynastyProfile {
+  id        String @id @default(cuid())
+
+  // "LEAGUE" today. "ACCOUNT" would key on a user id instead. [TUNE-later]
+  ownerKind String @default("LEAGUE")
+  // == leagueId while ownerKind is "LEAGUE".
+  ownerKey  String
+
+  leagueId  String? @unique
+  league    League? @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  /// JSON string map of skillId -> rank purchased, e.g. {"EVALUATIONS":2}.
+  /// Absent key == rank 0. See lib/dynasty.ts DYNASTY_SKILLS.
+  skills    String @default("{}")
+
+  /// Scout Now charge ledger. `scoutNowYear` is the league year the counter
+  /// applies to; when League.seasonYear moves past it the counter is treated
+  /// as 0 (and rewritten on the next spend), which is how "resets on a new
+  /// season" works without a season hook.
+  scoutNowYear Int @default(0)
+  scoutNowUsed Int @default(0)
+
+  /// Same ledger for the Negotiation branch's once-or-twice-a-season Insider
+  /// ability, kept separate so the two scarcities are tuned independently.
+  insiderYear Int @default(0)
+  insiderUsed Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([ownerKind, ownerKey])
 }
