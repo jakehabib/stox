@@ -371,6 +371,12 @@ export default async function TeamDashboard({ params }: { params: { id: string }
             { value: `${roster.length}${injured.length ? ` (${injured.length} inj)` : ''}`, label: 'Roster' },
             { value: `${picks}`, label: 'Picks Owned' },
           ]}
+          ratings={myRating ? [
+            { label: 'Team Overall', value: myRating.overall, rank: myRating.rank, outOf: leagueRatings.size },
+            { label: 'Offense', value: myRating.offense, rank: compositeRank(leagueRatings, team.id, 'offense'), outOf: leagueRatings.size },
+            { label: 'Defense', value: myRating.defense, rank: compositeRank(leagueRatings, team.id, 'defense'), outOf: leagueRatings.size },
+            { label: 'Special Teams', value: myRating.specialTeams, rank: compositeRank(leagueRatings, team.id, 'specialTeams'), outOf: leagueRatings.size },
+          ] : undefined}
           nextGame={nextGame}
         />
       </div>
@@ -441,4 +447,20 @@ export default async function TeamDashboard({ params }: { params: { id: string }
       </div>
     </div>
   );
+}
+
+/**
+ * League rank for one of the composite ratings. TeamRating carries a rank for
+ * the OVERALL and for each individual unit, but not for offense, defense or
+ * special teams — so ranking them here, off the same map that produced the
+ * number, is the only way the rank under a figure is the rank OF that figure.
+ * Same reasoning, and same shape, as offDefRankDetail on the handover screen.
+ */
+function compositeRank(
+  ratings: Map<string, { teamId: string; offense: number; defense: number; specialTeams: number }>,
+  teamId: string,
+  key: 'offense' | 'defense' | 'specialTeams',
+): number {
+  const all = [...ratings.values()].sort((a, b) => b[key] - a[key]);
+  return all.findIndex((t) => t.teamId === teamId) + 1;
 }

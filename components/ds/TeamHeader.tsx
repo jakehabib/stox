@@ -1,6 +1,7 @@
 import { TeamLogo } from '../TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { StatNumber } from './StatNumber';
+import { ratingColor } from '@/lib/ratings';
 
 interface NextGame {
   teamId: string; abbr: string; city: string; wins: number; losses: number;
@@ -9,9 +10,11 @@ interface NextGame {
   why?: { label: string; points: number; detail: string }[];
 }
 interface StatTile { value: string; label: string; color?: string }
+/** One unit's strength and where it sits among the 32 clubs. */
+interface RatingTile { label: string; value: number; rank: number; outOf: number }
 
 export function TeamHeader({
-  teamId, abbr, city, nickname, wins, losses, ties, standing, tenureLabel, scenarioTag, stats, nextGame,
+  teamId, abbr, city, nickname, wins, losses, ties, standing, tenureLabel, scenarioTag, stats, ratings, nextGame,
 }: {
   teamId: string; abbr: string; city: string; nickname: string;
   wins: number; losses: number; ties: number; standing: string;
@@ -20,6 +23,13 @@ export function TeamHeader({
   /** A clinch/elimination scenario worth flagging, e.g. "Clinched the division." */
   scenarioTag?: { label: string; tone: 'good' | 'bad' };
   stats: StatTile[];
+  /**
+   * Team strength, with league rank. The record says what has happened; this
+   * says what you are holding. It used to appear on the dashboard only as
+   * small print inside the win-probability reasoning ("76 overall vs 74"),
+   * which is the one place a GM would never look for it.
+   */
+  ratings?: RatingTile[];
   /** The next matchup, embedded directly rather than a separate card — one hero, one read. */
   nextGame?: NextGame;
 }) {
@@ -62,6 +72,26 @@ export function TeamHeader({
         </div>
       </div>
 
+      {ratings && ratings.length > 0 && (
+        // Its own band rather than more tiles in the row above: those are
+        // inventory (money, bodies, picks) and these are quality, and the two
+        // read as one undifferentiated wall of numbers when mixed. Ranks are
+        // among the 32 clubs in this league, and the rank under each number is
+        // the rank OF that number — offense and defense are ranked on the same
+        // composite they display, not on the overall.
+        <div className="relative border-t border-line/60 bg-ink/30 grid grid-cols-2 sm:grid-cols-4 divide-x divide-line/40">
+          {ratings.map((r) => (
+            <div key={r.label} className="px-5 py-2.5">
+              <div className="label-sm">{r.label}</div>
+              <div className="flex items-baseline gap-2 mt-0.5">
+                <span className={`stat-value text-stat-sm ${ratingColor(r.value)}`}>{r.value}</span>
+                <span className="text-[11px] text-muted">{ordinal(r.rank)} of {r.outOf}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {nextGame && (
         // bg-ink/40 so this row stays legible over the watermark crest,
         // which extends down behind it — the pill nearly disappeared into
@@ -97,4 +127,11 @@ export function TeamHeader({
       )}
     </div>
   );
+}
+
+/** 1 -> "1st". Local because the dashboard's own ordinal is not exported. */
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
 }
