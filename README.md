@@ -1170,3 +1170,31 @@ ever force-pushed over, so every state below still exists in git history).
   fresh row on every Dynasty action instead of updating the one.
   Verified: `tsc --noEmit` clean; `/dynasty`, `/scouting`, `/gm` and both
   a drafted and a rostered player page return 200.
+- **2026-08-21 — Saves are now scoped to the browser that created them
+  (`0c79c45`).** The pre-launch blocker. The home page ran an unfiltered
+  `prisma.league.findMany()`, `deleteLeagueAction` deleted any id it was
+  handed, and none of the 33 server actions checked whose league they were
+  operating on. On one machine that is invisible; the moment this is served
+  to two testers, each sees the other's franchises and can delete a
+  twenty-season dynasty with one click.
+  New `lib/owner.ts` mints an opaque random id into an **httpOnly cookie**
+  and stamps it on `League.ownerKey` at creation. This is **not
+  authentication** — whoever holds the cookie is the owner, and clearing
+  cookies loses the saves — but it is the correct boundary for a
+  single-player game with no accounts, and it had to exist before a public
+  test deploy. Three enforcement points: `listOwnedLeagues()` (home page),
+  `assertLeagueOwner` / `assertTeamOwner` (every server action — a
+  page-level check does nothing for POST endpoints), and `canViewLeague()`
+  inside `getLeagueContext` (every league page render).
+  **Legacy saves** (`ownerKey IS NULL`, created before the column) stay
+  visible in development and are adopted by the first browser that opens
+  them, so existing local saves don't disappear; in production they are
+  invisible and undeletable, because on a shared deployment an unowned save
+  is precisely the thing nobody should be able to claim.
+  Verified live: with the test league stamped to a foreign owner key its
+  page returned **404** and it vanished from the home list; restored to
+  unowned, all 17 league routes returned 200.
+  *Still open before a real public deploy:* the cookie is the only
+  credential, so it cannot survive a cleared browser or move between
+  devices. If saves need to follow a person rather than a browser, that is
+  a real sign-in and a separate change.
