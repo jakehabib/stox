@@ -268,6 +268,23 @@ is gitignored; `.env.example` is the committed template.
 > every browser. In development they are visible to everyone. Flipping this on
 > a shared deployment exposes every unowned save to every visitor.
 
+### If a deploy fails right after `npm install`, with `allow-scripts` warnings
+
+npm 11.6 stopped running dependencies' install scripts unless the project
+approves them. Prisma is entirely dependent on those: `@prisma/engines`'s
+postinstall is what downloads the query and schema engine binaries, and
+without them `prisma generate` cannot run and the build dies seconds in,
+with the real reason appearing only as a warning further up.
+
+`package.json` carries an `allowScripts` block naming the four packages that
+need scripts (`prisma`, `@prisma/client`, `@prisma/engines`, `esbuild`).
+This is easy to miss locally, because npm 10 has no such feature and simply
+ignores the field — the build passes on a developer machine and fails on
+Vercel, which ships a newer npm.
+
+If a future dependency adds an install script, the same failure returns.
+The fix is `npx npm@11 approve-scripts <pkg>`, which appends to that block.
+
 ### If a deploy fails with P1002
 
 `prisma migrate deploy` reached the database and timed out. Two causes, in

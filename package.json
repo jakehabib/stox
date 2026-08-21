@@ -7,17 +7,20 @@
     "build": "prisma generate && prisma migrate deploy && next build",
     "start": "next start -p 3001",
     "lint": "next lint",
-
     "db:push": "prisma db push",
     "db:reset": "prisma db push --force-reset",
     "db:studio": "prisma studio",
-
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:migrate:status": "prisma migrate status",
-
     "sim:health": "tsx scripts/simHealth.ts",
     "postinstall": "prisma generate"
+  },
+  "allowScripts": {
+    "prisma": true,
+    "@prisma/client": true,
+    "@prisma/engines": true,
+    "esbuild": true
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
