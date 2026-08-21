@@ -1308,3 +1308,32 @@ ever force-pushed over, so every state below still exists in git history).
   It was a sub-tab under GM Career, so the level/XP/skill-tree system was
   invisible to anyone who had not already clicked into that category, and it
   was reported as missing entirely.
+- **2026-08-21 — Contract negotiation became a minigame (`1885f1c`).** The
+  ask was *"the contract negotiations for re-sign and free agency need to be
+  more of a minigame instead of them accepting everything. A live updating
+  interest meter might work"* and *"the salary should just be a slider too"*.
+  A model and panel were built to that spec and **never connected to
+  anything** — `NegotiationPanel`, `InterestMeter` and `lib/negotiation.ts`
+  had zero call sites, while the live path was `apy >= 0.9 * market`: four
+  lines, no personality, no term, no guarantee, no patience, no rival. That
+  *was* the "they accept everything" bug.
+  Both screens are now real — sliders, live meter, server-authoritative
+  patience, and a loss condition. **One evaluator survived**
+  (`lib/negotiation.ts`); `lib/freeagency.ts`'s is deleted, and both the
+  client meter and the server acceptance call the same `decideOffer`,
+  because a meter that says "he'll sign" while the server refuses is exactly
+  the lying-metric bug this project keeps shipping.
+  Proven rather than asserted: **234,801 offer comparisons, zero
+  disagreements**, six runs, comparing the session the client holds against
+  one the server re-resolves — every field, not just `accepted`. The check
+  caught two real bugs on the way: an offer charging one patience pip while
+  the button promised two, and a nonsense minimum-price quote for prove-it
+  players. Consolidating also made his reservation price depend on **true**
+  ratings while the estimate you see stays **scouted**, so scouting quality
+  now matters at the negotiating table.
+- **2026-08-21 — The production build was run, and passes.** `next build`
+  had not been run against this tree in a long time, and `tsc` cannot see
+  Suspense boundaries, server/client component violations or route config
+  problems. All 27 routes compile, exit 0. Every league route is dynamic
+  (`cookies()` in the ownership check makes them so); only `/design-system/*`
+  is static — and publicly reachable, which is worth knowing.
