@@ -7,6 +7,8 @@ import { teamCapSummary } from '@/lib/cap-summary';
 import { TeamLogo } from '@/components/TeamLogo';
 import { LeagueNav } from '@/components/LeagueNav';
 import { LeagueWireTicker } from '@/components/ds/LeagueWireTicker';
+import { CapAlertBanner } from '@/components/ds/CapAlertBanner';
+import { capComplianceReport } from '@/lib/capEnforcement';
 import { transactionCategory } from '@/lib/newsCategory';
 import { prisma } from '@/lib/db';
 
@@ -21,8 +23,13 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // league. Deliberately excludes NEWS/DEV_MILESTONE stat-leader trivia:
   // it isn't breaking, and the Dashboard's League Wire already shows it, so
   // including it made the two read as duplicates of each other.
-  const [cap, tickerTx] = await Promise.all([
+  // capMode OFF means there is no ceiling to be under, so neither the header
+  // figure nor the compliance banner has anything true to say — both are
+  // skipped rather than rendering a number the rest of the UI disowns.
+  // (teamCapSummary's capSpace is +Infinity in that mode; see its doc.)
+  const [cap, compliance, tickerTx] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : teamCapSummary(userTeam.id, league.seasonYear, ctx.settings.capMode),
+    ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : capComplianceReport(userTeam.id, league.seasonYear, ctx.settings.capMode),
     prisma.transaction.findMany({
       where: { leagueId: league.id, type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'INJURY', 'DRAFT', 'FIRE', 'CHAMPION', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] } },
       orderBy: { createdAt: 'desc' },
@@ -80,6 +87,19 @@ export default async function LeagueLayout({ children, params }: { children: Rea
           </div>
         </div>
         <LeagueNav leagueId={league.id} />
+        {compliance && !compliance.compliant && (
+          <CapAlertBanner
+            leagueId={league.id}
+            shortfall={compliance.shortfall}
+            capUsed={compliance.capUsed}
+            capTotal={compliance.capTotal}
+            deadMoney={compliance.deadMoney}
+            blocksAdvance={ctx.settings.capMode === 'REALISTIC' && compliance.fixable}
+            moves={compliance.relief.slice(0, 2).map((r) => ({
+              playerId: r.playerId, name: r.name, position: r.position, frees: r.frees, kind: r.kind,
+            }))}
+          />
+        )}
       </header>
       <main className="max-w-7xl mx-auto px-6 py-8">{children}</main>
     </div>

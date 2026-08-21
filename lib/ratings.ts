@@ -125,19 +125,15 @@ export function ratingTier(ovr: number): { label: string; className: string } {
 }
 
 /**
- * A coarser, role-flavored label than ratingTier. For anyone unproven
- * (a draftee, or a rookie with 0 experience) the grade is drawn from
- * POTENTIAL rather than current overall — a rookie's present-day number
- * means almost nothing yet, the projected ceiling is the actual story —
- * and the whole thing reads from the same fogged scouted view as
- * everything else, so a label can flip as scouting narrows in on someone,
- * same as a real draft evaluation.
+ * Confidence bands the tag itself is gated on — deliberately the SAME
+ * HIGH/MEDIUM/LOW split ScoutingRange already renders next to it (see
+ * lib/scouting.ts confidenceLabel), so a "Franchise Prospect" tag and a
+ * "Confidence: HIGH" readout never disagree about how sure the read is.
  */
-export function playerLabel(opts: { ovr: number; potential: number; isDraftee?: boolean; experience?: number }): { label: string; className: string } {
-  const { ovr, potential, isDraftee, experience } = opts;
-  const unproven = isDraftee || (experience ?? 1) === 0;
-  const grade = unproven ? potential : ovr;
+const LABEL_CONFIDENCE_HIGH = 75;
+const LABEL_CONFIDENCE_MEDIUM = 40;
 
+function gradeTag(grade: number, unproven: boolean): { label: string; className: string } {
   if (grade >= 97) return { label: 'Generational', className: 'text-gold' };
   if (grade >= 90) return { label: unproven ? 'Franchise Prospect' : 'Franchise', className: 'text-gold' };
   if (grade >= 82) return { label: unproven ? 'Star Prospect' : 'Star', className: 'text-accent' };
@@ -145,6 +141,38 @@ export function playerLabel(opts: { ovr: number; potential: number; isDraftee?: 
   if (grade >= 66) return { label: unproven ? 'Depth Prospect' : 'Rotational', className: 'text-chalk' };
   if (grade >= 58) return { label: unproven ? 'Late-Round Prospect' : 'Backup', className: 'text-muted' };
   return { label: unproven ? 'Deep Sleeper' : 'Camp Body', className: 'text-bad' };
+}
+
+/**
+ * A coarser, role-flavored label than ratingTier. For anyone unproven
+ * (a draftee, or a rookie with 0 experience) the grade is drawn from
+ * POTENTIAL rather than current overall — a rookie's present-day number
+ * means almost nothing yet, the projected ceiling is the actual story —
+ * and the whole thing reads from the same fogged scouted view as
+ * everything else, so a label can flip as scouting narrows in on someone,
+ * same as a real draft evaluation.
+ *
+ * `confidence` gates the reveal — this is potential/ovr distilled into the
+ * single most legible signal in the game, so handing it out for free on an
+ * unscouted prospect would make the entire scouting system pointless. Below
+ * MEDIUM there simply isn't a book on the player yet, so the tag is hidden
+ * behind an explicit "Unevaluated" rather than showing a grade nobody has
+ * actually earned. Between MEDIUM and HIGH the read exists but hasn't
+ * converged, so it's shown hedged (a trailing "?", muted) rather than with
+ * the same certainty as a fully-scouted grade. A revealed view (own roster
+ * unfogged, or revealTrueRatings) already reports confidence: 100 from
+ * buildScoutedView, so it clears HIGH automatically — no separate "revealed"
+ * flag needed here.
+ */
+export function playerLabel(opts: { ovr: number; potential: number; isDraftee?: boolean; experience?: number; confidence: number }): { label: string; className: string } {
+  const { ovr, potential, isDraftee, experience, confidence } = opts;
+  const unproven = isDraftee || (experience ?? 1) === 0;
+  const grade = unproven ? potential : ovr;
+  const tag = gradeTag(grade, unproven);
+
+  if (confidence < LABEL_CONFIDENCE_MEDIUM) return { label: 'Unevaluated', className: 'text-muted' };
+  if (confidence < LABEL_CONFIDENCE_HIGH) return { label: `${tag.label}?`, className: `${tag.className} italic` };
+  return tag;
 }
 
 export function ratingColor(v: number): string {

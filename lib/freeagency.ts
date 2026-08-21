@@ -6,6 +6,7 @@ import { readJson, writeJson } from './json';
 import { buildContract, marketValue, suggestedYears, capHit, formatMoney } from './cap';
 import { maxOffer, parseGmProfile, teamNeeds, RosterPlayer } from './ai/gm';
 import { teamCapSummary } from './cap-summary';
+import { assertCapRoom } from './capEnforcement';
 
 /**
  * ===========================================================================
@@ -79,14 +80,11 @@ export async function signFreeAgent(opts: {
   const { playerId, teamId, apy, years, seasonYear, capMode, week } = opts;
   const voidYears = Math.max(0, opts.voidYears ?? 0);
 
-  const summary = await teamCapSummary(teamId, seasonYear, capMode);
   const contract = buildContract({ apy, years, signedYear: seasonYear, escalation: opts.escalation });
   // Void years widen the proration divisor, so they change the year-1 hit the
   // cap check has to clear — build the check off the same shape that gets stored.
   const hit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries), voidYears }, capMode);
-  if (capMode !== 'OFF' && hit > summary.capSpace + 1) {
-    throw new Error(`Signing would exceed the cap by ${Math.round((hit - summary.capSpace) / 1000)}K.`);
-  }
+  await assertCapRoom({ action: 'Signing', seasonYear, capMode, charges: [{ teamId, delta: hit }] });
 
   await prisma.$transaction(async (tx) => {
     await tx.player.update({ where: { id: playerId }, data: { teamId, status: 'ACTIVE' } });
@@ -146,15 +144,15 @@ export async function extendContract(opts: {
   if (!player.teamId) throw new Error('Player is not on a roster.');
   const teamId = player.teamId;
 
-  const summary = await teamCapSummary(teamId, seasonYear, capMode);
   const oldHit = player.contract ? capHit(player.contract, capMode) : 0;
-  const availableSpace = summary.capSpace + oldHit;
-
   const contract = buildContract({ apy, years, signedYear: seasonYear, escalation: opts.escalation, bonusPct: opts.bonusPct });
   const newHit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries) }, capMode);
-  if (capMode !== 'OFF' && newHit > availableSpace + 1) {
-    throw new Error(`Extension would exceed the cap by ${Math.round((newHit - availableSpace) / 1000)}K.`);
-  }
+  // The old deal is torn up the instant this one is signed, so its hit is
+  // credited back before the new one is measured against the ceiling.
+  await assertCapRoom({
+    action: 'Extension', seasonYear, capMode,
+    charges: [{ teamId, delta: newHit, creditBack: oldHit }],
+  });
 
   await prisma.$transaction(async (tx) => {
     await tx.contract.deleteMany({ where: { playerId } });
@@ -216,12 +214,11 @@ export async function applyFranchiseTag(opts: {
   const positionSalaries = positionPeers.map((p) => capHit(p.contract, capMode)).filter((v) => v > 0);
   const tagValue = franchiseTagValue(positionSalaries);
 
-  const summary = await teamCapSummary(teamId, seasonYear, capMode);
   const oldHit = player.contract ? capHit(player.contract, capMode) : 0;
-  const availableSpace = summary.capSpace + oldHit;
-  if (capMode !== 'OFF' && tagValue > availableSpace + 1) {
-    throw new Error(`The tag would exceed the cap by $${Math.round((tagValue - availableSpace) / 1000)}K.`);
-  }
+  await assertCapRoom({
+    action: 'Franchise tag', seasonYear, capMode,
+    charges: [{ teamId, delta: tagValue, creditBack: oldHit }],
+  });
 
   await prisma.$transaction(async (tx) => {
     await tx.contract.deleteMany({ where: { playerId } });
@@ -274,6 +271,20 @@ export async function restructureContract(opts: {
   const next = computeRestructure(player.contract, opts.convertAmount, { addVoidYears: opts.addVoidYears, nowYear: opts.seasonYear });
   if (next.signingBonus === player.contract.signingBonus) {
     throw new Error('That conversion amount is too small to change anything — the base salary floor was already hit.');
+  }
+
+  // A restructure normally FREES room, but not always: rebasing re-prorates
+  // the whole (old + newly converted) bonus over just the years that are
+  // left, so restructuring a bonus-heavy deal late in its life can raise
+  // this year's hit instead of lowering it. Same gate as every other move,
+  // and a no-op in the common cap-relief direction since delta <= 0 there.
+  const oldHit = capHit(player.contract, opts.capMode);
+  const newHit = capHit({ ...next, baseSalaries: writeJson(next.baseSalaries) }, opts.capMode);
+  if (player.teamId) {
+    await assertCapRoom({
+      action: 'Restructure', seasonYear: opts.seasonYear, capMode: opts.capMode,
+      charges: [{ teamId: player.teamId, delta: newHit - oldHit }],
+    });
   }
 
   await prisma.$transaction(async (tx) => {

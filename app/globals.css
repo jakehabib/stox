@@ -150,6 +150,31 @@
     @apply inline-flex items-stretch gap-1 bg-ink/70 rounded-md px-3 py-1.5 border border-line;
   }
 
+  /* Scroll-shadow affordance for a fixed-height scroller. Without it a
+     max-height list slices its last row in half with no signal that there's
+     more below — the trade builder's roster panels read as broken rather
+     than scrollable.
+
+     The two `local` gradients are opaque covers that scroll WITH the content,
+     so they sit over the shadows only when you're already at that end; the
+     two `scroll` radial gradients are the shadows themselves, pinned to the
+     container. The result auto-hides top and bottom independently with no
+     JavaScript and no scroll listener. The cover colour has to match the
+     scroller's own background or the effect shows a seam, hence --scroll-bg.
+
+     Set --scroll-bg on the element when the surface isn't the default card. */
+  .scroll-shadow-y {
+    --scroll-bg: #18181b;
+    background:
+      linear-gradient(var(--scroll-bg) 30%, transparent) center top,
+      linear-gradient(transparent, var(--scroll-bg) 70%) center bottom,
+      radial-gradient(farthest-side at 50% 0, rgba(0,0,0,0.6), transparent) center top,
+      radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,0.6), transparent) center bottom;
+    background-repeat: no-repeat;
+    background-size: 100% 32px, 100% 32px, 100% 12px, 100% 12px;
+    background-attachment: local, local, scroll, scroll;
+  }
+
   /* League Wire ticker — continuous scroll, pauses on hover so a headline
      can actually be read, and holds still entirely for reduced-motion. */
   .ticker-track {

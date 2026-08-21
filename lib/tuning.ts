@@ -178,6 +178,8 @@ export const PROGRESSION = {
   /** OVR + potential bump for winning a season award (MVP/OPOY/DPOY/ROTY/Super Bowl MVP). */
   AWARD_OVR_BUMP: 3,
   AWARD_POTENTIAL_BUMP: 2,
+  /** Growth multiplier at a checkpoint for a player carrying a Development Focus charge (see SCOUT_TIERS.DEVELOP). One charge is consumed per checkpoint. */
+  DEV_FOCUS_GROWTH_MULT: 1.5,
 };
 
 // ---------------------------------------------------------------------------
@@ -337,6 +339,124 @@ export const SCOUTING = {
   POTENTIAL_DIFFICULTY: 0.95,
   /** Unscouted default center for potential — a blurred league-average read, same idea as the 62 default used for individual attributes. */
   POTENTIAL_DEFAULT_CENTER: 75,
+};
+
+// ---------------------------------------------------------------------------
+// SCOUTING ECONOMY [FRAGILE — this is the whole scarcity model]
+// ---------------------------------------------------------------------------
+/**
+ * Focus points are the GM's only scarce non-money resource. The numbers below
+ * are sized against a 400-prospect draft class and a ~110 focus/week team:
+ *
+ *   full season of regular-season grants  ~ 1,870
+ *   pre-draft allotment (one lump)        ~   700
+ *   whole league year, everything counted ~ 3,600
+ *
+ *   one Area Look on all 400 prospects    =  2,000   (a whole year of breadth)
+ *   one Deep Dive on all 400 prospects    = 18,000   (5x a year's budget — impossible on purpose)
+ *
+ * So breadth is affordable-ish and depth is not: you triage, or you learn
+ * nothing about anybody.
+ */
+export const SCOUT_ECONOMY = {
+  /**
+   * Per-period grant as a multiple of the team's weekly staff output. The
+   * league year is a sequence of periods (one per week in-season, one per
+   * offseason step, ONE for the entire pre-draft window).
+   */
+  PHASE_GRANT_MULT: {
+    PRESEASON: 1.0,
+    REGULAR: 1.0,
+    PLAYOFFS: 0.8,      // scouts are at bowl games, not everywhere
+    OFFSEASON: 0.75,
+    RESIGN: 0.75,
+    FREE_AGENCY: 1.0,   // the FA board needs real work
+    DRAFT: 6.0,         // combine + pro days + private visits, all in one lump
+    FANTASY_DRAFT: 6.0,
+  } as Record<string, number>,
+
+  /**
+   * Carry-over cap, as a fraction of the INCOMING period's grant. Unspent
+   * focus above this evaporates at replenishment. Banking one partial week to
+   * afford a Deep Dive is a real decision; hoarding a season into the draft is
+   * not possible.
+   */
+  CARRY_CAP_FRACTION: 0.5,
+
+  /** Cost of pass N+1 on the same player = base * (1 + REPEAT_COST_STEP * N). */
+  REPEAT_COST_STEP: 0.6,
+  /** Reveal strength of pass N+1 on the same player = base * REPEAT_REVEAL_DECAY^N. */
+  REPEAT_REVEAL_DECAY: 0.82,
+  /**
+   * Hard ceiling on passes against one player inside one period. Replaces the
+   * old "one scout per player per week" lock: two looks a week is a plausible
+   * amount of tape, and it stops a whole week's budget vanishing into one guy
+   * in a single sitting.
+   */
+  MAX_PASSES_PER_PERIOD: 2,
+  /**
+   * Ceiling on the share of a player's attributes that can ever be locked to
+   * their true value. Without it, enough Deep Dives collapse the displayed
+   * OVR range to a single number — and "you are never fully certain" is the
+   * fog-of-war contract this whole system is built on. Potential is protected
+   * separately (errorBand's floor keeps it a range at any confidence).
+   */
+  MAX_LOCKED_FRACTION: 0.6,
+
+  /**
+   * Scout-staff contribution to the weekly grant. Each scout is worth
+   * STAFF_FLOOR..1.0 by speed, and additional scouts are discounted
+   * geometrically so a 5-scout department isn't 2.5x a 2-scout one.
+   */
+  STAFF_FLOOR: 0.35,
+  STAFF_HEADCOUNT_DECAY: 0.72,
+  /** grant = budgetPerWeek * (BASE_SHARE + STAFF_SHARE * staffContribution). */
+  BASE_SHARE: 0.35,
+  STAFF_SHARE: 0.5,
+};
+
+/**
+ * The four things a GM can buy with focus. `close` is the fraction of the
+ * REMAINING uncertainty a pass removes — which is why the fifth look at a
+ * player is worth so much less than the first even before repeat decay.
+ */
+export type ScoutTierKey = 'LOOK' | 'EVAL' | 'DEEP' | 'DEVELOP';
+
+export const SCOUT_TIERS: Record<ScoutTierKey, {
+  label: string;
+  cost: number;
+  /** Fraction of remaining confidence gap closed. */
+  close: number;
+  /** How many attributes this pass locks to their true value. */
+  revealAttrs: number;
+  /** Extra fraction of the POTENTIAL gap closed on top of the general read. */
+  potentialClose: number;
+  /** Can this pass surface the hidden development trait? */
+  revealsDev: boolean;
+  /** Own-roster only (coaching focus, not scouting). */
+  ownRosterOnly: boolean;
+  blurb: string;
+}> = {
+  LOOK: {
+    label: 'Area Look', cost: 5, close: 0.22, revealAttrs: 0, potentialClose: 0,
+    revealsDev: false, ownRosterOnly: false,
+    blurb: 'One regional scout, one game of tape. Narrows the overall range a little.',
+  },
+  EVAL: {
+    label: 'Full Evaluation', cost: 18, close: 0.42, revealAttrs: 2, potentialClose: 0,
+    revealsDev: false, ownRosterOnly: false,
+    blurb: 'A full cross-check. Narrows the range and locks two attributes to their true value.',
+  },
+  DEEP: {
+    label: 'Deep Dive', cost: 45, close: 0.65, revealAttrs: 3, potentialClose: 0.5,
+    revealsDev: true, ownRosterOnly: false,
+    blurb: 'Private visit + medical + interviews. Tightens the potential range and can surface his development trait.',
+  },
+  DEVELOP: {
+    label: 'Development Focus', cost: 30, close: 0.35, revealAttrs: 1, potentialClose: 0.25,
+    revealsDev: true, ownRosterOnly: true,
+    blurb: 'Coaching hours on one of your own. Boosts his next development checkpoint and reads his growth curve.',
+  },
 };
 
 // ---------------------------------------------------------------------------

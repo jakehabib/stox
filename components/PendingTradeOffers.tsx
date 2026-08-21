@@ -1,6 +1,6 @@
 'use client';
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { respondToTradeOfferAction } from '@/app/actions/trade';
@@ -23,12 +23,17 @@ export interface PendingOffer {
 export function PendingTradeOffers({ leagueId, offers }: { leagueId: string; offers: PendingOffer[] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
   if (offers.length === 0) return null;
 
   const respond = (offerId: string, accept: boolean) => {
     startTransition(async () => {
-      await respondToTradeOfferAction(leagueId, offerId, accept);
+      const res = await respondToTradeOfferAction(leagueId, offerId, accept);
+      // Accepting can fail on the salary cap — the incoming contracts have to
+      // fit under YOUR ceiling too. The offer stays pending so it can be
+      // accepted after clearing room; say why rather than silently no-op'ing.
+      setError(res.ok ? null : res.message);
       router.refresh();
     });
   };
@@ -39,6 +44,12 @@ export function PendingTradeOffers({ leagueId, offers }: { leagueId: string; off
         <span className="w-2 h-2 rounded-full bg-accent2 animate-pulse" />
         Trade Offers ({offers.length})
       </h3>
+      {error && (
+        <div className="panel p-3 border-bad/40 bg-bad/5 text-xs space-y-1">
+          <div className="label-sm text-bad">Couldn't accept that offer</div>
+          <p className="text-muted">{error}</p>
+        </div>
+      )}
       <div className="space-y-2">
         {offers.map((o) => (
           <div key={o.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-raised">

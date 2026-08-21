@@ -23,6 +23,9 @@ import { SectionHeading } from '@/components/ds/SectionHeading';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { generateStorylines } from '@/lib/storyline';
 import { StorylineFeed } from '@/components/ds/StorylineFeed';
+import { InjuryReport, InjuryEntry } from '@/components/ds/InjuryReport';
+import { TeamLeaders, LeaderEntry } from '@/components/ds/TeamLeaders';
+import { SeasonStats } from '@/lib/types';
 
 const AWARD_TYPES: { type: string; code: string; label: string }[] = [
   { type: 'AWARD_MVP', code: 'MVP', label: 'MVP' },
@@ -191,6 +194,61 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   });
   // Games first so a real result outranks same-week trivia news on a tie —
   // "what happened last week" belongs above "who's pacing the league."
+  // --- Right-rail widgets -----------------------------------------------
+  // Both read the roster that's already loaded above, so neither costs a
+  // query. The rail was carrying two short widgets against a left column
+  // three times its height, leaving most of the page's right half blank.
+
+  // "54 (3 inj)" in the header names nobody. A starter here is whoever tops
+  // their position group on raw rating — the depth chart can override that,
+  // but this page doesn't load it and the approximation is right in the case
+  // that matters (your best player at a spot going down).
+  const bestAtPosition = new Map<string, string>();
+  for (const p of roster) {
+    if (!bestAtPosition.has(p.position)) bestAtPosition.set(p.position, p.id);
+  }
+  const injuries: InjuryEntry[] = roster
+    .filter((p) => p.injuryWeeks > 0)
+    .map((p) => ({
+      id: p.id,
+      name: `${p.firstName} ${p.lastName}`,
+      position: p.position,
+      ovr: p.trueOvr,
+      weeks: p.injuryWeeks,
+      type: p.injuryType,
+      isStarter: bestAtPosition.get(p.position) === p.id,
+    }))
+    .sort((a, b) => Number(b.isStarter) - Number(a.isStarter) || b.weeks - a.weeks || b.ovr - a.ovr)
+    .slice(0, 6);
+
+  const statsById = new Map(roster.map((p) => [p.id, readJson<SeasonStats>(p.seasonStats, {})]));
+  // One name per phase of the game — the Stats page owns the deep tables, so
+  // anything more here would just duplicate it.
+  const LEADER_CATEGORIES: { category: string; pick: (s: SeasonStats) => number; line: (s: SeasonStats) => string }[] = [
+    { category: 'Passing', pick: (s) => s.passYds ?? 0, line: (s) => `${(s.passYds ?? 0).toLocaleString()} yds · ${s.passTd ?? 0} TD` },
+    { category: 'Rushing', pick: (s) => s.rushYds ?? 0, line: (s) => `${(s.rushYds ?? 0).toLocaleString()} yds · ${s.rushTd ?? 0} TD` },
+    { category: 'Receiving', pick: (s) => s.recYds ?? 0, line: (s) => `${s.rec ?? 0} rec · ${(s.recYds ?? 0).toLocaleString()} yds` },
+    { category: 'Pass Rush', pick: (s) => s.sacks ?? 0, line: (s) => `${s.sacks ?? 0} sacks · ${s.tackles ?? 0} tkl` },
+  ];
+  const leaders: LeaderEntry[] = LEADER_CATEGORIES.flatMap(({ category, pick, line }) => {
+    let best: (typeof roster)[number] | null = null;
+    let bestVal = 0;
+    for (const p of roster) {
+      const v = pick(statsById.get(p.id) ?? {});
+      if (v > bestVal) { bestVal = v; best = p; }
+    }
+    // A category nobody has produced in yet is omitted rather than shown as a
+    // zero — an empty leader board reads as broken, a shorter one doesn't.
+    if (!best || bestVal <= 0) return [];
+    return [{
+      category,
+      id: best.id,
+      name: `${best.firstName} ${best.lastName}`,
+      position: best.position,
+      line: line(statsById.get(best.id) ?? {}),
+    }];
+  });
+
   const wire = [...wireFromGames, ...wireFromTx]
     .sort((a, b) => b.seasonYear - a.seasonYear || b.week - a.week)
     .slice(0, 6)
@@ -261,13 +319,6 @@ export default async function TeamDashboard({ params }: { params: { id: string }
               <StorylineFeed leagueId={league.id} storylines={storylines} />
             </div>
           )}
-
-          <div className="section">
-            <SectionHeading title="League Wire" action={<Link href={`/league/${league.id}/news`} className="text-xs text-accent2 hover:underline">View all →</Link>} />
-            <div className="panel px-4 divide-y divide-line/60">
-              {wire.length > 0 ? wire : <p className="text-sm text-muted py-3">No news yet.</p>}
-            </div>
-          </div>
         </div>
 
         <div className="space-y-6">
@@ -292,6 +343,27 @@ export default async function TeamDashboard({ params }: { params: { id: string }
               }))}
             />
           </div>
+
+          <div className="section">
+            <SectionHeading title="Injury Report" action={<Link href={`/league/${league.id}/depth-chart`} className="text-xs text-accent2 hover:underline">Depth chart →</Link>} />
+            <InjuryReport leagueId={league.id} entries={injuries} />
+          </div>
+
+          <div className="section">
+            <SectionHeading title="Season Leaders" action={<Link href={`/league/${league.id}/stats`} className="text-xs text-accent2 hover:underline">All stats →</Link>} />
+            <TeamLeaders leagueId={league.id} leaders={leaders} />
+          </div>
+        </div>
+      </div>
+
+      {/* Full width rather than in the left column: the wire is the longest
+          block on the page, and stacking it under the brief pushed the left
+          column to roughly three times the rail's height with the right half
+          of the page left blank. */}
+      <div className="section">
+        <SectionHeading title="League Wire" action={<Link href={`/league/${league.id}/news`} className="text-xs text-accent2 hover:underline">View all →</Link>} />
+        <div className="panel px-4 divide-y divide-line/60">
+          {wire.length > 0 ? wire : <p className="text-sm text-muted py-3">No news yet.</p>}
         </div>
       </div>
     </div>

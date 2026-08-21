@@ -8,8 +8,21 @@ export interface CapSummary {
   activeSalary: number;
   deadMoney: number;
   capUsed: number;
+  /**
+   * Room left under the ceiling. In OFF mode this is deliberately
+   * `Number.POSITIVE_INFINITY`, NOT 0 — the AI's offer sizing (maxOffer,
+   * runAiFreeAgencyWave, fillRosterForTeam) budgets against it, and a 0
+   * would silently stop every CPU team from signing anyone in a league
+   * with the cap switched off.
+   *
+   * That makes it unsafe to render directly: formatMoney(Infinity) prints
+   * "$InfinityM". Branch on `capEnabled` before displaying any figure from
+   * this summary.
+   */
   capSpace: number;
   rosterSize: number;
+  /** False only when capMode is OFF. The single flag UI should branch on. */
+  capEnabled: boolean;
 }
 
 export async function teamCapSummary(teamId: string, seasonYear: number, mode: CapMode): Promise<CapSummary> {
@@ -34,5 +47,6 @@ export async function teamCapSummary(teamId: string, seasonYear: number, mode: C
     capUsed,
     capSpace: mode === 'OFF' ? Number.POSITIVE_INFINITY : capTotal - capUsed,
     rosterSize: players.length,
+    capEnabled: mode !== 'OFF',
   };
 }

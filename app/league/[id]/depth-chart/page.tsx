@@ -26,8 +26,9 @@ export default async function DepthChartPage({ params }: { params: { id: string 
   }
 
   const groupCount = POSITIONS.filter((pos) => byPosition[pos].length > 0).length;
-  const thinGroups = POSITIONS.filter((pos) => byPosition[pos].length === 1).length;
-  const emptyGroups = POSITIONS.filter((pos) => byPosition[pos].length === 0).length;
+  const emptyPositions = POSITIONS.filter((pos) => byPosition[pos].length === 0);
+  const emptyGroups = emptyPositions.length;
+  const thinPositions = POSITIONS.filter((pos) => byPosition[pos].length === 1);
   // Average rating of whoever currently sits atop each group — the closest
   // single number to "how good is the lineup this page actually sets."
   const starterOvrs = POSITIONS
@@ -38,6 +39,19 @@ export default async function DepthChartPage({ params }: { params: { id: string 
   const starterAvgOvr = starterOvrs.length > 0
     ? starterOvrs.reduce((s, v) => s + v, 0) / starterOvrs.length
     : 0;
+  // A depth chart that isn't sorted by rating is a legitimate choice, so this
+  // reports rather than corrects — but a new signing appends to the bottom of
+  // his group, so an 83 can end up behind two 69s without the user ever
+  // deciding that. Injured players are excluded: benching someone who's hurt
+  // is exactly right, and counting it would make the number meaningless.
+  const misordered = POSITIONS.filter((pos) => {
+    const order = orderByPosition[pos] ?? [];
+    const healthy = order
+      .map((id) => players.find((p) => p.id === id))
+      .filter((p): p is NonNullable<typeof p> => !!p && p.injuryWeeks === 0);
+    return healthy.some((p, i) => healthy.slice(i + 1).some((q) => q.trueOvr > p.trueOvr));
+  });
+
   const injuredStarters = POSITIONS.filter((pos) => {
     const topId = orderByPosition[pos]?.[0];
     if (!topId) return false;
@@ -61,16 +75,28 @@ export default async function DepthChartPage({ params }: { params: { id: string 
           {
             label: 'Unmanned',
             value: String(emptyGroups),
-            detail: emptyGroups > 0 ? 'nobody rostered there' : 'every spot covered',
+            detail: emptyGroups > 0 ? emptyPositions.join(', ') : 'every spot covered',
             color: emptyGroups > 0 ? 'text-bad' : 'text-accent',
           },
           { label: 'Starter OVR', value: starterAvgOvr.toFixed(1), detail: 'average across the ones', color: undefined },
-          { label: 'No Backup', value: String(thinGroups), detail: thinGroups > 0 ? 'one injury from a hole' : 'depth everywhere', color: thinGroups > 0 ? 'text-warn' : 'text-accent' },
+          { label: 'No Backup', value: String(thinPositions.length), detail: thinPositions.length > 0 ? thinPositions.join(', ') : 'depth everywhere', color: thinPositions.length > 0 ? 'text-warn' : 'text-accent' },
           { label: 'Injured Starters', value: String(injuredStarters), detail: injuredStarters > 0 ? 'reorder before kickoff' : 'none', color: injuredStarters > 0 ? 'text-bad' : 'text-accent' },
+          {
+            label: 'Out Of Order',
+            value: String(misordered.length),
+            detail: misordered.length > 0 ? misordered.join(', ') : 'best man starts everywhere',
+            color: misordered.length > 0 ? 'text-warn' : 'text-accent',
+          },
         ]}
       />
 
-      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+      {/* Column flow, not a grid. A grid row is as tall as its tallest cell, so
+          a two-deep QB card sat in a box sized for the seven-deep WR card
+          beside it and the page ran close to half empty. Columns pack each
+          card against the previous one instead. Reading order becomes
+          top-to-bottom then across, which is fine here because every card
+          names its own position. */}
+      <div className="columns-1 md:columns-2 xl:columns-3 gap-4 [&>*]:mb-4 [&>*]:break-inside-avoid">
         {POSITIONS.filter((pos) => byPosition[pos].length > 0).map((pos) => (
           <DepthChartGroup
             key={pos}

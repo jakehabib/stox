@@ -24,6 +24,7 @@ import { checkAndUpdateRecords, recordBreakHeadline } from './records';
 import { reseedDraftOrder, startRookieDraft } from './draft';
 import { autoDepthChartAll } from './gen/league';
 import { observe } from './scouting';
+import { replenishLeagueScoutingBudgets } from './scoutingEconomy';
 
 /**
  * ===========================================================================
@@ -39,7 +40,84 @@ import { observe } from './scouting';
  * ===========================================================================
  */
 
-export async function advanceWeek(leagueId: string) {
+/**
+ * Public entrypoint. Wraps the phase machine so that whatever the step did to
+ * the clock, every team's scouting allowance is brought onto the new period
+ * before the UI reads it: this is the replenishment tick for the focus
+ * economy (lib/scoutingEconomy.ts). It is idempotent — a team already on the
+ * current period is skipped — so a no-op advance never hands out free focus.
+ */
+export async function advanceWeek(leagueId: string): Promise<AdvanceResult> {
+  const before = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const blocked = await capComplianceBlock(leagueId, parseSettings(before.settings));
+  if (blocked) return blocked; // time does not move while the user is over the cap
+
+  const result = await advanceWeekStep(leagueId);
+  const after = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  await replenishLeagueScoutingBudgets(leagueId, after, parseSettings(after.settings));
+  return result;
+}
+
+/**
+ * What `advanceWeek` hands back. `blocked` means time did NOT move — the
+ * summary explains why, and `capBlock` carries the specific way out, so the
+ * UI can render an explanation and a route instead of a dead button.
+ */
+export interface AdvanceResult {
+  summary: string;
+  blocked?: boolean;
+  capBlock?: {
+    teamAbbr: string;
+    shortfall: number;
+    /** Cuts that, taken together, clear the shortfall — biggest saver first. */
+    path: { playerId: string; name: string; position: string; frees: number; deadMoney: number }[];
+  };
+}
+
+/**
+ * League-year compliance gate. Real teams cannot roll into the next week
+ * over the salary cap, and neither can the user — being over has to cost
+ * something or the ceiling is decoration.
+ *
+ * Deliberately narrow:
+ *   - REALISTIC only. SIMPLIFIED still enforces transactions but has no
+ *     dead money, so a team can always cut straight back under and a hard
+ *     stop adds nothing; OFF means the user switched the rule off entirely
+ *     and nothing here may override that.
+ *   - The USER's team only. AI teams are enforced at transaction time, and
+ *     halting the user's clock over a CPU team's books would be unfixable.
+ *   - Only while a way out still exists. If cutting every player who frees
+ *     anything still leaves the team over (dead money alone can exceed the
+ *     ceiling), blocking would be a permanent soft-lock, so the week
+ *     advances and the standing over-cap warning carries it instead.
+ */
+async function capComplianceBlock(leagueId: string, settings: LeagueSettings): Promise<AdvanceResult | null> {
+  if (settings.capMode !== 'REALISTIC') return null;
+  const userTeam = await prisma.team.findFirst({ where: { leagueId, isUser: true }, select: { id: true } });
+  if (!userTeam) return null;
+
+  const { capComplianceReport } = await import('./capEnforcement');
+  const { formatMoney } = await import('./cap');
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { seasonYear: true } });
+  const report = await capComplianceReport(userTeam.id, league.seasonYear, settings.capMode);
+  if (report.compliant || !report.fixable) return null;
+
+  const steps = report.path
+    .map((c) => `cut ${c.name} (${c.position}) to free ${formatMoney(c.frees)}`)
+    .join(', then ');
+  return {
+    summary: `Can't advance — ${report.teamName} is ${formatMoney(report.shortfall)} over the salary cap `
+      + `(${formatMoney(report.capUsed)} committed against a ${formatMoney(report.capTotal)} ceiling`
+      + `${report.deadMoney > 0 ? `, ${formatMoney(report.deadMoney)} of it dead money` : ''}). `
+      + `Get back under it and the week will advance. `
+      + (steps ? `Fastest route: ${steps}. ` : '')
+      + `A restructure or a trade that sends salary out works too — the Cap page lists every option.`,
+    blocked: true,
+    capBlock: { teamAbbr: report.teamAbbr, shortfall: report.shortfall, path: report.path },
+  };
+}
+
+async function advanceWeekStep(leagueId: string) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const rng = new Rng(`${settings.simSeed || league.id}-${league.phase}-${league.week}`);

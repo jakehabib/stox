@@ -50,6 +50,7 @@ export function TradeBuilder({
     sendValue: number; receiveValue: number;
     explanation?: { give: string[]; receive: string[] };
   } | null>(null);
+  const [execError, setExecError] = useState<string | null>(null);
   const [partnerSuggestions, setPartnerSuggestions] = useState<TradePartnerSuggestion[] | null>(null);
 
   const toggle = (set: Set<string>, setFn: (s: Set<string>) => void, id: string) => {
@@ -132,7 +133,15 @@ export function TradeBuilder({
 
   const execute = () => {
     startTransition(async () => {
-      await executeTradeAction(leagueId, myTeam.id, partnerId, giveAssets, getAssets);
+      const res = await executeTradeAction(leagueId, myTeam.id, partnerId, giveAssets, getAssets);
+      if (!res.ok) {
+        // Most often the salary cap on one side or the other. Keep the
+        // assembled offer on screen so the user can rework it instead of
+        // rebuilding it from scratch.
+        setExecError(res.message);
+        return;
+      }
+      setExecError(null);
       setGive(new Set()); setGet(new Set()); setResult(null);
       router.refresh();
     });
@@ -214,6 +223,13 @@ export function TradeBuilder({
           )}
         </div>
       </div>
+
+      {execError && (
+        <div className="panel p-4 border-bad/40 bg-bad/5 text-sm space-y-1">
+          <div className="label-sm text-bad">Trade blocked</div>
+          <p className="text-muted">{execError}</p>
+        </div>
+      )}
 
       {result && (
         <div className={`panel p-4 text-sm space-y-3 ${result.accepted ? 'border-accent/40' : 'border-bad/30'}`}>
@@ -416,7 +432,14 @@ function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks,
           <SortHeader key={c.key} label={c.label} sortKey={c.key} active={sortKey === c.key} dir={dir} onClick={toggleSort} className={`${c.width} text-right`} />
         ))}
       </div>
-      <div className="max-h-96 overflow-y-auto space-y-1">
+      {/* Fixed-height scroller: .scroll-shadow-y (app/globals.css) gives it an
+          affordance so a row clipped at the fold reads as "there's more below"
+          rather than as a rendering bug. --scroll-bg must match this
+          container's actual surface or the cover gradients leave a seam. */}
+      <div
+        className="max-h-96 overflow-y-auto space-y-1 scroll-shadow-y"
+        style={{ ['--scroll-bg' as never]: '#141417' }}
+      >
         {rows.map((p) => (
           <div
             key={p.id}

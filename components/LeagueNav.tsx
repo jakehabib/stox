@@ -25,7 +25,12 @@ const CATEGORIES: Category[] = [
       { href: '/trade', label: 'Trade' },
     ],
   },
-  { key: 'draft', label: 'Draft', items: [{ href: '/draft', label: 'Draft' }] },
+  {
+    key: 'draft', label: 'Draft', items: [
+      { href: '/draft', label: 'Draft Board' },
+      { href: '/scouting', label: 'Scouting Dept' },
+    ],
+  },
   {
     key: 'league', label: 'League', items: [
       { href: '/standings', label: 'Standings' },

@@ -100,6 +100,16 @@ model Team {
   playoffSeed Int?
   eliminated Boolean @default(false)
 
+  // Scouting economy (see lib/scoutingEconomy.ts) ------------------------------
+  // Focus is a finite per-period allowance, not a growing pile. `scoutPeriod`
+  // is the period key (year/phase/week) the current allowance was granted for;
+  // when the league moves past it the balance is topped up and any unspent
+  // carry-over above SCOUT_ECONOMY.CARRY_CAP_FRACTION of the new grant is lost.
+  scoutPoints      Int @default(0)   // unspent focus right now
+  scoutPeriod      Int @default(0)   // period key of the last replenishment (0 = never)
+  scoutPeriodGrant Int @default(0)   // size of the grant that opened this period (UI shows "x of y")
+  scoutSpentSeason Int @default(0)   // focus burned so far this league year, for the department UI
+
   players      Player[]
   staff        Staff[]
   scouts       Scout[]
@@ -189,6 +199,11 @@ model Player {
   collegeStats    String @default("{}")
   combineTesting  String @default("{}")
 
+  // Coaching/development focus charges bought with scouting focus points.
+  // Each charge multiplies the next in-season development checkpoint roll and
+  // is consumed by it (see lib/development.ts). 0 for every existing save.
+  devFocus  Int      @default(0)
+
   injuryWeeks Int    @default(0)
   injuryType  String?  // human-readable description, e.g. "Hamstring strain" — set when injured, cleared on recovery
   fatigue     Int    @default(0)   // 0-100, restores between weeks
@@ -231,7 +246,23 @@ model ScoutingReport {
   ovrLow     Int    @default(0)
   ovrHigh    Int    @default(99)
   notes      String @default("")
+  // Period key (see lib/scoutingEconomy.ts periodKey) of the most recent pass.
   lastWeek   Int    @default(0)
+
+  // Scouting economy bookkeeping ----------------------------------------------
+  // Total passes ever run on this player by this team. Drives BOTH the cost
+  // escalation and the reveal decay, so hammering one prospect gets steadily
+  // more expensive and steadily less informative.
+  passes       Int     @default(0)
+  // Passes run inside the current period only — reset whenever lastWeek moves.
+  periodPasses Int     @default(0)
+  // Potential has its own confidence track: only a Deep Dive pushes it above
+  // the general confidence, which is what makes the deep tier worth its price.
+  potConfidence Int    @default(0)
+  // JSON array of attribute keys locked to their true value by an evaluation.
+  attrsRevealed String @default("[]")
+  // True once a Deep Dive surfaced the player's hidden development trait.
+  devRevealed  Boolean @default(false)
 
   @@unique([playerId, teamId])
   @@index([teamId])

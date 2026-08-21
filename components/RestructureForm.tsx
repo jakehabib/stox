@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { restructureContractAction } from '@/app/actions/roster';
-import { formatMoney, proration, capHit, deadMoneyOnCut, restructureContract as computeRestructure } from '@/lib/cap';
+import { formatMoney, proration, capHit, capHitSchedule, deadMoneyOnCut, restructureContract as computeRestructure } from '@/lib/cap';
 
 interface ContractShape {
   years: number; yearsRemaining: number; signedYear: number;
@@ -35,12 +35,21 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
     const nextShaped = { ...next, baseSalaries: JSON.stringify(next.baseSalaries) };
     const oldHit = (bases[yearIdx] ?? 0) + proration(contract);
     const newHit = capHit(nextShaped, 'REALISTIC');
+    // The whole point of the warning below: what the deal looks like in
+    // EVERY year left, not just this one. capHitSchedule slices from the
+    // year already elapsed, so index 0 is this season for both shapes.
+    const oldSchedule = capHitSchedule(contract, 'REALISTIC');
+    const newSchedule = capHitSchedule(nextShaped, 'REALISTIC');
     return {
       oldHit,
       newHit,
       oldDead: deadMoneyOnCut(contract, 'REALISTIC'),
       newDead: deadMoneyOnCut(nextShaped, 'REALISTIC'),
       capFreed: oldHit - newHit,
+      oldSchedule,
+      newSchedule,
+      /** Extra cap charged in future years to buy this year's relief. */
+      futureCost: newSchedule.slice(1).reduce((a, b) => a + b, 0) - oldSchedule.slice(1).reduce((a, b) => a + b, 0),
     };
   }, [convert, addVoidYears]);
 
@@ -81,6 +90,39 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
         <div className="flex justify-between pt-1 border-t border-line/60"><span className="text-muted">Your cap space after</span><span className="font-mono font-semibold text-accent">{formatMoney(capSpace + preview.capFreed)}</span></div>
         <div className="flex justify-between"><span className="text-muted">Dead money if cut</span><span className="font-mono">{formatMoney(preview.oldDead)} → <span className="text-bad font-semibold">{formatMoney(preview.newDead)}</span></span></div>
       </div>
+
+      {preview.newSchedule.length > 1 && (
+        <div className="panel p-3 space-y-1.5">
+          <div className="label-sm">Every year left on the deal</div>
+          <div className="flex gap-1.5">
+            {preview.newSchedule.map((hit, i) => {
+              const was = preview.oldSchedule[i] ?? 0;
+              const worse = hit > was;
+              return (
+                <div key={i} className="flex-1 min-w-0 text-center">
+                  <div className="label-sm !text-[10px]">{contract.signedYear + i}</div>
+                  <div className={`stat-value text-stat-sm ${worse ? 'text-bad' : 'text-accent'}`}>{formatMoney(hit)}</div>
+                  <div className="text-[10px] text-muted font-mono truncate">was {formatMoney(was)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {preview.futureCost > 0 && (
+        <p className="text-xs text-warn">
+          You are borrowing {formatMoney(preview.capFreed)} from this season and paying back {formatMoney(preview.futureCost)}
+          {' '}across the later years of the deal. That money does not disappear — it just moves.
+        </p>
+      )}
+
+      <p className="text-xs text-bad">
+        The trap: restructure now and cut him later and you pay for BOTH. His dead money rises from{' '}
+        {formatMoney(preview.oldDead)} to {formatMoney(preview.newDead)} — release him after this and{' '}
+        {formatMoney(preview.newDead)} lands on your cap for a player who is no longer on the roster.
+        Only restructure a player you intend to keep.
+      </p>
 
       <p className="text-xs text-muted">Future years absorb the rest — this only moves WHEN the money hits the cap, not how much you owe overall.</p>
 

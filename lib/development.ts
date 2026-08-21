@@ -124,7 +124,11 @@ export async function applyInSeasonProgression(
     const attrs = readJson<AttrMap>(p.trueAttrs, {});
     const tier = tierById.get(p.id);
     const perfMult = tier === 'breakout' ? PROGRESSION.BREAKOUT_GROWTH_MULT : tier === 'slump' ? PROGRESSION.SLUMP_GROWTH_MULT : 1;
-    const { attrs: rolled, ovr: rolledOvr } = progressPlayer(rng, p.position as Position, attrs, p.age, p.potential, p.devTrait, speed, share * perfMult);
+    // Development Focus charges bought with scouting focus points (see
+    // SCOUT_TIERS.DEVELOP): coaching hours the GM chose to spend on this guy
+    // instead of on the draft board. One charge is consumed per checkpoint.
+    const focusMult = p.devFocus > 0 ? PROGRESSION.DEV_FOCUS_GROWTH_MULT : 1;
+    const { attrs: rolled, ovr: rolledOvr } = progressPlayer(rng, p.position as Position, attrs, p.age, p.potential, p.devTrait, speed, share * perfMult * focusMult);
 
     const categories = leaderCategoriesById.get(p.id);
     if (categories) {
@@ -145,6 +149,13 @@ export async function applyInSeasonProgression(
     FROM (VALUES ${values}) AS v(id, attrs, ovr, potential)
     WHERE p.id = v.id
   `;
+
+  // Burn one Development Focus charge per player who carried one into this
+  // checkpoint — the spend buys a boost, not a permanent multiplier.
+  await prisma.player.updateMany({
+    where: { leagueId, status: 'ACTIVE', devFocus: { gt: 0 } },
+    data: { devFocus: { decrement: 1 } },
+  });
 
   if (leaders.length > 0) {
     await prisma.transaction.createMany({

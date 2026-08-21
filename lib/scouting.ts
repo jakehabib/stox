@@ -1,5 +1,5 @@
 import { Rng, clamp } from './rng';
-import { SCOUTING, POSITION_GROUP } from './tuning';
+import { SCOUTING } from './tuning';
 import type { Position } from './tuning';
 import { ATTRIBUTE_BY_KEY, AttrMap, attrsForPosition, computeOverall } from './ratings';
 import { readJson } from './json';
@@ -33,8 +33,10 @@ export interface ScoutedAttr {
   high: number;
   /** 0..1 — how tight this specific attribute is known. */
   certainty: number;
-  /** Present only when the settings reveal truth (debug / scouting off). */
+  /** Present only when the settings reveal truth (debug / scouting off), or when a Full Evaluation locked this one attribute. */
   actual?: number;
+  /** True when an evaluation pinned this attribute to its true value. */
+  locked?: boolean;
 }
 
 export interface ScoutedPlayerView {
@@ -112,7 +114,15 @@ export function buildScoutedView(args: {
   trueOvr: number;
   /** True potential ceiling. Never returned directly when fogged — only feeds the scouted range's center via the report's stored observation. */
   potential: number;
-  report?: { confidence: number; observed: string; notes?: string } | null;
+  report?: {
+    confidence: number;
+    observed: string;
+    notes?: string;
+    /** Potential's own confidence track — only Deep Dives push it above `confidence`. */
+    potConfidence?: number | null;
+    /** JSON array of attribute keys an evaluation locked to their true value. */
+    attrsRevealed?: string | null;
+  } | null;
   settings: LeagueSettings;
   /** True for players on the viewing team (they get a confidence floor). */
   isOwnRoster?: boolean;
@@ -151,9 +161,17 @@ export function buildScoutedView(args: {
   const observed = readJson<AttrMap>(args.report?.observed ?? null, {});
   const penalty = args.isUserView ? DIFFICULTY_MODS[settings.difficulty].userScoutPenalty : 0;
 
+  // Attributes a Full Evaluation / Deep Dive locked in. Those stop being a
+  // range at all — you sent people to measure it and now you know.
+  const locked = new Set(readJson<string[]>(args.report?.attrsRevealed ?? null, []));
+
   const attrs: ScoutedAttr[] = attrsForPosition(position).map((key) => {
     const def = ATTRIBUTE_BY_KEY[key];
     const diff = def?.scoutDifficulty ?? 0.5;
+    if (locked.has(key)) {
+      const truth = clamp(Math.round(trueAttrs[key] ?? 62), 20, 99);
+      return { key, label: def?.label ?? key, observed: truth, low: truth, high: truth, certainty: 1, actual: truth, locked: true };
+    }
     const band = errorBand(confidence, diff, penalty);
     // If we have no observation yet, fall back to a blurred league-average read
     // rather than leaking the true value.
@@ -175,7 +193,11 @@ export function buildScoutedView(args: {
   // Potential is always a range, never a bare "?" — it just starts very wide
   // (potential is inherently the hardest thing to project) and narrows the
   // same way every other scouted number does as confidence rises.
-  const potBand = errorBand(confidence, SCOUTING.POTENTIAL_DIFFICULTY, penalty);
+  // Potential rides the general read unless a Deep Dive bought it a tighter
+  // one of its own. Never collapses to a point: errorBand's floor plus
+  // POTENTIAL_DIFFICULTY keeps a several-point spread even at 99 confidence.
+  const potConfidence = Math.max(confidence, args.report?.potConfidence ?? 0);
+  const potBand = errorBand(potConfidence, SCOUTING.POTENTIAL_DIFFICULTY, penalty);
   const potCenter = observed[POTENTIAL_OBS_KEY] ?? SCOUTING.POTENTIAL_DEFAULT_CENTER;
 
   return {
@@ -200,23 +222,10 @@ export function scoutNote(confidence: number): string {
   return 'Essentially unscouted. Anything we say right now is a guess.';
 }
 
-/** Confidence gained by spending `points` on one player. */
-export function confidenceGain(points: number, scoutAccuracy: number, specialtyMatch: boolean): number {
-  const accuracyMult = 0.6 + (scoutAccuracy / 100) * 0.8; // [TUNE]
-  const specialty = specialtyMatch ? 1 + SCOUTING.SPECIALTY_BONUS : 1;
-  return points * SCOUTING.CONFIDENCE_PER_POINT * accuracyMult * specialty;
-}
-
-/** Weekly scouting points available to a team, from its scout staff. */
-export function weeklyScoutingBudget(
-  scouts: { speed: number }[],
-  settings: LeagueSettings,
-): number {
-  const staffBonus = scouts.reduce((a, s) => a + s.speed / 100, 0);
-  return Math.round(settings.scoutingBudgetPerWeek * (0.5 + staffBonus));
-}
-
-export function specialtyMatches(specialty: string, position: Position): boolean {
-  if (specialty === 'ALL') return true;
-  return POSITION_GROUP[position] === specialty;
-}
+/*
+ * The point -> confidence conversion, the weekly budget and the specialty
+ * check all moved to lib/scoutingEconomy.ts when focus points became a real
+ * currency: reveal strength is now a fraction of REMAINING uncertainty per
+ * tiered action, not a linear rate per point, so those helpers no longer had
+ * a caller here. Import them from lib/scoutingEconomy.ts.
+ */

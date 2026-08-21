@@ -182,31 +182,119 @@ export function generateCollegeProfile(rng: Rng, position: Position, trueAttrs: 
 
 const SKIPS_BENCH: Position[] = ['QB', 'WR', 'CB', 'S', 'K', 'P'];
 
-/** Combine or pro-day testing numbers — always public knowledge, unlike scouted attribute ranges. [TUNE] */
-export function generateCombineTesting(rng: Rng, position: Position, trueAttrs: AttrMap, trueOvr: number): CombineTesting {
+/**
+ * Testing-day outlier archetypes (design doc: "combine numbers should
+ * correlate with ability, imperfectly"). Rolled off `truePercentile` — this
+ * prospect's trueOvr rank within his OWN position group in the class, 0 =
+ * worst, 1 = best, supplied by generateDraftClass once the whole class
+ * exists (a single prospect's own generation has no way to know that on its
+ * own). Bottom-third guys can only roll WARRIOR (great testing, bad
+ * football player — the trap); top-third guys can only roll SLEEPER (great
+ * testing, genuinely good — the guy testing plus tape finds) or BAD_TESTER
+ * (poor testing, genuinely good — the guy testing alone would bury). A
+ * prospect in the middle third never gets an outlier roll at all — the
+ * whole design point is that both traps are draft-capital-relevant misses,
+ * not "anyone can randomly test weird."
+ */
+type TestingArchetype = 'WARRIOR' | 'SLEEPER' | 'BAD_TESTER' | 'NORMAL';
+
+/**
+ * [TUNE] top/bottom third boundary and per-category outlier odds. The
+ * injection rate (12%) is higher than the target land rate (8-12% of the
+ * ELIGIBLE tier actually reads as an outlier — see class verification):
+ * outliers have to out-test genuinely elite true-ability prospects (who
+ * test well for real, honest reasons) to actually crack the position's top
+ * decile, so not every injected roll clears that bar.
+ */
+const OUTLIER_TIER = 1 / 3;
+const OUTLIER_RATE = 0.12;
+
+function rollTestingArchetype(rng: Rng, truePercentile: number): TestingArchetype {
+  if (truePercentile < OUTLIER_TIER) {
+    return rng.bool(OUTLIER_RATE) ? 'WARRIOR' : 'NORMAL';
+  }
+  if (truePercentile >= 1 - OUTLIER_TIER) {
+    if (rng.bool(OUTLIER_RATE)) return 'SLEEPER';
+    // Second independent roll off the same top-third pool (SLEEPER guys
+    // already consumed by the branch above), not a fresh third population —
+    // ~9% of the remaining 90%, still squarely in the target band.
+    if (rng.bool(OUTLIER_RATE)) return 'BAD_TESTER';
+  }
+  return 'NORMAL';
+}
+
+/**
+ * 0..1 "how did he test," 1 = best. NORMAL blends true ability (dominant,
+ * via truePercentile so the correlation strength doesn't depend on whether
+ * this position happens to weight speed/strength heavily — a DT's testing
+ * tracks his true quality about as reliably as a corner's does) with a
+ * smaller physical-attribute term for texture, plus day-of noise. The three
+ * outlier archetypes override this outright and IGNORE true ability, which
+ * is the entire point: testing alone can't tell a workout warrior from a
+ * real one, or a bad tester from a bust — only scouting the tape can.
+ */
+const NORMAL_NOISE_SD = 0.05; // [TUNE] dialed (alongside OUTLIER_RATE above) to put a class's trueOvr-vs-testing rank correlation around 0.6-0.75 per position — see class verification
+function testingQuality(rng: Rng, archetype: TestingArchetype, truePercentile: number, attrQuality: number): number {
+  // Pushed close to the ceiling/floor (not just "above average") — a
+  // workout warrior or bad-tester has to be extreme enough to actually beat
+  // genuinely elite true-ability prospects who test well for honest reasons,
+  // or the outlier would get lost in the crowd instead of standing out.
+  if (archetype === 'WARRIOR') return clamp(rng.normal(0.97, 0.025), 0.88, 0.999);
+  if (archetype === 'SLEEPER') return clamp(rng.normal(0.96, 0.03), 0.86, 0.999);
+  if (archetype === 'BAD_TESTER') return clamp(rng.normal(0.04, 0.03), 0.001, 0.13);
+  // truePercentile already encodes "the relevant physical attributes" for
+  // this position — trueOvr is itself the position-weighted blend of them
+  // (ratings.ts POSITION_WEIGHTS). attrQuality gets a small explicit nudge
+  // on top for texture, but kept light: for positions that don't weight
+  // speed/strength/agility at all (K, P, interior OL), those attrs are
+  // near-random noise and a heavier weight here would visibly drag exactly
+  // those positions' correlation down relative to everyone else's.
+  const ability = 0.92 * truePercentile + 0.08 * attrQuality;
+  return clamp(ability + rng.normal(0, NORMAL_NOISE_SD), 0, 1);
+}
+
+/**
+ * Combine or pro-day testing numbers — always public knowledge, unlike
+ * scouted attribute ranges. [TUNE]
+ *
+ * `truePercentile` (0=worst, 1=best within this prospect's OWN position
+ * group in the class) drives the correlation between true ability and how
+ * he tests; defaults to 0.5 (neutral) for any caller that doesn't have a
+ * whole class to rank against, e.g. a single ad-hoc generated player.
+ */
+export function generateCombineTesting(rng: Rng, position: Position, trueAttrs: AttrMap, trueOvr: number, truePercentile = 0.5): CombineTesting {
   const speed = trueAttrs.speed ?? 50;
   const accel = trueAttrs.acceleration ?? 50;
   const agility = trueAttrs.agility ?? 50;
   const strength = trueAttrs.strength ?? 50;
+
+  const archetype = rollTestingArchetype(rng, truePercentile);
+  const attrQuality = clamp(((speed + accel + agility + strength) / 4 - 20) / 79, 0, 1);
+  const quality = testingQuality(rng, archetype, truePercentile, attrQuality);
+  // Re-expresses `quality` on the same 20..99 attribute scale the
+  // position-anchored formulas below were already calibrated against, so
+  // BASE_40 and the rest of the per-position math is untouched — only WHERE
+  // the driving number comes from changed (a blended ability+noise+outlier
+  // quality instead of the raw attribute), not the position calibration.
+  const proxy = 20 + quality * 79;
 
   const BASE_40: Partial<Record<Position, number>> = {
     WR: 4.48, CB: 4.47, RB: 4.52, S: 4.55, TE: 4.68, LB: 4.72, QB: 4.75, EDGE: 4.68,
     FB: 4.85, DT: 5.05, RT: 5.25, LT: 5.25, RG: 5.3, LG: 5.3, C: 5.28, K: 4.95, P: 4.95,
   };
   const base40 = BASE_40[position] ?? 4.9;
-  const fortyYard = clamp(base40 - (speed - 50) / 220 - (accel - 50) / 400 + rng.float(-0.06, 0.06), 4.22, 5.9);
+  const fortyYard = clamp(base40 - (proxy - 50) / 160 + rng.float(-0.05, 0.05), 4.22, 5.9);
 
-  const explosive = (speed + strength) / 2;
-  const vertical = clamp(28 + (explosive - 50) / 3.2 + rng.float(-2, 2), 18, 46);
-  const broadJump = clamp(100 + (explosive - 50) / 2.3 + rng.float(-4, 4), 84, 145);
+  const vertical = clamp(28 + (proxy - 50) / 3.2 + rng.float(-2, 2), 18, 46);
+  const broadJump = clamp(100 + (proxy - 50) / 2.3 + rng.float(-4, 4), 84, 145);
 
-  const agilityBase = 7.0 - (agility - 50) / 55;
+  const agilityBase = 7.0 - (proxy - 50) / 55;
   const threeCone = clamp(agilityBase + rng.float(-0.15, 0.15), 6.3, 8.2);
   const shuttle = clamp(threeCone - 2.7 + rng.float(-0.1, 0.1), 3.8, 5.3);
 
   const benchReps = SKIPS_BENCH.includes(position)
     ? null
-    : clamp(Math.round(14 + (strength - 50) / 3.5 + rng.float(-3, 3)), 2, 44);
+    : clamp(Math.round(14 + (proxy - 50) / 3.5 + rng.float(-3, 3)), 2, 44);
 
   // Higher-rated prospects test at the combine more consistently; the rest
   // more often only get a pro day.
@@ -222,11 +310,22 @@ export function generateCombineTesting(rng: Rng, position: Position, trueAttrs: 
  * a QB or edge rusher over a similarly-graded guard. A small deterministic
  * wobble (reseeded every couple weeks, not every render) gives risers and
  * fallers across the season without touching anyone's true rating.
+ *
+ * `testingPercentile` (0-100, from lib/combineRank's overallTestingPercentile,
+ * null/omitted if nobody has recorded numbers) is the public's OTHER input
+ * besides scoutedOvr — it's what makes the two combine outlier archetypes
+ * actually matter instead of being cosmetic: a workout warrior's testing is
+ * public and genuinely lifts him here even though scoutedOvr never saw it
+ * coming, and a good player who tests poorly gets actively marked down by
+ * evaluators who over-index on the stopwatch, same as real draft media does.
+ * Weighted modestly relative to scoutedOvr's own spread — a strong workout
+ * nudges the board, it doesn't rewrite the grade.
  */
-export function bigBoardScore(scoutedOvr: number, position: Position, playerId: string, leagueWeek: number, posValue: number): number {
+export function bigBoardScore(scoutedOvr: number, position: Position, playerId: string, leagueWeek: number, posValue: number, testingPercentile?: number | null): number {
   const buzzRng = new Rng(`${playerId}-buzz-${Math.floor(leagueWeek / 2)}`);
   const buzz = buzzRng.float(-3, 3);
-  return scoutedOvr * posValue + buzz;
+  const testingSwing = testingPercentile != null ? ((testingPercentile - 50) / 50) * 8 * posValue : 0;
+  return scoutedOvr * posValue + buzz + testingSwing;
 }
 
 /**

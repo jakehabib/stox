@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { cutPlayer as cutPlayerLib, signFreeAgentWithCompetition, evaluateOffer, extendContract, restructureContract, applyFranchiseTag, leadingCompetingBid, fillRosterForTeam } from '@/lib/freeagency';
 import { parseSettings } from '@/lib/settings';
+import { teamCapSummary } from '@/lib/cap-summary';
+import { capHit, deadMoneyOnCut, capSavingsOnCut } from '@/lib/cap';
 import { autoDepthChart } from '@/lib/gen/league';
 import { Rng } from '@/lib/rng';
 
@@ -12,6 +14,65 @@ export async function cutPlayerAction(leagueId: string, playerId: string) {
   const settings = parseSettings(league.settings);
   await cutPlayerLib({ leagueId, playerId, capMode: settings.capMode, seasonYear: league.seasonYear, week: league.week });
   revalidatePath(`/league/${leagueId}`, 'layout');
+}
+
+export interface CutImpact {
+  /** False in OFF mode — the UI then shows no dollar figures at all. */
+  capEnabled: boolean;
+  playerName: string;
+  /** This year's cap hit that goes away. */
+  currentHit: number;
+  /** Accelerated signing-bonus proration that stays on the books. */
+  deadMoney: number;
+  /** currentHit - deadMoney. NEGATIVE means the release costs you cap space. */
+  savings: number;
+  capSpaceBefore: number;
+  capSpaceAfter: number;
+  /** Release leaves the team over the ceiling. */
+  leavesOverCap: boolean;
+  /** Dead money exceeds the hit — the "restructured, now trapped" shape. */
+  costsMoreThanKeeping: boolean;
+}
+
+/**
+ * What releasing this player actually does, for the confirm step.
+ *
+ * A cut is the one move whose real cost is invisible at the point of
+ * decision: in REALISTIC mode every remaining dollar of prorated signing
+ * bonus (void years included) accelerates onto THIS year's cap the moment
+ * he's gone, so a heavily-restructured contract can cost more to release
+ * than to keep. Nothing said so before you clicked.
+ */
+export async function cutImpactAction(leagueId: string, playerId: string): Promise<CutImpact> {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
+  const name = `${player.firstName} ${player.lastName}`;
+
+  if (settings.capMode === 'OFF' || !player.contract || !player.teamId) {
+    return {
+      capEnabled: false, playerName: name, currentHit: 0, deadMoney: 0, savings: 0,
+      capSpaceBefore: 0, capSpaceAfter: 0, leavesOverCap: false, costsMoreThanKeeping: false,
+    };
+  }
+
+  const summary = await teamCapSummary(player.teamId, league.seasonYear, settings.capMode);
+  const currentHit = capHit(player.contract, settings.capMode);
+  const dead = deadMoneyOnCut(player.contract, settings.capMode);
+  const savings = capSavingsOnCut(player.contract, settings.capMode);
+  const after = summary.capSpace + savings;
+
+  return {
+    capEnabled: true,
+    playerName: name,
+    currentHit,
+    deadMoney: dead,
+    savings,
+    capSpaceBefore: summary.capSpace,
+    capSpaceAfter: after,
+    leavesOverCap: after < 0,
+    costsMoreThanKeeping: dead > currentHit,
+  };
 }
 
 export async function fillRosterAction(leagueId: string, teamId: string) {

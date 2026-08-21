@@ -13,6 +13,7 @@ import { positionBadgeClass } from '@/components/ds/positionColor';
 import { MetricTiles } from '@/components/ds/MetricTiles';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { buildCapHealth, rankContractValue, classifyContractValue, type CapHealth, type SurplusRow } from '@/lib/analytics';
+import { capComplianceReport } from '@/lib/capEnforcement';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'cap' | 'base' | 'years' | 'savings';
 
@@ -50,10 +51,11 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
     );
   }
 
-  const [summary, players, deadRows] = await Promise.all([
+  const [summary, players, deadRows, compliance] = await Promise.all([
     teamCapSummary(team.id, league.seasonYear, settings.capMode),
     prisma.player.findMany({ where: { teamId: team.id, status: 'ACTIVE' }, include: { contract: true } }),
     prisma.capCharge.findMany({ where: { teamId: team.id, year: league.seasonYear } }),
+    capComplianceReport(team.id, league.seasonYear, settings.capMode),
   ]);
 
   const usedPct = Math.min(100, Math.round((summary.capUsed / summary.capTotal) * 100));
@@ -227,6 +229,70 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
           { label: 'Mode', value: settings.capMode === 'REALISTIC' ? 'Realistic' : 'Simplified', detail: 'set in league settings' },
         ]}
       />
+
+      {!compliance.compliant && (
+        <div className="panel p-4 border-bad/40 bg-bad/5 space-y-3">
+          <div className="section-head !pb-1.5">
+            <div>
+              <div className="section-eyebrow text-bad">Non-compliant</div>
+              <h2 className="section-title">Path back under the cap</h2>
+            </div>
+            <div className="stat-value text-stat-lg text-bad">{formatMoney(compliance.shortfall)}</div>
+          </div>
+
+          <p className="text-sm text-muted">
+            {settings.capMode === 'REALISTIC' && compliance.fixable
+              ? 'The week will not advance until you are back under the ceiling. Any combination of these clears it — cuts and restructures below, or a trade that sends salary out.'
+              : compliance.fixable
+                ? 'Clear the shortfall before adding any more salary — signings, extensions, tags and trades are all blocked while you are over.'
+                : 'Cutting every player who frees cap space still would not clear this — most of your commitment is dead money that cannot be released. A trade that sends salary out is the only route, so the week is still allowed to advance.'}
+          </p>
+
+          {compliance.path.length > 0 && (
+            <div>
+              <div className="label-sm mb-1.5">Fastest route — {compliance.path.length} release{compliance.path.length === 1 ? '' : 's'}</div>
+              <div className="space-y-1">
+                {compliance.path.map((c) => (
+                  <Link
+                    key={c.playerId}
+                    href={`/league/${league.id}/player/${c.playerId}`}
+                    className="flex items-center gap-3 px-3 py-1.5 rounded-md bg-raised hover:bg-line transition-colors text-sm"
+                  >
+                    <span className={`pill ${positionBadgeClass(c.position)}`}>{c.position}</span>
+                    <span className="flex-1 truncate">{c.name}</span>
+                    <span className="text-xs text-muted font-mono">{formatMoney(c.deadMoney)} dead</span>
+                    <span className="font-mono text-accent font-semibold w-20 text-right">+{formatMoney(c.frees)}</span>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {compliance.relief.some((r) => r.kind === 'RESTRUCTURE') && (
+            <div>
+              <div className="label-sm mb-1.5">Or keep them — restructure candidates</div>
+              <div className="space-y-1">
+                {compliance.relief.filter((r) => r.kind === 'RESTRUCTURE').map((r) => (
+                  <Link
+                    key={r.playerId}
+                    href={`/league/${league.id}/player/${r.playerId}`}
+                    className="flex items-center gap-3 px-3 py-1.5 rounded-md bg-raised hover:bg-line transition-colors text-sm"
+                  >
+                    <span className={`pill ${positionBadgeClass(r.position)}`}>{r.position}</span>
+                    <span className="flex-1 truncate">{r.name}</span>
+                    <span className="text-xs text-muted font-mono">{formatMoney(r.deadMoney)} dead if cut after</span>
+                    <span className="font-mono text-accent font-semibold w-20 text-right">+{formatMoney(r.frees)}</span>
+                  </Link>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted mt-1.5">
+                A restructure buys room this year by pushing bonus into later ones — and raises the dead money you would
+                owe if you cut him afterwards. Only restructure players you intend to keep.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="panel p-4">
         <div className="flex items-center justify-between mb-2 text-sm">

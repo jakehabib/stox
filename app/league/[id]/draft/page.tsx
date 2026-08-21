@@ -5,7 +5,8 @@ import { buildScoutedView } from '@/lib/scouting';
 import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE, AI, Position } from '@/lib/tuning';
-import { bigBoardScore } from '@/lib/gen/prospectProfile';
+import { bigBoardScore, CombineTesting } from '@/lib/gen/prospectProfile';
+import { rankProspectCombine, overallTestingPercentile } from '@/lib/combineRank';
 import { imminentDraftYear } from '@/lib/draft';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { DraftPickButton } from '@/components/DraftPickButton';
@@ -124,9 +125,32 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           }),
         }));
       })();
+  // Testing is PUBLIC — the consensus board reacts to it even though nobody's
+  // scouted anyone yet, which is what makes a workout warrior actually rise
+  // here and a good-tape/bad-forty guy actually fall (see bigBoardScore).
+  // Grouped by position within this same ranking pool, not the whole league's
+  // history of prospects, so a prospect is judged against the exact peers
+  // he's being ranked against on this board.
+  const combinesByPosition = new Map<string, CombineTesting[]>();
+  for (const { p } of classForRank) {
+    const ct = readJson<Partial<CombineTesting>>(p.combineTesting, {});
+    if (!ct.venue) continue;
+    const arr = combinesByPosition.get(p.position) ?? [];
+    arr.push(ct as CombineTesting);
+    combinesByPosition.set(p.position, arr);
+  }
+  const testingPercentileById = new Map<string, number | null>();
+  for (const { p } of classForRank) {
+    const ct = readJson<Partial<CombineTesting>>(p.combineTesting, {});
+    testingPercentileById.set(
+      p.id,
+      ct.venue ? overallTestingPercentile(rankProspectCombine(ct as CombineTesting, combinesByPosition.get(p.position) ?? [])) : null,
+    );
+  }
+
   const ranked = [...classForRank].sort((a, b) =>
-    bigBoardScore(b.view.scoutedOvr, b.p.position as any, b.p.id, league.week, AI.DRAFT_POSITION_VALUE[b.p.position as Position] ?? 1) -
-    bigBoardScore(a.view.scoutedOvr, a.p.position as any, a.p.id, league.week, AI.DRAFT_POSITION_VALUE[a.p.position as Position] ?? 1),
+    bigBoardScore(b.view.scoutedOvr, b.p.position as any, b.p.id, league.week, AI.DRAFT_POSITION_VALUE[b.p.position as Position] ?? 1, testingPercentileById.get(b.p.id)) -
+    bigBoardScore(a.view.scoutedOvr, a.p.position as any, a.p.id, league.week, AI.DRAFT_POSITION_VALUE[a.p.position as Position] ?? 1, testingPercentileById.get(a.p.id)),
   );
   const rankById = new Map(ranked.map(({ p }, i) => [p.id, i + 1]));
   const rankBadge = (playerId: string): { label: string; className: string } | null => {
@@ -331,7 +355,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             <tbody>
               {sorted.map(({ p, view }) => {
                 const potentialForLabel = view.revealed ? p.potential : (view.potLow + view.potHigh) / 2;
-                const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0 });
+                const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0, confidence: view.confidence });
                 return (
                   <tr key={p.id}>
                     <td><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>

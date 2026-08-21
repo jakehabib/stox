@@ -63,6 +63,52 @@ export async function draftPlayer(opts: {
 
   const isFantasy = pickInfo.state.kind === 'FANTASY';
 
+  /**
+   * A rookie deal is real cap money and was the one acquisition path with no
+   * check at all. It's also the one transaction a team can't decline, so the
+   * two sides are handled differently WITHOUT giving either an exemption:
+   *   - the user is blocked, with the same specific CapViolationError every
+   *     other move throws, and has to clear room before picking;
+   *   - an AI team clears its own room first (autoClearCapRoom releases the
+   *     fewest positive-savings veterans that cover the bill) — the same
+   *     price a real front office pays to fit its rookie pool — rather than
+   *     stalling the draft for everyone.
+   */
+  if (!isFantasy && pickInfo.pick) {
+    const { parseSettings } = await import('./settings');
+    const leagueRow = await prisma.league.findUniqueOrThrow({ where: { id: opts.leagueId } });
+    const capMode = parseSettings(leagueRow.settings).capMode;
+    if (capMode !== 'OFF') {
+      const { assertCapRoom, autoClearCapRoom } = await import('./capEnforcement');
+      const { capHit } = await import('./cap');
+      const { teamCapSummary } = await import('./cap-summary');
+      const overall = (pickInfo.pick.round - 1) * LEAGUE.TEAM_COUNT + pickInfo.pick.slot;
+      const rookie = buildContract({
+        apy: rookieScaleApy(overall, LEAGUE.TEAM_COUNT * 7),
+        years: 4, signedYear: opts.seasonYear, isRookieDeal: true, bonusPct: 0.4,
+      });
+      const hit = capHit({ ...rookie, baseSalaries: writeJson(rookie.baseSalaries) }, capMode);
+      const team = await prisma.team.findUniqueOrThrow({ where: { id: opts.teamId }, select: { isUser: true } });
+
+      if (team.isUser) {
+        await assertCapRoom({ action: 'Rookie deal', seasonYear: opts.seasonYear, capMode, charges: [{ teamId: opts.teamId, delta: hit }] });
+      } else {
+        const summary = await teamCapSummary(opts.teamId, opts.seasonYear, capMode);
+        const shortfall = hit - summary.capSpace;
+        // Still short after cutting everyone who frees anything? Then no
+        // legal roster exists and blocking would deadlock the draft — the
+        // pick goes through, exactly like the user's escape valve in
+        // lib/season.ts's compliance block.
+        if (shortfall > 0) {
+          await autoClearCapRoom({
+            leagueId: opts.leagueId, teamId: opts.teamId, needed: shortfall,
+            seasonYear: opts.seasonYear, capMode, week: leagueRow.week,
+          });
+        }
+      }
+    }
+  }
+
   await prisma.$transaction(async (tx) => {
     await tx.player.update({
       where: { id: opts.playerId },

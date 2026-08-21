@@ -1,7 +1,6 @@
 import { prisma } from './db';
 import { teamNeeds, RosterPlayer } from './ai/gm';
-import { marketValue, formatMoney, capSavingsOnCut } from './cap';
-import { teamCapSummary } from './cap-summary';
+import { marketValue, formatMoney } from './cap';
 import { CapMode } from './types';
 import { Position } from './tuning';
 
@@ -121,25 +120,21 @@ export async function buildFrontOfficeBrief(
   }
 
   // --- Cap -----------------------------------------------------------
+  // Reuses the same compliance report the standing over-cap banner and the
+  // advancement block read, so the brief never contradicts either of them.
   if (capMode !== 'OFF') {
-    const summary = await teamCapSummary(teamId, seasonYear, capMode);
-    if (summary.capSpace < 0) {
-      const contracts = await prisma.player.findMany({
-        where: { teamId, status: 'ACTIVE', contract: { isNot: null } },
-        include: { contract: true },
-      });
-      let bestCut: { name: string; savings: number } | null = null;
-      for (const p of contracts) {
-        if (!p.contract) continue;
-        const savings = capSavingsOnCut(p.contract, capMode);
-        if (savings > 0 && (!bestCut || savings > bestCut.savings)) bestCut = { name: `${p.firstName} ${p.lastName}`, savings };
-      }
+    const { capComplianceReport } = await import('./capEnforcement');
+    const report = await capComplianceReport(teamId, seasonYear, capMode);
+    if (!report.compliant) {
+      const best = report.path[0] ?? report.relief.find((r) => r.kind === 'CUT');
+      const blocks = capMode === 'REALISTIC' && report.fixable;
       items.push({
         category: 'Cap',
-        headline: `You're over the cap by ${formatMoney(-summary.capSpace)}`,
-        detail: bestCut
-          ? `Cutting ${bestCut.name} would clear ${formatMoney(bestCut.savings)}.`
-          : 'No easy cuts — a restructure or trade may be the only way out.',
+        headline: `You're over the cap by ${formatMoney(report.shortfall)}`,
+        detail: [
+          blocks ? 'The week will not advance until you\'re compliant.' : null,
+          best ? `Cutting ${best.name} would clear ${formatMoney(best.frees)}.` : 'No easy cuts — a trade that sends salary out may be the only way back.',
+        ].filter(Boolean).join(' '),
         action: 'Open Cap',
         href: '/cap',
       });

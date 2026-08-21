@@ -6,6 +6,7 @@ import { projectedDraftOrder, imminentDraftYear } from './draft';
 import { CapMode } from './types';
 import { recordTrade } from './tradeRetro';
 import { deadMoneyOnCut } from './cap';
+import { assertCapRoom, tradeCapDeltas } from './capEnforcement';
 
 /**
  * ===========================================================================
@@ -181,6 +182,20 @@ export async function executeTrade(opts: {
     prisma.team.findUniqueOrThrow({ where: { id: opts.teamB } }),
   ]);
   const capMode: CapMode = JSON.parse(league.settings).capMode ?? 'REALISTIC';
+
+  /**
+   * A trade can be comfortably legal for the side shedding salary and
+   * illegal for the side taking it on, so BOTH teams are checked — one net
+   * position per team across both directions, since a two-way deal can have
+   * a team sending and receiving contracts at the same time. Deltas come
+   * from tradeCapDeltas(), which mirrors exactly what the move() below
+   * writes (bonus accelerates onto the seller, base salary travels).
+   */
+  const deltas = [
+    ...(await tradeCapDeltas(opts.aToB, opts.teamA, opts.teamB, capMode)),
+    ...(await tradeCapDeltas(opts.bToA, opts.teamB, opts.teamA, capMode)),
+  ];
+  await assertCapRoom({ action: 'Trade', seasonYear: opts.seasonYear, capMode, charges: deltas });
 
   // Snapshot what's being traded (and what it's worth right now) BEFORE
   // ownership changes — this is the only record of asset identity a trade

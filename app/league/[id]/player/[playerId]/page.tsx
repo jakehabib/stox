@@ -5,6 +5,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { ratingColor, playerLabel } from '@/lib/ratings';
+import { rankProspectCombine, ordinal, CombineMeasurable } from '@/lib/combineRank';
 import { formatMoney, capHit, remainingValue, marketValue, deadMoneyOnCut } from '@/lib/cap';
 import { classifyContractValue } from '@/lib/analytics';
 import { generateScoutingReport } from '@/lib/scoutingProse';
@@ -57,6 +58,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
     potential: view.revealed ? player.potential : (view.potLow + view.potHigh) / 2,
     isDraftee: player.isDraftee,
     experience: player.experience,
+    confidence: view.confidence,
   });
   // Top few stat lines for the hero — the full breakdown still lives in the
   // Season/Career Stats sections below; this is a headline, not a replacement.
@@ -69,6 +71,25 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
   const collegeProfile = collegeProfileRaw?.games?.length ? (collegeProfileRaw as CollegeProfile) : null;
   const combineRaw = player.isDraftee ? readJson<Partial<CombineTesting>>(player.combineTesting, {}) : null;
   const combineTesting = combineRaw?.venue ? (combineRaw as CombineTesting) : null;
+  // Testing numbers are PUBLIC — every team watches the same combine — so
+  // this ranks against the whole position group in the class with no fog
+  // gating, unlike the scouted attribute ranges above. draftYear scopes the
+  // peer group to prospects generated in the same class, not every CB who's
+  // ever passed through isDraftee:true.
+  const combinePeers = combineTesting && player.draftYear != null
+    ? await prisma.player.findMany({
+        where: { leagueId: league.id, isDraftee: true, position: player.position, draftYear: player.draftYear },
+        select: { combineTesting: true },
+      })
+    : [];
+  const combineRanks = combineTesting
+    ? rankProspectCombine(
+        combineTesting,
+        combinePeers
+          .map((p) => readJson<Partial<CombineTesting>>(p.combineTesting, {}))
+          .filter((c): c is CombineTesting => !!c.venue),
+      )
+    : {};
   const weeksElapsed = collegeWeeksElapsed(league.week);
   const collegeToDate = collegeProfile ? aggregateCollegeGames(collegeProfile.games, weeksElapsed) : null;
   const buzzNote = collegeProfile
@@ -346,19 +367,27 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
               </div>
             </div>
             <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-line/40 border-b border-line/60">
-              {[
-                { label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s` },
-                { label: 'Vertical', value: `${combineTesting.vertical}"` },
-                { label: 'Broad', value: `${combineTesting.broadJump}"` },
-                { label: '3-Cone', value: `${combineTesting.threeCone.toFixed(2)}s` },
-                { label: 'Shuttle', value: `${combineTesting.shuttle.toFixed(2)}s` },
-                { label: 'Bench', value: combineTesting.benchReps !== null ? `${combineTesting.benchReps}` : '—' },
-              ].map((m) => (
-                <div key={m.label} className="px-3 py-3 text-center">
-                  <div className="label-sm">{m.label}</div>
-                  <div className="stat-value text-stat-sm leading-none mt-1.5">{m.value}</div>
-                </div>
-              ))}
+              {([
+                { label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s`, key: 'fortyYard' },
+                { label: 'Vertical', value: `${combineTesting.vertical}"`, key: 'vertical' },
+                { label: 'Broad', value: `${combineTesting.broadJump}"`, key: 'broadJump' },
+                { label: '3-Cone', value: `${combineTesting.threeCone.toFixed(2)}s`, key: 'threeCone' },
+                { label: 'Shuttle', value: `${combineTesting.shuttle.toFixed(2)}s`, key: 'shuttle' },
+                { label: 'Bench', value: combineTesting.benchReps !== null ? `${combineTesting.benchReps}` : '—', key: 'benchReps' },
+              ] as { label: string; value: string; key: CombineMeasurable }[]).map((m) => {
+                const rank = combineRanks[m.key];
+                return (
+                  <div key={m.label} className="px-3 py-3 text-center">
+                    <div className="label-sm">{m.label}</div>
+                    <div className="stat-value text-stat-sm leading-none mt-1.5">{m.value}</div>
+                    {/* Public combine data, same as the numbers above it — never fogged, so this
+                        shows for every prospect regardless of scouting confidence. */}
+                    <div className="text-[10px] text-muted mt-1">
+                      {rank ? `${ordinal(rank.rank)} of ${rank.outOf}` : ' '}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="p-5">

@@ -41,8 +41,8 @@ export default async function SettingsPage({ params }: { params: { id: string } 
             tip="Normally your own players' true ratings are always visible. Turning this on fogs them too, for a harder, more realistic mode where even your own scouts can be wrong about your guys."
           />
           <NumberField
-            label="Scouting budget / week" name="scoutingBudgetPerWeek" defaultValue={settings.scoutingBudgetPerWeek}
-            tip="How many scouting points your staff generates each week. More points spent scouting a player narrows his displayed rating range faster and raises confidence sooner."
+            label="Scouting focus / week (base)" name="scoutingBudgetPerWeek" defaultValue={settings.scoutingBudgetPerWeek}
+            tip="Base focus your front office generates per period, before your scouts' speed scales it. Focus is a finite allowance, not a running total: it refills every week (and pays one large lump for the pre-draft window), and only half of a period's grant can be carried over. Raise this to make scouting cheap, lower it to force harder triage. See the Scouting Department page for the live budget and price list."
           />
         </Section>
 

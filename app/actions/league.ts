@@ -29,6 +29,10 @@ export async function deleteLeagueAction(leagueId: string) {
 }
 
 export async function advanceWeekAction(leagueId: string) {
+  // `result.blocked` means the salary-cap compliance gate refused to move
+  // time (see capComplianceBlock in lib/season.ts). It is a normal, fully
+  // explained outcome — not an error — so it comes back as data the button
+  // can render, never as a throw that blanks the page.
   const result = await advanceWeek(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   revalidatePath(`/league/${leagueId}`, 'layout');

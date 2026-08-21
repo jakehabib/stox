@@ -2,7 +2,17 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { advanceWeekAction, getLeaguePhaseAction, AdvanceMode } from '@/app/actions/league';
+import { formatMoney } from '@/lib/cap';
+
+/** The salary-cap compliance refusal, plus the sentence explaining it. */
+interface CapBlock {
+  teamAbbr: string;
+  shortfall: number;
+  path: { playerId: string; name: string; position: string; frees: number; deadMoney: number }[];
+  summary: string;
+}
 
 /** Phases that need the user to actually do something before the sim keeps going. */
 const GATE_PHASES = new Set(['RESIGN', 'DRAFT', 'FANTASY_DRAFT']);
@@ -73,6 +83,10 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
   const OPTIONS = optionsFor(currentPhase);
   const [pending, startTransition] = useTransition();
   const [toast, setToast] = useState<string | null>(null);
+  // A cap block isn't a transient result — it's a standing condition the user
+  // has to act on — so it gets its own sticky panel instead of a toast that
+  // disappears after 7 seconds and leaves a button that just doesn't work.
+  const [capBlock, setCapBlock] = useState<CapBlock | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
@@ -92,6 +106,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
       setProgress('Simulating…');
       const result = await advanceWeekAction(leagueId);
       setProgress(null);
+      if (result.blocked) { showBlock(result.summary, result.capBlock ?? null); return; }
       showToast(result.summary);
     });
   };
@@ -120,6 +135,13 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
       while (iterations < MAX_ITERATIONS) {
         setProgress(`Simulating ${PHASE_NOUN[phase] ?? 'step'} ${week}…`);
         const result = await advanceWeekAction(leagueId);
+        // The cap gate refused to move time — stop the batch immediately
+        // rather than spinning MAX_ITERATIONS times against a closed door.
+        if (result.blocked) {
+          setProgress(null);
+          showBlock(result.summary, result.capBlock ?? null);
+          return;
+        }
         lastSummary = result.summary;
         phase = result.phase;
         week = result.week;
@@ -133,8 +155,15 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
 
   const showToast = (text: string) => {
     setToast(text);
+    setCapBlock(null);
     router.refresh();
     setTimeout(() => setToast(null), 7000);
+  };
+
+  const showBlock = (summary: string, block: Omit<CapBlock, 'summary'> | null) => {
+    setToast(null);
+    setCapBlock(block ? { ...block, summary } : { teamAbbr: '', shortfall: 0, path: [], summary });
+    router.refresh();
   };
 
   return (
@@ -176,6 +205,32 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
       {!pending && toast && (
         <div className="absolute right-0 top-full mt-2 w-80 card card-pad text-sm z-30 animate-fadeUp shadow-lg">
           {toast}
+        </div>
+      )}
+      {!pending && capBlock && (
+        <div className="absolute right-0 top-full mt-2 w-[22rem] card card-pad z-30 animate-fadeUp shadow-lg border-bad/40 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="label-sm text-bad">Over the salary cap</div>
+            <button onClick={() => setCapBlock(null)} className="text-muted hover:text-chalk text-xs leading-none" aria-label="Dismiss">✕</button>
+          </div>
+          {capBlock.shortfall > 0 && (
+            <div className="stat-value text-stat-md text-bad">{formatMoney(capBlock.shortfall)} over</div>
+          )}
+          <p className="text-sm text-muted">{capBlock.summary}</p>
+          {capBlock.path.length > 0 && (
+            <div className="panel p-3 space-y-1.5">
+              <div className="label-sm">Fastest route back</div>
+              {capBlock.path.map((c) => (
+                <div key={c.playerId} className="flex justify-between gap-3 text-xs">
+                  <span className="truncate">Cut {c.name} <span className="text-muted">({c.position})</span></span>
+                  <span className="font-mono text-accent shrink-0">+{formatMoney(c.frees)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <Link href={`/league/${leagueId}/cap`} onClick={() => setCapBlock(null)} className="btn-secondary w-full text-xs">
+            Open Cap Sheet
+          </Link>
         </div>
       )}
     </div>
