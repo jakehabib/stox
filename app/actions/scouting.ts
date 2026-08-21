@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
+import { assertLeagueOwner } from '@/lib/owner';
 import { readJson, writeJson } from '@/lib/json';
 import { AttrMap } from '@/lib/ratings';
 import { observe, scoutNote } from '@/lib/scouting';
@@ -59,6 +60,7 @@ async function loadContext(leagueId: string, teamId: string, playerId: string) {
  * to date.
  */
 export async function getScoutPanelAction(leagueId: string, teamId: string, playerId: string): Promise<ScoutPanel> {
+  await assertLeagueOwner(leagueId);
   const { league, settings, player } = await loadContext(leagueId, teamId, playerId);
   const budget = await syncScoutingBudget(teamId, league, settings);
   const report = await prisma.scoutingReport.findUnique({ where: { playerId_teamId: { playerId, teamId } } });
@@ -112,6 +114,7 @@ export interface ScoutResult {
 export async function scoutPlayerAction(
   leagueId: string, teamId: string, playerId: string, tier: ScoutTierKey,
 ): Promise<ScoutResult> {
+  await assertLeagueOwner(leagueId);
   const spec = SCOUT_TIERS[tier];
   if (!spec) return { ok: false, message: 'Unknown scouting action.' };
 
@@ -242,6 +245,7 @@ export async function scoutPlayerAction(
 
 /** Budget-only read for pages that show the allowance without a player in hand. */
 export async function getScoutingBudgetAction(leagueId: string, teamId: string): Promise<ScoutingBudget> {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   return syncScoutingBudget(teamId, league, parseSettings(league.settings));
 }

@@ -2,17 +2,20 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
+import { assertLeagueOwner } from '@/lib/owner';
 import { evaluateTrade, executeTrade, rankTradePartners, isTradeDeadlinePassed, TradeAsset } from '@/lib/trade';
 import { parseSettings } from '@/lib/settings';
 import { readJson } from '@/lib/json';
 
 export async function evaluateTradeAction(leagueId: string, aiTeamId: string, give: TradeAsset[], get: TradeAsset[]) {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   return evaluateTrade({ aiTeamId, give, get, currentYear: league.seasonYear, settings: { aiAcceptsLopsided: settings.aiAcceptsLopsided } });
 }
 
 export async function rankTradePartnersAction(leagueId: string, position: string, excludeTeamId: string) {
+  await assertLeagueOwner(leagueId);
   return rankTradePartners(leagueId, position, excludeTeamId);
 }
 
@@ -28,6 +31,7 @@ export interface TradeActionResult { ok: boolean; message: string }
 export async function executeTradeAction(
   leagueId: string, teamA: string, teamB: string, aToB: TradeAsset[], bToA: TradeAsset[],
 ): Promise<TradeActionResult> {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   if (settings.tradeDeadlineEnabled && isTradeDeadlinePassed(league.phase, league.week, settings.tradeDeadlineWeek)) {
@@ -43,6 +47,7 @@ export async function executeTradeAction(
 }
 
 export async function respondToTradeOfferAction(leagueId: string, offerId: string, accept: boolean): Promise<TradeActionResult> {
+  await assertLeagueOwner(leagueId);
   const offer = await prisma.tradeOffer.findUniqueOrThrow({ where: { id: offerId } });
   if (offer.status !== 'PENDING') return { ok: false, message: 'That offer is no longer on the table.' };
 

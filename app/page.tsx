@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { prisma } from '@/lib/db';
+import { listOwnedLeagues } from '@/lib/owner';
 import { createLeagueAction, deleteLeagueAction } from './actions/league';
 import { TEAM_SEEDS } from '@/lib/gen/names';
 import { PHASE_LABELS } from '@/lib/season';
@@ -10,7 +10,10 @@ import { CreateLeagueForm } from '@/components/CreateLeagueForm';
 export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
-  const leagues = await prisma.league.findMany({ orderBy: { createdAt: 'desc' }, include: { teams: { where: { isUser: true } } } });
+  // Scoped to this browser's saves — see lib/owner.ts. This used to be an
+  // unfiltered findMany, which on any shared deployment listed every tester's
+  // franchises to every other tester.
+  const leagues = await listOwnedLeagues();
 
   return (
     <div className="min-h-screen">

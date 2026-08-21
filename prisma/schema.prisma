@@ -27,6 +27,15 @@ model League {
   name       String
   createdAt  DateTime @default(now())
 
+  // Which browser owns this save (see lib/owner.ts). Opaque random id from an
+  // httpOnly cookie — not authentication, but the boundary that stops one
+  // tester from listing or deleting another's franchises on a shared
+  // deployment. Nullable for the same reason as startYear below: `prisma db
+  // push` cannot add a required column to a database that already has rows.
+  // A null here means "created before ownership existed"; lib/owner.ts adopts
+  // those in development and hides them in production.
+  ownerKey   String?
+
   seasonYear Int    @default(2025)
   // The season this league was FOUNDED in — the base year capForYear() grows
   // the salary cap from. Nullable ONLY so `prisma db push` can add it to an

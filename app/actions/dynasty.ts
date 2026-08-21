@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { Rng } from '@/lib/rng';
 import { prisma } from '@/lib/db';
+import { assertLeagueOwner } from '@/lib/owner';
 import { readJson, writeJson } from '@/lib/json';
 import { attrsForPosition } from '@/lib/ratings';
 import type { AttrMap } from '@/lib/ratings';
@@ -66,6 +67,7 @@ function safeRevalidate(leagueId: string) {
 // ---------------------------------------------------------------------------
 
 export async function purchaseSkillAction(leagueId: string, skillId: DynastySkillId): Promise<DynastyActionResult> {
+  await assertLeagueOwner(leagueId);
   const def = SKILL_BY_ID[skillId];
   if (!def) return { ok: false, message: 'Unknown upgrade.' };
 
@@ -131,6 +133,7 @@ export interface FullScoutResult extends DynastyActionResult {
  * not expire when the calendar turns.
  */
 export async function fullScoutAction(leagueId: string, teamId: string, playerId: string): Promise<FullScoutResult> {
+  await assertLeagueOwner(leagueId);
   const state = await buildDynastyState(leagueId);
   if (state.fullScout.remaining <= 0) {
     return {
@@ -224,6 +227,7 @@ export interface FullScoutPanelData {
  * shipping the whole pool to the client just to filter it would be silly.
  */
 export async function fullScoutPanelAction(leagueId: string, teamId: string, query: string): Promise<FullScoutPanelData> {
+  await assertLeagueOwner(leagueId);
   const state = await buildDynastyState(leagueId);
   const q = query.trim();
 
@@ -297,6 +301,7 @@ export interface ContractEstimate {
  * Read-only. It does not change what the player will accept.
  */
 export async function contractEstimateAction(leagueId: string, playerId: string, years: number): Promise<ContractEstimate | null> {
+  await assertLeagueOwner(leagueId);
   const state = await buildDynastyState(leagueId);
   const rank = rankOf(state.skills, 'MARKET_KNOWLEDGE');
   const pct = DYNASTY.MARKET_BAND_PCT[rank];
@@ -347,6 +352,7 @@ export async function tradeIntelAction(
   give: { type: 'PLAYER' | 'PICK'; id: string }[],
   get: { type: 'PLAYER' | 'PICK'; id: string }[],
 ): Promise<TradeIntelRead> {
+  await assertLeagueOwner(leagueId);
   const state = await buildDynastyState(leagueId);
   if (rankOf(state.skills, 'TRADE_INTEL') === 0) {
     return { unlocked: false, theirValue: 0, yourValue: 0, shortfall: 0 };
@@ -389,6 +395,7 @@ export async function insiderReadAction(
   give: { type: 'PLAYER' | 'PICK'; id: string }[],
   get: { type: 'PLAYER' | 'PICK'; id: string }[],
 ): Promise<InsiderResult> {
+  await assertLeagueOwner(leagueId);
   const state = await buildDynastyState(leagueId);
   if (!state.insider.unlocked) return { ok: false, message: 'Insider is not unlocked. Buy it on the Dynasty screen.' };
   if (state.insider.remaining <= 0) {

@@ -1,9 +1,17 @@
 import { prisma } from './db';
+import { canViewLeague } from './owner';
 import { parseSettings } from './settings';
 import { PHASE_LABELS } from './season';
 
 export async function getLeagueContext(leagueId: string) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  // Every league page funnels through here, so this is the one place a save
+  // that belongs to another browser can be refused a render. Server actions
+  // are guarded separately (assertLeagueOwner) — they are POST endpoints and
+  // a page-level check does nothing for them. Thrown, not `notFound()`, so
+  // the same call works from a non-page caller; the league layout already
+  // turns a throw from this function into a 404.
+  if (!canViewLeague(league.ownerKey)) throw new Error('This save belongs to another browser.');
   const settings = parseSettings(league.settings);
   const userTeam = league.userTeamId
     ? await prisma.team.findUnique({ where: { id: league.userTeamId } })

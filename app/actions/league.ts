@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
+import { assertLeagueOwner, ensureOwnerKey } from '@/lib/owner';
 import { createLeague } from '@/lib/gen/league';
 import { DEFAULT_SETTINGS, LeagueSettings, serializeSettings } from '@/lib/settings';
 import { advanceWeek } from '@/lib/season';
@@ -20,15 +21,22 @@ export async function createLeagueAction(formData: FormData) {
     settings: { ...DEFAULT_SETTINGS, leagueStart, capMode, difficulty },
   });
 
+  // Stamp the save with this browser's owner key the moment it exists, so it
+  // is never briefly visible to, or deletable by, anyone else. ensureOwnerKey
+  // mints the cookie on the first league a browser creates.
+  await prisma.league.update({ where: { id: leagueId }, data: { ownerKey: ensureOwnerKey() } });
+
   redirect(`/league/${leagueId}`);
 }
 
 export async function deleteLeagueAction(leagueId: string) {
+  await assertLeagueOwner(leagueId);
   await prisma.league.delete({ where: { id: leagueId } });
   revalidatePath('/');
 }
 
 export async function advanceWeekAction(leagueId: string) {
+  await assertLeagueOwner(leagueId);
   // `result.blocked` means the salary-cap compliance gate refused to move
   // time (see capComplianceBlock in lib/season.ts). It is a normal, fully
   // explained outcome — not an error — so it comes back as data the button
@@ -46,6 +54,7 @@ export async function advanceWeekAction(leagueId: string) {
  * see inside of.
  */
 export async function getLeaguePhaseAction(leagueId: string) {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings: LeagueSettings = JSON.parse(league.settings);
   return { phase: league.phase, week: league.week, seasonYear: league.seasonYear, seasonLength: settings.seasonLength };
@@ -54,6 +63,7 @@ export async function getLeaguePhaseAction(leagueId: string) {
 export type AdvanceMode = 'week' | '3weeks' | 'midseason' | 'playoffs' | 'offseason' | 'nextstage';
 
 export async function updateSettingsAction(leagueId: string, formData: FormData) {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const current: LeagueSettings = JSON.parse(league.settings);
 

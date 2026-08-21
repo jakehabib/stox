@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
+import { assertLeagueOwner, assertTeamOwner } from '@/lib/owner';
 import { cutPlayer as cutPlayerLib, signFreeAgentWithCompetition, evaluateOffer, extendContract, restructureContract, applyFranchiseTag, leadingCompetingBid, fillRosterForTeam } from '@/lib/freeagency';
 import { parseSettings } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
@@ -10,6 +11,7 @@ import { autoDepthChart } from '@/lib/gen/league';
 import { Rng } from '@/lib/rng';
 
 export async function cutPlayerAction(leagueId: string, playerId: string) {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   await cutPlayerLib({ leagueId, playerId, capMode: settings.capMode, seasonYear: league.seasonYear, week: league.week });
@@ -44,6 +46,7 @@ export interface CutImpact {
  * than to keep. Nothing said so before you clicked.
  */
 export async function cutImpactAction(leagueId: string, playerId: string): Promise<CutImpact> {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
@@ -76,6 +79,7 @@ export async function cutImpactAction(leagueId: string, playerId: string): Promi
 }
 
 export async function fillRosterAction(leagueId: string, teamId: string) {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const rng = new Rng(`fill-roster-${teamId}-${league.seasonYear}-${league.week}`);
@@ -88,6 +92,7 @@ export async function offerContractAction(
   leagueId: string, playerId: string, teamId: string, apy: number, years: number,
   escalation?: number, voidYears?: number,
 ) {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   // The player judges the deal on money and length only — structure and void
@@ -115,6 +120,7 @@ export async function offerContractAction(
 
 /** Live "who else is bidding" check for the frenzy UI — what the leading AI offer actually is right now, if any. */
 export async function checkCompetingBidAction(leagueId: string, playerId: string, teamId: string) {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   return leadingCompetingBid(leagueId, playerId, teamId, league.seasonYear, settings.capMode);
@@ -123,6 +129,7 @@ export async function checkCompetingBidAction(leagueId: string, playerId: string
 export async function extendContractAction(
   leagueId: string, playerId: string, apy: number, years: number, escalation: number, voidYears: number,
 ) {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   try {
@@ -138,6 +145,7 @@ export async function extendContractAction(
 }
 
 export async function applyFranchiseTagAction(leagueId: string, playerId: string) {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   if (!settings.franchiseTagEnabled) return { ok: false, message: 'Franchise tags are disabled in league settings.' };
@@ -152,6 +160,7 @@ export async function applyFranchiseTagAction(leagueId: string, playerId: string
 }
 
 export async function restructureContractAction(leagueId: string, playerId: string, convertAmount: number, addVoidYears: number) {
+  await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   try {
@@ -166,6 +175,7 @@ export async function restructureContractAction(leagueId: string, playerId: stri
 }
 
 export async function setDepthChartAction(teamId: string, position: string, orderedPlayerIds: string[]) {
+  await assertTeamOwner(teamId);
   await prisma.depthChartSlot.deleteMany({ where: { teamId, position } });
   await prisma.depthChartSlot.createMany({
     data: orderedPlayerIds.map((playerId, rank) => ({ teamId, playerId, position, rank })),
@@ -175,12 +185,14 @@ export async function setDepthChartAction(teamId: string, position: string, orde
 }
 
 export async function autoSortDepthChartAction(teamId: string) {
+  await assertTeamOwner(teamId);
   await autoDepthChart(teamId);
   const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
   revalidatePath(`/league/${team.leagueId}/depth-chart`);
 }
 
 export async function setTeamSchemeAction(teamId: string, offScheme?: string, defScheme?: string) {
+  await assertTeamOwner(teamId);
   const data: any = {};
   if (offScheme) data.offScheme = offScheme;
   if (defScheme) data.defScheme = defScheme;
