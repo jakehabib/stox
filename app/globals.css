@@ -74,8 +74,13 @@
   .nav-link:hover::after { @apply bg-line; }
   .nav-link-active { @apply nav-link text-chalk; }
   .nav-link-active::after { @apply bg-accent; }
-  .table-clean { @apply w-full text-sm border-separate border-spacing-0; }
-  .table-clean th { @apply label-sm text-left px-3 py-2 border-b border-line sticky top-0 bg-card; }
+  /* text-left lives on the table, not on `th`. `.table-clean th` is
+     specificity (0,1,1), so a plain `text-right` utility on a header — which
+     is (0,1,0) — silently lost to it, and every numeric column in the app
+     was rendering a left-aligned header over right-aligned figures. Inherited
+     from the table, any explicit alignment on a cell wins. */
+  .table-clean { @apply w-full text-sm border-separate border-spacing-0 text-left; }
+  .table-clean th { @apply label-sm px-3 py-2 border-b border-line sticky top-0 bg-card; }
   .table-clean td { @apply px-3 py-2 border-b border-line/60; }
   .table-clean tr:hover td { @apply bg-raised/50; }
 

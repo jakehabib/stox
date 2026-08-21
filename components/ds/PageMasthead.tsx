@@ -69,8 +69,14 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
         {action && <div className="shrink-0">{action}</div>}
       </div>
 
+      {/* The fact strip is sized to the number of facts, not a fixed five.
+          The Depth Chart passes six, which stranded the last one alone on a
+          second row beside four empty cells. Tailwind needs whole class names
+          to survive its scan, so this is a lookup rather than a template. */}
       {facts.length > 0 && (
-        <div className="relative border-t border-line/60 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 divide-x divide-line/40 bg-ink/30">
+        <div className={`relative border-t border-line/60 grid grid-cols-2 sm:grid-cols-3 divide-x divide-line/40 bg-ink/30 ${
+          ({ 1: 'lg:grid-cols-1', 2: 'lg:grid-cols-2', 3: 'lg:grid-cols-3', 4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5', 6: 'lg:grid-cols-6' } as Record<number, string>)[facts.length] ?? 'lg:grid-cols-5'
+        }`}>
           {facts.map((f) => (
             <div key={f.label} className="px-4 py-3">
               <div className="label-sm">{f.label}</div>
