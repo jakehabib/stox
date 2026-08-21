@@ -239,31 +239,53 @@ export default async function StatsPage({ params, searchParams }: { params: { id
         teamId={myTeam ? userTeam?.id : undefined}
         teamAbbr={myTeam ? userTeam?.abbr : undefined}
         eyebrow={`${league.seasonYear} · Week ${league.week}`}
-        title={myTeam ? 'My Team Stats' : 'League Stats'}
-        subtitle={myTeam ? 'Your full roster, every efficiency stat on the books.' : 'League leaders and team production, season-to-date.'}
+        title={playoffs ? (myTeam ? 'My Team Playoff Stats' : 'League Playoff Stats') : (myTeam ? 'My Team Stats' : 'League Stats')}
+        subtitle={
+          playoffs
+            ? (myTeam ? 'Your roster in the postseason — these games are counted nowhere else.' : 'League leaders and team production in the postseason only.')
+            : (myTeam ? 'Your full roster, every efficiency stat on the books.' : 'League leaders and team production, season-to-date.')
+        }
         action={
           <div className="flex flex-col items-end gap-1.5">
+          <StatScopeToggle scope={statScope} regularHref={href({ playoffs: false })} playoffHref={href({ playoffs: true })} />
           <div className="flex gap-1.5">
-            <Link href={`/league/${league.id}/stats${advanced ? '?view=advanced' : ''}`} className={`pill ${!myTeam ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>League</Link>
+            <Link href={href({ myTeam: false })} className={`pill ${!myTeam ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>League</Link>
             {userTeam && (
-              <Link href={`/league/${league.id}/stats?scope=myteam${advanced ? '&view=advanced' : ''}`} className={`pill ${myTeam ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>My Team</Link>
+              <Link href={href({ myTeam: true })} className={`pill ${myTeam ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>My Team</Link>
             )}
           </div>
-          <div className="flex gap-1.5">
-            <Link href={`/league/${league.id}/stats${myTeam ? '?scope=myteam' : ''}`} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
-            <Link href={`/league/${league.id}/stats?view=advanced${myTeam ? '&scope=myteam' : ''}`} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
-          </div>
+          {/* No Basic/Advanced in the postseason view — the advanced blocks
+              are regular-season constructs. See the `advanced` binding. */}
+          {!playoffs && (
+            <div className="flex gap-1.5">
+              <Link href={href({ view: false })} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
+              <Link href={href({ view: true })} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
+            </div>
+          )}
           </div>
         }
         facts={[
+          { label: 'Split', value: playoffs ? 'Playoffs' : 'Regular Season', detail: playoffs ? 'postseason games only' : 'weeks 1 to the finale' },
           { label: 'Scope', value: myTeam ? (userTeam?.abbr ?? 'Team') : 'League', detail: myTeam ? 'your roster only' : `all ${teams.length} teams` },
-          { label: 'View', value: advanced ? 'Advanced' : 'Basic', detail: advanced ? 'efficiency and rate stats' : 'counting stats' },
-          { label: 'Players Ranked', value: withStats.length.toLocaleString(), detail: 'with recorded stats' },
+          { label: 'Players Ranked', value: withStats.length.toLocaleString(), detail: playoffs ? 'with postseason stats' : 'with recorded stats' },
         ]}
       />
 
+      {playoffs && (
+        <p className="text-xs text-muted px-1">
+          Postseason production only, kept in its own column since the day it was first recorded — a club&apos;s
+          run adds games to these numbers and to nothing on the Regular Season side. Team records here are the
+          playoff bracket; the standings, Pythagorean and strength-of-schedule tables count regular-season games
+          only and live on the Regular Season view.
+        </p>
+      )}
+
       {withStats.length === 0 ? (
-        <div className="panel p-4 text-sm text-muted">No stats recorded yet this season — check back after Week 1.</div>
+        <div className="panel p-4 text-sm text-muted">
+          {playoffs
+            ? `No postseason games have been played in ${league.seasonYear} yet — this fills in once the bracket starts.`
+            : 'No stats recorded yet this season — check back after Week 1.'}
+        </div>
       ) : (
         <>
           {advanced && myPythag && (
@@ -376,7 +398,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
 
           {myTeam ? (
             <div className="panel overflow-hidden">
-              <div className="px-4 py-3 border-b border-line/70 label-sm">Full Roster Stat Line</div>
+              <div className="px-4 py-3 border-b border-line/70 label-sm">{playoffs ? 'Full Roster Stat Line — Postseason' : 'Full Roster Stat Line'}</div>
               <div className="overflow-x-auto">
                 <table className="table-clean">
                   <thead>
@@ -384,7 +406,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                   </thead>
                   <tbody>
                     {myPlayers.length === 0 && (
-                      <tr><td colSpan={7} className="text-sm text-muted">No stats recorded yet this season.</td></tr>
+                      <tr><td colSpan={7} className="text-sm text-muted">{playoffs ? 'Nobody on this roster has played a postseason game this year.' : 'No stats recorded yet this season.'}</td></tr>
                     )}
                     {myPlayers.map(({ p, stats }) => {
                       const line = nerdyLine(p.position, stats);
@@ -422,7 +444,10 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                 .slice(0, 10);
               return (
                 <div key={cat.title} className="panel overflow-hidden">
-                  <div className="px-4 py-3 border-b border-line/70 label-sm">{cat.title}</div>
+                  <div className="px-4 py-3 border-b border-line/70 label-sm">
+                    {cat.title}
+                    <span className="ml-1.5 font-normal normal-case tracking-normal text-muted">{playoffs ? '· Playoffs' : '· Regular Season'}</span>
+                  </div>
                   <table className="table-clean">
                     <thead>
                       <tr>
@@ -461,20 +486,23 @@ export default async function StatsPage({ params, searchParams }: { params: { id
 
       {!myTeam && (
         <div className="panel overflow-hidden">
-          <div className="px-4 py-3 border-b border-line/70 label-sm">Team Stats</div>
+          <div className="px-4 py-3 border-b border-line/70 label-sm">{playoffs ? 'Team Stats — Postseason' : 'Team Stats'}</div>
           <table className="table-clean">
             <thead><tr><th>Team</th><th>Record</th><th>PF</th><th>PA</th><th>Diff</th><th>Off. Yards</th></tr></thead>
             <tbody>
-              {teamRows.map(({ t, offYards, diff }) => (
+              {teamRows.length === 0 && (
+                <tr><td colSpan={6} className="text-sm text-muted">No postseason games played yet.</td></tr>
+              )}
+              {teamRows.map(({ t, wins, losses, ties, pf, pa, offYards, diff }) => (
                 <tr key={t.id}>
                   <td>
                     <Link href={t.id === userTeam?.id ? `/league/${league.id}/roster` : `/league/${league.id}/history?team=${t.id}#franchise`} className="hover:text-accent2 flex items-center gap-2 font-medium">
                       <TeamLogo seed={t.id} abbr={t.abbr} size={22} /> {t.city} {t.nickname}
                     </Link>
                   </td>
-                  <td className="font-mono text-muted">{t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ''}</td>
-                  <td className="font-mono">{t.pointsFor}</td>
-                  <td className="font-mono text-muted">{t.pointsAgnst}</td>
+                  <td className="font-mono text-muted">{wins}-{losses}{ties ? `-${ties}` : ''}</td>
+                  <td className="font-mono">{pf}</td>
+                  <td className="font-mono text-muted">{pa}</td>
                   <td className={`stat-value text-stat-sm ${diff >= 0 ? 'text-accent' : 'text-bad'}`}>{diff >= 0 ? '+' : ''}{diff}</td>
                   <td className="font-mono text-muted">{offYards.toLocaleString()}</td>
                 </tr>

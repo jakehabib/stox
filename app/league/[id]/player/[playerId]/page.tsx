@@ -38,6 +38,7 @@ import {
 import { CollegeStatLine } from '@/components/CollegeStatLine';
 import { CareerHonors, HonorAward } from '@/components/ds/CareerHonors';
 import { CareerStatTable } from '@/components/ds/CareerStatTable';
+import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/ds/StatScopeToggle';
 import { ringYearsFor } from '@/lib/gen/leagueHistory';
 import { allStarYearsFor } from '@/lib/allStars';
 
@@ -47,8 +48,23 @@ const AWARD_LABEL: Record<string, string> = {
   AWARD_ROTY: 'Rookie of the Year', AWARD_SBMVP: 'Championship MVP',
 };
 
-export default async function PlayerPage({ params }: { params: { id: string; playerId: string } }) {
+export default async function PlayerPage({
+  params,
+  searchParams,
+}: {
+  params: { id: string; playerId: string };
+  searchParams: { split?: string };
+}) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
+  // Which half of the year this card's stat sections are about. In the URL so
+  // a reload and a shared link both keep it; regular season by absence.
+  const statScope = parseStatScope(searchParams?.[STAT_SCOPE_PARAM]);
+  const showPlayoffs = statScope === 'PLAYOFFS';
+  // The fragment keeps the reader where they were: flipping the toggle is a
+  // full navigation, and landing back at the top of a long player card reads
+  // as "nothing happened".
+  const scopeHref = (playoffs: boolean) =>
+    `/league/${params.id}/player/${params.playerId}${playoffs ? `?${STAT_SCOPE_PARAM}=playoffs` : ''}#stat-line`;
   const player = await prisma.player.findUnique({ where: { id: params.playerId }, include: { contract: true, team: true } });
   if (!player || player.leagueId !== league.id) notFound();
 
@@ -79,8 +95,14 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
   const onShortlist = !!prospectScouting?.[1];
   const workedOutThisYear = !!workoutSlots && report?.workoutYear === workoutSlots.seasonYear;
 
+  // Regular season and postseason are stored apart (see Player.seasonStats in
+  // the schema) and are never added together here — the toggle picks one.
   const seasonStats = readJson<Record<string, number>>(player.seasonStats, {});
   const careerStats = readJson<Record<string, number>>(player.careerStats, {});
+  const playoffStats = readJson<Record<string, number>>(player.playoffStats, {});
+  const careerPlayoffStats = readJson<Record<string, number>>(player.careerPlayoffStats, {});
+  const shownSeasonStats = showPlayoffs ? playoffStats : seasonStats;
+  const shownCareerStats = showPlayoffs ? careerPlayoffStats : careerStats;
   const hit = capHit(player.contract, settings.capMode);
   const capSummary = userTeam && settings.capMode !== 'OFF'
     ? await teamCapSummary(userTeam.id, league.seasonYear, settings.capMode)
@@ -152,7 +174,9 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
       position: player.position,
       liveInProgress: league.phase === 'REGULAR' || league.phase === 'PLAYOFFS',
       careerStats,
+      careerPlayoffStats,
       startYear,
+      scope: statScope,
     };
 
     // The season in progress never comes from PlayerSeason — its rows aren't
@@ -385,7 +409,16 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
                 </div>
               </div>
             ) : keyStats.length > 0 ? (
+              /* Regular season, always — the hero is the player's headline
+                 number and the postseason has its own sections below. Said out
+                 loud rather than assumed, because an unlabelled total that
+                 quietly means one of two things is this codebase's most
+                 repeated bug. */
               <div className="flex items-stretch gap-6 mt-5 border-t border-line/50 pt-4 flex-wrap">
+                <div className="pr-6 border-r border-line/40 self-center">
+                  <div className="label-sm">{league.seasonYear}</div>
+                  <div className="text-xs text-muted mt-1">Regular season</div>
+                </div>
                 {keyStats.map(([k, v]) => (
                   <div key={k} className="pr-6 border-r border-line/40 last:border-r-0 last:pr-0">
                     <div className="label-sm">{statLabel(k)}</div>
@@ -518,11 +551,17 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           three or four rows and a fifteen-year career shows what a real stat
           page shows. */}
       {careerTable && (
-        <div className="section">
+        <div className="section" id="stat-line">
           <SectionHeading
             eyebrow="Year by year"
-            title="Career Stat Line"
-            action={<span className="text-xs text-muted hidden sm:block">One row per season, per club</span>}
+            title={showPlayoffs ? 'Career Stat Line — Postseason' : 'Career Stat Line'}
+            action={
+              <StatScopeToggle
+                scope={statScope}
+                regularHref={scopeHref(false)}
+                playoffHref={scopeHref(true)}
+              />
+            }
           />
           <div className="panel overflow-hidden">
             <CareerStatTable position={player.position} table={careerTable} />
@@ -666,13 +705,17 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
             are just noise on the card. */}
         {!player.isDraftee && (<>
         <div className="section">
-          <SectionHeading title="Season Stats" />
+          <SectionHeading title={showPlayoffs ? 'This Postseason' : 'Season Stats'} />
           <div className="panel p-5">
-            {Object.keys(seasonStats).length === 0 ? (
-              <p className="text-sm text-muted">No stats recorded yet this season.</p>
+            {Object.keys(shownSeasonStats).length === 0 ? (
+              <p className="text-sm text-muted">
+                {showPlayoffs
+                  ? `No postseason games this year — his club hasn't played one, or hasn't got there.`
+                  : 'No stats recorded yet this season.'}
+              </p>
             ) : (
               <div className="grid grid-cols-2 gap-2 text-sm">
-                {sortStatEntries(seasonStats).map(([k, v]) => (
+                {sortStatEntries(shownSeasonStats).map(([k, v]) => (
                   <div key={k} className="flex justify-between border-b border-line/50 py-1">
                     <span className="text-muted">{statLabel(k)}</span><span className="font-mono font-semibold">{v}</span>
                   </div>
@@ -683,13 +726,17 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
         </div>
 
         <div className="section">
-          <SectionHeading title="Career Stats" />
+          <SectionHeading title={showPlayoffs ? 'Career Postseason' : 'Career Stats'} />
           <div className="panel p-5">
-            {Object.keys(careerStats).length === 0 ? (
-              <p className="text-sm text-muted">No career stats on file yet — these accumulate as full seasons complete.</p>
+            {Object.keys(shownCareerStats).length === 0 ? (
+              <p className="text-sm text-muted">
+                {showPlayoffs
+                  ? 'No postseason games on his record. Twenty of thirty-two clubs finish every year without one, so this is an ordinary answer rather than missing data.'
+                  : 'No career stats on file yet — these accumulate as full seasons complete.'}
+              </p>
             ) : (
               <div className="grid grid-cols-2 gap-2 text-sm">
-                {sortStatEntries(careerStats).map(([k, v]) => (
+                {sortStatEntries(shownCareerStats).map(([k, v]) => (
                   <div key={k} className="flex justify-between border-b border-line/50 py-1">
                     <span className="text-muted">{statLabel(k)}</span><span className="font-mono font-semibold">{v}</span>
                   </div>

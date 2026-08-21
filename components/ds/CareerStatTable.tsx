@@ -20,9 +20,16 @@ import type { CareerTable, CareerTableRow } from '@/lib/playerSeasons';
  *     seasons.
  *   - "Career" — summed from the visible rows, so the bottom line is always
  *     the total of the table above it.
+ *
+ * `table.scope` says which half of the year these rows are, and the table
+ * never mixes them. An empty POSTSEASON table is a real answer — twenty of
+ * thirty-two clubs finish every year without a playoff game — so it is
+ * written out in words instead of being drawn as a grid of zeroes or left as
+ * a blank panel.
  */
 export function CareerStatTable({ position, table }: { position: string; table: CareerTable }) {
   const cols = careerColumns(position);
+  const playoffs = table.scope === 'PLAYOFFS';
 
   if (cols.length === 0) {
     return (
@@ -34,10 +41,19 @@ export function CareerStatTable({ position, table }: { position: string; table: 
   }
   if (table.empty) {
     return (
-      <p className="text-sm text-muted p-5">
-        No season on the books yet. Rows appear here the moment he records a stat, one per year and
-        per club.
-      </p>
+      <div className="p-5 space-y-2">
+        <p className="text-sm text-muted">
+          {playoffs
+            ? 'No postseason games. He has never played one here — so there is nothing to show, rather than a table of zeroes.'
+            : 'No season on the books yet. Rows appear here the moment he records a stat, one per year and per club.'}
+        </p>
+        {playoffs && table.hasPreLeagueCareer && (
+          <p className="text-xs text-muted">
+            His career before this league arrived as one merged total with no postseason recorded in it —
+            see the note on the Regular Season view. The game will not guess at a split it was never given.
+          </p>
+        )}
+      </div>
     );
   }
 
@@ -69,6 +85,18 @@ export function CareerStatTable({ position, table }: { position: string; table: 
       </div>
 
       <div className="px-4 py-3 border-t border-line/60 space-y-1">
+        <p className="text-xs text-muted">
+          {playoffs
+            ? 'Postseason games only — wild card through the final. None of these numbers appear on the Regular Season view, and G counts the playoff games the yardage came from.'
+            : 'Regular season only. Playoff games are counted on the Playoffs view and nowhere else, so G here is the regular-season schedule.'}
+        </p>
+        {playoffs && table.hasPreLeagueCareer && (
+          <p className="text-xs text-muted">
+            The career he arrived with — everything before this league started keeping records — was seeded as
+            one merged total with no postseason in it. Those years are on the Regular Season view and cannot be
+            split, so they are absent here rather than guessed at.
+          </p>
+        )}
         {table.hasUndecomposed && (
           <p className="text-xs text-muted">
             <span className="text-chalk font-semibold">Before {beforeYear(table)}</span> is a real

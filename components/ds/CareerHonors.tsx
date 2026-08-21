@@ -95,7 +95,12 @@ export function CareerHonors({
         </div>
       )}
 
-      {careerHighlights.length > 0 && (
+      {careerHighlights.length > 0 && (<>
+        {/* Regular season, which is what "career stats" means on every real
+            football reference — and here it is literally what the column
+            holds, since the postseason lives in its own bucket. Labelled so
+            the number can't be read as a combined total. */}
+        <div className="px-4 pt-3 -mb-1 label-sm">Career · regular season</div>
         <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-line/40">
           {careerHighlights.map((h) => (
             <div key={h.label} className="px-4 py-3">
@@ -104,7 +109,7 @@ export function CareerHonors({
             </div>
           ))}
         </div>
-      )}
+      </>)}
     </div>
   );
 }

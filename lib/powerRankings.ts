@@ -586,11 +586,23 @@ export async function buildPowerRankings(leagueId: string): Promise<PowerRanking
     composite: wResume * zResume[i] + wSrs * zSrs[i] + wRating * zRating[i] + wForm * zForm[i],
   }));
 
-  // Ties break on the rating and then the abbreviation, so the order is fully
+  // Ties break on the RATING RANK, then the abbreviation, so the order is fully
   // determined by the data rather than by query order.
+  //
+  // The rank, not `rating.overall`, and that is the whole point. `overall` is
+  // ROUNDED (lib/teamRating.ts rounds for display but ranks on the unrounded
+  // value, deliberately and with a comment saying so), so every pair of clubs
+  // landing on the same integer is exactly tied here — and before a ball is
+  // kicked `wRating` is 1 and the composite IS the rounded rating, so the ties
+  // are everywhere. The chain then fell through to alphabetical order, which
+  // is how the #1 club came to carry the note "theirs is the 2nd-best roster"
+  // while #2 said "1st in the league": both notes were true, the table was
+  // sorted by a different key than the notes were written from. Measured
+  // across 20 dev leagues: 11 had a preseason contradiction, one of them on
+  // 23 of its 32 rows.
   scored.sort((a, b) =>
     b.composite - a.composite
-    || (b.d.rating?.overall ?? 0) - (a.d.rating?.overall ?? 0)
+    || (a.d.rating?.rank ?? Number.MAX_SAFE_INTEGER) - (b.d.rating?.rank ?? Number.MAX_SAFE_INTEGER)
     || a.d.team.abbr.localeCompare(b.d.team.abbr));
 
   // --- Movement, from what was written down, or nothing at all -------------

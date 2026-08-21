@@ -112,6 +112,15 @@ async function main() {
     // never be persisted.
     const maxYear = Math.max(...games.map((g) => g.seasonYear));
     const throughYear = liveYear != null ? liveYear - 1 : maxYear;
+    // A save can carry rows for the year it is still playing — an older
+    // rollover wrote them, or a sweep ran with the live year in range. They
+    // hold combined totals AND they mark the year "done", so the real
+    // rollover would skip it and those rows would stay wrong forever. Drop
+    // them; the rollover rebuilds the year from box scores when it ends.
+    let staleLive = 0;
+    if (liveYear != null && !DRY) {
+      staleLive = (await prisma.playerSeason.deleteMany({ where: { leagueId: league.id, seasonYear: liveYear } })).count;
+    }
     let rows = 0;
     if (!DRY && throughYear >= Math.min(...games.map((g) => g.seasonYear))) {
       const res = await syncPlayerSeasons(league.id, throughYear, ageBasisYear(league), { rebuild: true });
@@ -177,11 +186,12 @@ async function main() {
     }
     totalCareerFixed += careerFixed;
     totalLiveFixed += liveFixed;
-    if (rows > 0 || careerFixed > 0 || liveFixed > 0) leaguesTouched++;
+    if (rows > 0 || careerFixed > 0 || liveFixed > 0 || staleLive > 0) leaguesTouched++;
 
     console.log(
       `${league.name} (${league.id}) ${league.seasonYear} ${league.phase}`
       + ` — PlayerSeason rows ${rows}, careers split ${careerFixed}, live accumulators split ${liveFixed}`
+      + (staleLive > 0 ? `, stale live-year rows dropped ${staleLive}` : '')
       + (liveYear ? ` [live year ${liveYear}]` : ' [no un-rolled year]'),
     );
   }
