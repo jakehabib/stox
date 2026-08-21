@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { evaluateTradeAction, executeTradeAction, rankTradePartnersAction } from '@/app/actions/trade';
 import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
+import { sortStatEntries, statLabel } from '@/lib/statLabels';
 import { PlayerAvatar } from './PlayerAvatar';
 import { TeamLogo } from './TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -19,6 +21,8 @@ interface RosterP {
   freedIfSent: number;
   /** Cap actually taken on by acquiring him — base salary only; his bonus stays with his old team. */
   addedIfAcquired: number;
+  /** Parsed Player.seasonStats — kept as an object (not the raw JSON string) so every row can render production without re-parsing on each sort/filter pass. */
+  seasonStats: Record<string, number>;
 }
 /** projectedSlot: where this pick would land "if the season ended today" — only ever set for a current-year pick, since a future year has no standings yet to project from. */
 interface Pick { id: string; year: number; round: number; slot: number; projectedSlot?: number }
@@ -183,8 +187,8 @@ export function TradeBuilder({
       )}
 
       <div className="grid md:grid-cols-2 gap-4">
-        <TeamPanel title="You send" teamId={myTeam.id} teamAbbr={myTeam.abbr} teamName={myTeam.name} roster={myRoster} picks={myPicks} selected={give} onToggle={(id) => toggle(give, setGive, id)} />
-        <TeamPanel title="You receive" teamId={partnerId} teamAbbr={currentPartner?.abbr ?? ''} teamName={currentPartner?.name ?? ''} roster={partnerRoster} picks={partnerPicks} selected={get} onToggle={(id) => toggle(get, setGet, id)} />
+        <TeamPanel leagueId={leagueId} title="You send" teamId={myTeam.id} teamAbbr={myTeam.abbr} teamName={myTeam.name} roster={myRoster} picks={myPicks} selected={give} onToggle={(id) => toggle(give, setGive, id)} />
+        <TeamPanel leagueId={leagueId} title="You receive" teamId={partnerId} teamAbbr={currentPartner?.abbr ?? ''} teamName={currentPartner?.name ?? ''} roster={partnerRoster} picks={partnerPicks} selected={get} onToggle={(id) => toggle(get, setGet, id)} />
       </div>
 
       <div className="panel p-4 flex items-center justify-between flex-wrap gap-3">
@@ -291,10 +295,80 @@ function assetList(selected: Set<string>, roster: RosterP[], picks: Pick[]) {
   return out;
 }
 
-function TeamPanel({ title, teamId, teamAbbr, teamName, roster, picks, selected, onToggle }: {
-  title: string; teamId: string; teamAbbr: string; teamName: string; roster: RosterP[]; picks: Pick[]; selected: Set<string>; onToggle: (id: string) => void;
+type SortKey = 'pos' | 'ovr' | 'age' | 'cap' | 'years';
+const SORT_COLUMNS: { key: SortKey; label: string; width: string }[] = [
+  { key: 'pos', label: 'Pos', width: 'w-8' },
+  { key: 'ovr', label: 'Ovr', width: 'w-8' },
+];
+const SORT_COLUMNS_RIGHT: { key: SortKey; label: string; width: string }[] = [
+  { key: 'age', label: 'Age', width: 'w-12' },
+  { key: 'cap', label: 'Cap Hit', width: 'w-16' },
+  { key: 'years', label: 'Yrs', width: 'w-10' },
+];
+
+// Duplicated from lib/league-data.ts positionSortKey — that module pulls in
+// prisma, so it can't be imported into this client component. Keep in sync
+// with positionBadgeClass's grouping if positions ever change.
+const POSITION_ORDER = ['QB', 'RB', 'FB', 'WR', 'TE', 'LT', 'LG', 'C', 'RG', 'RT', 'EDGE', 'DT', 'LB', 'CB', 'S', 'K', 'P'];
+function localPositionSortKey(pos: string): number {
+  const idx = POSITION_ORDER.indexOf(pos);
+  return idx === -1 ? 99 : idx;
+}
+
+/** A one-line production headline so a player can be judged without leaving the trade screen — the full stat sheet is one click away on his card. Games played is omitted here since it's a volume floor, not production. */
+function productionLine(stats: Record<string, number>): string {
+  const entries = sortStatEntries(stats).filter(([k, v]) => k !== 'gp' && v !== 0);
+  if (entries.length === 0) return 'No stats recorded yet';
+  return entries.slice(0, 3).map(([k, v]) => `${v} ${statLabel(k)}`).join(' · ');
+}
+
+function SortHeader({ label, sortKey, active, dir, onClick, className }: {
+  label: string; sortKey: SortKey; active: boolean; dir: 1 | -1; onClick: (key: SortKey) => void; className: string;
+}) {
+  return (
+    <button type="button" onClick={() => onClick(sortKey)} className={`${className} hover:text-chalk ${active ? 'text-chalk' : ''}`}>
+      {label}{active && (dir === -1 ? ' ▾' : ' ▴')}
+    </button>
+  );
+}
+
+function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks, selected, onToggle }: {
+  leagueId: string; title: string; teamId: string; teamAbbr: string; teamName: string; roster: RosterP[]; picks: Pick[]; selected: Set<string>; onToggle: (id: string) => void;
 }) {
   const teamColor = generateTeamLogoParams(teamId).primary;
+  const [search, setSearch] = useState('');
+  const [posFilter, setPosFilter] = useState('ALL');
+  const [sortKey, setSortKey] = useState<SortKey>('ovr');
+  const [dir, setDir] = useState<1 | -1>(-1);
+
+  const positions = useMemo(
+    () => Array.from(new Set(roster.map((p) => p.position))).sort((a, b) => localPositionSortKey(a) - localPositionSortKey(b)),
+    [roster],
+  );
+
+  const toggleSort = (key: SortKey) => {
+    // Clicking a fresh column always starts high-to-low; clicking the same
+    // column again flips it — same idiom as the Roster page's sort links.
+    setDir((d) => (sortKey === key && d === -1 ? 1 : -1));
+    setSortKey(key);
+  };
+
+  const rows = useMemo(() => {
+    let list = roster;
+    if (posFilter !== 'ALL') list = list.filter((p) => p.position === posFilter);
+    const q = search.trim().toLowerCase();
+    if (q) list = list.filter((p) => p.name.toLowerCase().includes(q));
+    return [...list].sort((a, b) => {
+      switch (sortKey) {
+        case 'ovr': return (a.ovr - b.ovr) * dir;
+        case 'age': return (a.age - b.age) * dir;
+        case 'cap': return (a.capHit - b.capHit) * dir;
+        case 'years': return (a.yearsRemaining - b.yearsRemaining) * dir;
+        default: return (localPositionSortKey(a.position) - localPositionSortKey(b.position)) * dir || b.ovr - a.ovr;
+      }
+    });
+  }, [roster, posFilter, search, sortKey, dir]);
+
   return (
     <div className="panel p-4">
       <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
@@ -316,31 +390,69 @@ function TeamPanel({ title, teamId, teamAbbr, teamName, roster, picks, selected,
         ))}
         {picks.length === 0 && <span className="text-xs text-muted">No picks owned.</span>}
       </div>
+
+      <div className="flex items-center gap-2 mb-2">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search roster…"
+          className="input flex-1 text-xs py-1"
+        />
+        <select value={posFilter} onChange={(e) => setPosFilter(e.target.value)} className="input text-xs py-1 w-20">
+          <option value="ALL">All Pos</option>
+          {positions.map((pos) => <option key={pos} value={pos}>{pos}</option>)}
+        </select>
+        <span className="text-[11px] text-muted whitespace-nowrap">{rows.length} of {roster.length}</span>
+      </div>
+
       <div className="label-sm mb-1.5 flex items-center gap-2">
         <span className="w-[22px]" />
-        <span className="w-8">Pos</span>
-        <span className="w-8">Ovr</span>
-        <span className="flex-1">Player</span>
-        <span className="w-12 text-right">Age</span>
-        <span className="w-16 text-right">Cap Hit</span>
-        <span className="w-10 text-right">Yrs</span>
+        {SORT_COLUMNS.map((c) => (
+          <SortHeader key={c.key} label={c.label} sortKey={c.key} active={sortKey === c.key} dir={dir} onClick={toggleSort} className={c.width} />
+        ))}
+        <span className="flex-1">Player / Production</span>
+        {SORT_COLUMNS_RIGHT.map((c) => (
+          <SortHeader key={c.key} label={c.label} sortKey={c.key} active={sortKey === c.key} dir={dir} onClick={toggleSort} className={`${c.width} text-right`} />
+        ))}
       </div>
-      <div className="max-h-64 overflow-y-auto space-y-1">
-        {roster.map((p) => (
-          <button
+      <div className="max-h-96 overflow-y-auto space-y-1">
+        {rows.map((p) => (
+          <div
             key={p.id}
+            role="button"
+            tabIndex={0}
+            // The row is a toggle, not a plain action — without aria-pressed a
+            // screen reader announces nothing about whether he's already in
+            // the deal, which is the whole state this panel conveys visually.
+            aria-pressed={selected.has(p.id)}
             onClick={() => onToggle(p.id)}
-            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm ${selected.has(p.id) ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised border border-transparent'}`}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(p.id); } }}
+            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm cursor-pointer ${selected.has(p.id) ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised border border-transparent'}`}
           >
             <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} />
-            <span className={`text-xs font-semibold w-8 ${positionBadgeClass(p.position)}`}>{p.position}</span>
-            <span className={`stat-value text-xs w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
-            <span className="flex-1 truncate">{p.name}</span>
-            <span className="w-12 text-right text-xs text-muted font-mono">{p.age}</span>
-            <span className="w-16 text-right text-xs text-muted font-mono">{p.capHit > 0 ? formatMoney(p.capHit) : '—'}</span>
-            <span className="w-10 text-right text-xs text-muted font-mono">{p.yearsRemaining > 0 ? `${p.yearsRemaining}yr` : '—'}</span>
-          </button>
+            <span className={`text-xs font-semibold w-8 shrink-0 ${positionBadgeClass(p.position)}`}>{p.position}</span>
+            <span className={`stat-value text-xs w-8 shrink-0 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="truncate">{p.name}</span>
+                {/* stopPropagation so opening the player card doesn't also toggle the row into the trade — the row itself handles selection. */}
+                <Link
+                  href={`/league/${leagueId}/player/${p.id}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-[10px] text-muted hover:text-accent2 shrink-0"
+                >
+                  Card →
+                </Link>
+              </div>
+              <div className="text-[11px] text-muted truncate">{productionLine(p.seasonStats)}</div>
+            </div>
+            <span className="w-12 text-right text-xs text-muted font-mono shrink-0">{p.age}</span>
+            <span className="w-16 text-right text-xs text-muted font-mono shrink-0">{p.capHit > 0 ? formatMoney(p.capHit) : '—'}</span>
+            <span className="w-10 text-right text-xs text-muted font-mono shrink-0">{p.yearsRemaining > 0 ? `${p.yearsRemaining}yr` : '—'}</span>
+          </div>
         ))}
+        {rows.length === 0 && <p className="text-xs text-muted px-2 py-3">No players match this filter.</p>}
       </div>
     </div>
   );

@@ -63,6 +63,7 @@ export default async function TradePage({ params, searchParams }: { params: { id
       freedIfSent: off ? 0 : capSavingsOnCut(p.contract, settings.capMode),
       addedIfAcquired: off ? 0 : capHit(p.contract, settings.capMode) - (settings.capMode === 'REALISTIC' && p.contract ? proration(p.contract) : 0),
       yearsRemaining: p.contract?.yearsRemaining ?? 0,
+      seasonStats: readJson<Record<string, number>>(p.seasonStats, {}),
     };
   };
 
