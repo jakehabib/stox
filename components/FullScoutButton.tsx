@@ -68,7 +68,14 @@ export function FullScoutButton({ leagueId, teamId, playerId, compact }: {
   const out = panel.remaining <= 0;
 
   return (
-    <div className={compact ? 'flex items-center gap-2 flex-wrap' : 'panel p-3 space-y-2'}>
+    // Compact still STACKS. It used to be a single horizontal flex row, which
+    // made the explanatory paragraph a flex item on the same line as the
+    // button — and its host on the player page is a `shrink-0` column, so
+    // nothing could constrain the text and nothing could wrap it. Measured: an
+    // 83px overhang past a 1024px panel. `min-w-0` lets it shrink inside a
+    // flex parent, and `max-w-xs` keeps the sentence from stretching the
+    // parent wide in the first place.
+    <div className={compact ? 'flex flex-col items-start gap-1 min-w-0 max-w-xs' : 'panel p-3 space-y-2'}>
       <div className="flex items-center gap-2 flex-wrap">
         {confirming ? (
           <>
@@ -94,7 +101,7 @@ export function FullScoutButton({ leagueId, teamId, playerId, compact }: {
           <DeltaChip delta={charges.delta} tone="info" />
         </span>
       </div>
-      <p className="text-[11px] text-muted">
+      <p className="text-[11px] text-muted text-balance">
         {out
           ? `All ${panel.max} used for ${panel.seasonYear}. They reset when the new league year starts.`
           : confirming

@@ -401,7 +401,10 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
             <p className="text-xs text-muted mt-1 max-w-lg">{view.notes}</p>
           </div>
           {userTeam && (
-            <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+            // `min-w-0` rather than `shrink-0`: this column holds prose (the
+            // Full Scout and workout explanations), and a column that refuses
+            // to shrink hands its children an unbounded width to overflow into.
+            <div className="flex flex-wrap items-center justify-end gap-2 min-w-0">
               {workoutSlots && (
                 <>
                   <span className="flex items-center gap-1.5 text-xs text-muted">
