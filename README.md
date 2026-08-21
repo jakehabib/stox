@@ -1149,3 +1149,24 @@ ever force-pushed over, so every state below still exists in git history).
   **17-0 rather than 21-0**, the largest record in the league was 17
   games, and every season record row written totals exactly 17.
 
+- **2026-08-21 — Dynasty page reachable; scouting ranks actually narrow
+  the bands (`ad98a74`).** The GM progression system (Dynasty levels, XP,
+  the three-branch skill tree, and the two per-season Full Scout charges)
+  shipped with three gaps that all had the same effect — a skill point
+  spent changed nothing the player could see:
+  - `/dynasty` had **no nav entry**, so it was reachable only by typing
+    the URL. It now sits under **GM Career** in the league nav.
+  - The **player page** and the **Scouting Dept page** built their
+    scouted views without passing `dynasty`, so Scouting-branch ranks
+    were ignored on the two screens those ranks exist for. Both now call
+    `loadScoutMods(league.id)` and pass it to `buildScoutedView`.
+  - **Full Scout** had no button on the player card. It now sits beside
+    the ordinary Scout button, showing its remaining charges, so the
+    price of a perfect evaluation is compared against an incremental
+    look at the moment the choice is made.
+  Also lands `app/actions/dynasty.ts`, whose profile upsert keys on
+  `leagueId` rather than `id` — `loadDynastyProfile` can return an
+  in-memory default with no id, and keying on `id` would have inserted a
+  fresh row on every Dynasty action instead of updating the one.
+  Verified: `tsc --noEmit` clean; `/dynasty`, `/scouting`, `/gm` and both
+  a drafted and a rostered player page return 200.
