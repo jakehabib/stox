@@ -13,6 +13,7 @@ import { ScatterChart } from '@/components/charts/ScatterChart';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { MetricTiles } from '@/components/ds/MetricTiles';
 import { buildPythagoreanTable, strengthOfSchedule, type PythagoreanRow } from '@/lib/analytics';
+import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/ds/StatScopeToggle';
 
 interface LeaderCol { key: keyof SeasonStats; label: string; format?: (n: number) => string }
 interface LeaderCategory { title: string; primary: LeaderCol; extra: LeaderCol[] }
@@ -89,17 +90,40 @@ function nerdyLine(position: string, s: SeasonStats): { label: string; value: st
   }
 }
 
-export default async function StatsPage({ params, searchParams }: { params: { id: string }; searchParams: { view?: string; scope?: string } }) {
+export default async function StatsPage({ params, searchParams }: { params: { id: string }; searchParams: { view?: string; scope?: string; split?: string } }) {
   const { league, userTeam } = await getLeagueContext(params.id);
-  const advanced = searchParams.view === 'advanced';
+  const statScope = parseStatScope(searchParams[STAT_SCOPE_PARAM]);
+  const playoffs = statScope === 'PLAYOFFS';
   const myTeam = searchParams.scope === 'myteam';
+  // The advanced blocks are built out of Team.wins/pointsFor and the
+  // regular-season schedule — the standings the sim keeps, which by design
+  // only ever count regular-season games (simulateAndSaveGame). There is no
+  // honest postseason Pythagorean or strength-of-schedule to draw from those,
+  // so the postseason view doesn't offer the switch rather than showing
+  // regular-season analytics under a "Playoffs" heading.
+  const advanced = searchParams.view === 'advanced' && !playoffs;
+
+  /** Every link on this page rebuilds the whole query string, so no pill can drop another pill's state. */
+  const href = (next: { view?: boolean; myTeam?: boolean; playoffs?: boolean }) => {
+    const wantPlayoffs = next.playoffs ?? playoffs;
+    const q = new URLSearchParams();
+    if ((next.view ?? advanced) && !wantPlayoffs) q.set('view', 'advanced');
+    if (next.myTeam ?? myTeam) q.set('scope', 'myteam');
+    // Regular season is the default by absence — see StatScopeToggle.
+    if (wantPlayoffs) q.set(STAT_SCOPE_PARAM, 'playoffs');
+    const s = q.toString();
+    return `/league/${league.id}/stats${s ? `?${s}` : ''}`;
+  };
 
   const [players, teams] = await Promise.all([
-    prisma.player.findMany({ where: { leagueId: league.id, seasonStats: { not: '{}' } }, include: { team: true } }),
+    prisma.player.findMany({
+      where: { leagueId: league.id, ...(playoffs ? { playoffStats: { not: '{}' } } : { seasonStats: { not: '{}' } }) },
+      include: { team: true },
+    }),
     prisma.team.findMany({ where: { leagueId: league.id } }),
   ]);
 
-  const withStats = players.map((p) => ({ p, stats: readJson<SeasonStats>(p.seasonStats, {}) }));
+  const withStats = players.map((p) => ({ p, stats: readJson<SeasonStats>(playoffs ? p.playoffStats : p.seasonStats, {}) }));
 
   const teamOffYards = new Map<string, number>();
   for (const { p, stats } of withStats) {
@@ -107,9 +131,46 @@ export default async function StatsPage({ params, searchParams }: { params: { id
     const yards = (stats.passYds ?? 0) + (stats.rushYds ?? 0);
     teamOffYards.set(p.teamId, (teamOffYards.get(p.teamId) ?? 0) + yards);
   }
+
+  // Team.wins/losses/pointsFor are regular-season standings and nothing else,
+  // so the postseason table cannot read them. A club's playoff record IS
+  // derivable — the games are right there with kind != 'REGULAR' — so it is
+  // derived rather than omitted or, worse, borrowed from the standings.
+  const playoffGames = playoffs
+    ? await prisma.game.findMany({
+        where: { leagueId: league.id, seasonYear: league.seasonYear, played: true, kind: { not: 'REGULAR' } },
+        select: { homeTeamId: true, awayTeamId: true, homeScore: true, awayScore: true },
+      })
+    : [];
+  const playoffRecord = new Map<string, { w: number; l: number; pf: number; pa: number }>();
+  for (const g of playoffGames) {
+    for (const [me, them, myScore, theirScore] of [
+      [g.homeTeamId, g.awayTeamId, g.homeScore, g.awayScore],
+      [g.awayTeamId, g.homeTeamId, g.awayScore, g.homeScore],
+    ] as const) {
+      void them;
+      const r = playoffRecord.get(me) ?? { w: 0, l: 0, pf: 0, pa: 0 };
+      if (myScore >= theirScore) r.w++; else r.l++;
+      r.pf += myScore; r.pa += theirScore;
+      playoffRecord.set(me, r);
+    }
+  }
+
   const teamRows = teams
-    .map((t) => ({ t, offYards: teamOffYards.get(t.id) ?? 0, diff: t.pointsFor - t.pointsAgnst }))
-    .sort((a, b) => b.t.wins - a.t.wins || b.diff - a.diff);
+    .map((t) => {
+      const po = playoffRecord.get(t.id);
+      const wins = playoffs ? (po?.w ?? 0) : t.wins;
+      const losses = playoffs ? (po?.l ?? 0) : t.losses;
+      const ties = playoffs ? 0 : t.ties;
+      const pf = playoffs ? (po?.pf ?? 0) : t.pointsFor;
+      const pa = playoffs ? (po?.pa ?? 0) : t.pointsAgnst;
+      return { t, wins, losses, ties, pf, pa, offYards: teamOffYards.get(t.id) ?? 0, diff: pf - pa };
+    })
+    // In the postseason view the twenty clubs that never played a game are
+    // not zero-win teams, they are absent — so they are dropped rather than
+    // padding the table with rows that read as an 0-0 season.
+    .filter((r) => !playoffs || playoffRecord.has(r.t.id))
+    .sort((a, b) => b.wins - a.wins || b.diff - a.diff);
 
   // --- Advanced-view data -----------------------------------------------
   let ratingBars: { label: string; value: number; displayValue: string; color: string }[] = [];
