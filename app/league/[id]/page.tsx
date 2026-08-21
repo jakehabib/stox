@@ -9,6 +9,7 @@ import { teamNeeds, needSeverity } from '@/lib/ai/gm';
 import { buildFrontOfficeBrief } from '@/lib/frontOffice';
 import { buildGmCareerSummary } from '@/lib/gmCareer';
 import { buildLeagueRatings, estimateGameWinChance } from '@/lib/teamRating';
+import { buildPowerRankings } from '@/lib/powerRankings';
 import { transactionCategory } from '@/lib/newsCategory';
 import { rankWire } from '@/lib/wireRank';
 import { computeClinchStatus, clinchScenarioTag } from '@/lib/clinchScenario';
@@ -128,9 +129,10 @@ export default async function TeamDashboard({ params }: { params: { id: string }
     return { name: m?.[1] ?? t.headline, position: m?.[2] ?? '', statLine: t.detail };
   });
   // The near-miss is READ, never re-ranked. It was frozen into its own row at
-  // selection time precisely because seasonStats keep climbing through the
-  // playoffs — recomputing it here would let the page change its mind in
-  // February about who was snubbed in January. See ALL_STAR_SNUB_TYPE.
+  // selection time, and stays frozen: seasonStats is cleared at the rollover
+  // and the candidate pool churns, so recomputing it here would let the page
+  // change its mind a year later about who was snubbed. See
+  // ALL_STAR_SNUB_TYPE.
   const snub = myAllStars.length === 0 ? await allStarSnubFor(league.id, team.id, league.seasonYear) : null;
 
   const expiringCount = league.phase === 'RESIGN'
@@ -151,6 +153,13 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   // League-wide ratings: one query set, reused by the matchup read below and
   // by anything else on this page that needs to know how good a team is.
   const leagueRatings = await buildLeagueRatings(league.id);
+
+  // WHERE YOU STAND, as the big number on the hero rather than a page away.
+  // The rating band below says how good the roster is; this says where that
+  // and the season so far put you against the other 31, which is the question
+  // a GM actually asks. Costs ~19ms and reuses the same ratings underneath.
+  const powerBoard = await buildPowerRankings(league.id);
+  const myPower = powerBoard.rows.find((r) => r.teamId === team.id) ?? null;
   const myRating = leagueRatings.get(team.id);
 
   let nextGame: {
@@ -400,7 +409,21 @@ export default async function TeamDashboard({ params }: { params: { id: string }
               ? { value: formatMoney(cap.capSpace), label: 'Cap Space', color: cap.capSpace >= 0 ? 'text-accent' : 'text-bad' }
               : { value: 'Off', label: 'Cap Space' },
             { value: `${roster.length}${injured.length ? ` (${injured.length} inj)` : ''}`, label: 'Roster' },
-            { value: `${picks}`, label: 'Picks Owned' },
+            myPower
+              ? {
+                  value: `#${myPower.rank}`,
+                  label: powerRankLabel(myPower),
+                  // Top of the league should LOOK like it. Gold is reserved for
+                  // first — the same gold the championship rows use — then the
+                  // top five, then the top ten; outside that it is an ordinary
+                  // number and gets ordinary ink, because colouring all 32
+                  // would make the colour mean nothing.
+                  color: myPower.rank === 1 ? 'text-gold'
+                    : myPower.rank <= 5 ? 'text-accent'
+                    : myPower.rank <= 10 ? 'text-accent2'
+                    : 'text-chalk',
+                }
+              : { value: '—', label: 'Power Rank' },
           ]}
           ratings={myRating ? [
             { label: 'Team Overall', value: myRating.overall, rank: myRating.rank, outOf: leagueRatings.size },
@@ -478,6 +501,19 @@ export default async function TeamDashboard({ params }: { params: { id: string }
       </div>
     </div>
   );
+}
+
+/**
+ * "Power Rank", plus the week-over-week move when there is one written down.
+ * The move is the story — a #12 that was #19 last week is a different club
+ * from a #12 sliding out of the top ten — and it is read from the stored
+ * snapshot, never recomputed, so it cannot disagree with the Power Rankings
+ * page.
+ */
+function powerRankLabel(row: { rank: number; move: { delta: number } | null }): string {
+  const d = row.move?.delta ?? 0;
+  if (d === 0) return 'Power Rank';
+  return `Power Rank ${d > 0 ? '\u25B2' : '\u25BC'}${Math.abs(d)}`;
 }
 
 /**
