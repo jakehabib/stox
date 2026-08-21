@@ -131,7 +131,7 @@ function fold(payloads: CoachPayload[]): Map<string, Folded> {
  * A span demands he was actually there for it: a back who played one of seven
  * weeks did not carry the stretch, whatever he did that afternoon.
  */
-function pickTop(folded: Map<string, Folded>, weeks: number, rng: Rng): Mention[] {
+function pickTop(folded: Map<string, Folded>, weeks: number, voice: Voice): Mention[] {
   const minGames = weeks > 1 ? Math.ceil(weeks / 2) : 1;
   const eligible = [...folded.values()]
     .filter((f) => f.gradeGames >= Math.min(minGames, f.games) && f.gradeGames > 0 && UNIT_OF[f.line.position])
@@ -147,9 +147,16 @@ function pickTop(folded: Map<string, Folded>, weeks: number, rng: Rng): Mention[
     takenUnits.add(x.unit);
     chosen.push(x);
   }
+  // A second man from the same unit, but only when he did something DIFFERENT.
+  // Defensive ladders saturate — five tackles and a sack is a top-5% edge game
+  // and three men can post it in the same afternoon — so without this check a
+  // report could print two identical rows with two identical sentences, which
+  // is the clearest possible signal that a template wrote them.
   for (const x of eligible) {
     if (chosen.length >= MAX_MENTIONS) break;
     if (chosen.includes(x) || x.avg < SECOND_FROM_UNIT_BAR) continue;
+    const phrase = headlinePhrase(x.f, weeks);
+    if (chosen.some((c) => c.unit === x.unit && headlinePhrase(c.f, weeks) === phrase)) continue;
     chosen.push(x);
   }
 
@@ -162,7 +169,7 @@ function pickTop(folded: Map<string, Folded>, weeks: number, rng: Rng): Mention[
       unit,
       grade: avg,
       line: statLine(f.line.position, f.stats),
-      clause: praise(f, avg, weeks, rng),
+      clause: praise(f, avg, weeks, voice),
       games: f.games,
       rookie: f.line.experience === 0,
       age: f.line.age,
@@ -194,15 +201,16 @@ const VOICE_BIG = [
 ];
 const VOICE_SOLID = [
   'Did his job.',
-  'Nothing loud about it. It counted.',
+  'That counted.',
   'Steady.',
   'He gave us what we needed.',
 ];
 
-/** "a", "two", "three"... A coach says "two sacks", not "2 sacks". */
+/** "an interception", "two sacks". A coach does not say "1 sacks". */
 const COUNT_WORD = ['no', 'a', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight'];
 function count(n: number, singular: string, plural = `${singular}s`): string {
-  return `${COUNT_WORD[n] ?? n} ${n === 1 ? singular : plural}`;
+  if (n === 1) return `${/^[aeiou]/i.test(singular) ? 'an' : 'a'} ${singular}`;
+  return `${COUNT_WORD[n] ?? n} ${plural}`;
 }
 
 /**
@@ -247,9 +255,24 @@ function headlinePhrase(f: Folded, weeks: number): string {
   return `${capitalise(bits.join(' and '))}${over}.`;
 }
 
-function praise(f: Folded, grade: number, weeks: number, rng: Rng): string {
+/**
+ * Draws a voice tag without repeating one inside a single report. Two rows
+ * ending in the same four words is the tell that a template wrote them, and
+ * the section stops sounding like a person the moment a reader spots it.
+ */
+class Voice {
+  private queues = new Map<string[], string[]>();
+  constructor(private rng: Rng) {}
+  pick(pool: string[]): string {
+    let q = this.queues.get(pool);
+    if (!q || q.length === 0) { q = this.rng.shuffle(pool); this.queues.set(pool, q); }
+    return q.pop()!;
+  }
+}
+
+function praise(f: Folded, grade: number, weeks: number, voice: Voice): string {
   const pool = grade >= 95 ? VOICE_HUGE : grade >= 88 ? VOICE_BIG : VOICE_SOLID;
-  return `${headlinePhrase(f, weeks)} ${rng.pick(pool)}`;
+  return `${headlinePhrase(f, weeks)} ${voice.pick(pool)}`;
 }
 
 /**
@@ -261,7 +284,7 @@ function praise(f: Folded, grade: number, weeks: number, rng: Rng): string {
  * One row per man, however many things went wrong. Three separate lines about
  * the same quarterback is a pile-on, not a report.
  */
-function pickConcerns(folded: Map<string, Folded>, weeks: number, rng: Rng): ConcernRow[] {
+function pickConcerns(folded: Map<string, Folded>, weeks: number, voice: Voice): ConcernRow[] {
   const rows = [...folded.values()]
     .map((f) => ({ f, list: findConcerns(f.line.position, f.stats, f.games) }))
     .filter((x) => x.list.length > 0)
@@ -272,8 +295,8 @@ function pickConcerns(folded: Map<string, Folded>, weeks: number, rng: Rng): Con
   return rows.map(({ f, list, worst }) => {
     const facts = list.sort((a, b) => b.severity - a.severity).slice(0, 2).map((c) => c.fact);
     const tail = worst >= 80
-      ? rng.pick(['That is where the game went.', 'We cannot win giving it away like that.', 'That has to be cleaned up.'])
-      : rng.pick(['Not good enough.', 'We need more than that.', 'That is on him and on us.']);
+      ? voice.pick(CONCERN_HEAVY)
+      : voice.pick(CONCERN_LIGHT);
     const over = weeks > 1 ? ` across ${f.games} game${f.games === 1 ? '' : 's'}` : '';
     return {
       playerId: f.line.playerId,
@@ -284,6 +307,9 @@ function pickConcerns(folded: Map<string, Folded>, weeks: number, rng: Rng): Con
     };
   });
 }
+
+const CONCERN_HEAVY = ['That is where the game went.', 'We cannot win giving it away like that.', 'That has to be cleaned up.'];
+const CONCERN_LIGHT = ['Not good enough.', 'We need more than that.', 'That is on him and on us.'];
 
 function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -425,7 +451,10 @@ function spanNotes(payloads: CoachPayload[], folded: Map<string, Folded>, hurtId
   return out;
 }
 
-function buildOpener(payloads: CoachPayload[], weeks: number, rng: Rng): string {
+const OPENER_WIN = ['Here is what stood up.', 'Here is what travelled.', 'Here is what I liked.'];
+const OPENER_LOSS = ['Here is what has to change.', 'Here is where it went.', 'Here is the honest read.'];
+
+function buildOpener(payloads: CoachPayload[], weeks: number, voice: Voice): string {
   const t = sumTeam(payloads);
   if (weeks > 1) {
     const w = payloads.filter((p) => p.outcome === 'W').length;
@@ -441,8 +470,8 @@ function buildOpener(payloads: CoachPayload[], weeks: number, rng: Rng): string 
     ? `We tied it ${p.team.points}-${p.team.oppPoints}.`
     : `We ${verb} it by ${m}, ${p.team.points}-${p.team.oppPoints}${p.oppAbbr ? ` against ${p.oppAbbr}` : ''}.`;
   const tail = p.outcome === 'W'
-    ? rng.pick(['Here is what stood up.', 'Here is what travelled.', 'Here is what I liked.'])
-    : rng.pick(['Here is what has to change.', 'Here is where it went.', 'Here is the honest read.']);
+    ? voice.pick(OPENER_WIN)
+    : voice.pick(OPENER_LOSS);
   return `${head} ${tail}`;
 }
 
@@ -454,16 +483,16 @@ export function buildCoachModel(payloadsIn: (CoachPayload | null | undefined)[])
   // Seeded on the span itself, so the same week re-renders to the same
   // sentences forever — including after a refresh, a resize, or a StrictMode
   // double render.
-  const rng = new Rng(`coach:${payloads.map((p) => p.gameId ?? p.weekLabel).join('|')}`);
+  const voice = new Voice(new Rng(`coach:${payloads.map((p) => p.gameId ?? p.weekLabel).join('|')}`));
 
   const folded = fold(payloads);
-  const top = pickTop(folded, weeks, rng);
-  const concerns = pickConcerns(folded, weeks, rng);
+  const top = pickTop(folded, weeks, voice);
+  const concerns = pickConcerns(folded, weeks, voice);
   const t = sumTeam(payloads);
 
   return {
     weeks,
-    opener: buildOpener(payloads, weeks, rng),
+    opener: buildOpener(payloads, weeks, voice),
     topLabel: weeks > 1 ? 'Who carried the stretch' : 'Who showed up',
     top,
     topEmpty: top.length === 0
