@@ -254,6 +254,7 @@ Then load the site, create one league, and advance one week.
 | `DATABASE_URL` | **Yes** | — | Postgres connection string. The only required variable. Use Neon's **pooled** URL (`-pooler` in the host); serverless functions open a connection per invocation and an unpooled endpoint exhausts connections under light concurrency. |
 | `MAX_LEAGUES_PER_OWNER` | No | `8` | Saves one browser may hold. A UX limit, not a security control — the owner key is a cookie, so clearing cookies resets the count. |
 | `MAX_LEAGUES_TOTAL` | No | `500` | Hard ceiling on leagues in the whole database. This is the one that actually protects your quota, because it is the only one a caller rotating cookies cannot walk around. ~500 leagues ≈ 2.6M rows. |
+| `NEXT_PUBLIC_SITE_URL` | No | `https://dynastygm.gg` | The origin used for `metadataBase`, the Open Graph share card, `robots.txt` and the sitemap. Production is the default, so **you only set this on preview deployments** — without it a preview's share card and canonical link point at production. Vercel exposes `VERCEL_URL` for previews; setting `NEXT_PUBLIC_SITE_URL=https://$VERCEL_URL` in the Preview scope is the usual move. |
 | `NODE_ENV` | Set for you | — | Do not set manually. See warning below. |
 
 Non-integer, zero, negative, and empty values for the two limits are ignored
@@ -265,6 +266,28 @@ is gitignored; `.env.example` is the committed template.
 > keys off it: in production, leagues with a `NULL` owner key are hidden from
 > every browser. In development they are visible to everyone. Flipping this on
 > a shared deployment exposes every unowned save to every visitor.
+
+### Attaching dynastygm.gg
+
+The domain was bought through Vercel, so DNS is already delegated and there
+is nothing to configure at a registrar.
+
+1. **Vercel → Project → Settings → Domains → Add** `dynastygm.gg`. Add
+   `www.dynastygm.gg` too and let Vercel redirect it to the apex; a friend
+   who types `www.` should not get a dead page.
+2. Vercel issues the TLS certificate automatically. It is normally under a
+   minute when the domain is bought in-platform.
+3. Confirm the apex is the **Production** domain, and that Production is
+   building from the branch you intend. A domain pointed at the wrong branch
+   is the quiet version of this going wrong.
+4. Nothing in the code needs changing: `NEXT_PUBLIC_SITE_URL` already
+   defaults to `https://dynastygm.gg`.
+
+Once it resolves, check the share card — paste the link into any chat app and
+confirm the 1200x630 image renders. It is generated at `/opengraph-image` and
+is the only first impression a shared link gets. `curl -sI
+https://dynastygm.gg/opengraph-image` should return `200` and
+`content-type: image/png`.
 
 ### Secrets audit
 
