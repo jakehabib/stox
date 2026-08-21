@@ -293,14 +293,21 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
 }
 
 /**
- * The cheapest offer he would actually sign, used server-side to sanity-check
- * an incoming acceptance and to let AI teams negotiate against the same model
- * the user faces. Solved by bisection because `evaluateOffer` is not trivially
- * invertible once personality weighting is applied.
+ * The cheapest offer he would actually sign at this length, or NULL when no
+ * amount of money closes it — which is a real answer, not an edge case: a
+ * prove-it player offered five years is refusing the TERM, and there is no
+ * salary that fixes that. The old version bisected regardless and returned
+ * three times his asking price as if that would do it, which is a number
+ * nobody should ever be quoted (the Market Knowledge band is priced off this).
+ *
+ * Bisection because `evaluateOffer` is not trivially invertible once
+ * personality weighting is applied. Monotonic in salary, so bisection is
+ * sound: more money never lowers interest.
  */
-export function minimumAcceptableApy(ctx: NegotiationContext, years: number, guaranteePct: number): number {
+export function minimumAcceptableApy(ctx: NegotiationContext, years: number, guaranteePct: number): number | null {
   let lo = 0;
   let hi = ctx.reservationApy * 3;
+  if (!evaluateOffer(ctx, { apy: hi, years, guaranteePct }).accepted) return null;
   for (let i = 0; i < 40; i++) {
     const mid = (lo + hi) / 2;
     if (evaluateOffer(ctx, { apy: mid, years, guaranteePct }).accepted) hi = mid;

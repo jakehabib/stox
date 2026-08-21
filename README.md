@@ -227,6 +227,16 @@ something here, the principle wins and the change is wrong.
 
 ## Known simplifications (documented, not bugs)
 
+- Negotiation PATIENCE is per-session, not stored. Each offer a player turns
+  down costs a pip (two for a lowball), decided and charged server-side — but
+  the counter itself lives in the panel's React state, so reloading the page
+  reopens talks with a full meter. Persisting it would need a new column
+  (a patience counter per player *per negotiating team*), and it would buy
+  less than it looks: the reservation price is seeded off the matchup and the
+  league year, so a reload hands you back the same man wanting the same money,
+  not a fresh roll. The consequence that DOES persist is the one that matters
+  — run out of patience on a contested free agent and he signs with the team
+  that was bidding against you, which is a real transaction and permanent.
 - AI teams don't carry their own `ScoutingReport` rows — they evaluate free
   agents/trades/draft prospects off true ratings. Modeling AI fog-of-war
   would 32x the scouting data for no gameplay benefit in a single-player game.

@@ -339,6 +339,9 @@ export async function contractEstimateAction(leagueId: string, playerId: string,
   // the guarantee he is asking for — i.e. the number the interest meter is
   // drawn against, not a proxy for it.
   const threshold = minimumAcceptableApy(ctx, Math.max(1, years), ctx.desiredGuarantee);
+  // No price signs him at this length — quoting a figure would be inventing
+  // one. Render nothing; the panel's own demands already say what is wrong.
+  if (threshold == null) return null;
   // Seeded off the player, not the clock, so re-opening the form does not
   // re-roll the estimate into a different answer.
   const rng = new Rng(`${leagueId}:${playerId}:market`);

@@ -148,13 +148,18 @@ async function main() {
         // The bisection used by the Market Knowledge estimate has to land on
         // the same boundary the sweep walks past.
         const min = minimumAcceptableApy(ctx, years, guaranteePct);
-        const below = decideOffer(ctx, { apy: Math.max(gate.minSalary, min - 100_000), years, guaranteePct }, gate, DEFAULT_STRUCTURE);
-        const at = decideOffer(ctx, { apy: min, years, guaranteePct }, gate, DEFAULT_STRUCTURE);
-        if (min <= gate.maxSalary && !at.evaluation.accepted) {
-          fail(`${p.firstName} ${p.lastName}: minimumAcceptableApy(${years}yr) = ${formatMoney(min)} is not accepted`);
-        }
-        if (min > gate.minSalary && below.evaluation.accepted && min - 100_000 >= gate.minSalary) {
-          fail(`${p.firstName} ${p.lastName}: ${formatMoney(min - 100_000)} accepted below minimumAcceptableApy ${formatMoney(min)}`);
+        if (min == null) {
+          // "No price closes this" has to mean exactly that on the grid too.
+          if (seenAccept) fail(`${p.firstName} ${p.lastName}: minimumAcceptableApy(${years}yr) says never, but the grid found a signable offer`);
+        } else {
+          const below = decideOffer(ctx, { apy: Math.max(gate.minSalary, min - 100_000), years, guaranteePct }, gate, DEFAULT_STRUCTURE);
+          const at = decideOffer(ctx, { apy: min, years, guaranteePct }, gate, DEFAULT_STRUCTURE);
+          if (!at.evaluation.accepted) {
+            fail(`${p.firstName} ${p.lastName}: minimumAcceptableApy(${years}yr) = ${formatMoney(min)} is not accepted`);
+          }
+          if (min > gate.minSalary && below.evaluation.accepted && min - 100_000 >= gate.minSalary) {
+            fail(`${p.firstName} ${p.lastName}: ${formatMoney(min - 100_000)} accepted below minimumAcceptableApy ${formatMoney(min)}`);
+          }
         }
       }
     }
