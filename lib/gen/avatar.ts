@@ -11,6 +11,12 @@ import { Rng } from '../rng';
  * from `seed` (the player's id), so the exact same face comes back every
  * time with zero schema/migration footprint — and it works retroactively for
  * every player already sitting in an existing league.
+ *
+ * It takes a body as well as a seed. `age` greys the hair and thins the
+ * hairline; `weightLb`/`heightIn`/`position` set the proportions the face is
+ * drawn at — shoulder span, neck, jaw. None of it is stored either, and all
+ * of it is optional: with no body at all the numbers land on the neutral build
+ * the portrait has always been drawn at, so an old call site is unchanged.
  * ===========================================================================
  */
 
@@ -34,6 +40,17 @@ export interface AvatarParams {
   noseStyle: NoseStyle;
   mouthStyle: MouthStyle;
   facialHair: FacialHair;
+  /**
+   * 0-1 bulk, from weight measured against the player's own positional norm
+   * blended with his absolute weight. Drives shoulder span, neck width, jaw
+   * width and cheek fullness — the silhouette, never a facial feature.
+   * `NEUTRAL_MASS` (0.45) is the build the portrait was always drawn at.
+   */
+  mass: number;
+  /** -1 short .. +1 tall for his position. Deliberately a whisper next to mass. */
+  frame: number;
+  /** 0-1 hairline recession, rising from ~28 and only for some men. */
+  recede: number;
 }
 
 /** [PLACEHOLDER palette] Flat, mid-saturation tones — reads clean at small sizes. */
@@ -65,7 +82,68 @@ const FACIAL_HAIR_WEIGHTS: Record<FacialHairPick, number> = {
   stubble: 0.34, beard: 0.28, goatee: 0.24, mustache: 0.14,
 };
 
-export function generateAvatarParams(seed: string, age = 26): AvatarParams {
+// ---------------------------------------------------------------------------
+// Body — mass, frame and age, pushed into the silhouette
+// ---------------------------------------------------------------------------
+
+/**
+ * Positional body norms: mean height (in) / weight (lb) and the spread that
+ * defines "heavy for his position". A 250 lb linebacker is a heavy linebacker;
+ * a 250 lb tackle is a light tackle, and the portrait has to say so.
+ *
+ * These mirror `BODY` in lib/gen/players.ts, which is what actually rolls
+ * heightIn/weightLb at league generation. Deliberately duplicated rather than
+ * imported: players.ts drags the whole league generator (name tables, college
+ * lists, prospect profiles) along with it, and this module is pulled into the
+ * client bundle by every roster row. If BODY moves, move this with it.
+ */
+export const POSITION_BODY_NORM: Record<string, { h: number; hSd: number; w: number; wSd: number }> = {
+  QB:  { h: 75, hSd: 1.6, w: 220, wSd: 12 },
+  RB:  { h: 70, hSd: 1.6, w: 214, wSd: 14 },
+  FB:  { h: 72, hSd: 1.3, w: 245, wSd: 12 },
+  WR:  { h: 73, hSd: 2.1, w: 200, wSd: 15 },
+  TE:  { h: 77, hSd: 1.4, w: 250, wSd: 13 },
+  LT:  { h: 78, hSd: 1.3, w: 313, wSd: 14 },
+  LG:  { h: 77, hSd: 1.3, w: 315, wSd: 14 },
+  C:   { h: 76, hSd: 1.2, w: 305, wSd: 13 },
+  RG:  { h: 77, hSd: 1.3, w: 315, wSd: 14 },
+  RT:  { h: 78, hSd: 1.3, w: 315, wSd: 14 },
+  EDGE:{ h: 76, hSd: 1.5, w: 262, wSd: 15 },
+  DT:  { h: 75, hSd: 1.5, w: 305, wSd: 18 },
+  LB:  { h: 74, hSd: 1.4, w: 238, wSd: 12 },
+  CB:  { h: 71, hSd: 1.7, w: 192, wSd: 11 },
+  S:   { h: 73, hSd: 1.4, w: 205, wSd: 11 },
+  K:   { h: 72, hSd: 1.8, w: 195, wSd: 14 },
+  P:   { h: 74, hSd: 1.8, w: 205, wSd: 14 },
+};
+
+/**
+ * The stand-in norm when we're handed no position (or one this table doesn't
+ * know — a scouting-board "OT", say). Its numbers are chosen so that a call
+ * with no body data at all lands on `NEUTRAL_MASS` and `frame` 0 exactly,
+ * which is the geometry the portrait has always been drawn at. A call site
+ * that passes nothing new therefore renders precisely what it renders today.
+ */
+const DEFAULT_BODY_NORM = { h: 74, hSd: 2.5, w: 245, wSd: 45 };
+
+/**
+ * The build the fixed geometry was originally drawn at — roughly a 245 lb pro
+ * athlete. Everything in PlayerAvatar is anchored here: mass 0.45 reproduces
+ * the old drawing exactly, and players deviate from it in both directions.
+ */
+export const NEUTRAL_MASS = 0.45;
+
+/** Body inputs. All optional — see DEFAULT_BODY_NORM for what absence means. */
+export interface AvatarBody {
+  weightLb?: number;
+  heightIn?: number;
+  /** One of lib/tuning POSITIONS. Unknown values fall back to the generic norm. */
+  position?: string;
+}
+
+const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+
+export function generateAvatarParams(seed: string, age = 26, body: AvatarBody = {}): AvatarParams {
   const rng = new Rng(`avatar-${seed}`);
 
   // Older players skew toward gray/white hair and are far more likely to
@@ -90,7 +168,7 @@ export function generateAvatarParams(seed: string, age = 26): AvatarParams {
     ? rng.weighted<FacialHairPick>(FACIAL_HAIR_WEIGHTS)
     : 'none';
 
-  return {
+  const face = {
     skinTone: rng.pick(SKIN_TONES),
     hairStyle,
     hairColor,
@@ -101,4 +179,33 @@ export function generateAvatarParams(seed: string, age = 26): AvatarParams {
     mouthStyle: rng.pick(MOUTH_STYLES),
     facialHair,
   };
+
+  // ---- Body ---------------------------------------------------------------
+  // Every draw above this line is untouched and in its original order, and the
+  // one new draw below it comes last, so an existing seed keeps the exact face
+  // it has always had. Only the proportions it is drawn at change.
+  const norm = (body.position && POSITION_BODY_NORM[body.position]) || DEFAULT_BODY_NORM;
+  const weightLb = body.weightLb ?? norm.w;
+
+  // Two readings of the same pound. `rel` is how he sits inside his own
+  // position (a 250 lb linebacker is a heavy linebacker); `abs` is how he sits
+  // against the whole league (a 250 lb linebacker is still a smaller human
+  // than a 310 lb guard). Weighted toward absolute, because that is what the
+  // eye actually reads at 22px — but the positional term is what stops every
+  // lineman looking identical and every corner looking frail.
+  const rel = clamp01((weightLb - (norm.w - norm.wSd)) / (2 * norm.wSd));
+  const abs = clamp01((weightLb - 170) / 175);
+  const mass = clamp01(0.3 * rel + 0.7 * abs);
+
+  const frame = body.heightIn === undefined
+    ? 0
+    : Math.max(-1, Math.min(1, (body.heightIn - norm.h) / (2 * norm.hSd)));
+
+  // Recession starts creeping in around 28 and is nowhere near universal —
+  // the coin flip is the last draw in the sequence precisely so it cannot
+  // disturb anything above it.
+  const recedeCurve = clamp01((age - 28) / 13);
+  const recede = recedeCurve * (rng.bool(0.55) ? 1 : 0.25);
+
+  return { ...face, mass, frame, recede };
 }
