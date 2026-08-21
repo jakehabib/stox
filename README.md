@@ -1602,3 +1602,28 @@ ever force-pushed over, so every state below still exists in git history).
   masthead numbers that contradicted the filter under them — filtering to TE
   read "**140 AVAILABLE / filtered to TE**" above eight tight ends, with a
   Best Available who was a right tackle.
+- **2026-08-21 — Playoff/regular-season stats split, and a one-round
+  postseason (`716a16c`).** A beta tester found playoff and regular-season
+  stats in the same bucket. Confirmed: a 2034 quarterback's stored line read
+  **3,988 yards — 3,722 regular plus 266 in the playoffs — and 17 games from
+  16 plus 1.** Only twelve of thirty-two clubs play those extra games, so the
+  leaderboard rewarded *making* the playoffs, and career totals inherited it.
+  `Player` and `PlayerSeason` now carry separate postseason columns and the
+  existing ones narrow to mean regular season, so every reader that was
+  implicitly asking for regular-season numbers became correct without a call
+  site to forget. Backfilled from stored box scores: **42 leagues, 91,448
+  season rows, 17,998 careers, 1,738 live accumulators.** Proof it restored
+  pristine state: re-running All-Star selection on a polluted save produced a
+  roster differing in **six selections**; after the backfill it recomputes
+  **byte-identical**. A `?split=playoffs` toggle sits on the stats page and
+  the player card; an empty postseason reads "No postseason games", never
+  zeroes.
+  **Chasing it surfaced something far worse:** every league past its first
+  season was crowning a champion out of the **wild card round**. Four queries
+  in `lib/season.ts` asked "what has this league played" when they meant
+  "this *season*", and the area had only ever been exercised in year one —
+  one save had **eight straight seasons of one-round playoffs and eight fake
+  champions**. Fixing the first exposed the next two: the divisional round
+  built itself out of two years' winners, and `createFinal` silently created
+  no final at all. A fresh league now plays a full bracket four seasons
+  running, with a champion and a Championship MVP each year.
