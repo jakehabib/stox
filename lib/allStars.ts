@@ -33,14 +33,22 @@ import {
  * WHEN IT RUNS, AND WHY THAT IS NOT A DETAIL
  * ---------------------------------------------------------------------------
  * At the end of the REGULAR SEASON, not after the final. That is when the real
- * thing is named, but there is a harder reason: `simulateAndSaveGame` gates
- * only the STANDINGS on `kind === 'REGULAR'` — seasonStats keep accumulating
- * straight through the postseason. Selecting after the final would fold two to
+ * thing is named — and it is now ONLY that.
+ *
+ * It used to be a workaround as well. `simulateAndSaveGame` gated only the
+ * STANDINGS on `kind === 'REGULAR'`, so seasonStats accumulated straight
+ * through the postseason; selecting after the final would have folded two to
  * four playoff games into the totals of the twelve teams that made it and none
- * of the twenty that did not, and then rank those totals against each other.
- * The stat line printed under a selection has to be the stat line that earned
- * it, so selection happens at the last moment those totals are purely regular
- * season. See the call site in lib/season.ts's simulateWeek().
+ * of the twenty that did not, and then ranked those totals against each other.
+ * Player.seasonStats is regular season only now — the postseason has its own
+ * bucket (Player.playoffStats, and PlayerSeason.playoffStats/playoffGp) — so
+ * the totals this module reads are purely regular season whenever it runs.
+ *
+ * The timing stays anyway, because it was always also the right answer to a
+ * different question: an All-Star is named in January, and the stat line
+ * printed under a selection has to be the stat line that earned it. What
+ * changed is that it is a choice about the calendar rather than the only way
+ * to get an honest number. See the call site in lib/season.ts's simulateWeek().
  *
  * ---------------------------------------------------------------------------
  * ROSTER SHAPE — DERIVED, NOT INVENTED
@@ -96,10 +104,11 @@ export const ALL_STAR_ANNOUNCEMENT_TYPE = 'ALL_STAR_ROSTER';
  * Transaction.type for the user club's best near-miss, at most one a season.
  *
  * It is written down rather than recomputed on demand, and that is not an
- * optimisation. seasonStats keep accumulating through the playoffs, so asking
- * "who just missed?" in February gets a different answer than asking it in
- * January — the near-miss has to be frozen at the same instant the selection
- * was, or a page would quietly change its mind about who was snubbed. Only
+ * optimisation. seasonStats are cleared at the rollover and the roster of
+ * candidates churns, so asking "who just missed?" a year later gets a
+ * different answer than asking it in January — the near-miss has to be frozen
+ * at the same instant the selection was, or a page would quietly change its
+ * mind about who was snubbed. Only
  * the user's club gets one: "somebody in the league just missed" is not a
  * story, and seventy-six of them would be a directory. Written only when he
  * had nobody selected at all — see recordAllStars.

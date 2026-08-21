@@ -71,6 +71,11 @@ export async function applyInSeasonProgression(
   const players = await prisma.player.findMany({ where: { leagueId, status: 'ACTIVE' } });
   if (players.length === 0) return;
 
+  // Regular season only — seasonStats is the regular-season bucket now (see
+  // Player.seasonStats in the schema). Every checkpoint this function runs at
+  // falls inside the regular season anyway, so the two were never going to
+  // disagree; reading the regular bucket keeps it that way if a checkpoint is
+  // ever moved.
   const statsById = new Map(players.map((p) => [p.id, readJson<SeasonStats>(p.seasonStats, {})]));
 
   // --- Performance tier: rank each player against others at his own

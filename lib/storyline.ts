@@ -227,6 +227,10 @@ async function recordChaseStorylines(leagueId: string, teamId: string): Promise<
   // `isHolder` always wins that slot over anyone else still chasing it.
   const bestByKey = new Map<string, { isHolder: boolean; gap: number; storyline: Storyline }>();
   for (const p of players) {
+    // Regular season only, and that is deliberate: LeagueRecord is written
+    // from the regular-season line too (lib/season.ts), so a chase measured
+    // against a total that included postseason games would be chasing a
+    // different number than the one it would have to beat.
     const season = readJson<SeasonStats>(p.seasonStats, {});
     // careerStats only folds in this season's totals at the offseason
     // rollover (lib/season.ts rollSeasonStatsIntoCareer) — mid-season it's

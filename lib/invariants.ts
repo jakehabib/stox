@@ -223,25 +223,48 @@ function sumStats(rows: string[]): Record<string, number> {
   return total;
 }
 
-/** Snapshot of league-wide season+career stat totals — call before and after a step to check INV-T1. */
-export async function snapshotStatTotals(leagueId: string): Promise<{ season: Record<string, number>; career: Record<string, number> }> {
-  const players = await prisma.player.findMany({ where: { leagueId }, select: { seasonStats: true, careerStats: true } });
+/**
+ * Snapshot of league-wide season+career stat totals — call before and after a
+ * step to check INV-T1. Both buckets are snapshotted: the postseason pair
+ * rolls over on the same schedule as the regular-season pair, and a rollup
+ * check that only watched one half would have declared a clean roll while the
+ * other half silently vanished.
+ */
+export async function snapshotStatTotals(leagueId: string): Promise<{
+  season: Record<string, number>; career: Record<string, number>;
+  playoff: Record<string, number>; careerPlayoff: Record<string, number>;
+}> {
+  const players = await prisma.player.findMany({
+    where: { leagueId },
+    select: { seasonStats: true, careerStats: true, playoffStats: true, careerPlayoffStats: true },
+  });
   return {
     season: sumStats(players.map((p) => p.seasonStats)),
     career: sumStats(players.map((p) => p.careerStats)),
+    playoff: sumStats(players.map((p) => p.playoffStats)),
+    careerPlayoff: sumStats(players.map((p) => p.careerPlayoffStats)),
   };
 }
 
 /** INV-T1: after a season roll, nothing should be lost or double-counted moving season -> career. */
 export function checkStatRollup(before: Awaited<ReturnType<typeof snapshotStatTotals>>, after: Awaited<ReturnType<typeof snapshotStatTotals>>): Violation[] {
   const out: Violation[] = [];
-  const keys = new Set([...Object.keys(before.season), ...Object.keys(before.career), ...Object.keys(after.career)]);
   const bad: string[] = [];
-  for (const k of keys) {
-    const expectedCareer = (before.career[k] ?? 0) + (before.season[k] ?? 0);
-    const actualCareer = after.career[k] ?? 0;
-    // Allow tiny float drift; these are all whole-number counting stats in practice.
-    if (Math.abs(expectedCareer - actualCareer) > 1) bad.push(`${k}: expected ${expectedCareer}, got ${actualCareer}`);
+  // Same arithmetic on each bucket, and they are checked independently — a
+  // playoff yard that landed in the regular-season career total would net out
+  // to zero if the two were summed first, which is precisely the failure this
+  // whole change exists to delete.
+  for (const [label, seasonKey, careerKey] of [
+    ['', 'season', 'career'],
+    ['playoff ', 'playoff', 'careerPlayoff'],
+  ] as const) {
+    const keys = new Set([...Object.keys(before[seasonKey]), ...Object.keys(before[careerKey]), ...Object.keys(after[careerKey])]);
+    for (const k of keys) {
+      const expectedCareer = (before[careerKey][k] ?? 0) + (before[seasonKey][k] ?? 0);
+      const actualCareer = after[careerKey][k] ?? 0;
+      // Allow tiny float drift; these are all whole-number counting stats in practice.
+      if (Math.abs(expectedCareer - actualCareer) > 1) bad.push(`${label}${k}: expected ${expectedCareer}, got ${actualCareer}`);
+    }
   }
   if (bad.length > 0) out.push({ id: 'INV-T1', severity: 'error', message: 'Season stats did not fully roll into career stats', count: bad.length, sample: bad.slice(0, 5) });
   return out;

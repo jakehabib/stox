@@ -8,7 +8,12 @@ import { SeasonStats, BoxScore } from './types';
  * ===========================================================================
  * Computed once, right when the championship game finishes, from that
  * season's accumulated Player.seasonStats — before those numbers get rolled
- * into career stats and reset for the new year. [TUNE] weights are a rough
+ * into career stats and reset for the new year. seasonStats is REGULAR SEASON
+ * ONLY (the postseason has its own bucket, Player.playoffStats), so MVP/OPOY/
+ * DPOY/ROTY are decided on regular-season production even though they are
+ * announced after the final — which is both what the real awards do and what
+ * stops a run to the title from outvoting a better year. Championship MVP is
+ * the deliberate exception and is scored off the final's own box line. [TUNE] weights are a rough
  * fantasy-points-style blend, not a real award-voting model — good enough to
  * produce a plausible, explainable winner without needing real ballots.
  * Exported so lib/development.ts can score in-season production with the
