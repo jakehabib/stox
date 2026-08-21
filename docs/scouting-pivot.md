@@ -1,5 +1,24 @@
 # Scouting pivot — focus points out, consensus board in
 
+> **STATUS: landed.** The UI half of this document has been applied. The
+> Scouting Department page, the draft board's ranking, the header tile and the
+> player-page affordance all run on the consensus board / shortlist attention /
+> private workouts model described below. `lib/scoutingEconomy.ts`,
+> `SCOUT_ECONOMY`, `SCOUT_TIERS`, `components/ScoutButton.tsx`,
+> `components/ScoutSpendRow.tsx`, the deprecated actions in
+> `app/actions/scouting.ts` and the `replenishLeagueScoutingBudgets` call in
+> `lib/season.ts` are all deleted. The tuning blocks named in §6.1 now live in
+> `lib/tuning.ts` and `BASE_40` is exported from `lib/gen/prospectProfile.ts`.
+>
+> **Still open**, deliberately: the four `Team.scout*` columns are dead but not
+> dropped (no reader left; dropping them needs a `db push` and a dev-server
+> restart), `bigBoardScore` in `lib/gen/prospectProfile.ts` is dead but not
+> deleted, §6.2's `SCOUTING_NETWORK` blurb reword is not done, and §6.3
+> (`Player.devFocus`) is untouched pending the owner's decision.
+>
+> Two things in §5 were wrong when applied; see the notes marked
+> **[correction]** in §5.2 and §5.4.
+
 Handoff notes for the scouting rework. Written by the systems workstream while
 the UI workstream held `components/**`, `app/league/**`, `app/globals.css`,
 `app/page.tsx`, `app/layout.tsx` and `lib/ratings.ts`. Nothing in those paths
@@ -235,6 +254,10 @@ and every `<ScoutSpendRow>`.
 **Replace with** three sections:
 1. **The consensus board** — `buildConsensusBoard(prospects, { teams, rounds })`,
    showing rank, grade, band and the strongest bias chip per row.
+   **[correction]** A row must ALSO show `positionPull`, or the page contradicts
+   itself: `rank` orders by `boardScore`, so a grade-98 edge rusher sits above a
+   grade-99 guard and the sort reads as broken. The shipped row carries a
+   `▲ +2.0 slot (EDGE)` term next to the grade for exactly that reason.
 2. **Your shortlist** — the starred players, `unitsEach` from the last
    attention pass, and each one's current confidence.
 3. **Private workouts** — `loadWorkoutSlots(league.id)` for the count and
@@ -271,6 +294,12 @@ const consensus = consensusBoardMap(
 ```
 Query the class by `draftYear` **including already-drafted prospects**, so a
 rank never changes because somebody else came off the board.
+
+**[correction]** `classYear` is undefined in the snippet above, and the obvious
+guess is wrong: `Player.draftYear` is stamped with the season the class was
+GENERATED in, while the draft those men are selected in is the year after
+(`imminentDraftYear`). Both shipped pages resolve the class by querying the
+newest `draftYear` present and label the screen with `imminentDraftYear`.
 
 `bigBoardScore` in `lib/gen/prospectProfile.ts` can then be deleted, along with
 its `testingPercentileById` plumbing on that page.

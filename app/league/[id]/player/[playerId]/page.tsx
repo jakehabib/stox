@@ -395,8 +395,8 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
       )}
 
       {!view.revealed && (
-        <div className="panel border-l-2 border-l-accent2 p-4 flex items-center justify-between gap-4">
-          <div>
+        <div className="panel border-l-2 border-l-accent2 p-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-[16rem] flex-1">
             <div className="text-sm font-medium">Scouting confidence: {Math.round(view.confidence)}%</div>
             <p className="text-xs text-muted mt-1 max-w-lg">{view.notes}</p>
           </div>

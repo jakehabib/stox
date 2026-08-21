@@ -69,11 +69,15 @@ export function NegotiationPanel({
   const [session, setSession] = useState(initialSession);
   const { ctx, gate } = session;
 
-  // Open at his market estimate rather than at zero: a slider that starts at
-  // the bottom reads as "make a lowball", and the first thing every user did
-  // was drag it up anyway.
+  // Opens a shade UNDER his public market estimate. Not at zero — a slider
+  // that starts at the bottom reads as "make a lowball" and the first thing
+  // anyone does is drag it up. But not at market either: opening exactly at
+  // the estimate signed a fair chunk of players on the very first click,
+  // which is the rubber stamp this panel replaced, wearing a slider. Ninety
+  // per cent is a real opening bid — respectable, usually short, and it makes
+  // the first drag a decision instead of a formality.
   const [apy, setApy] = useState(() =>
-    clampStep(Math.max(gate.minSalary, Math.min(ctx.marketApy, gate.maxSalary)), gate.minSalary, gate.maxSalary),
+    clampStep(Math.max(gate.minSalary, Math.min(ctx.marketApy * 0.9, gate.maxSalary)), gate.minSalary, gate.maxSalary),
   );
   const [years, setYears] = useState(() => Math.min(ctx.desiredYears, gate.maxYears));
   const [guaranteePct, setGuaranteePct] = useState(0.5);

@@ -130,8 +130,13 @@ export async function submitOfferAction(
     leagueId, playerId, teamId, seasonYear: league.seasonYear, week: league.week,
     settings, incumbent: false, offer, structure, patienceSpent, fingerprint,
   });
-  // A signing, an outbidding and a rival closing him all change the league.
-  if (outcome.ok || outcome.lostTo) revalidatePath(`/league/${leagueId}`, 'layout');
+  // Only a SIGNING revalidates. Losing him to a rival changes the league too,
+  // but revalidating on that path tears the panel out from under the user at
+  // the exact moment it is telling them what just happened — the page
+  // re-renders him as another team's player and the explanation goes with it.
+  // The wire and the pool are correct on the next navigation, which is a
+  // second later and after they have read the bad news.
+  if (outcome.ok) revalidatePath(`/league/${leagueId}`, 'layout');
   return outcome;
 }
 
