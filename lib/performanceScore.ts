@@ -142,6 +142,33 @@ const NORMS: Record<string, Record<string, number[]>> = {
 };
 
 /**
+ * The SAME ladder treatment applied to the finished composite, per position.
+ *
+ * Without this the composite is only comparable inside a position: the raw
+ * weighted mean clears 72 on 20.3% of receiver games and on 2.9% of corner
+ * games, because a receiver's line has four moving numbers and a corner's has
+ * two coin flips. A single bar across that is not a position-relative
+ * standard, it is the old bias with different favourites.
+ *
+ * Calibrating through this ladder makes `Grade.score` mean exactly one thing
+ * at every position: "better than N% of games played at this position". A bar
+ * of 85 is then a top-15% game whether the man plays quarterback or corner.
+ * Measured over the same 781,420 box lines, gated by playedEnough().
+ */
+const COMPOSITE_NORMS: Record<string, number[]> = {
+  QB: [12.9, 20.1, 25, 35.3, 49.1, 63.5, 74.4, 79.5, 87.4],
+  RB: [15.3, 19.2, 22, 29.1, 44.4, 65.2, 80.4, 85.5, 91.9],
+  WR: [6.1, 11.3, 19.5, 31, 48.6, 68.4, 80.2, 85, 92.2],
+  TE: [11.8, 15.1, 19.3, 34.1, 52.2, 68.6, 78.9, 82.9, 89.9],
+  EDGE: [29.5, 29.5, 29.5, 29.5, 48.7, 60.3, 79.4, 79.4, 84.4],
+  DT: [26.9, 35.8, 35.8, 35.8, 54.9, 54.9, 72.6, 83.2, 87.8],
+  LB: [26, 26, 26, 26, 61.7, 61.7, 61.7, 77.6, 82.3],
+  CB: [36.9, 36.9, 36.9, 36.9, 45.4, 57.4, 65.9, 68.3, 83],
+  S: [25.9, 25.9, 25.9, 33.2, 52.3, 59.6, 69.1, 74.8, 80.8],
+  K: [6.6, 10.4, 16.6, 30.4, 50, 70.7, 77.3, 78.8, 84.8],
+};
+
+/**
  * Where a value sits in its position's ladder, 0-100.
  *
  * The flat-run rule is the whole trick. Half of every ladder above is a run
@@ -153,7 +180,10 @@ const NORMS: Record<string, Record<string, number[]>> = {
  * answer a full sort of all 94,009 linebacker lines would give.
  */
 export function positionPercentile(position: string, key: string, value: number): number | null {
-  const ladder = NORMS[position]?.[key];
+  return ladderPercentile(NORMS[position]?.[key], value);
+}
+
+function ladderPercentile(ladder: number[] | undefined, value: number): number | null {
   if (!ladder) return null;
   if (value < ladder[0]) return 0;
   if (value > ladder[ladder.length - 1]) return 100;
@@ -223,8 +253,14 @@ export interface GradeBreakdown {
 }
 
 export interface Grade {
-  /** 0-100. 50 is a median game AT THIS POSITION, not a median game. */
+  /**
+   * 0-100, and it means one thing only: the share of games at this position
+   * that were worse than this one. 85 is a top-15% game for a corner and a
+   * top-15% game for a quarterback.
+   */
   score: number;
+  /** The uncalibrated weighted mean, kept for debugging and for tie-breaks. */
+  raw: number;
   parts: GradeBreakdown[];
   /** The single stat that carried the grade — what the comment leads with. */
   headline: GradeBreakdown | null;
@@ -267,7 +303,8 @@ export function gradeLine(position: string, stats: SeasonStats): Grade | null {
   }
 
   if (weightSum === 0) return null;
-  const score = sum / weightSum;
+  const raw = sum / weightSum;
+  const score = ladderPercentile(COMPOSITE_NORMS[position], raw) ?? raw;
 
   // The headline is the highest-percentile part that is actually good and
   // actually carries weight — never a negative one, because "he threw the
@@ -281,7 +318,7 @@ export function gradeLine(position: string, stats: SeasonStats): Grade | null {
     .filter((p) => !NEGATIVE.has(p.key) && p.pct >= 60 && p.weight >= 1)
     .sort((a, b) => (b.pct - a.pct) || (b.weight - a.weight))[0] ?? null;
 
-  return { score, parts, headline };
+  return { score, raw, parts, headline };
 }
 
 // ---------------------------------------------------------------------------
@@ -326,7 +363,7 @@ export const UNIT_LABEL: Record<UnitKey, string> = {
  * mention manufactured to fill a slot is exactly the noise this section is
  * supposed to avoid.
  */
-export const MENTION_BAR = 72;
+export const MENTION_BAR = 90;
 /** [TUNE] Never more than this many, however good the week was. */
 export const MAX_MENTIONS = 5;
 
