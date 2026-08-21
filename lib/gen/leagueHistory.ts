@@ -363,6 +363,7 @@ interface VeteranSeason {
 }
 
 interface VeteranCareer {
+  position: Position;
   seasons: VeteranSeason[];
   /** Exactly the sum of `seasons` — Player.careerStats and the rows must reconcile. */
   career: SeasonStats;
@@ -452,6 +453,7 @@ export async function generateLeagueHistory(opts: {
     const nowAge = ageById.get(p.recordId);
     if (nowAge == null) continue;
     veteranCareers.set(p.recordId, {
+      position: p.position,
       career: p.career,
       seasons: p.seasons.map((s) => ({
         year: s.year, teamId: s.teamId, age: nowAge - (seasonYear - s.year),
@@ -459,6 +461,11 @@ export async function generateLeagueHistory(opts: {
       })),
     });
   }
+
+  // The record book is written first and the careers are fitted under it — a
+  // man on a roster today must not already hold a mark the league says
+  // somebody else does. See capSeededCareers.
+  capSeededCareers(rng, veteranCareers, records);
 
   // --- 7. Persist ----------------------------------------------------------
   await persistHistory({ leagueId, teams, seasons, awards, records, veteranCareers });
@@ -1009,23 +1016,26 @@ function calibrateSeasonRecords(rng: Rng, stars: HistPlayer[], abbrOf: (teamId: 
  * follow yards, not the other way round, so a 6,900-yard season still reads
  * like a quarterback's season and not a spreadsheet artefact.
  */
-function redriveDerived(rng: Rng, p: HistPlayer) {
-  for (const s of p.seasons) {
-    const l = s.line;
-    if (p.position === 'QB' && l.passYds != null) {
+function redriveLines(rng: Rng, position: Position, lines: CoreLine[]) {
+  for (const l of lines) {
+    if (position === 'QB' && l.passYds != null) {
       l.passAtt = Math.round(l.passYds / rng.float(5.5, 6.5));
       l.passCmp = Math.round(l.passAtt * rng.float(0.58, 0.68));
     }
-    if (p.position === 'RB' && l.rushYds != null) {
+    if (position === 'RB' && l.rushYds != null) {
       l.rushAtt = Math.round(l.rushYds / rng.float(4.6, 6.1));
       l.rushTd = Math.round(l.rushYds / rng.float(85, 155));
     }
-    if ((p.position === 'WR' || p.position === 'TE') && l.recYds != null) {
+    if ((position === 'WR' || position === 'TE') && l.recYds != null) {
       l.rec = Math.round(l.recYds / rng.float(8.2, 10.8));
       l.targets = Math.round(l.rec / rng.float(0.58, 0.68));
       l.recTd = Math.round(l.recYds / rng.float(115, 210));
     }
   }
+}
+
+function redriveDerived(rng: Rng, p: HistPlayer) {
+  redriveLines(rng, p.position, p.seasons.map((s) => s.line));
 }
 
 /**
@@ -1380,10 +1390,70 @@ function buildVeteranCareers(
         seasons.push({ year, teamId: clubs[i], age: ageThen, gp: line.gp ?? 0, line });
         career = mergeStats(career, line as SeasonStats);
       });
-      if (seasons.length > 0) out.set(p.id, { seasons, career });
+      if (seasons.length > 0) out.set(p.id, { position: pos, seasons, career });
     });
   }
   return out;
+}
+
+/**
+ * Nothing on a roster may already have beaten the record book.
+ *
+ * The marks are calibrated off the STARS (calibrateCareers, then
+ * calibrateSeasonRecords), which is fine for the men those passes can see —
+ * but an ordinary starter with fifteen years behind him out-totals a legend
+ * without ever having been one. The generator was shipping leagues whose
+ * all-time passing record was 54,993 and whose starting quarterback arrived
+ * with 56,934, and whose sack record was 89 held by a man sitting behind
+ * somebody with 103. A record page contradicted by a player page is precisely
+ * the failure this file exists to prevent; it was simply invisible while a
+ * veteran's career was one undecomposable blob nobody could read.
+ *
+ * So every seeded career is scaled to sit UNDER the mark it would otherwise
+ * have broken on day one — under rather than level with it, and by a random
+ * amount, so a league doesn't read as thirty men who all stopped one yard
+ * short. Scaling keeps the shape of his career (every season moves by the same
+ * factor, his best year is still his best year) and the companion numbers are
+ * re-derived afterwards so the attempts still match the yards.
+ *
+ * The record holders themselves are exempt, since by construction they ARE the
+ * mark.
+ */
+function capSeededCareers(rng: Rng, careers: Map<string, VeteranCareer>, records: RecordRow[]) {
+  const seasonMark = new Map<RecordCategory, number>();
+  const careerMark = new Map<RecordCategory, number>();
+  for (const r of records) (r.scope === 'SEASON' ? seasonMark : careerMark).set(r.category, r.value);
+  const holders = new Set(records.map((r) => r.playerId));
+
+  for (const [id, c] of careers) {
+    if (holders.has(id)) continue;
+    let touched = false;
+    for (const cat of RECORD_CATEGORIES) {
+      const sm = seasonMark.get(cat);
+      if (sm != null) {
+        for (const s of c.seasons) {
+          if ((s.line[cat] ?? 0) < sm) continue;
+          s.line[cat] = Math.floor(sm * rng.float(0.80, 0.97));
+          touched = true;
+        }
+      }
+      const cm = careerMark.get(cat);
+      if (cm == null) continue;
+      const total = c.seasons.reduce((a, s) => a + (s.line[cat] ?? 0), 0);
+      if (total < cm || total <= 0) continue;
+      const f = Math.floor(cm * rng.float(0.82, 0.97)) / total;
+      for (const s of c.seasons) {
+        if (s.line[cat] == null) continue;
+        s.line[cat] = Math.round(s.line[cat]! * f);
+      }
+      touched = true;
+    }
+    if (!touched) continue;
+    redriveLines(rng, c.position, c.seasons.map((s) => s.line));
+    // careerStats is the sum of the rows and nothing else — recomputed here so
+    // the two cannot drift apart when the rows underneath them move.
+    c.career = c.seasons.reduce((a, s) => mergeStats(a, s.line as SeasonStats), {} as SeasonStats);
+  }
 }
 
 // ---------------------------------------------------------------------------

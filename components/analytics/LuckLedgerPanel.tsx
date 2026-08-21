@@ -44,7 +44,7 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
         text: `${signed(tenureLuck)} wins across your tenure`,
         tone: tenureLuck > 0.5 ? 'good' : tenureLuck < -0.5 ? 'bad' : 'warn',
       }}
-      aside={tenure.length === 0 ? 'Franchise record only — you have not finished a season' : undefined}
+      aside={rows.length > 0 && tenure.length === 0 ? 'Franchise record only — you have not finished a season' : undefined}
       why={<>
         Pythagorean expectation turns points scored and allowed into the record that scoring deserved
         (exponent 2.37, the football fit). Where the blue line sits above the orange one, the club banked
