@@ -934,29 +934,22 @@ export async function negotiateOffer(opts: {
     };
   }
 
-  // --- Somebody else is paying more ----------------------------------------
-  // He liked the deal; he liked theirs more. Submitting anyway is how you find
-  // out, and it costs you the player rather than a unit of patience.
-  if (decision.outbid) {
-    const lost = await loseToCompetingBid({
-      leagueId, playerId, teamId, seasonYear, capMode: settings.capMode, week,
-    });
-    if (lost) {
-      return {
-        ...base, ok: false, lostTo: lost,
-        message: `Outbid — the ${lost.teamName} closed him at ${formatMoney(lost.apy)}/yr while you were still talking.`,
-      };
-    }
-    return { ...base, ok: false, message: decision.reason ?? 'Someone else is offering more.' };
-  }
-
   // --- The ledger said no, not the player ----------------------------------
+  // Never reached him, so it costs nothing but the click.
   if (decision.blocked) {
     return { ...base, ok: false, message: decision.reason ?? 'This offer cannot be made.' };
   }
 
   // --- He turned it down ---------------------------------------------------
-  const cost = decision.evaluation.insulting ? 2 : 1;
+  // Being outbid is a refusal like any other and is charged like one. It used
+  // to end the negotiation outright — you offered a dollar under the rival's
+  // number and he was gone on the spot — which read as brutal and, worse,
+  // made patience meaningless for exactly the players patience is for: with a
+  // rival at the table every negotiation was a single shot. Now his agent
+  // takes your offer, shops it, and comes back; you lose him when the pips
+  // run out, which is a thing the panel has been counting down in front of
+  // you the whole time.
+  const cost = decision.patienceCost;
   const patienceSpent = Math.min(session.ctx.patience, spentBefore + cost);
   const walkedAway = patienceSpent >= session.ctx.patience;
 
@@ -987,9 +980,11 @@ export async function negotiateOffer(opts: {
     walkedAway,
     message: walkedAway
       ? `${session.ctx.playerName} has ended talks. He will test the market.`
-      : decision.evaluation.insulting
-        ? `${decision.evaluation.headline} That one cost you.`
-        : decision.evaluation.headline,
+      : decision.outbid
+        ? `They shopped it — ${session.gate.competingTeam ?? 'another club'} is still at ${formatMoney(session.gate.competingApy)}/yr and he is not signing for less.`
+        : decision.evaluation.insulting
+          ? `${decision.evaluation.headline} That one cost you.`
+          : decision.evaluation.headline,
   };
 }
 

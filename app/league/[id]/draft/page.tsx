@@ -377,7 +377,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                           <span className="stat-value text-stat-sm text-chalk">{read.grade}</span>
                           {Math.abs(gap) >= 4 && (
                             <span className={`text-[11px] font-mono ${gap > 0 ? 'text-accent' : 'text-warn'}`}>
-                              {gap > 0 ? '+' : '−'}{Math.abs(gap)} us
+                              us {ownGradeFor(view)}
                             </span>
                           )}
                         </div>

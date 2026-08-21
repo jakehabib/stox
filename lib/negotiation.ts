@@ -368,10 +368,18 @@ export interface OfferDecision {
   /** True only when submitting this right now signs him. */
   accepted: boolean;
   /**
-   * True when a refusal is the PLAYER's. A deal that busts the cap or breaks
-   * the term limit never reached him, so it costs nothing.
+   * True when a refusal is the PLAYER's — including losing the auction, since
+   * his agent still had to take your offer to him to find that out. A deal
+   * that busts the cap or breaks the term limit never reached him, so it
+   * costs nothing.
    */
   costsPatience: boolean;
+  /**
+   * What submitting this costs, in pips. Lives on the decision rather than
+   * being re-derived at each site because the button LABEL states the price
+   * and the server CHARGES it — two places, and they may never differ.
+   */
+  patienceCost: number;
   /** Stated reason this can't be signed, or null when it can. */
   reason: string | null;
 }
@@ -446,7 +454,9 @@ export function decideOffer(
     blocked,
     outbid,
     accepted: evaluation.accepted && !blocked && !outbid,
-    costsPatience: !blocked && !outbid && !evaluation.accepted,
+    costsPatience: !blocked && !(evaluation.accepted && !outbid),
+    // A lowball is remembered whether or not somebody else is bidding.
+    patienceCost: !blocked && !(evaluation.accepted && !outbid) ? (evaluation.insulting ? 2 : 1) : 0,
     reason,
   };
 }

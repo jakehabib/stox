@@ -5,13 +5,14 @@ import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
 import { readJson } from '@/lib/json';
 import { ratingColor } from '@/lib/ratings';
-import { LEAGUE } from '@/lib/tuning';
+import { LEAGUE, SHORTLIST_ATTENTION } from '@/lib/tuning';
 import {
   buildConsensusBoard, ownGradeFor, disagreementNote,
   type ConsensusBias,
 } from '@/lib/consensus';
 import { loadAttentionPlan, unitsFor, confidenceAfterWeek } from '@/lib/shortlistAttention';
 import { loadWorkoutSlots } from '@/lib/workouts';
+import { imminentDraftYear } from '@/lib/draft';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { ScoutingRange } from '@/components/ds/ScoutingRange';
@@ -84,6 +85,11 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
     select: { draftYear: true },
   });
   const classYear = classYearRow?.draftYear ?? league.seasonYear;
+  // Player.draftYear is stamped with the season the class was GENERATED in;
+  // these men are selected in the offseason after it, so the two numbers
+  // differ by one and only the pick year is the one to put on screen. The
+  // draft page labels itself the same way for the same reason.
+  const draftLabelYear = (await imminentDraftYear(league.id)) ?? classYear + 1;
 
   const [classPlayers, shortlistEntries, scoutMods, plan, slots] = await Promise.all([
     prisma.player.findMany({ where: { leagueId: league.id, draftYear: classYear } }),
@@ -160,7 +166,7 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
         title="Scouting Department"
         subtitle="The board is free and everybody has it. Your edge is knowing where it's wrong — and paying attention to the right handful of names for long enough to find out."
         facts={[
-          { label: 'Class', value: String(classSize), detail: `${classYear} draft · all graded, no cost` },
+          { label: 'Class', value: String(classSize), detail: `${draftLabelYear} draft · all graded, no cost` },
           {
             label: 'Shortlisted',
             value: String(plan.shortlisted),
@@ -223,7 +229,7 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
             const p = playerById.get(read.playerId)!;
             const top: ConsensusBias | undefined = read.biases[0];
             return (
-              <div key={read.playerId} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+              <div key={read.playerId} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3" title={read.headline}>
                 <div className="stat-value text-stat-sm text-muted w-8 text-right shrink-0">{read.rank}</div>
                 <ShortlistStar
                   leagueId={league.id}
@@ -254,13 +260,6 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
                     )}
                   </div>
                 </div>
-                {/* The public signal itself, not just its name — this is the
-                    sentence the whole file exists to be able to say. */}
-                {top && (
-                  <span className="text-[11px] text-muted hidden xl:block w-[24rem] shrink-0 truncate" title={top.counter}>
-                    {top.because}
-                  </span>
-                )}
                 <div className="text-right shrink-0 w-36">
                   <div className={`stat-value text-stat-sm ${ratingColor(read.grade)}`}>{read.grade}</div>
                   <div className={`text-[10px] leading-none mt-0.5 ${BAND_TONE[read.band] ?? 'text-muted'}`}>{read.bandLabel}</div>
@@ -330,6 +329,7 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
               const view = viewFor(p.id);
               const { units, specialtyCovered } = unitsFor(plan, p.position);
               const nextWeek = Math.round(confidenceAfterWeek(view.confidence, units));
+              const atCeiling = view.confidence >= SHORTLIST_ATTENTION.CONFIDENCE_CEILING - 1;
               const note = disagreementNote(read, view);
               const gap = view.confidence >= 25 ? ownGradeFor(view) - read.grade : 0;
               return (
@@ -390,7 +390,12 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
                       <div className="label-sm">This week</div>
                       <div className="stat-value text-stat-sm text-chalk">{units.toFixed(1)}</div>
                       <div className="text-[10px] text-muted leading-tight mt-0.5">
-                        {Math.round(view.confidence)}% → {nextWeek}%
+                        {/* Past the ceiling the share is still spent on him and
+                            still comes out of everybody else's — which is the
+                            argument for taking the star off, so say it. */}
+                        {atCeiling
+                          ? <span className="text-warn">as far as watching gets</span>
+                          : <>{Math.round(view.confidence)}% → {nextWeek}%</>}
                         {specialtyCovered && <span className="text-accent2"> · specialist</span>}
                       </div>
                     </div>

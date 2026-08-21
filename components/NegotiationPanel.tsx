@@ -159,6 +159,19 @@ export function NegotiationPanel({
             disabled={over}
             warn={decision.blocked === 'CAP' ? `Over your room by ${formatMoney(decision.year1CapHit - gate.capSpace)}` : undefined}
           />
+          {/* The one preset worth keeping from the old offer form: the number
+              that actually wins the auction. Everything else about salary is
+              the slider now, but "what does it take to beat them" was a real
+              question the form answered in one click. */}
+          {decision.outbid && !over && (
+            <button
+              type="button"
+              onClick={() => setApy(Math.min(gate.maxSalary, Math.round((gate.competingApy * 1.03) / 100_000) * 100_000))}
+              className="pill border-bad/40 text-bad hover:bg-bad/10"
+            >
+              Beat {gate.competingTeam ? gate.competingTeam.split(' ').pop() : 'their offer'} — {formatMoney(Math.round((gate.competingApy * 1.03) / 100_000) * 100_000)}/yr
+            </button>
+          )}
           <Slider
             label="Years"
             value={`${years} year${years === 1 ? '' : 's'}`}
@@ -263,9 +276,9 @@ export function NegotiationPanel({
               : walkedAway ? 'Talks are over'
               : decision.blocked === 'CAP' ? 'Not enough cap room'
               : decision.blocked ? 'Cannot offer this'
-              : decision.outbid ? `Offer anyway — ${gate.competingTeam ?? 'a rival'} is higher`
               : decision.accepted ? 'Offer this deal — he signs'
-              : `Offer this deal — costs ${ev.insulting ? '2 patience' : '1 patience'}`
+              : decision.outbid ? `Offer anyway — ${gate.competingTeam ?? 'a rival'} is higher, costs ${decision.patienceCost} patience`
+              : `Offer this deal — costs ${decision.patienceCost} patience`
           }
           workingLabel="On the phone…"
           doneLabel="Signed"

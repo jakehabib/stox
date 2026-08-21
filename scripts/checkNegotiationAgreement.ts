@@ -57,7 +57,7 @@ function fail(msg: string) {
 /** Every field of the answer, not just the yes/no. */
 function sameDecision(a: OfferDecision, b: OfferDecision): string | null {
   const keys: (keyof OfferDecision)[] = [
-    'accepted', 'blocked', 'outbid', 'costsPatience', 'year1CapHit',
+    'accepted', 'blocked', 'outbid', 'costsPatience', 'patienceCost', 'year1CapHit',
     'totalValue', 'guaranteedMoney', 'deadMoneyIfCut', 'reason',
   ];
   for (const k of keys) if (a[k] !== b[k]) return `${String(k)}: client ${JSON.stringify(a[k])} vs server ${JSON.stringify(b[k])}`;
@@ -206,7 +206,7 @@ async function main() {
     if (!outcome.ok && !outcome.lostTo && after.teamId !== null) fail(`${p.firstName} ${p.lastName}: reported refused but left free agency`);
     if (outcome.lostTo && after.teamId === team.id) fail(`${p.firstName} ${p.lastName}: reported lost but signed with us`);
     if (!outcome.ok && !outcome.lostTo) {
-      const expected = predicted.costsPatience ? (predicted.evaluation.insulting ? 2 : 1) : 0;
+      const expected = predicted.patienceCost;
       if (outcome.patienceSpent !== expected) {
         fail(`${p.firstName} ${p.lastName}: patience cost ${outcome.patienceSpent}, meter implied ${expected}`);
       }
@@ -223,6 +223,69 @@ async function main() {
   }
 
   console.log(`\n${e2eSigned} signed, ${e2eRefused} refused, ${e2eLost} lost to a rival bid.`);
+
+  // --- 4. Running out of patience with a rival at the table ----------------
+  // The one consequence that outlives the page: when the pips are gone and
+  // somebody else is bidding, he signs there and he is not coming back.
+  console.log('\nPatience burn-down (a contested free agent, lowballed until his agent quits):\n');
+  const contested: typeof freeAgents = [];
+  for (const p of freeAgents.slice(20)) {
+    const s = await resolveNegotiationSession({
+      leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+    });
+    if (s.gate.competingApy > 0) { contested.push(p); if (contested.length >= 2) break; }
+  }
+  for (const p of contested) {
+    let spent = 0;
+    let guard = 0;
+    for (;;) {
+      const session = await resolveNegotiationSession({
+        leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      const offer: Offer = {
+        apy: Math.max(session.gate.minSalary, Math.round(session.ctx.reservationApy * 0.6 / 100_000) * 100_000),
+        years: Math.min(session.ctx.desiredYears, session.gate.maxYears),
+        guaranteePct: 0.5,
+      };
+      const predicted = decideOffer(session.ctx, offer, session.gate, DEFAULT_STRUCTURE);
+      const outcome = await negotiateOffer({
+        leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
+        settings, incumbent: false, offer, structure: DEFAULT_STRUCTURE, patienceSpent: spent,
+        fingerprint: sessionFingerprint(session),
+      });
+      comparisons++;
+      if (outcome.ok !== predicted.accepted) fail(`${p.lastName}: burn-down meter/server disagreement`);
+      console.log(`  ${p.lastName.padEnd(14)} offer ${formatMoney(offer.apy)} vs ~${formatMoney(session.ctx.reservationApy)} — patience ${outcome.patienceSpent}/${session.ctx.patience}${outcome.lostTo ? ` — LOST to the ${outcome.lostTo.teamName} at ${formatMoney(outcome.lostTo.apy)}/yr` : ''}`);
+      spent = outcome.patienceSpent;
+      if (outcome.walkedAway || outcome.lostTo) {
+        const after = await prisma.player.findUniqueOrThrow({ where: { id: p.id }, select: { teamId: true } });
+        if (outcome.lostTo && after.teamId === null) fail(`${p.lastName}: reported lost to a rival but is still a free agent`);
+        if (!outcome.lostTo && after.teamId !== null) fail(`${p.lastName}: walked away but signed somewhere`);
+        break;
+      }
+      if (++guard > 12) { fail(`${p.lastName}: patience never ran out`); break; }
+    }
+  }
+
+  // --- 5. A cap-illegal offer is refused, and costs nothing ----------------
+  const poor = freeAgents[0];
+  {
+    const session = await resolveNegotiationSession({
+      leagueId, playerId: poor.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+    });
+    const offer: Offer = { apy: session.gate.capSpace + 20_000_000, years: 1, guaranteePct: 0.5 };
+    const predicted = decideOffer(session.ctx, offer, session.gate, DEFAULT_STRUCTURE);
+    const outcome = await negotiateOffer({
+      leagueId, playerId: poor.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
+      settings, incumbent: false, offer, structure: DEFAULT_STRUCTURE, patienceSpent: 0,
+      fingerprint: sessionFingerprint(session),
+    });
+    comparisons++;
+    if (predicted.blocked !== 'CAP') fail('a wildly unaffordable offer was not cap-blocked by the meter');
+    if (outcome.ok) fail('the server signed a cap-illegal deal');
+    if (outcome.patienceSpent !== 0) fail('a cap refusal cost patience');
+    console.log(`\nCap gate: ${formatMoney(offer.apy)}/yr against ${formatMoney(session.gate.capSpace)} of room — meter blocked=${predicted.blocked}, server refused, patience ${outcome.patienceSpent}. "${outcome.message}"`);
+  }
   console.log(`\n${comparisons.toLocaleString()} comparisons, ${failures} disagreement${failures === 1 ? '' : 's'}.`);
 
   await prisma.league.delete({ where: { id: leagueId } });
