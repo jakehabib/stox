@@ -60,8 +60,7 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
         <div className="min-w-0">
           {eyebrow && <div className="label-sm">{eyebrow}</div>}
           <h1
-            className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1"
-            style={accent ? { color: 'var(--team-text)' } : undefined}
+            className={`font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1${accent ? ' text-team' : ''}`}
           >
             {title}
           </h1>

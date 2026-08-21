@@ -32,7 +32,7 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
           <TeamLogo seed={team.id} abbr={team.abbr} size={48} />
           <div>
             <div className="label-sm">GM Career</div>
-            <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none mt-1" style={{ color: 'var(--team-text)' }}>
+            <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none mt-1 text-team">
               {team.city} {team.nickname}
             </div>
             <p className="text-muted text-sm mt-1.5">

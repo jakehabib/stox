@@ -16,7 +16,10 @@ export function LeagueWireTicker({ items }: { items: TickerItem[] }) {
 
   return (
     <div className="border-b border-line bg-surface/60 overflow-hidden flex items-center text-xs">
-      <div className="label-sm shrink-0 px-3 py-1.5 border-r-2 border-accent2/40 bg-raised text-accent2">League Wire</div>
+      {/* Stacked above the track: the marquee is a later sibling, so without an
+          explicit z-index the scrolling headlines paint straight over this
+          label as they exit left. */}
+      <div className="relative z-10 label-sm shrink-0 px-3 py-1.5 border-r-2 border-accent2/40 bg-raised text-accent2">League Wire</div>
       <div className="ticker-track flex items-center whitespace-nowrap py-1.5 pl-4">
         {loop.map((item, i) => (
           <span key={i} className="inline-flex items-center gap-1.5 px-4 shrink-0">

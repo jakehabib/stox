@@ -11,15 +11,14 @@
        hardcoding a color, so recoloring one wrapper recolors every accent
        use inside it. Falls back to the house blue when no team is in scope. */
     --team-accent: #38bdf8;
-    /* --team-text: a guaranteed-legible variant for TEXT specifically.
-       Curated team colors (see lib/gen/teamLogo.ts COLOR_PAIRS) are
-       deliberately dark/saturated for use as fills and borders — several
-       (oxblood, midnight, forest) fail contrast as small text on this
-       near-black background. Lightened at render time via color-mix, not
-       baked into the palette, so every component gets it for free by
-       switching from var(--team-accent) to var(--team-text) for text.
-       Use --team-accent for fills/borders/watermarks; --team-text for text. */
-    --team-text: color-mix(in srgb, var(--team-accent) 60%, white 40%);
+/* Team-coloured TEXT does NOT get its own custom property. A var() inside a
+       custom property is substituted at computed-value time on the element where
+       that property is DECLARED — so a --team-text declared here on :root bakes
+       in :root's own --team-accent (the house blue) and inherits that fixed
+       colour down, ignoring every per-team --team-accent set further in. Use the
+       .text-team utility below instead: it does the color-mix in a real
+       property, which resolves against the nearest --team-accent at use time.
+       --team-accent itself is still the right token for fills/borders/watermarks. */
   }
   body {
     @apply bg-ink text-chalk antialiased;
@@ -118,6 +117,15 @@
   /* Large, low-opacity team mark used behind hero/header sections. Absolute
      inside a `relative` wrapper; the wrapper controls clipping. */
   .watermark-logo { @apply absolute pointer-events-none opacity-[0.07] -z-0; }
+
+  /* Team-coloured text. The color-mix happens in a real property, so
+     var(--team-accent) resolves against the nearest ancestor that set it —
+     unlike a --team-text custom property, which would bake in whatever
+     --team-accent was in scope where it was declared. The lightening is not
+     cosmetic: several curated team primaries (oxblood, midnight, forest) sit
+     around 1.6:1 against the near-black background and are unreadable as
+     small text raw. */
+  .text-team { color: color-mix(in srgb, var(--team-accent) 60%, white 40%); }
 
   /* Rating chip — the proprietary rating shape (RatingBadge). A notched top
      corner instead of a plain rounded square, echoing the shield/hexagon

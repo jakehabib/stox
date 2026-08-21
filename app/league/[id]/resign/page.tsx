@@ -28,9 +28,13 @@ export default async function ResignPage({ params }: { params: { id: string } })
     ? (await prisma.contract.findFirst({ where: { teamId: team.id, isFranchiseTag: true, signedYear: league.seasonYear } })) !== null
     : true;
 
-  // Cost to keep everyone at their current number — a floor, not a quote, but
-  // it answers "can I even afford this group" before you open a single deal.
-  const currentCost = settings.capMode === 'OFF'
+  // What these deals currently occupy on the books. This is NOT a cost to
+  // re-sign them: teamCapSummary's activeSalary already counts every active
+  // player, so this figure is a subset of the committed total that produced
+  // capSpace. Comparing the two implied you were short by the whole amount
+  // when keeping everyone at their current number costs nothing extra — it
+  // is money that comes OFF the books, not money you still have to find.
+  const committedToExpiring = settings.capMode === 'OFF'
     ? 0
     : expiring.reduce((s, p) => s + capHit(p.contract, settings.capMode), 0);
 
@@ -59,10 +63,9 @@ export default async function ResignPage({ params }: { params: { id: string } })
               color: summary.capSpace >= 0 ? 'text-accent' : 'text-bad',
             },
             {
-              label: 'Cost To Keep All',
-              value: formatMoney(currentCost),
-              detail: 'at current cap hits',
-              color: currentCost > summary.capSpace ? 'text-warn' : undefined,
+              label: 'On The Books',
+              value: formatMoney(committedToExpiring),
+              detail: 'these deals — comes off if they walk',
             },
           ] : []),
         ]}

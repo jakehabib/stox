@@ -28,7 +28,18 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   const where: any = { leagueId: league.id, status: 'FREE_AGENT', teamId: null, isDraftee: false };
   if (searchParams.pos) where.position = searchParams.pos;
 
-  const freeAgents = await prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: 100 });
+  // The headline count and the position filters must describe the WHOLE pool,
+  // not the slice rendered below it — reporting slice.length as a total claimed
+  // "100 AVAILABLE" against 140 real free agents, and dropped the filter pill
+  // for any position with nobody in the top 100 by rating, making it look empty.
+  const [freeAgents, totalAvailable, positionGroups] = await Promise.all([
+    prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: 100 }),
+    prisma.player.count({ where: { leagueId: league.id, status: 'FREE_AGENT', teamId: null, isDraftee: false } }),
+    prisma.player.groupBy({
+      by: ['position'],
+      where: { leagueId: league.id, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+    }),
+  ]);
   const reportIds = new Set(freeAgents.map((p) => p.id));
   if (topAvailable) reportIds.add(topAvailable.id);
   const reports = await prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: Array.from(reportIds) } } });
@@ -42,7 +53,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   }) : null;
   const topMarket = topAvailable && topView ? marketValue({ ovr: topView.scoutedOvr, position: topAvailable.position as any, age: topAvailable.age }) : 0;
 
-  const positions = Array.from(new Set(freeAgents.map((p) => p.position))).sort((a, b) => positionSortKey(a) - positionSortKey(b));
+  const positions = positionGroups.map((g) => g.position).sort((a, b) => positionSortKey(a) - positionSortKey(b));
 
   const rows = freeAgents.map((p) => {
     const view = buildScoutedView({
@@ -87,7 +98,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         teamId={team.id}
         teamAbbr={team.abbr}
         eyebrow="Free Agency"
-        title={`${freeAgents.length} Available`}
+        title={`${totalAvailable} Available`}
         subtitle="Offer a contract to open negotiations. Rival teams bid on the same players, so a fair offer isn't always the winning one."
         facts={[
           ...(capSummary ? [{
@@ -96,7 +107,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
             detail: 'room to spend',
             color: capSummary.capSpace >= 0 ? 'text-accent' : 'text-bad',
           }] : []),
-          { label: 'On The Market', value: String(freeAgents.length), detail: searchParams.pos ? `filtered to ${searchParams.pos}` : 'all positions' },
+          { label: 'On The Market', value: String(totalAvailable), detail: searchParams.pos ? `filtered to ${searchParams.pos}` : 'all positions' },
           ...(topAvailable && topView ? [{
             label: 'Best Available',
             value: String(topView.revealed || topView.confidence >= 90 ? topView.scoutedOvr : `${topView.ovrLow}-${topView.ovrHigh}`),
@@ -105,7 +116,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
           ...(affordable !== null ? [{
             label: 'Within Budget',
             value: String(affordable),
-            detail: 'at estimated market rate',
+            detail: `of the top ${rows.length} shown`,
             color: affordable === 0 ? 'text-warn' : undefined,
           }] : []),
         ]}

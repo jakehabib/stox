@@ -1,79 +1,223 @@
 import Link from 'next/link';
-import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { TeamLogo } from '@/components/TeamLogo';
 import { computeRankDeltas } from '@/lib/standingsTrend';
+import { buildStandingsBoard, StandingsRow } from '@/lib/standingsBoard';
+import { PageMasthead } from '@/components/ds/PageMasthead';
+import { LEAGUE } from '@/lib/tuning';
+
+/**
+ * A team's own roster page only ever shows the user's team, so linking all 32
+ * rows there sent 31 of them somewhere misleading. Franchise history is the
+ * one screen that renders any team in the league, so that's where a rival's
+ * name goes; the user's own row still leads to their roster.
+ */
+function teamHref(leagueId: string, t: StandingsRow): string {
+  return t.isUser ? `/league/${leagueId}/roster` : `/league/${leagueId}/history?team=${t.id}#franchise`;
+}
+
+function TeamCell({ leagueId, t }: { leagueId: string; t: StandingsRow }) {
+  return (
+    <Link href={teamHref(leagueId, t)} className="flex items-center gap-2 hover:text-accent2 min-w-0">
+      <TeamLogo seed={t.id} abbr={t.abbr} size={22} />
+      <span className={`truncate ${t.isUser ? 'font-semibold' : ''}`}>{t.city} {t.nickname}</span>
+      {t.isUser && <span className="pill border-accent/40 text-accent text-[10px] shrink-0">You</span>}
+    </Link>
+  );
+}
+
+function StreakChip({ streak }: { streak: string | null }) {
+  if (!streak) return <span className="text-muted">—</span>;
+  const hot = streak.startsWith('W') && Number(streak.slice(1)) >= 2;
+  const cold = streak.startsWith('L') && Number(streak.slice(1)) >= 2;
+  return (
+    <span className={`font-mono text-xs ${hot ? 'text-accent' : cold ? 'text-bad' : 'text-muted'}`}>{streak}</span>
+  );
+}
 
 export default async function StandingsPage({ params }: { params: { id: string } }) {
-  const { league } = await getLeagueContext(params.id);
-  const teams = await prisma.team.findMany({ where: { leagueId: league.id } });
+  const { league, phaseLabel } = await getLeagueContext(params.id);
 
-  const groups = new Map<string, typeof teams>();
-  for (const t of teams) {
-    const key = `${t.conference} ${t.division}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(t);
-  }
-  for (const arr of groups.values()) {
-    arr.sort((a, b) => {
-      const pctA = (a.wins + a.ties * 0.5) / Math.max(1, a.wins + a.losses + a.ties);
-      const pctB = (b.wins + b.ties * 0.5) / Math.max(1, b.wins + b.losses + b.ties);
-      return pctB - pctA;
-    });
-  }
+  // Rank movement only means anything once games have been played.
+  const board = await buildStandingsBoard(league.id, { withStreaks: true });
+  const allTeams = board.flatMap((c) => c.divisions.flatMap((d) => d.teams));
 
-  // Rank deltas only mean something once games have actually been played —
-  // same "week-over-week movement" reconstruction the Dashboard uses,
-  // applied here to every division rather than just the user's own.
-  const deltasByDivision = league.phase === 'REGULAR'
-    ? new Map(await Promise.all(Array.from(groups.entries()).map(async ([division, teamList]) => [division, await computeRankDeltas(league.id, teamList)] as const)))
-    : new Map<string, Map<string, number>>();
+  const deltas = league.phase === 'REGULAR'
+    ? new Map(
+        (await Promise.all(
+          board.flatMap((c) => c.divisions).map(async (d) => Array.from((await computeRankDeltas(league.id, d.teams)).entries())),
+        )).flat(),
+      )
+    : new Map<string, number>();
+
+  const userRow = allTeams.find((t) => t.isUser);
+  const userConf = board.find((c) => c.conference === userRow?.conference);
+  const playedWeeks = userRow ? userRow.wins + userRow.losses + userRow.ties : 0;
+  const seedsPerConf = LEAGUE.PLAYOFF_TEAMS_PER_CONF;
+
+  const facts = userRow
+    ? [
+        { label: 'Your Record', value: `${userRow.wins}-${userRow.losses}${userRow.ties ? `-${userRow.ties}` : ''}`, detail: `${(userRow.pct * 100).toFixed(0)}% · week ${Math.min(playedWeeks + 1, LEAGUE.REGULAR_SEASON_WEEKS)}` },
+        {
+          label: 'Playoff Position',
+          value: userRow.seed ? `#${userRow.seed} seed` : 'Outside',
+          detail: userRow.seed ? (userRow.divisionLeader ? 'Leading the division' : 'Wild card') : `${userRow.gamesBack.toFixed(1)} games back`,
+          color: userRow.seed ? 'text-accent' : 'text-bad',
+        },
+        { label: 'Point Diff', value: `${userRow.diff >= 0 ? '+' : ''}${userRow.diff}`, detail: `${userRow.pointsFor} for · ${userRow.pointsAgnst} against`, color: userRow.diff >= 0 ? 'text-accent' : 'text-bad' },
+        { label: 'Division', value: `${userRow.divWins}-${userRow.divLosses}`, detail: `${userRow.conference} ${userRow.division}` },
+        { label: 'Streak', value: userRow.streak ?? '—', detail: 'Last decided games' },
+      ]
+    : [];
 
   return (
     <div className="space-y-6">
-      <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Standings</h1>
-      <div className="grid md:grid-cols-2 gap-5">
-        {Array.from(groups.entries()).map(([division, teamList]) => {
-          const deltas = deltasByDivision.get(division);
-          return (
-            <div key={division} className="panel overflow-hidden">
-              <div className="px-4 py-3 border-b border-line/70 label-sm">{division}</div>
-              <table className="table-clean">
-                <thead>
-                  <tr><th></th><th>Team</th><th>W</th><th>L</th><th>T</th><th>PF</th><th>PA</th></tr>
-                </thead>
-                <tbody>
-                  {teamList.map((t) => {
-                    const delta = deltas?.get(t.id);
-                    return (
-                      <tr key={t.id} className={t.isUser ? 'bg-raised/60' : ''}>
-                        <td className="w-8">
-                          {delta ? (
-                            <span className={`text-xs font-mono ${delta > 0 ? 'text-accent' : 'text-bad'}`}>{delta > 0 ? '▲' : '▼'}{Math.abs(delta)}</span>
-                          ) : (
-                            <span className="text-xs text-muted">—</span>
-                          )}
-                        </td>
-                        <td>
-                          <Link href={`/league/${league.id}/roster`} className="hover:text-accent2 flex items-center gap-2">
-                            <TeamLogo seed={t.id} abbr={t.abbr} size={22} />
-                            <span className={t.isUser ? 'font-semibold' : ''}>{t.city} {t.nickname}</span> {t.isUser && <span className="text-accent text-xs">(You)</span>}
-                            {t.playoffSeed ? <span className="text-xs text-gold ml-1">#{t.playoffSeed}</span> : null}
-                          </Link>
-                        </td>
-                        <td className="stat-value text-stat-sm">{t.wins}</td>
-                        <td className="stat-value text-stat-sm">{t.losses}</td>
-                        <td className="stat-value text-stat-sm">{t.ties}</td>
-                        <td className="font-mono text-muted">{t.pointsFor}</td>
-                        <td className="font-mono text-muted">{t.pointsAgnst}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+      <PageMasthead
+        teamId={userRow?.id}
+        teamAbbr={userRow?.abbr}
+        eyebrow={`${league.seasonYear} · ${phaseLabel}`}
+        title="Standings"
+        subtitle={`Division winners are seeded above every wild card, so a division lead is worth more than a better record. Top ${seedsPerConf} per conference make the field; the top two get a bye.`}
+        facts={facts}
+      />
+
+      {userConf && (userConf.inField.length > 0 || userConf.inHunt.length > 0) && (
+        <PlayoffPicture leagueId={league.id} conf={userConf} />
+      )}
+
+      {board.map((conf) => (
+        <div key={conf.conference} className="section">
+          <div className="section-head">
+            <h2 className="section-title text-base">{conf.conference}</h2>
+            <span className="label-sm">{conf.divisions.length} divisions</span>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            {conf.divisions.map((d) => (
+              <div key={`${d.conference}-${d.division}`} className="panel overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-line/70 flex items-center justify-between">
+                  <span className="label-sm">{d.conference} {d.division}</span>
+                  <span className="text-[11px] text-muted">{d.teams[0]?.abbr} leads</span>
+                </div>
+                <table className="table-clean">
+                  <thead>
+                    <tr>
+                      <th className="w-7 px-1.5"></th><th className="w-full">Team</th>
+                      <th className="text-right w-8 px-1.5">W</th><th className="text-right w-8 px-1.5">L</th>
+                      <th className="text-right w-8 px-1.5">T</th><th className="text-right w-12 px-1.5">PCT</th>
+                      <th className="text-right w-12 px-1.5">DIFF</th><th className="text-right w-10 px-1.5">STRK</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.teams.map((t) => {
+                      const delta = deltas.get(t.id);
+                      return (
+                        <tr key={t.id} className={t.isUser ? 'bg-accent/[0.06]' : ''}>
+                          <td className="w-7 px-1.5">
+                            {t.seed ? (
+                              <span
+                                className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${
+                                  t.divisionLeader ? 'bg-accent/20 text-accent' : 'bg-accent2/15 text-accent2'
+                                }`}
+                                title={t.divisionLeader ? `Division leader — #${t.seed} seed` : `Wild card — #${t.seed} seed`}
+                              >
+                                {t.seed}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-muted/60">—</span>
+                            )}
+                          </td>
+                          <td>
+                            <span className="flex items-center gap-2">
+                              <TeamCell leagueId={league.id} t={t} />
+                              {delta ? (
+                                <span className={`text-[10px] font-mono shrink-0 ${delta > 0 ? 'text-accent' : 'text-bad'}`}>
+                                  {delta > 0 ? '▲' : '▼'}{Math.abs(delta)}
+                                </span>
+                              ) : null}
+                            </span>
+                          </td>
+                          <td className="stat-value text-stat-sm text-right px-1.5">{t.wins}</td>
+                          <td className="stat-value text-stat-sm text-right text-muted px-1.5">{t.losses}</td>
+                          <td className="stat-value text-stat-sm text-right text-muted px-1.5">{t.ties}</td>
+                          <td className="font-mono text-xs text-right px-1.5">{t.pct.toFixed(3).replace(/^0/, '')}</td>
+                          <td className={`font-mono text-xs text-right px-1.5 ${t.diff > 0 ? 'text-accent' : t.diff < 0 ? 'text-bad' : 'text-muted'}`}>
+                            {t.diff >= 0 ? '+' : ''}{t.diff}
+                          </td>
+                          <td className="text-right px-1.5"><StreakChip streak={t.streak} /></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The bracket as it stands right now for the user's own conference — seeds in
+ * order with the bye line and the cut line drawn in, then the teams close
+ * enough to still take someone's spot. This is the screen a GM checks in
+ * week 14, so it goes above the division tables rather than below them.
+ */
+function PlayoffPicture({ leagueId, conf }: { leagueId: string; conf: Awaited<ReturnType<typeof buildStandingsBoard>>[number] }) {
+  const byes = 2;
+  return (
+    <div className="panel overflow-hidden">
+      <div className="px-4 py-3 border-b border-line/70 flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <div className="label-sm">{conf.conference} Playoff Picture</div>
+          <div className="text-xs text-muted mt-0.5">Projected from today's records using the same seeding rules the season finale runs.</div>
+        </div>
+        <div className="flex items-center gap-3 text-[11px] text-muted">
+          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-gold/50" />Bye</span>
+          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-accent/40" />Division</span>
+          <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-accent2/30" />Wild card</span>
+        </div>
+      </div>
+      <div className="divide-y divide-line/50">
+        {conf.inField.map((t, i) => (
+          <div
+            key={t.id}
+            className={`flex items-center gap-3 px-4 py-2 ${t.isUser ? 'bg-accent/[0.06]' : ''} ${i < byes ? 'bg-gold/[0.04]' : ''}`}
+          >
+            <span className={`stat-value text-stat-sm w-7 shrink-0 ${i < byes ? 'text-gold' : t.divisionLeader ? 'text-accent' : 'text-accent2'}`}>
+              {t.seed}
+            </span>
+            <div className="flex-1 min-w-0"><TeamCell leagueId={leagueId} t={t} /></div>
+            <span className="font-mono text-xs text-muted shrink-0">
+              {t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ''}
+            </span>
+            <span className="text-[11px] text-muted w-24 text-right shrink-0 hidden sm:block">
+              {i < byes ? 'First-round bye' : t.divisionLeader ? `${t.division} leader` : 'Wild card'}
+            </span>
+            <span className="w-10 text-right shrink-0"><StreakChip streak={t.streak} /></span>
+          </div>
+        ))}
+        {conf.inHunt.length > 0 && (
+          <>
+            <div className="px-4 py-1.5 bg-ink/40 text-[10px] uppercase tracking-widest text-bad/70 font-semibold">
+              Cut line
             </div>
-          );
-        })}
+            {conf.inHunt.map((t) => (
+              <div key={t.id} className={`flex items-center gap-3 px-4 py-2 opacity-70 ${t.isUser ? 'bg-accent/[0.06] opacity-100' : ''}`}>
+                <span className="w-7 shrink-0 text-center text-[10px] text-muted">—</span>
+                <div className="flex-1 min-w-0"><TeamCell leagueId={leagueId} t={t} /></div>
+                <span className="font-mono text-xs text-muted shrink-0">
+                  {t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ''}
+                </span>
+                <span className="text-[11px] text-muted w-24 text-right shrink-0 hidden sm:block">
+                  {t.gamesBack > 0 ? `${t.gamesBack.toFixed(1)} GB` : 'Tied'}
+                </span>
+                <span className="w-10 text-right shrink-0"><StreakChip streak={t.streak} /></span>
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );

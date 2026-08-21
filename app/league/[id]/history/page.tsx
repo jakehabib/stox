@@ -132,7 +132,7 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
         </div>
       )}
 
-      <div className="border-t border-line/60 pt-5 space-y-5">
+      <div id="franchise" className="border-t border-line/60 pt-5 space-y-5 scroll-mt-24">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide">Franchise History</h2>
@@ -153,7 +153,7 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
           <TeamLogo seed={team.id} abbr={team.abbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
           <TeamLogo seed={team.id} abbr={team.abbr} size={56} className="relative" />
           <div className="relative">
-            <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none" style={{ color: 'var(--team-text)' }}>{team.city} {team.nickname}</div>
+            <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none text-team">{team.city} {team.nickname}</div>
             <div className="text-sm text-muted mt-1.5">
               {records.length} season{records.length === 1 ? '' : 's'} on record
               {championships.length > 0 && <span className="text-gold"> · {championships.length}× Champion</span>}

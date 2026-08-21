@@ -22,8 +22,7 @@ export function BottomNav({ active = 0 }: { active?: number }) {
       {ITEMS.map(({ Icon, label }, i) => (
         <button
           key={label}
-          className="flex-1 flex flex-col items-center gap-1 py-2.5 text-xs font-medium text-muted"
-          style={i === active ? { color: 'var(--team-text)' } : undefined}
+          className={`flex-1 flex flex-col items-center gap-1 py-2.5 text-xs font-medium ${i === active ? 'text-team' : 'text-muted'}`}
         >
           <Icon size={20} />
           {label}

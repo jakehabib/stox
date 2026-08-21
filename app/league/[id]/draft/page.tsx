@@ -78,7 +78,15 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   const where: any = { leagueId: league.id, teamId: null, status: 'FREE_AGENT', isDraftee: true };
   if (searchParams.pos) where.position = searchParams.pos;
   if (shortlistOnly) where.id = { in: Array.from(shortlistIds) };
-  const pool = await prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: shortlistOnly ? undefined : (draftLive ? 80 : 300) });
+  // Same rule as Free Agency: the headline count describes the whole class,
+  // not the slice below it. Reporting slice.length claimed "300 prospects"
+  // against a 400-deep class — and during a live draft the slice narrows to
+  // 80, which would have made that claim off a sample of 80.
+  const classWhere = { leagueId: league.id, teamId: null, status: 'FREE_AGENT', isDraftee: true } as const;
+  const [pool, classSize] = await Promise.all([
+    prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: shortlistOnly ? undefined : (draftLive ? 80 : 300) }),
+    prisma.player.count({ where: classWhere }),
+  ]);
   const reports = await prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: pool.map((p) => p.id) } } });
   const reportMap = new Map(reports.map((r) => [r.playerId, r]));
   const positions = Array.from(new Set(pool.map((p) => p.position))).sort((a, b) => positionSortKey(a) - positionSortKey(b));
@@ -214,7 +222,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             ? undefined
             : 'The incoming class is browsable all season — scout them now, the draft opens after free agency.'}
           facts={[
-            { label: 'Prospects', value: String(pool.length), detail: searchParams.pos ? `filtered to ${searchParams.pos}` : 'on the board' },
+            { label: 'Prospects', value: String(classSize), detail: searchParams.pos ? `filtered to ${searchParams.pos}` : 'in the class' },
             {
               label: 'Shortlisted',
               value: String(shortlistIds.size),
@@ -225,7 +233,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             {
               label: 'Well Scouted',
               value: `${scoutedCount}`,
-              detail: pool.length > 0 ? `of ${pool.length} — high confidence` : 'nobody yet',
+              detail: pool.length > 0 ? `of the top ${pool.length} shown` : 'nobody yet',
               color: scoutedCount === 0 ? 'text-warn' : undefined,
             },
           ]}
@@ -254,7 +262,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <div className="label-sm">
                   {state.kind === 'FANTASY' ? 'Fantasy Draft' : `Round ${state.round}`} · Pick {state.pickIndex + 1} of {totalPicks}
                 </div>
-                <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1" style={{ color: 'var(--team-text)' }}>
+                <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1 text-team">
                   {isUserOnClock ? 'You Are On The Clock' : `${onClockTeam.city} On The Clock`}
                 </div>
               </div>

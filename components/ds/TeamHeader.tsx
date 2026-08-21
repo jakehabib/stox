@@ -39,7 +39,7 @@ export function TeamHeader({
           <div>
             <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none">{city} {nickname}</div>
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-              <span className="stat-value text-stat-sm" style={{ color: 'var(--team-text)' }}>{wins}-{losses}{ties ? `-${ties}` : ''}</span>
+              <span className="stat-value text-stat-sm text-team">{wins}-{losses}{ties ? `-${ties}` : ''}</span>
               <span className="text-xs text-muted">{standing}{tenureLabel ? ` · ${tenureLabel}` : ''}</span>
             </div>
             {scenarioTag && (
@@ -68,8 +68,8 @@ export function TeamHeader({
             {nextGame.city} <span className="text-muted font-normal">{nextGame.wins}-{nextGame.losses}</span>
           </span>
           <span
-            className="pill border shrink-0"
-            style={{ borderColor: 'var(--team-accent)', color: 'var(--team-text)', background: 'color-mix(in srgb, var(--team-accent) 22%, transparent)' }}
+            className="pill border shrink-0 text-team"
+            style={{ borderColor: 'var(--team-accent)', background: 'color-mix(in srgb, var(--team-accent) 22%, transparent)' }}
           >
             {nextGame.winProb}% Win
           </span>

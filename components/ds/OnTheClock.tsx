@@ -33,7 +33,7 @@ export function OnTheClock({ teamId, abbr, city, round, pick, clock }: {
           <TeamLogo seed={teamId} abbr={abbr} size={56} />
           <div>
             <div className="label-sm">Round {round} · Pick {pick} · {city}</div>
-            <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1" style={{ color: 'var(--team-text)' }}>
+            <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1 text-team">
               On The Clock
             </div>
           </div>
@@ -43,9 +43,9 @@ export function OnTheClock({ teamId, abbr, city, round, pick, clock }: {
           <div className="text-center">
             <div className="label-sm">Time Remaining</div>
             <div className="scoreboard-digits mt-1.5">
-              <span className="stat-value text-stat-xl" style={{ color: 'var(--team-text)' }}>{mm}</span>
+              <span className="stat-value text-stat-xl text-team">{mm}</span>
               <span className="stat-value text-stat-xl text-muted">:</span>
-              <span className="stat-value text-stat-xl" style={{ color: 'var(--team-text)' }}>{ss}</span>
+              <span className="stat-value text-stat-xl text-team">{ss}</span>
             </div>
           </div>
           <div className="flex flex-col gap-2">
