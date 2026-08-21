@@ -63,7 +63,7 @@ export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, tea
         </p>
       ) : (
         <>
-          <div className="grid grid-cols-[34px_minmax(190px,1.25fr)_minmax(100px,1fr)_72px_66px] gap-2.5 label-sm text-[9.5px] pb-1.5 border-b border-line">
+          <div className="grid grid-cols-[34px_minmax(190px,320px)_minmax(100px,1fr)_72px_66px] gap-2.5 label-sm text-[9.5px] pb-1.5 border-b border-line">
             <span />
             <span>Player</span>
             <span>Surplus against market</span>
@@ -77,7 +77,7 @@ export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, tea
               <Link
                 key={r.playerId}
                 href={`/league/${leagueId}/player/${r.playerId}`}
-                className="grid grid-cols-[34px_minmax(190px,1.25fr)_minmax(100px,1fr)_72px_66px] gap-2.5 items-center py-1 border-b border-line/45 hover:bg-raised/45"
+                className="grid grid-cols-[34px_minmax(190px,320px)_minmax(100px,1fr)_72px_66px] gap-2.5 items-center py-1 border-b border-line/45 hover:bg-raised/45"
                 title={`${r.name} (${r.position}, ${r.age}) · rated ${r.ovr} · cap hit ${formatMoney(r.hit)} against a ${formatMoney(r.marketValue)} market · ${positive ? 'surplus' : 'overpay'} ${formatMoney(Math.abs(r.surplus))}`}
               >
                 <PlayerAvatar seed={r.playerId} age={r.age} size={30} teamColor={teamAccent} weightLb={r.weightLb} heightIn={r.heightIn} position={r.position} />

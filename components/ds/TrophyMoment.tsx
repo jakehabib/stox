@@ -167,15 +167,15 @@ export function TrophyMoment({ data, onClose, leagueId }: {
           </div>
 
           {/* ---- The MVP, and how the game was actually won -------------- */}
-          <section className="mt-5 grid md:grid-cols-2 gap-4 items-stretch">
+          <section className="mt-5 grid md:grid-cols-2 gap-4 items-start">
             {champion && data.mvp && (
               <div>
                 <Rule label="Championship MVP" accent />
                 <div
-                  className="panel p-4 h-[calc(100%-2rem)] flex flex-wrap items-center gap-4"
+                  className="panel p-5 flex flex-wrap items-center gap-x-5 gap-y-4"
                   style={{
                     borderColor: 'color-mix(in srgb, var(--team-accent) 45%, transparent)',
-                    background: 'linear-gradient(120deg, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 70%)',
+                    background: 'linear-gradient(120deg, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 78%)',
                   }}
                 >
                   {data.mvp.age !== null && (
@@ -183,7 +183,7 @@ export function TrophyMoment({ data, onClose, leagueId }: {
                       <PlayerAvatar
                         seed={data.mvp.playerId}
                         age={data.mvp.age}
-                        size={84}
+                        size={96}
                         teamColor={accent}
                         weightLb={data.mvp.weightLb ?? undefined}
                         heightIn={data.mvp.heightIn ?? undefined}
@@ -191,9 +191,9 @@ export function TrophyMoment({ data, onClose, leagueId }: {
                       />
                     </div>
                   )}
-                  <div className="flex-1 min-w-[190px]">
+                  <div className="flex-1 min-w-[210px]">
                     <span className={`pill border ${positionBadgeClass(data.mvp.position)}`}>{data.mvp.position}</span>
-                    <div className="font-display font-extrabold uppercase tracking-wide text-[1.7rem] leading-none mt-2">
+                    <div className="font-display font-extrabold uppercase tracking-wide text-[1.65rem] leading-none mt-2">
                       {data.mvp.name}
                     </div>
                     {/* The cells and the award transaction's own sentence are the
@@ -201,18 +201,18 @@ export function TrophyMoment({ data, onClose, leagueId }: {
                         the cells when the line could be matched back, the stored
                         sentence when it couldn't. */}
                     {data.mvp.stats.length > 0 ? (
-                      <div className="flex gap-5 mt-2.5">
+                      <div className="flex gap-6 mt-3">
                         {data.mvp.stats.map((st) => (
                           <div key={st.label}>
-                            <div className="stat-value text-stat-sm" style={{ color: textColor }}>{st.value}</div>
+                            <div className="stat-value text-stat-md" style={{ color: textColor }}>{st.value}</div>
                             <div className="label-sm">{st.label}</div>
                           </div>
                         ))}
                       </div>
                     ) : data.mvpAward && (
-                      <p className="font-mono text-xs text-muted mt-2.5">{data.mvpAward}</p>
+                      <p className="font-mono text-xs text-muted mt-3">{data.mvpAward}</p>
                     )}
-                    <p className="text-[11px] text-muted mt-2.5">Scored off his line in the final itself, winning roster only.</p>
+                    <p className="text-[11px] text-muted mt-3">Scored off his line in the final itself, winning roster only.</p>
                   </div>
                 </div>
               </div>
@@ -227,6 +227,7 @@ export function TrophyMoment({ data, onClose, leagueId }: {
                     home={{ teamId: data.final.home.teamId, abbr: data.final.home.abbr, score: data.final.home.score }}
                     quarters={data.final.quarters}
                     overtime={data.final.overtime}
+                    emphasis={champion ? 'winner' : 'none'}
                   />
                   {data.final.shape && (
                     <div className={champion && data.mvp ? 'mt-2.5 pt-2.5 border-t border-line/50' : 'mt-3 md:mt-0'}>

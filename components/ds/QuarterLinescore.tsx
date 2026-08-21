@@ -10,11 +10,19 @@ import { TeamLogo } from '../TeamLogo';
  * so when a game went past regulation this says so in words instead of
  * inventing a column the data does not have.
  */
-export function QuarterLinescore({ away, home, quarters, overtime }: {
+export function QuarterLinescore({ away, home, quarters, overtime, emphasis = 'winner' }: {
   away: { teamId: string; abbr: string; score: number };
   home: { teamId: string; abbr: string; score: number };
   quarters: { home: number[]; away: number[] };
   overtime?: boolean;
+  /**
+   * Whose total gets the accent. 'winner' is the default and is right
+   * everywhere the reader is a neutral. 'none' exists for the one surface
+   * where it isn't — the Tier-0 screen that fires when the USER has just been
+   * knocked out, where lighting up the opponent's total in the celebratory
+   * green would be cheering for the club that just ended their year.
+   */
+  emphasis?: 'winner' | 'none';
 }) {
   const n = Math.max(quarters.home.length, quarters.away.length, 4);
   const cols = Array.from({ length: n }, (_, i) => `Q${i + 1}`);
@@ -34,7 +42,7 @@ export function QuarterLinescore({ away, home, quarters, overtime }: {
             {line[i] ?? 0}
           </td>
         ))}
-        <td className={`py-2 pl-3 text-right stat-value text-stat-sm ${won ? 'text-accent' : 'text-muted'}`}>
+        <td className={`py-2 pl-3 text-right stat-value text-stat-sm ${emphasis === 'none' ? 'text-chalk' : won ? 'text-accent' : 'text-muted'}`}>
           {side.score}
         </td>
       </tr>
