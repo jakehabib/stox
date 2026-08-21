@@ -15,6 +15,7 @@ import {
 import { maxOffer, parseGmProfile, teamNeeds, RosterPlayer } from './ai/gm';
 import { teamCapSummary } from './cap-summary';
 import { assertCapRoom } from './capEnforcement';
+import { reconcileDepthChart } from './gen/league';
 
 /**
  * ===========================================================================
@@ -263,6 +264,11 @@ export async function signFreeAgent(opts: {
         detail: `${years}-yr deal, ~$${(apy / 1_000_000).toFixed(1)}M/yr`,
       },
     });
+    // A roster spot is not a place on the field. This is the single funnel
+    // for EVERY signing in the game — AI waves, roster-minimum fills, the
+    // user's own offers — and none of it touched a depth chart, so a man
+    // signed in week 8 took no snaps for the rest of the season.
+    await reconcileDepthChart(teamId, tx);
   });
 }
 
@@ -634,6 +640,9 @@ export async function cutPlayer(opts: {
         headline: `Released ${player.firstName} ${player.lastName}`,
       },
     });
+    // Drop the slot he left behind, or it holds a rank forever against
+    // a man who is gone.
+    await reconcileDepthChart(player.teamId!, tx);
   });
 }
 

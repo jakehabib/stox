@@ -374,6 +374,20 @@ export function NegotiationPanel({
             field={PERCENT_FIELD}
             warn={capOn && decision.deadMoneyIfCut > 0 ? `${formatMoney(decision.deadMoneyIfCut)} dead if you cut him` : undefined}
           />
+          {/* HE HAS A FLOOR, and it is stated beside the control that sets it
+              rather than discovered by a refusal — the same rule the term limit
+              follows. Deliberately NOT the exact percentage: unlike the term
+              limit this one is a price you can pay, and printing the figure
+              would turn "how little can I lock in" into arithmetic instead of a
+              thing the meter tells you when you cross it. What is stated is
+              that the limit exists, which is what stops it being a gotcha. */}
+          {ctx.guaranteeFloor > 0 && !over && (
+            <p className={`text-xs -mt-2.5 ${ev.underGuaranteed ? 'text-bad' : 'text-muted'}`}>
+              {ev.underGuaranteed
+                ? `A man of his standing does not sign for this little locked in. No salary fixes it — guarantee more of it.`
+                : `A player of his standing expects a real share of it guaranteed, and this clears that.`}
+            </p>
+          )}
         </div>
 
         {structureSlot}

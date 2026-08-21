@@ -52,6 +52,32 @@
  *      checked would be the invented-metric bug class this file exists to
  *      police, moved from the meter into the flavour text.
  *
+ * Three more arrived with this pass, because all three moved `decideOffer`:
+ *
+ *   6. THE MARKET IS NOT UNIVERSAL, AND IT IS NOT INVENTED. `leadingCompetingBid`
+ *      used to answer "does any of 31 clubs have a need here" and so could only
+ *      ever say yes. It now answers the wave's own question — would this club
+ *      get to him, on its real slots and its real budget — so "nobody is
+ *      circling" is a state that happens. Section 12 makes the claim falsifiable
+ *      in the only direction it can be: it resolves a spread of free agents,
+ *      runs the REAL sealed-bid wave, and fails if anybody the panel said was
+ *      unwanted is signed by a rival's bid.
+ *
+ *   7. THE GUARANTEE FLOOR. Guaranteed money used to be a luxury: at his asking
+ *      price with nothing locked in a player still read 70-88 interest, so
+ *      guaranteeing zero was optimal and the slider was decoration. There is a
+ *      floor now (lib/negotiation.ts, guaranteeFloorFor) that caps interest
+ *      below the band, which means a whole region of the grid where NO salary
+ *      signs him. Section 2 sweeps guarantee as it always did; section 13 pins
+ *      the invariants that region has to obey.
+ *
+ *   8. SET ASIDE COSTS NOTHING. The re-sign list can park a player
+ *      (NegotiationTalks.dismissedAt). It shares a table with the patience
+ *      count, which is the one number the whole minigame rests on, so section 14
+ *      checks against the database that parking and un-parking a man moves
+ *      neither his pips nor his price — and that the advance warning names him
+ *      before he is allowed to walk.
+ *
  * Run: npx tsx scripts/checkNegotiationAgreement.ts
  * ===========================================================================
  */
@@ -60,9 +86,10 @@ import { prisma } from '../lib/db';
 import { createLeague } from '../lib/gen/league';
 import { parseSettings } from '../lib/settings';
 import { resolveNegotiationSession, negotiateOffer, runAiFreeAgencyWave, MARKET_FLOOR } from '../lib/freeagency';
+import { advanceWeek } from '../lib/season';
 import {
   decideOffer, minimumAcceptableApy, sessionFingerprint, clampOffer,
-  signBandFor, maybeChance, ACCEPT_INTEREST,
+  signBandFor, maybeChance, ACCEPT_INTEREST, guaranteeFloorFor,
   DEFAULT_STRUCTURE, type DealStructure, type NegotiationMode,
   type NegotiationSession, type Offer, type OfferDecision,
 } from '../lib/negotiation';
@@ -144,6 +171,7 @@ function sameDecision(a: OfferDecision, b: OfferDecision): string | null {
   if (a.evaluation.interest !== b.evaluation.interest) return `interest: ${a.evaluation.interest} vs ${b.evaluation.interest}`;
   if (a.evaluation.verdict !== b.evaluation.verdict) return `verdict: ${a.evaluation.verdict} vs ${b.evaluation.verdict}`;
   if (a.evaluation.insulting !== b.evaluation.insulting) return `insulting: ${a.evaluation.insulting} vs ${b.evaluation.insulting}`;
+  if (a.evaluation.underGuaranteed !== b.evaluation.underGuaranteed) return `underGuaranteed: ${a.evaluation.underGuaranteed} vs ${b.evaluation.underGuaranteed}`;
   return null;
 }
 
@@ -213,6 +241,7 @@ async function main() {
   let gridPoints = 0;
   let typedPoints = 0;
   let shapePoints = 0;
+  let guaranteePoints = 0;
 
   for (const { p, incumbent, mode } of sweepSubjects) {
     // What the browser was handed when talks opened...
@@ -335,6 +364,55 @@ async function main() {
       }
     }
 
+    // --- The guarantee floor -----------------------------------------------
+    //
+    // Guaranteed money is no longer a luxury: under `ctx.guaranteeFloor` the
+    // interest bar is capped below the band, which is a claim with teeth —
+    // there is NO salary that signs him. Three things have to hold, and the
+    // first is the one that would quietly turn the cap into a lie.
+    {
+      if (ctx.guaranteeFloor < 0 || ctx.guaranteeFloor > 0.5) {
+        fail(`${p.lastName}: guarantee floor ${ctx.guaranteeFloor} is outside 0..0.5`);
+      }
+      if (ctx.guaranteeFloor > ctx.desiredGuarantee) {
+        fail(`${p.lastName}: guarantee floor ${ctx.guaranteeFloor} is above what he ASKS for (${ctx.desiredGuarantee}) — the floor is where he stops listening, not where he is happy`);
+      }
+      if (ctx.guaranteeFloor !== guaranteeFloorFor(p.trueOvr, ctx.personality)) {
+        fail(`${p.lastName}: context floor ${ctx.guaranteeFloor} is not what guaranteeFloorFor(${p.trueOvr}, ${ctx.personality}) produces`);
+      }
+      const years = Math.min(ctx.desiredYears, gate.maxYears, ctx.willingYears);
+      let lastInterest = -1;
+      for (let g = 0; g <= 100; g++) {
+        const guaranteePct = g / 100;
+        // The most money the panel can possibly offer. If HE will not sign at
+        // the ceiling, no salary signs him — which is exactly what the cap is
+        // claiming, so this is the claim, tested.
+        const offer = clampOffer({ apy: gate.maxSalary, years, guaranteePct }, gate);
+        const client = decideOffer(ctx, offer, gate, DEFAULT_STRUCTURE);
+        const server = decideOffer(serverSession.ctx, offer, serverSession.gate, DEFAULT_STRUCTURE);
+        comparisons++;
+        guaranteePoints++;
+        const diff = sameDecision(client, server);
+        if (diff) fail(`${p.lastName} @ ${g}% guaranteed — ${diff}`);
+        if (client.evaluation.underGuaranteed !== (guaranteePct < ctx.guaranteeFloor)) {
+          fail(`${p.lastName}: underGuaranteed disagrees with the floor at ${g}%`);
+        }
+        if (client.evaluation.underGuaranteed && client.signBand !== 'NO') {
+          fail(`${p.lastName}: an under-guaranteed offer at the salary ceiling still reads ${client.signBand} — the cap does not hold`);
+        }
+        if (client.evaluation.underGuaranteed && minimumAcceptableApy(ctx, years, guaranteePct) !== null) {
+          fail(`${p.lastName}: minimumAcceptableApy quoted a price for an offer under his guarantee floor`);
+        }
+        // More guaranteed is never worse, exactly as more money is never worse.
+        // The cap makes this the only place the meter could have gone
+        // backwards, since it lifts in one step at the floor.
+        if (client.evaluation.interest < lastInterest) {
+          fail(`${p.lastName}: interest went DOWN as the guarantee went up (${lastInterest} -> ${client.evaluation.interest} at ${g}%)`);
+        }
+        lastInterest = client.evaluation.interest;
+      }
+    }
+
     const screen = mode === 'FREE_AGENT' ? 'free agent'
       : mode === 'EXTENSION' ? `extension/${ctx.controlYears}yr control`
       : `re-sign/${ctx.resignWindow}`;
@@ -344,6 +422,7 @@ async function main() {
       `asks ~${formatMoney(ctx.reservationApy)}/yr, patience ${ctx.patience}, ` +
       `term<=${ctx.willingYears} (won't play past ${ctx.intendedFinalAge}), band +-${ctx.bandHalfWidth}, ` +
       `suitor ${clientSession.suitor ? `${clientSession.suitor.teamAbbr} ${formatMoney(clientSession.suitor.apy)}` : 'none'}, ` +
+      `guarantee floor ${Math.round(ctx.guaranteeFloor * 100)}%, ` +
       `${acceptedCount} signable offers on the grid`,
     );
   }
@@ -351,7 +430,8 @@ async function main() {
   console.log(
     `\nGrid: ${gridPoints.toLocaleString()} offers compared (salary x years x guarantee, client session vs server session)` +
     `\n      ${typedPoints.toLocaleString()} typed-entry probes (values no slider can produce, plus empty/negative/1e9/NaN)` +
-    `\n      ${shapePoints.toLocaleString()} deal shapes (front-load, back-load, void years — on all three screens)\n`,
+    `\n      ${shapePoints.toLocaleString()} deal shapes (front-load, back-load, void years — on all three screens)` +
+    `\n      ${guaranteePoints.toLocaleString()} guarantee points at the salary ceiling (the floor's "no price signs this" claim)\n`,
   );
 
   // --- 3. End to end -------------------------------------------------------
@@ -647,7 +727,8 @@ async function main() {
       }
 
       const roster = await prisma.player.findMany({
-        where: { teamId: suitor.teamId },
+        // The same roster `leadingCompetingBid` and the wave both read.
+        where: { teamId: suitor.teamId, status: 'ACTIVE' },
         select: { id: true, position: true, trueOvr: true, age: true, potential: true },
       });
       const needs = teamNeeds(roster as RosterPlayer[]);
