@@ -42,7 +42,7 @@ export default async function ResignPage({ params }: { params: { id: string } })
         eyebrow={`${league.seasonYear} Offseason`}
         title="Re-sign Window"
         subtitle="Players whose deals are up or about to be. Extend anyone you want to keep — whoever's still undecided once the re-sign phase ends gets released to free agency, and other teams can sign them from there."
-        action={trulyExpiringCount > 0 ? <LetAiResignButton leagueId={league.id} /> : undefined}
+        action={expiring.length > 0 ? <LetAiResignButton leagueId={league.id} /> : undefined}
         facts={[
           { label: 'Decisions', value: String(expiring.length), detail: 'contracts on the clock' },
           {

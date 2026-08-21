@@ -12,7 +12,7 @@ import { ScatterChart } from '@/components/charts/ScatterChart';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { MetricTiles } from '@/components/ds/MetricTiles';
 import { PageMasthead } from '@/components/ds/PageMasthead';
-import { buildCapHealth, rankContractValue, type CapHealth, type SurplusRow } from '@/lib/analytics';
+import { buildCapHealth, rankContractValue, classifyContractValue, type CapHealth, type SurplusRow } from '@/lib/analytics';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'cap' | 'base' | 'years' | 'savings';
 
@@ -155,17 +155,21 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       .filter(({ p }) => p.contract)
       .map(({ p, hit }) => {
         const expected = marketValue({ ovr: p.trueOvr, position: p.position as any, age: p.age, potential: p.potential });
+        const surplus = expected - hit; // positive = paying under what the rating is worth
         return {
           playerId: p.id, name: `${p.firstName} ${p.lastName}`, position: p.position,
           age: p.age, ovr: p.trueOvr, hit, marketValue: expected,
-          surplus: expected - hit, // positive = paying under what the rating is worth
+          surplus, tier: classifyContractValue(surplus, expected),
         };
       });
     contractValue = rankContractValue(surplusRows);
     valuePoints = surplusRows.map((r) => ({
       id: r.playerId, x: r.ovr, y: r.hit, label: r.name,
-      color: r.surplus >= 0 ? '#3987e5' : '#e66767',
-      detail: r.surplus >= 0 ? `${formatMoney(r.surplus)}/yr under market value` : `${formatMoney(-r.surplus)}/yr over market value`,
+      // Muted gray for market-rate deals — only a material deviation earns blue/red.
+      color: r.tier === 'bargain' ? '#3987e5' : r.tier === 'overpay' ? '#e66767' : '#93939c',
+      detail: r.tier === 'market'
+        ? 'within market range'
+        : r.surplus >= 0 ? `${formatMoney(r.surplus)}/yr under market value` : `${formatMoney(-r.surplus)}/yr over market value`,
     }));
 
     health = buildCapHealth({
@@ -321,9 +325,9 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
           <div className="panel p-4 lg:col-span-2">
             <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
               Cap Hit vs. Overall Rating
-              <Tooltip text="Every player under contract, plotted by rating and cap hit. Blue = costing less than his rating's market value (a bargain); red = costing more (an overpay, fairly or not — a young player on a big second contract will often show red here even if the deal was reasonable when signed)." />
+              <Tooltip text="Every player under contract, plotted by rating and cap hit. Blue = costing meaningfully less than his rating's market value (a bargain); red = costing meaningfully more (an overpay, fairly or not — a young player on a big second contract will often show red here even if the deal was reasonable when signed). Gray = within normal market range — small dollar swings around the going rate aren't worth flagging either way." />
             </h2>
-            <p className="text-xs text-muted mb-3">Blue = under market value for the rating · Red = over market value</p>
+            <p className="text-xs text-muted mb-3">Blue = under market value · Gray = at market · Red = over market value</p>
             <ScatterChart
               points={valuePoints}
               xLabel="Overall Rating" yLabel="Cap Hit"

@@ -6,7 +6,7 @@ import { parseSettings } from '@/lib/settings';
 import { resignDecisionsForTeam } from '@/lib/season';
 import { Rng } from '@/lib/rng';
 
-/** Delegate every pending (0-years-remaining) re-sign decision on the user's own team to the same AI logic that runs each AI team's offseason. */
+/** Delegate every pending re-sign decision on the user's own team — expired and walk-year alike — to the same AI logic that runs each AI team's offseason. */
 export async function letAiResignAction(leagueId: string) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);

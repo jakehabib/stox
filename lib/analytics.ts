@@ -142,6 +142,29 @@ export function buildCapHealth(input: {
   };
 }
 
+/**
+ * A deviation only counts as a real bargain/overpay once it clears BOTH a
+ * percentage-of-value bar and a flat dollar floor. Percentage alone would
+ * flag a $15K miss on a $30M QB deal as an "overpay" — noise in a league
+ * with a $255M cap (see CAP.BASE_CAP). Dollar-floor alone would flag a
+ * minimum-salary punter for being paid double his going rate, which still
+ * isn't a number that moves a roster. Requiring both means the threshold
+ * scales with the player's own value while staying anchored to what
+ * actually matters on a real cap sheet.
+ */
+export const CONTRACT_VALUE_MATERIAL_PCT = 0.12;
+export const CONTRACT_VALUE_MATERIAL_FLOOR = 1_000_000;
+
+export type ContractValueTier = 'bargain' | 'market' | 'overpay';
+
+/** market − cap hit, classified against the material-deviation band above. */
+export function classifyContractValue(surplus: number, marketValue: number): ContractValueTier {
+  const threshold = Math.max(marketValue * CONTRACT_VALUE_MATERIAL_PCT, CONTRACT_VALUE_MATERIAL_FLOOR);
+  if (surplus >= threshold) return 'bargain';
+  if (surplus <= -threshold) return 'overpay';
+  return 'market';
+}
+
 export interface SurplusRow {
   playerId: string;
   name: string;
@@ -152,13 +175,14 @@ export interface SurplusRow {
   marketValue: number;
   /** market − cap hit. Positive = paying under what the rating is worth. */
   surplus: number;
+  tier: ContractValueTier;
 }
 
-/** Ranked contract value — the bargains and the overpays, by absolute dollars. */
+/** Ranked contract value — the bargains and the overpays, by absolute dollars. Market-rate deals are excluded from both lists. */
 export function rankContractValue(rows: SurplusRow[]): { bargains: SurplusRow[]; overpays: SurplusRow[] } {
   const sorted = [...rows].sort((a, b) => b.surplus - a.surplus);
   return {
-    bargains: sorted.filter((r) => r.surplus > 0).slice(0, 6),
-    overpays: sorted.filter((r) => r.surplus < 0).slice(-6).reverse(),
+    bargains: sorted.filter((r) => r.tier === 'bargain').slice(0, 6),
+    overpays: sorted.filter((r) => r.tier === 'overpay').slice(-6).reverse(),
   };
 }

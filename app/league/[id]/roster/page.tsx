@@ -6,14 +6,66 @@ import { formatMoney, capHit } from '@/lib/cap';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { positionSortKey } from '@/lib/league-data';
+import { POSITION_GROUPS, PositionGroup, positionGroup } from '@/lib/positionGroups';
+import { SeasonStats } from '@/lib/types';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { FillRosterButton } from '@/components/FillRosterButton';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { RosterGroupHeader } from '@/components/ds/RosterGroupHeader';
 import { teamCapSummary } from '@/lib/cap-summary';
 
 type SortKey = 'pos' | 'ovr' | 'age' | 'potential' | 'cap' | 'years';
+
+const GROUP_LABEL: Record<PositionGroup, string> = {
+  QB: 'Quarterback',
+  RB: 'Backfield',
+  'WR/TE': 'Receivers',
+  OL: 'Offensive Line',
+  DL: 'Defensive Line',
+  LB: 'Linebackers',
+  DB: 'Secondary',
+  ST: 'Special Teams',
+};
+
+// Which broadcast-style "unit" banner a group falls under — purely a display
+// grouping one level up from PositionGroup, so the page reads offense →
+// defense → special teams instead of eight undifferentiated headers in a row.
+const UNIT_FOR_GROUP: Record<PositionGroup, string> = {
+  QB: 'Offense', RB: 'Offense', 'WR/TE': 'Offense', OL: 'Offense',
+  DL: 'Defense', LB: 'Defense', DB: 'Defense',
+  ST: 'Special Teams',
+};
+
+/**
+ * The one-line box score a scout actually cares about, shaped per position —
+ * mirrors the per-position stat picks on the Stats page, but condensed to a
+ * single scannable string for a table row instead of a labeled grid.
+ * Returns null for positions/players this sim doesn't box-score (OL) or who
+ * haven't played yet, so the row just omits the line rather than showing zeros.
+ */
+function productionLine(position: string, s: SeasonStats): string | null {
+  if (!s.gp) return null;
+  switch (position) {
+    case 'QB':
+      return `${(s.passYds ?? 0).toLocaleString()} YDS · ${s.passTd ?? 0} TD · ${s.int ?? 0} INT`;
+    case 'RB': case 'FB':
+      return `${(s.rushYds ?? 0).toLocaleString()} YDS · ${s.rushTd ?? 0} TD · ${s.rushAtt ?? 0} ATT`;
+    case 'WR': case 'TE':
+      return `${s.rec ?? 0} REC · ${(s.recYds ?? 0).toLocaleString()} YDS · ${s.recTd ?? 0} TD`;
+    case 'EDGE': case 'DT': case 'LB':
+      return `${s.tackles ?? 0} TKL · ${s.sacks ?? 0} SK${s.ff ? ` · ${s.ff} FF` : ''}`;
+    case 'CB': case 'S':
+      return `${s.defInt ?? 0} INT · ${s.pd ?? 0} PD · ${s.tackles ?? 0} TKL`;
+    case 'K':
+      return `${s.fgm ?? 0}/${s.fga ?? 0} FG · ${s.xpm ?? 0}/${s.xpa ?? 0} XP`;
+    case 'P':
+      return s.punts ? `${s.punts} PUNTS · ${((s.puntYds ?? 0) / s.punts).toFixed(1)} AVG` : null;
+    default:
+      return null;
+  }
+}
 
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'pos', label: 'Pos' },
@@ -28,10 +80,10 @@ export default async function RosterPage({ params, searchParams }: { params: { i
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
 
-  const players = await prisma.player.findMany({
-    where: { teamId: team.id },
-    include: { contract: true },
-  });
+  const [players, slots] = await Promise.all([
+    prisma.player.findMany({ where: { teamId: team.id }, include: { contract: true } }),
+    prisma.depthChartSlot.findMany({ where: { teamId: team.id }, orderBy: { rank: 'asc' } }),
+  ]);
   const reports = await prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: players.map((p) => p.id) } } });
   const reportMap = new Map(reports.map((r) => [r.playerId, r]));
 
@@ -42,6 +94,19 @@ export default async function RosterPage({ params, searchParams }: { params: { i
     });
     return { p, view, hit: capHit(p.contract, settings.capMode) };
   });
+
+  // Who actually plays: the Depth Chart page's manual rank-0, falling back
+  // to the best true rating at that exact position for anyone never set —
+  // same "first player is the starter" rule DepthChartGroup already uses,
+  // so the two pages agree on who's WR1 without the roster page reimplementing
+  // depth-chart ordering itself.
+  const starterIdByPosition = new Map<string, string>();
+  for (const s of slots) if (!starterIdByPosition.has(s.position)) starterIdByPosition.set(s.position, s.playerId);
+  for (const p of players) {
+    if (starterIdByPosition.has(p.position)) continue;
+    const incumbent = players.filter((x) => x.position === p.position).reduce((best, x) => (x.trueOvr > best.trueOvr ? x : best));
+    starterIdByPosition.set(p.position, incumbent.id);
+  }
 
   const sortKey: SortKey = (['pos', 'ovr', 'age', 'potential', 'cap', 'years'] as SortKey[]).includes(searchParams.sort as SortKey)
     ? (searchParams.sort as SortKey) : 'pos';
@@ -82,6 +147,86 @@ export default async function RosterPage({ params, searchParams }: { params: { i
   const avgOvr = rows.length > 0 ? rows.reduce((s, r) => s + r.view.scoutedOvr, 0) / rows.length : 0;
   const expiring = players.filter((p) => (p.contract?.yearsRemaining ?? 99) <= 1).length;
 
+  // Group order tracks the depth-chart shape (QB → ST) by default so the
+  // page always reads like a squad. The one exception: flipping the Pos
+  // column itself should visibly do something, so that specific sort also
+  // flips which end of the squad leads.
+  const groupOrder = sortKey === 'pos' && dir === 1 ? [...POSITION_GROUPS].reverse() : POSITION_GROUPS;
+
+  let lastUnit: string | null = null;
+  const bodyRows: React.ReactNode[] = [];
+  for (const group of groupOrder) {
+    const groupRows = sorted.filter(({ p }) => positionGroup(p.position) === group);
+    if (groupRows.length === 0) continue;
+
+    const unit = UNIT_FOR_GROUP[group];
+    if (unit !== lastUnit) {
+      bodyRows.push(
+        <tr key={`unit-${unit}`}>
+          <td colSpan={8} className={`px-3 text-[11px] font-display font-bold uppercase tracking-[0.18em] text-muted/60 ${lastUnit ? 'pt-5' : 'pt-1'} pb-1`}>
+            {unit}
+          </td>
+        </tr>
+      );
+      lastUnit = unit;
+    }
+
+    const groupAvgOvr = groupRows.reduce((s, r) => s + r.view.scoutedOvr, 0) / groupRows.length;
+    const groupCap = groupRows.reduce((s, r) => s + r.hit, 0);
+    // "Thin" means zero rostered depth beyond one body per exact position this
+    // group covers — a flat headcount threshold would flag a normal 2-QB room
+    // or a kicker/punter (always exactly one each) every single time.
+    const startingSlots = new Set(groupRows.map((r) => r.p.position)).size;
+    bodyRows.push(
+      <RosterGroupHeader
+        key={`group-${group}`}
+        label={GROUP_LABEL[group]}
+        count={groupRows.length}
+        avgOvr={groupAvgOvr}
+        capHit={settings.capMode === 'OFF' ? null : groupCap}
+        thin={groupRows.length <= startingSlots}
+      />
+    );
+
+    for (const { p, view, hit } of groupRows) {
+      const isStarter = starterIdByPosition.get(p.position) === p.id;
+      const production = productionLine(p.position, readJson<SeasonStats>(p.seasonStats, {}));
+      bodyRows.push(
+        <tr key={p.id} style={isStarter ? { background: `${teamColor}0d` } : undefined}>
+          <td style={{ borderLeft: `3px solid ${isStarter ? teamColor : 'transparent'}` }}>
+            <span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span>
+          </td>
+          <td>
+            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2.5">
+              <PlayerAvatar seed={p.id} age={p.age} size={30} teamColor={teamColor} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className={isStarter ? 'font-semibold' : 'font-medium'}>{p.firstName} {p.lastName}</span>
+                  {isStarter && <span className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: teamColor }}>Starter</span>}
+                </div>
+                {production && <div className="text-[11px] text-muted font-mono mt-0.5 truncate">{production}</div>}
+              </div>
+            </Link>
+          </td>
+          <td className="text-muted">{p.age}</td>
+          <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>
+            {view.revealed || view.confidence >= 90 ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}
+          </td>
+          <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+          <td>
+            {p.injuryWeeks > 0 ? (
+              <span title={p.injuryType ?? 'Injured'} className="pill border-bad/30 text-bad bg-bad/10 cursor-help">Injured · {p.injuryWeeks}w</span>
+            ) : (
+              <span className="pill border-accent/30 text-accent bg-accent/10">Active</span>
+            )}
+          </td>
+          <td className="font-mono text-muted">{settings.capMode === 'OFF' ? '—' : formatMoney(hit)}</td>
+          <td className="text-muted">{p.contract?.yearsRemaining ?? '—'}</td>
+        </tr>
+      );
+    }
+  }
+
   return (
     <div className="space-y-5">
       <PageMasthead
@@ -120,7 +265,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
             <thead>
               <tr>
                 <th><Link href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
-                <th>Name</th>
+                <th>Player</th>
                 <th><Link href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
                 <th><Link href={sortHref('ovr')} className="hover:text-chalk">{ovrLabel}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
                 <th><Link href={sortHref('potential')} className="hover:text-chalk">Pot.{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
@@ -130,31 +275,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
               </tr>
             </thead>
             <tbody>
-              {sorted.map(({ p, view, hit }) => (
-                <tr key={p.id}>
-                  <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
-                  <td>
-                    <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2">
-                      <PlayerAvatar seed={p.id} age={p.age} size={28} teamColor={teamColor} />
-                      {p.firstName} {p.lastName}
-                    </Link>
-                  </td>
-                  <td className="text-muted">{p.age}</td>
-                  <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>
-                    {view.revealed || view.confidence >= 90 ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}
-                  </td>
-                  <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
-                  <td>
-                    {p.injuryWeeks > 0 ? (
-                      <span title={p.injuryType ?? 'Injured'} className="pill border-bad/30 text-bad bg-bad/10 cursor-help">Injured · {p.injuryWeeks}w</span>
-                    ) : (
-                      <span className="pill border-accent/30 text-accent bg-accent/10">Active</span>
-                    )}
-                  </td>
-                  <td className="font-mono text-muted">{settings.capMode === 'OFF' ? '—' : formatMoney(hit)}</td>
-                  <td className="text-muted">{p.contract?.yearsRemaining ?? '—'}</td>
-                </tr>
-              ))}
+              {bodyRows}
             </tbody>
           </table>
         </div>

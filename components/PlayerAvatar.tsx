@@ -1,4 +1,4 @@
-import { generateAvatarParams, HairStyle, EyeStyle, EyebrowStyle, NoseStyle, MouthStyle, FaceShape } from '@/lib/gen/avatar';
+import { generateAvatarParams, HairStyle, EyeStyle, EyebrowStyle, NoseStyle, MouthStyle, FaceShape, FacialHair } from '@/lib/gen/avatar';
 
 interface Props {
   seed: string;
@@ -49,15 +49,19 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
         {/* Vignette floor so the bust doesn't float. */}
         <ellipse cx={60} cy={124} rx={62} ry={26} fill="#000" opacity={0.22} />
 
-        {/* --- Bust: shoulder pads, not a thin jersey V ------------------- */}
-        <path d="M12 120 Q14 96 32 88 L48 82 Q60 92 72 82 L88 88 Q106 96 108 120 Z" fill={`url(#pa-jersey-${uid})`} />
+        {/* --- Bust: broad, high shoulder pads — pro-athlete bulk, not a
+            thin jersey V. Shoulder points sit high and wide so the frame
+            reads as built even at 20px, before any facial detail lands. */}
+        <path d="M8 120 Q10 92 28 84 L44 80 Q60 91 76 80 L92 84 Q110 92 112 120 Z" fill={`url(#pa-jersey-${uid})`} />
         {/* Pad seam + collar give the jersey structure at a glance. */}
-        <path d="M32 88 Q60 100 88 88" stroke={shade(teamColor, -0.4)} strokeWidth={1.5} fill="none" opacity={0.7} />
-        <path d="M48 82 Q60 94 72 82 L68 78 Q60 84 52 78 Z" fill={shade(teamColor, -0.42)} />
+        <path d="M28 84 Q60 98 92 84" stroke={shade(teamColor, -0.4)} strokeWidth={1.5} fill="none" opacity={0.7} />
+        <path d="M44 80 Q60 92 76 80 L71 76 Q60 82 49 76 Z" fill={shade(teamColor, -0.42)} />
 
-        {/* --- Neck, set behind the jaw with a cast shadow ---------------- */}
-        <path d="M50 66 L50 86 Q60 92 70 86 L70 66 Z" fill={shadow} />
-        <path d="M50 66 L50 74 Q60 82 70 74 L70 66 Z" fill={deep} opacity={0.55} />
+        {/* --- Neck, set behind the jaw with a cast shadow. Thick on
+            purpose — a trained neck is one of the strongest masculinity
+            cues and it has to survive down to a 20px roster row. --------- */}
+        <path d="M44 64 L44 86 Q60 94 76 86 L76 64 Z" fill={shadow} />
+        <path d="M44 64 L44 74 Q60 84 76 74 L76 64 Z" fill={deep} opacity={0.55} />
 
         {/* --- Ears ------------------------------------------------------- */}
         <ellipse cx={28} cy={52} rx={5.5} ry={8.5} fill={p.skinTone} stroke={deep} strokeWidth={0.8} />
@@ -72,6 +76,9 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
         <FacialHairShape style={p.facialHair} color={p.hairColor} />
         <MouthShape style={p.mouthStyle} />
         <NoseShape style={p.noseStyle} shadow={shadow} deep={deep} />
+        {/* Brow ridge shadow sits under the eyebrows, not on top of them —
+            it's what reads as bone structure instead of a drawn-on line. */}
+        <BrowRidge color={shadow} />
         <EyeShape style={p.eyeStyle} />
         <EyebrowShape style={p.eyebrowStyle} color={p.hairColor} />
         <HairTop style={p.hairStyle} color={p.hairColor} />
@@ -80,10 +87,19 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
   );
 }
 
+/**
+ * All three variants now resolve to a flat, squared-off chin instead of a
+ * tapered point — a pointed jaw is the single strongest "soft/androgynous"
+ * signal at silhouette level, so it's gone from every shape, not just
+ * 'square'. They still read as distinct bone structure: square keeps a
+ * near-rectangular jawline, oval tapers in through the cheeks, round keeps
+ * the fullest cheeks but still squares off at the chin instead of coming
+ * to a point.
+ */
 function HeadShape({ shape, skinTone, stroke }: { shape: FaceShape; skinTone: string; stroke: string }) {
-  if (shape === 'square') return <path d="M31 40 Q31 20 60 20 Q89 20 89 40 L89 56 Q89 78 60 82 Q31 78 31 56 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
-  if (shape === 'oval') return <ellipse cx={60} cy={50} rx={27} ry={32} fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
-  return <path d="M31 46 Q31 21 60 21 Q89 21 89 46 Q89 72 60 81 Q31 72 31 46 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
+  if (shape === 'square') return <path d="M31 40 Q31 20 60 20 Q89 20 89 40 L89 56 Q89 77 74 82 L46 82 Q31 77 31 56 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
+  if (shape === 'oval') return <path d="M33 44 Q31 19 60 19 Q89 19 87 44 Q88 62 78 72 L72 80 Q60 83 48 80 L42 72 Q32 62 33 44 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
+  return <path d="M31 46 Q31 21 60 21 Q89 21 89 46 Q89 71 72 79 L48 79 Q31 71 31 46 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
 }
 
 /** Cheekbone + jaw shadow, shaped to the head so it never spills outside it. */
@@ -206,56 +222,68 @@ function LongHairBack({ color }: { color: string }) {
   );
 }
 
+/** Soft shadow band standing in for a protruding brow — bone structure the
+ *  eyebrow line alone can't sell, and it still reads at 20px as a face that
+ *  isn't flat under the forehead. */
+function BrowRidge({ color }: { color: string }) {
+  return <path d="M36 45.5 Q47 40 60 41 Q73 40 84 45.5 L82 49.5 Q60 43.5 38 49.5 Z" fill={color} opacity={0.22} />;
+}
+
+/** Heavier, lower, straighter than a default brow — sitting closer to the
+ *  eye is a bigger masculinity cue than thickness alone, so the baseline
+ *  moved down toward the lid instead of just getting a fatter stroke. */
 function EyebrowShape({ style, color }: { style: EyebrowStyle; color: string }) {
   const brow = (cx: number, mirror: boolean) => {
     const flip = mirror ? -1 : 1;
-    if (style === 'angled') return <path d={`M${cx - 8} 41 L${cx + 8} 39`} stroke={color} strokeWidth={3} strokeLinecap="round" transform={`rotate(${6 * flip} ${cx} 40)`} />;
-    if (style === 'raised') return <path d={`M${cx - 8} 41 Q${cx} 35 ${cx + 8} 41`} stroke={color} strokeWidth={3} fill="none" strokeLinecap="round" />;
-    return <path d={`M${cx - 8} 40 Q${cx} 38.5 ${cx + 8} 40`} stroke={color} strokeWidth={3} fill="none" strokeLinecap="round" />;
+    if (style === 'angled') return <path d={`M${cx - 9} 44 L${cx + 9} 41`} stroke={color} strokeWidth={3.6} strokeLinecap="round" transform={`rotate(${7 * flip} ${cx} 42.5)`} />;
+    if (style === 'raised') return <path d={`M${cx - 9} 44 Q${cx} 39 ${cx + 9} 44`} stroke={color} strokeWidth={3.6} fill="none" strokeLinecap="round" />;
+    return <path d={`M${cx - 9} 43 Q${cx} 41.5 ${cx + 9} 43`} stroke={color} strokeWidth={3.6} fill="none" strokeLinecap="round" />;
   };
   return <>{brow(46, true)}{brow(74, false)}</>;
 }
 
 /**
  * Almond eyes with a real upper lid, rather than a white circle with a dot —
- * the lid is what keeps a face from reading startled at every size.
+ * the lid is what keeps a face from reading startled at every size. Sized
+ * down and dropped half a pixel below the old baseline so they sit under
+ * the brow ridge instead of floating wide open in the middle of the face.
  */
 function EyeShape({ style }: { style: EyeStyle }) {
   const eye = (cx: number) => {
     if (style === 'narrow') {
       return (
         <g>
-          <path d={`M${cx - 7} 50 Q${cx} 45.5 ${cx + 7} 50 Q${cx} 53 ${cx - 7} 50 Z`} fill="#fdfdfd" />
-          <circle cx={cx} cy={49.5} r={2.6} fill="#2a2118" />
-          <path d={`M${cx - 7} 50 Q${cx} 45.5 ${cx + 7} 50`} stroke="#241f1a" strokeWidth={1.6} fill="none" strokeLinecap="round" />
+          <path d={`M${cx - 6.3} 51 Q${cx} 47 ${cx + 6.3} 51 Q${cx} 53.3 ${cx - 6.3} 51 Z`} fill="#fdfdfd" />
+          <circle cx={cx} cy={50.6} r={2.3} fill="#2a2118" />
+          <path d={`M${cx - 6.3} 51 Q${cx} 47 ${cx + 6.3} 51`} stroke="#241f1a" strokeWidth={1.7} fill="none" strokeLinecap="round" />
         </g>
       );
     }
     if (style === 'wide') {
       return (
         <g>
-          <ellipse cx={cx} cy={50} rx={7} ry={5.4} fill="#fdfdfd" />
-          <circle cx={cx} cy={50} r={3.4} fill="#2a2118" />
-          <circle cx={cx + 1.2} cy={48.6} r={1.1} fill="#fff" opacity={0.85} />
-          <path d={`M${cx - 7} 49.6 Q${cx} 43.6 ${cx + 7} 49.6`} stroke="#241f1a" strokeWidth={1.8} fill="none" strokeLinecap="round" />
+          <ellipse cx={cx} cy={51} rx={6.2} ry={4.6} fill="#fdfdfd" />
+          <circle cx={cx} cy={51} r={3} fill="#2a2118" />
+          <circle cx={cx + 1} cy={49.7} r={0.95} fill="#fff" opacity={0.85} />
+          <path d={`M${cx - 6.2} 50.6 Q${cx} 45.2 ${cx + 6.2} 50.6`} stroke="#241f1a" strokeWidth={1.9} fill="none" strokeLinecap="round" />
         </g>
       );
     }
     if (style === 'sleepy') {
       return (
         <g>
-          <path d={`M${cx - 6.5} 50.5 Q${cx} 47 ${cx + 6.5} 50.5 Q${cx} 53.5 ${cx - 6.5} 50.5 Z`} fill="#fdfdfd" />
-          <circle cx={cx} cy={50.4} r={2.5} fill="#2a2118" />
-          <path d={`M${cx - 7} 50 Q${cx} 47 ${cx + 7} 50`} stroke="#241f1a" strokeWidth={2.2} fill="none" strokeLinecap="round" />
+          <path d={`M${cx - 5.8} 51.3 Q${cx} 48.3 ${cx + 5.8} 51.3 Q${cx} 54 ${cx - 5.8} 51.3 Z`} fill="#fdfdfd" />
+          <circle cx={cx} cy={51.2} r={2.2} fill="#2a2118" />
+          <path d={`M${cx - 6.3} 50.8 Q${cx} 48.3 ${cx + 6.3} 50.8`} stroke="#241f1a" strokeWidth={2.3} fill="none" strokeLinecap="round" />
         </g>
       );
     }
     return (
       <g>
-        <ellipse cx={cx} cy={50} rx={6.4} ry={4.6} fill="#fdfdfd" />
-        <circle cx={cx} cy={50} r={2.9} fill="#2a2118" />
-        <circle cx={cx + 1} cy={48.8} r={0.95} fill="#fff" opacity={0.8} />
-        <path d={`M${cx - 6.6} 49.4 Q${cx} 44.6 ${cx + 6.6} 49.4`} stroke="#241f1a" strokeWidth={1.7} fill="none" strokeLinecap="round" />
+        <ellipse cx={cx} cy={51} rx={5.7} ry={4} fill="#fdfdfd" />
+        <circle cx={cx} cy={51} r={2.6} fill="#2a2118" />
+        <circle cx={cx + 0.9} cy={49.9} r={0.85} fill="#fff" opacity={0.8} />
+        <path d={`M${cx - 5.9} 50.4 Q${cx} 46.2 ${cx + 5.9} 50.4`} stroke="#241f1a" strokeWidth={1.8} fill="none" strokeLinecap="round" />
       </g>
     );
   };
@@ -275,7 +303,7 @@ function NoseShape({ style, shadow, deep }: { style: NoseStyle; shadow: string; 
   if (style === 'wide') {
     return (
       <g>
-        <path d="M56 54 Q54 62 60 65 Q66 62 64 54 Z" fill={shadow} opacity={0.75} />
+        <path d="M55 54 Q53 62 60 65 Q67 62 65 54 Z" fill={shadow} opacity={0.8} />
         <ellipse cx={55.5} cy={63.5} rx={2.4} ry={1.5} fill={deep} opacity={0.6} />
         <ellipse cx={64.5} cy={63.5} rx={2.4} ry={1.5} fill={deep} opacity={0.6} />
       </g>
@@ -304,7 +332,11 @@ function MouthShape({ style }: { style: MouthStyle }) {
   return <path d="M50 71 Q60 72.4 70 71" stroke="#5e2b2b" strokeWidth={2.6} fill="none" strokeLinecap="round" />;
 }
 
-function FacialHairShape({ style, color }: { style: string; color: string }) {
+function FacialHairShape({ style, color }: { style: FacialHair; color: string }) {
+  // Five-o'clock shadow: a low-opacity wash over the jaw rather than
+  // drawn hairs, which is the only facial-hair treatment that still reads
+  // correctly once it's shrunk to a 20px roster row.
+  if (style === 'stubble') return <path d="M33 55 Q31 74 60 82 Q89 74 87 55 Q88 67 76 75 Q60 81 44 75 Q32 67 33 55 Z" fill={color} opacity={0.3} />;
   if (style === 'mustache') return <path d="M49 66.5 Q54 63.5 60 66 Q66 63.5 71 66.5 Q60 70 49 66.5 Z" fill={color} opacity={0.92} />;
   if (style === 'goatee') {
     return (

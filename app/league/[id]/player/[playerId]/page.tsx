@@ -6,6 +6,7 @@ import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { ratingColor, playerLabel } from '@/lib/ratings';
 import { formatMoney, capHit, remainingValue, marketValue, deadMoneyOnCut } from '@/lib/cap';
+import { classifyContractValue } from '@/lib/analytics';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { sortStatEntries, statLabel } from '@/lib/statLabels';
 import { CutButton } from '@/components/CutButton';
@@ -121,6 +122,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
   const market = marketValue({ ovr: view.scoutedOvr, position: player.position as any, age: player.age, potential: player.potential });
   const releaseCost = deadMoneyOnCut(player.contract, settings.capMode);
   const capTotal = capSummary?.capTotal ?? 0;
+  const valueTier = player.contract ? classifyContractValue(market - hit, market) : 'market';
 
   const heroFacts: { label: string; value: string; detail?: string; color?: string }[] = player.isDraftee
     ? [
@@ -144,8 +146,13 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           {
             label: 'Market Value',
             value: `${formatMoney(market)}/yr`,
-            detail: player.contract ? `${market - hit >= 0 ? 'surplus +' : 'over by '}${formatMoney(Math.abs(market - hit))}` : 'what the rating is worth',
-            color: player.contract ? (market - hit >= 0 ? 'text-accent' : 'text-bad') : undefined,
+            detail: !player.contract
+              ? 'what the rating is worth'
+              : valueTier === 'market'
+                ? 'paid at market rate'
+                : `${valueTier === 'bargain' ? 'surplus +' : 'over by '}${formatMoney(Math.abs(market - hit))}`,
+            // Market-rate stays the default ink — only a deviation big enough to matter earns green/red.
+            color: valueTier === 'bargain' ? 'text-accent' : valueTier === 'overpay' ? 'text-bad' : undefined,
           },
           {
             label: 'Years Left',

@@ -767,11 +767,19 @@ async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: 
 }
 
 /**
- * Decide re-sign outcomes for one team's expiring (0-years-remaining)
- * players using the same need/profile-driven logic the rest of the AI GM
- * uses, just applied to "keep your own guy" instead of "sign someone
- * else's." Shared between the AI-only offseason wave and the user-facing
- * "Let the AI pick" delegate button on the re-sign page.
+ * Decide re-sign outcomes for one team's pending players — both the
+ * truly-expired (0-years-remaining) and the walk-year (1-remaining, this is
+ * their contract's last season) ones — using the same need/profile-driven
+ * logic the rest of the AI GM uses, just applied to "keep your own guy"
+ * instead of "sign someone else's." Shared between the AI-only offseason
+ * wave and the user-facing "Let the AI pick" delegate button on the re-sign
+ * page, so both cover every decision the re-sign page actually shows, not
+ * just the subset that's already hit free agency's doorstep.
+ *
+ * A walk-year player who isn't judged worth an early extension isn't
+ * "released" — nothing happens, since he's still under contract for this
+ * season. Only an un-kept ALREADY-expired player actually walks; `released`
+ * only ever counts those.
  */
 export async function resignDecisionsForTeam(
   leagueId: string,
@@ -788,31 +796,47 @@ export async function resignDecisionsForTeam(
 
   const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
   const roster = await prisma.player.findMany({ where: { teamId, status: 'ACTIVE' }, include: { contract: true } });
-  const expiring = roster.filter((p) => p.contract && p.contract.yearsRemaining === 0);
-  if (expiring.length === 0) return { kept: 0, released: 0 };
+  const pending = roster.filter((p) => p.contract && p.contract.yearsRemaining <= 1);
+  if (pending.length === 0) return { kept: 0, released: 0 };
 
   const needs = teamNeeds(roster.map((p) => ({ id: p.id, position: p.position, trueOvr: p.trueOvr, age: p.age, potential: p.potential })));
   const profile = parseGmProfile(team.gmProfile, rng);
   let kept = 0;
+  let released = 0;
 
-  for (const p of expiring) {
+  for (const p of pending) {
+    const alreadyExpired = p.contract!.yearsRemaining === 0;
     const summary = await teamCapSummary(team.id, seasonYear, capMode);
     // [TUNE] Keep him if he's still good enough to matter and the team
     // has real room; better players and needier positions get priority.
     const worthKeeping = p.trueOvr >= 62 && (p.trueOvr >= 74 || (needs[p.position] ?? 0) > 0.3);
     const willingness = 0.35 + profile.winNow * 0.3 + (needs[p.position] ?? 0) * 0.35;
-    if (!worthKeeping || !rng.bool(willingness)) continue;
+    if (!worthKeeping || !rng.bool(willingness)) {
+      if (alreadyExpired) released++;
+      continue;
+    }
 
     const apy = Math.round(marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential }) * (0.95 + rng.float(0, 0.15)));
     const years = suggestedYears(p.trueOvr, p.age);
     const usable = summary.capSpace - 3_000_000;
-    if (usable < apy) continue;
+    if (usable < apy) {
+      if (alreadyExpired) released++;
+      continue;
+    }
     const ok = await extendContract({ leagueId, playerId: p.id, apy, years, seasonYear, capMode, week }).then(() => true).catch(() => false);
     if (ok) kept++;
+    else if (alreadyExpired) released++;
   }
-  return { kept, released: expiring.length - kept };
+  return { kept, released };
 }
 
+/**
+ * AI-only offseason wave — every non-user team decides on its own pending
+ * re-sign class before the user ever lands on the re-sign screen. Without
+ * this, no CPU team ever extends anyone: every expiring contract league-wide
+ * would hit release at the end of RESIGN and dump the entire AI side of the
+ * league into free agency every single year.
+ */
 async function runAiResignWave(leagueId: string, seasonYear: number, week: number, capMode: LeagueSettings['capMode'], rng: Rng) {
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
   for (const team of teams) {
