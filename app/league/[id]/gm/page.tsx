@@ -1,7 +1,9 @@
 import { getLeagueContext } from '@/lib/league-data';
-import { buildGmCareerSummary } from '@/lib/gmCareer';
+import { buildGmCareerSummary, tradeInvolves } from '@/lib/gmCareer';
 import { formatMoney } from '@/lib/cap';
 import { TeamLogo } from '@/components/TeamLogo';
+import Link from 'next/link';
+import { prisma } from '@/lib/db';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 const RESULT_LABEL: Record<string, string> = {
@@ -13,6 +15,38 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
   const { league, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
   const s = await buildGmCareerSummary(league.id, team, league.seasonYear);
+
+  // A first-season GM page was five sparse tiles and six hundred pixels of
+  // empty page. Two things fill it with the GM's actual body of work rather
+  // than placeholders: the season log (including the season in progress, which
+  // has no TeamSeasonRecord row yet) and the ledger of moves they've made.
+  const MOVE_TYPES = ['SIGN', 'CUT', 'DRAFT', 'TAG'];
+  const [seasonRecords, ownMoves, moveCounts, tradeRows] = await Promise.all([
+    prisma.teamSeasonRecord.findMany({ where: { teamId: team.id }, orderBy: { year: 'desc' } }),
+    prisma.transaction.findMany({
+      where: { leagueId: league.id, teamId: team.id, type: { in: MOVE_TYPES } },
+      orderBy: [{ seasonYear: 'desc' }, { createdAt: 'desc' }],
+      take: 14,
+    }),
+    prisma.transaction.groupBy({
+      by: ['type'],
+      where: { leagueId: league.id, teamId: team.id, type: { in: MOVE_TYPES } },
+      _count: true,
+    }),
+    // Trades carry no teamId — both sides are encoded in one headline — so
+    // they need the shared matcher rather than a teamId filter. Filtering
+    // these by teamId is exactly how this ledger first reported "Trades 0" on
+    // the same page whose summary tile said seven.
+    prisma.transaction.findMany({
+      where: { leagueId: league.id, type: 'TRADE' },
+      orderBy: [{ seasonYear: 'desc' }, { createdAt: 'desc' }],
+    }),
+  ]);
+  const myTrades = tradeRows.filter((t) => tradeInvolves(t.headline, team.abbr));
+  const countOf = (t: string) => (t === 'TRADE' ? myTrades.length : moveCounts.find((m) => m.type === t)?._count ?? 0);
+  const moves = [...ownMoves, ...myTrades]
+    .sort((a, b) => b.seasonYear - a.seasonYear || b.createdAt.getTime() - a.createdAt.getTime())
+    .slice(0, 14);
 
   const games = s.wins + s.losses + s.ties;
   const winPct = games > 0 ? s.wins / (s.wins + s.losses || 1) : 0;
@@ -97,6 +131,85 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
           ) : (
             <div className="text-sm text-muted">No completed seasons yet.</div>
           )}
+        </div>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-5">
+        <div className="section">
+          <div className="section-head">
+            <h2 className="section-title">Season Log</h2>
+            <span className="label-sm">{s.tenureYears} season{s.tenureYears === 1 ? '' : 's'}</span>
+          </div>
+          <div className="panel overflow-hidden">
+            <table className="table-clean">
+              <thead><tr><th>Year</th><th className="text-right">W</th><th className="text-right">L</th><th className="text-right">T</th><th className="text-right">PF</th><th className="text-right">PA</th><th>Result</th></tr></thead>
+              <tbody>
+                {/* The season in progress has no TeamSeasonRecord row until it
+                    ends, so it's synthesised here — otherwise a first-year GM
+                    sees an empty table while sitting on a 7-2 start. */}
+                <tr className="bg-accent/[0.06]">
+                  <td className="font-mono">{league.seasonYear}</td>
+                  <td className="font-mono text-right">{team.wins}</td>
+                  <td className="font-mono text-right">{team.losses}</td>
+                  <td className="font-mono text-right">{team.ties}</td>
+                  <td className="font-mono text-muted text-right">{team.pointsFor}</td>
+                  <td className="font-mono text-muted text-right">{team.pointsAgnst}</td>
+                  <td className="text-accent text-xs">In progress</td>
+                </tr>
+                {seasonRecords.map((r) => (
+                  <tr key={r.id} className={r.playoffResult === 'CHAMPION' ? 'bg-gold/5' : ''}>
+                    <td className="font-mono">{r.year}</td>
+                    <td className="font-mono text-right">{r.wins}</td>
+                    <td className="font-mono text-right">{r.losses}</td>
+                    <td className="font-mono text-right">{r.ties}</td>
+                    <td className="font-mono text-muted text-right">{r.pointsFor}</td>
+                    <td className="font-mono text-muted text-right">{r.pointsAgnst}</td>
+                    <td className={`text-xs ${r.playoffResult === 'CHAMPION' ? 'text-gold font-semibold' : 'text-muted'}`}>
+                      {r.playoffResult === 'CHAMPION' && '🏆 '}{RESULT_LABEL[r.playoffResult] ?? r.playoffResult}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="section">
+          <div className="section-head">
+            <h2 className="section-title">Your Moves</h2>
+            <Link href={`/league/${league.id}/news`} className="text-xs text-accent2 hover:underline">League wire →</Link>
+          </div>
+          <div className="panel overflow-hidden">
+            <div className="grid grid-cols-3 sm:grid-cols-5 divide-x divide-line/40 border-b border-line/70">
+              {[
+                // No "Re-signs" column: nothing in the sim writes a RESIGN
+                // transaction, so it could only ever read zero. Extensions
+                // land as SIGN and are counted there.
+                { label: 'Trades', n: countOf('TRADE') },
+                { label: 'Signings', n: countOf('SIGN') },
+                { label: 'Drafted', n: countOf('DRAFT') },
+                { label: 'Released', n: countOf('CUT') },
+                { label: 'Tags', n: countOf('TAG') },
+              ].map((c) => (
+                <div key={c.label} className="px-3 py-2.5">
+                  <div className="label-sm text-[10px]">{c.label}</div>
+                  <div className="stat-value text-stat-sm mt-1">{c.n}</div>
+                </div>
+              ))}
+            </div>
+            <div className="divide-y divide-line/50">
+              {moves.length === 0 && <div className="px-4 py-4 text-sm text-muted">No moves yet — the ledger starts with your first trade or signing.</div>}
+              {moves.map((m) => (
+                <div key={m.id} className="px-4 py-2">
+                  <div className="flex items-baseline gap-2">
+                    <span className="label-sm text-[10px] shrink-0">{m.type}</span>
+                    <span className="text-sm truncate">{m.headline}</span>
+                  </div>
+                  {m.detail && <div className="text-[11px] text-muted mt-0.5 truncate">{m.detail}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 

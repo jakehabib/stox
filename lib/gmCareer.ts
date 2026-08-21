@@ -29,6 +29,18 @@ export interface GmAward {
   year: number;
 }
 
+/**
+ * A trade transaction carries no teamId — both sides live on one row, encoded
+ * in the headline as "Trade: {abbrA} <-> {abbrB}". Anything counting a team's
+ * trades has to match on that, and it has to be this function: the GM page
+ * once filtered trades by teamId instead and reported zero on the same screen
+ * where the summary tile said seven.
+ */
+export function tradeInvolves(headline: string, abbr: string): boolean {
+  if (!headline.startsWith('Trade: ')) return false;
+  return headline.slice('Trade: '.length).split(' <-> ').includes(abbr);
+}
+
 export interface GmCareerSummary {
   tenureYears: number;
   firstYear: number;
@@ -117,12 +129,7 @@ export async function buildGmCareerSummary(
     ? { year: best.year, wins: best.wins, losses: best.losses, ties: best.ties, result: best.playoffResult }
     : null;
 
-  // Trade transactions carry no teamId (both sides are on one row) — the
-  // headline is always "Trade: {abbrA} <-> {abbrB}", so match on that.
-  const trades = tradeTx.filter((t) => {
-    const rest = t.headline.startsWith('Trade: ') ? t.headline.slice('Trade: '.length) : '';
-    return rest.split(' <-> ').includes(team.abbr);
-  }).length;
+  const trades = tradeTx.filter((t) => tradeInvolves(t.headline, team.abbr)).length;
 
   let draftHits = 0;
   for (const dp of draftPicks) {
