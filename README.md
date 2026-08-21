@@ -1542,3 +1542,19 @@ ever force-pushed over, so every state below still exists in git history).
   16 men and called them the starters (now the actual 24), "Injured
   Starters" could not see an injured WR2, and "Unmanned" read "every spot
   covered" over a group two deep at a three-starter position.
+- **2026-08-21 — Free agency finally shows your own roster (`8742c79`).**
+  The page had **nothing about your team on it**: you were asked to decide
+  on a receiver with no sight of the receivers you already had. A
+  `Vs. Your Starters` column and a depth panel now answer it, both driven
+  by one shared rule — `slotVerdict()` uses `reconcileDepthChart`'s own
+  insertion rule (**one past the last listed man who out-rates him**), not
+  "count how many of your men are better". Those agree only while the chart
+  happens to be rating-sorted, and a real save proves they don't: DAL's
+  receivers run **94, 73, 89, 74**, so the counting rule would promise an 85
+  a starting job the signing does not give — the threshold is **89**, the
+  man at ST3, not the 73 above him. Scouting fog is answered by computing
+  the verdict at both ends of the band: agree → Upgrade or Depth, disagree
+  → **Toss-up**, naming the exact number he has to match. Also fixed three
+  masthead numbers that contradicted the filter under them — filtering to TE
+  read "**140 AVAILABLE / filtered to TE**" above eight tight ends, with a
+  Best Available who was a right tackle.
