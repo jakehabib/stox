@@ -4,6 +4,8 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { computeRankDeltas } from '@/lib/standingsTrend';
 import { buildStandingsBoard, StandingsRow } from '@/lib/standingsBoard';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { prisma } from '@/lib/db';
+import { PlayoffBracket, BracketGame } from '@/components/ds/PlayoffBracket';
 import { LEAGUE } from '@/lib/tuning';
 
 /**
@@ -50,6 +52,35 @@ export default async function StandingsPage({ params }: { params: { id: string }
       )
     : new Map<string, number>();
 
+  // The postseason had no interface at all beyond "#1"-"#6" tags on the table
+  // below, and the header reads "Wk 1" for all four rounds — so a player could
+  // not tell which round was being played, let alone see the bracket.
+  const playoffGames = await prisma.game.findMany({
+    where: { leagueId: league.id, seasonYear: league.seasonYear, kind: { not: 'REGULAR' } },
+    include: { homeTeam: true, awayTeam: true },
+    orderBy: { week: 'asc' },
+  });
+  const seedOf = new Map(allTeams.map((t) => [t.id, t.seed]));
+  const bracket: BracketGame[] = playoffGames.map((g) => {
+    const homeWon = g.played && g.homeScore > g.awayScore;
+    const awayWon = g.played && g.awayScore > g.homeScore;
+    return {
+      id: g.id,
+      kind: g.kind,
+      played: g.played,
+      home: {
+        teamId: g.homeTeam.id, abbr: g.homeTeam.abbr, city: g.homeTeam.city,
+        seed: seedOf.get(g.homeTeam.id) ?? null, score: g.played ? g.homeScore : null,
+        isUser: g.homeTeam.isUser, won: homeWon,
+      },
+      away: {
+        teamId: g.awayTeam.id, abbr: g.awayTeam.abbr, city: g.awayTeam.city,
+        seed: seedOf.get(g.awayTeam.id) ?? null, score: g.played ? g.awayScore : null,
+        isUser: g.awayTeam.isUser, won: awayWon,
+      },
+    };
+  });
+
   const userRow = allTeams.find((t) => t.isUser);
   const userConf = board.find((c) => c.conference === userRow?.conference);
   const playedWeeks = userRow ? userRow.wins + userRow.losses + userRow.ties : 0;
@@ -81,7 +112,13 @@ export default async function StandingsPage({ params }: { params: { id: string }
         facts={facts}
       />
 
-      {userConf && (userConf.inField.length > 0 || userConf.inHunt.length > 0) && (
+      {/* Once the bracket exists it replaces the projection — a projected
+          field is only interesting while the field is still undecided. */}
+      {bracket.length > 0 && (
+        <PlayoffBracket leagueId={league.id} games={bracket} seasonYear={league.seasonYear} />
+      )}
+
+      {bracket.length === 0 && userConf && (userConf.inField.length > 0 || userConf.inHunt.length > 0) && (
         <PlayoffPicture leagueId={league.id} conf={userConf} />
       )}
 
