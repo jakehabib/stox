@@ -835,3 +835,36 @@ ever force-pushed over, so every state below still exists in git history).
   - Note: agent verification advanced the shared demo league
     (`cmt1vj55h...`) through a full season and offseason, so its state
     differs from earlier screenshots in this changelog.
+
+- **2026-08-21 — Standings rebuilt around the playoff picture (`4611465`).**
+  Three defects and one missing feature, all on the same screen.
+  - **The 32 team links were wrong.** Every row linked to
+    `/roster`, which only ever renders *your* team — so 31 of 32 links
+    quietly showed you your own roster no matter whose name you clicked.
+    Rivals now deep-link into their franchise history; your own row still
+    goes to your roster. The Stats page team table had the identical
+    defect (every team linked back to `/standings`) and the identical fix.
+  - **Division panels shuffled between renders.** The team query had no
+    `orderBy`, so Postgres was free to return rows in any order and the
+    eight division panels reordered themselves at random. Now ordered by
+    conference, division, abbreviation.
+  - **The League Wire ticker painted over its own label.** The marquee is
+    a later DOM sibling than the "League Wire" chip, so scrolling
+    headlines slid straight over the top of it. Fixed with an explicit
+    stacking context.
+  - **New: a live playoff picture.** `lib/standingsBoard.ts` computes the
+    conference field the same way `seedPlayoffs()` in `lib/season.ts`
+    will actually seed it at the end of week 17 — every division winner
+    above every wild card. This is the point: a projection based on raw
+    record would tell you you're 5th when the sim is going to seed you
+    4th. The test save demonstrates the rule live — a 3-2 division leader
+    seeded #4 above a 4-1 wild card at #5. Bye line and cut line are
+    drawn in, with the four teams still in the hunt and their games-back.
+  - Also added: current W/L streaks computed from the game log in a
+    single pass, point differential (the sim's actual tiebreaker) as a
+    column, and week-over-week rank movement.
+  - Verified by script against a real save: every division leader seeded,
+    no wild card above a division winner, top seed at 0.0 GB, and the
+    games-back formula checked against a hand calculation. Screenshotted
+    and read back — which is how the ticker overlap and a team-name
+    column truncating to "Jackso..." were caught.
