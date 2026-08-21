@@ -5,6 +5,7 @@ import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, philosophySu
 import { projectedDraftOrder, imminentDraftYear } from './draft';
 import { CapMode } from './types';
 import { recordTrade } from './tradeRetro';
+import { deadMoneyOnCut } from './cap';
 
 /**
  * ===========================================================================
@@ -192,18 +193,47 @@ export async function executeTrade(opts: {
   });
 
   await prisma.$transaction(async (tx) => {
-    const move = async (assets: TradeAsset[], toTeam: string) => {
+    /**
+     * Trading a player away does NOT hand his signing-bonus proration to the
+     * team acquiring him — in real football the whole remaining bonus (void
+     * years included) accelerates onto the cap of the team giving him up, and
+     * the new team inherits base salary only. Without this, dumping a
+     * bonus-heavy contract was a way to escape it entirely.
+     */
+    const move = async (assets: TradeAsset[], fromTeam: string, toTeam: string) => {
       for (const a of assets) {
         if (a.type === 'PLAYER') {
+          const contract = await tx.contract.findUnique({ where: { playerId: a.id } });
+          if (contract && capMode === 'REALISTIC') {
+            const accelerated = deadMoneyOnCut(contract, capMode);
+            if (accelerated > 0) {
+              const p = await tx.player.findUniqueOrThrow({ where: { id: a.id } });
+              await tx.capCharge.create({
+                data: {
+                  teamId: fromTeam,
+                  year: opts.seasonYear,
+                  amount: accelerated,
+                  label: `Traded away — ${p.firstName} ${p.lastName}`,
+                },
+              });
+            }
+          }
           await tx.player.update({ where: { id: a.id }, data: { teamId: toTeam } });
-          await tx.contract.updateMany({ where: { playerId: a.id }, data: { teamId: toTeam } });
+          // Bonus stays behind with the old team as the charge above, so the
+          // contract that travels carries base salary and nothing else.
+          await tx.contract.updateMany({
+            where: { playerId: a.id },
+            data: capMode === 'REALISTIC'
+              ? { teamId: toTeam, signingBonus: 0, voidYears: 0 }
+              : { teamId: toTeam },
+          });
         } else {
           await tx.draftPick.update({ where: { id: a.id }, data: { ownerTeamId: toTeam } });
         }
       }
     };
-    await move(opts.aToB, opts.teamB);
-    await move(opts.bToA, opts.teamA);
+    await move(opts.aToB, opts.teamA, opts.teamB);
+    await move(opts.bToA, opts.teamB, opts.teamA);
 
     await tx.transaction.create({
       data: {

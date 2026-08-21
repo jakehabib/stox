@@ -6,6 +6,7 @@ import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE, AI, Position } from '@/lib/tuning';
 import { bigBoardScore } from '@/lib/gen/prospectProfile';
+import { imminentDraftYear } from '@/lib/draft';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { DraftPickButton } from '@/components/DraftPickButton';
 import { LiveDraftTicker } from '@/components/LiveDraftTicker';
@@ -13,6 +14,7 @@ import { ShortlistStar } from '@/components/ShortlistStar';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
 import { SectionHeading } from '@/components/ds/SectionHeading';
+import { PageMasthead } from '@/components/ds/PageMasthead';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 
 type SortKey = 'consensus' | 'pos' | 'ovr' | 'age' | 'potential';
@@ -168,6 +170,27 @@ export default async function DraftPage({ params, searchParams }: { params: { id
 
   const onClockColor = onClockTeam ? generateTeamLogoParams(onClockTeam.id).primary : undefined;
 
+  // How much of this class you actually have a read on, and how much draft
+  // capital you hold — the two things that decide whether the board in front
+  // of you is useful yet.
+  //
+  // "Scouted" deliberately means HIGH confidence, not "confidence > 0": every
+  // prospect carries a baseline report from league creation, so a >0 test
+  // marked the entire class scouted and told you nothing. This matches the
+  // threshold ScoutingRange itself labels HIGH.
+  const scoutedCount = rows.filter(({ view }) => view.confidence >= 75).length;
+  // Picks for the NEXT draft, not the current season year — once a draft has
+  // happened, seasonYear and the upcoming draft year diverge (see lib/draft.ts).
+  // Null once no future draft is scheduled — fall back to counting every
+  // unused pick rather than silently reporting zero.
+  const upcomingDraftYear = await imminentDraftYear(league.id);
+  const myPickCount = await prisma.draftPick.count({
+    where: {
+      leagueId: league.id, ownerTeamId: team.id, used: false,
+      ...(upcomingDraftYear !== null ? { year: upcomingDraftYear } : {}),
+    },
+  });
+
   return (
     <div className="space-y-6">
       {classOutlook && (
@@ -178,16 +201,35 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       )}
 
       {!(state && onClockTeam) && (
-        <div>
-          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">
-            {state ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft — Round ${state.round}`) : `${league.seasonYear} Draft Class`}
-          </h1>
-          <p className="text-muted text-sm mt-1">
-            {state
-              ? `Pick ${state.pickIndex + 1} of ${totalPicks}`
-              : `${pool.length} prospects on the board — scout them now, the draft opens after free agency.`}
-          </p>
-        </div>
+        <PageMasthead
+          teamId={team.id}
+          teamAbbr={team.abbr}
+          eyebrow={state ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft · Round ${state.round}`) : 'Scouting Hub'}
+          // Named for the draft these prospects are actually selected in, not
+          // the season being played: they're generated during one season and
+          // drafted in the offseason after it, so seasonYear runs a year early
+          // and wouldn't match the picks you'd spend on them.
+          title={state ? `Pick ${state.pickIndex + 1} of ${totalPicks}` : `${upcomingDraftYear ?? league.seasonYear} Draft Class`}
+          subtitle={state
+            ? undefined
+            : 'The incoming class is browsable all season — scout them now, the draft opens after free agency.'}
+          facts={[
+            { label: 'Prospects', value: String(pool.length), detail: searchParams.pos ? `filtered to ${searchParams.pos}` : 'on the board' },
+            {
+              label: 'Shortlisted',
+              value: String(shortlistIds.size),
+              detail: shortlistIds.size > 0 ? 'flagged to watch' : 'star anyone to track them',
+              color: shortlistIds.size > 0 ? 'text-gold' : undefined,
+            },
+            { label: 'Your Picks', value: String(myPickCount), detail: upcomingDraftYear !== null ? `owned in the ${upcomingDraftYear} draft` : 'unused picks owned' },
+            {
+              label: 'Well Scouted',
+              value: `${scoutedCount}`,
+              detail: pool.length > 0 ? `of ${pool.length} — high confidence` : 'nobody yet',
+              color: scoutedCount === 0 ? 'text-warn' : undefined,
+            },
+          ]}
+        />
       )}
 
       {state && onClockTeam && (

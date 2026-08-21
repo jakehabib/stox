@@ -11,8 +11,7 @@ import { LineChart } from '@/components/charts/LineChart';
 import { ScatterChart } from '@/components/charts/ScatterChart';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { MetricTiles } from '@/components/ds/MetricTiles';
-import { TeamLogo } from '@/components/TeamLogo';
-import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { PageMasthead } from '@/components/ds/PageMasthead';
 import { buildCapHealth, rankContractValue, type CapHealth, type SurplusRow } from '@/lib/analytics';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'cap' | 'base' | 'years' | 'savings';
@@ -58,7 +57,6 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
   ]);
 
   const usedPct = Math.min(100, Math.round((summary.capUsed / summary.capTotal) * 100));
-  const teamColor = generateTeamLogoParams(team.id).primary;
 
   const rows = players.map((p) => {
     const bases = p.contract ? (JSON.parse(p.contract.baseSalaries) as number[]) : [];
@@ -196,55 +194,46 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Salary Cap — {league.seasonYear}</h1>
-        <div className="flex gap-1.5">
-          <Link href={`/league/${league.id}/cap`} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
-          <Link href={`/league/${league.id}/cap?view=advanced`} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
+      <PageMasthead
+        teamId={team.id}
+        teamAbbr={team.abbr}
+        eyebrow={`${league.seasonYear} Salary Cap`}
+        title={`${team.city} ${team.nickname}`}
+        action={
+          <div className="flex gap-1.5">
+            <Link href={`/league/${league.id}/cap`} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
+            <Link href={`/league/${league.id}/cap?view=advanced`} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
+          </div>
+        }
+        facts={[
+          {
+            label: 'Cap Space',
+            value: formatMoney(summary.capSpace),
+            detail: `${usedPct}% of the cap used`,
+            color: summary.capSpace >= 0 ? 'text-accent' : 'text-bad',
+          },
+          { label: 'Cap Limit', value: formatMoney(summary.capTotal), detail: `${league.seasonYear} league cap` },
+          { label: 'Committed', value: formatMoney(summary.capUsed), detail: `${players.length} contracts` },
+          {
+            label: 'Dead Money',
+            value: formatMoney(summary.deadMoney),
+            detail: summary.deadMoney > 0 ? 'already spent, unrecoverable' : 'none on the books',
+            color: summary.deadMoney > 0 ? 'text-bad' : 'text-accent',
+          },
+          { label: 'Mode', value: settings.capMode === 'REALISTIC' ? 'Realistic' : 'Simplified', detail: 'set in league settings' },
+        ]}
+      />
+
+      <div className="panel p-4">
+        <div className="flex items-center justify-between mb-2 text-sm">
+          <span className="label-sm">Cap Usage</span>
+          <span className="text-muted">
+            {formatMoney(summary.activeSalary)} active salary
+            {summary.deadMoney > 0 && <span className="text-bad"> · {formatMoney(summary.deadMoney)} dead</span>}
+          </span>
         </div>
-      </div>
-
-      <div
-        className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
-        style={{
-          ['--team-accent' as never]: teamColor,
-          borderColor: 'var(--team-accent)',
-          background: 'radial-gradient(ellipse 120% 140% at 100% 0%, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 70%)',
-        }}
-      >
-        <div
-          className="absolute inset-0 opacity-[0.05] pointer-events-none"
-          style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
-        />
-        <TeamLogo seed={team.id} abbr={team.abbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
-
-        <div className="relative px-6 py-6">
-          <div className="flex items-end justify-between flex-wrap gap-4 mb-4">
-            <div>
-              <div className="label-sm">Cap Space</div>
-              <div
-                className={`stat-value text-stat-xl leading-none mt-1 ${summary.capSpace < 0 ? 'text-bad' : ''}`}
-                style={summary.capSpace >= 0 ? { color: 'var(--team-text)' } : undefined}
-              >
-                {formatMoney(summary.capSpace)}
-              </div>
-            </div>
-            <div className="text-sm text-muted text-right">{formatMoney(summary.capUsed)} used of {formatMoney(summary.capTotal)}</div>
-          </div>
-          <div className="h-3 bg-raised rounded-full overflow-hidden">
-            <div className={`h-full ${usedPct > 96 ? 'bg-bad' : usedPct > 85 ? 'bg-warn' : 'bg-accent'}`} style={{ width: `${usedPct}%` }} />
-          </div>
-          <div className="grid grid-cols-3 gap-4 mt-5 text-sm">
-            <div><div className="label-sm">Active Salary</div><div className="font-mono">{formatMoney(summary.activeSalary)}</div></div>
-            <div>
-              <div className="label-sm inline-flex items-center gap-1.5">
-                Dead Money
-                <Tooltip text="Cap charges left behind by players already cut or traded away — signing bonus proration that has to count against the cap somewhere even though they're gone. It still counts against your space, but nothing you do now changes it." />
-              </div>
-              <div className="font-mono">{formatMoney(summary.deadMoney)}</div>
-            </div>
-            <div><div className="label-sm">Mode</div><div>{settings.capMode === 'REALISTIC' ? 'Realistic' : 'Simplified'}</div></div>
-          </div>
+        <div className="h-3 bg-raised rounded-full overflow-hidden">
+          <div className={`h-full ${usedPct > 96 ? 'bg-bad' : usedPct > 85 ? 'bg-warn' : 'bg-accent'}`} style={{ width: `${usedPct}%` }} />
         </div>
       </div>
 

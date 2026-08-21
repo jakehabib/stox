@@ -13,7 +13,13 @@ import { positionBadgeClass } from './ds/positionColor';
 import type { PhilosophySummary } from '@/lib/ai/gm';
 import type { TradePartnerSuggestion } from '@/lib/trade';
 
-interface RosterP { id: string; name: string; position: string; ovr: number; age: number; capHit: number; yearsRemaining: number }
+interface RosterP {
+  id: string; name: string; position: string; ovr: number; age: number; capHit: number; yearsRemaining: number;
+  /** Cap actually freed by sending him out — his hit minus the bonus that accelerates onto you. */
+  freedIfSent: number;
+  /** Cap actually taken on by acquiring him — base salary only; his bonus stays with his old team. */
+  addedIfAcquired: number;
+}
 /** projectedSlot: where this pick would land "if the season ended today" — only ever set for a current-year pick, since a future year has no standings yet to project from. */
 interface Pick { id: string; year: number; round: number; slot: number; projectedSlot?: number }
 interface Team { id: string; name: string; abbr: string; philosophy?: PhilosophySummary }
@@ -55,11 +61,25 @@ export function TradeBuilder({
   // Cap impact of exactly what's selected right now — updates live as
   // players are picked, not just after proposing, so the space you'd be
   // left with is visible before you ever hit accept.
+  // Asymmetric on purpose: sending a player out frees his hit MINUS the bonus
+  // that accelerates onto your cap, and acquiring one adds base salary only
+  // (his bonus stays behind with his old team). Using his raw cap hit for both
+  // sides would overstate what a bonus-heavy contract actually saves you.
   const capAfter = useMemo(() => {
-    const freed = [...give].reduce((sum, id) => sum + (myRoster.find((r) => r.id === id)?.capHit ?? 0), 0);
-    const added = [...get].reduce((sum, id) => sum + (partnerRoster.find((r) => r.id === id)?.capHit ?? 0), 0);
+    const freed = [...give].reduce((sum, id) => sum + (myRoster.find((r) => r.id === id)?.freedIfSent ?? 0), 0);
+    const added = [...get].reduce((sum, id) => sum + (partnerRoster.find((r) => r.id === id)?.addedIfAcquired ?? 0), 0);
     return capSpace + freed - added;
   }, [give, get, myRoster, partnerRoster, capSpace]);
+
+  // Dead money you'd eat by sending these players out — surfaced separately
+  // because it's the part a raw "cap space after" number hides.
+  const deadIncurred = useMemo(
+    () => [...give].reduce((sum, id) => {
+      const r = myRoster.find((x) => x.id === id);
+      return sum + (r ? r.capHit - r.freedIfSent : 0);
+    }, 0),
+    [give, myRoster],
+  );
 
   // "Best trade partners" — when exactly one player is selected to shop,
   // surface which other teams actually need that position instead of making
@@ -173,6 +193,11 @@ export function TradeBuilder({
           {capMode !== 'OFF' && (
             <span>
               Your cap space after: <span className={`stat-value text-stat-sm ${capAfter < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(capAfter)}</span>
+            </span>
+          )}
+          {capMode === 'REALISTIC' && deadIncurred > 0 && (
+            <span title="Signing-bonus proration on the players you're sending out accelerates onto your cap the moment the trade goes through — it does not follow them to their new team.">
+              Dead money you'd eat: <span className="stat-value text-stat-sm text-bad">{formatMoney(deadIncurred)}</span>
             </span>
           )}
         </div>

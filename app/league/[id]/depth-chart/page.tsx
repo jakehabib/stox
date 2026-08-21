@@ -3,8 +3,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { POSITIONS } from '@/lib/tuning';
 import { DepthChartGroup } from '@/components/DepthChartGroup';
 import { AutoSortButton } from '@/components/AutoSortButton';
-import { TeamLogo } from '@/components/TeamLogo';
-import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { PageMasthead } from '@/components/ds/PageMasthead';
 
 export default async function DepthChartPage({ params }: { params: { id: string } }) {
   const { userTeam } = await getLeagueContext(params.id);
@@ -26,40 +25,50 @@ export default async function DepthChartPage({ params }: { params: { id: string 
     orderByPosition[pos] = [...ranked, ...rest];
   }
 
-  const teamColor = generateTeamLogoParams(team.id).primary;
   const groupCount = POSITIONS.filter((pos) => byPosition[pos].length > 0).length;
   const thinGroups = POSITIONS.filter((pos) => byPosition[pos].length === 1).length;
+  const emptyGroups = POSITIONS.filter((pos) => byPosition[pos].length === 0).length;
+  // Average rating of whoever currently sits atop each group — the closest
+  // single number to "how good is the lineup this page actually sets."
+  const starterOvrs = POSITIONS
+    .map((pos) => orderByPosition[pos]?.[0])
+    .filter((id): id is string => !!id)
+    .map((id) => players.find((p) => p.id === id)?.trueOvr)
+    .filter((v): v is number => typeof v === 'number');
+  const starterAvgOvr = starterOvrs.length > 0
+    ? starterOvrs.reduce((s, v) => s + v, 0) / starterOvrs.length
+    : 0;
+  const injuredStarters = POSITIONS.filter((pos) => {
+    const topId = orderByPosition[pos]?.[0];
+    if (!topId) return false;
+    const starter = players.find((p) => p.id === topId);
+    return (starter?.injuryWeeks ?? 0) > 0;
+  }).length;
 
   return (
     <div className="space-y-6">
-      <div
-        className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
-        style={{
-          ['--team-accent' as never]: teamColor,
-          borderColor: 'var(--team-accent)',
-          background: 'radial-gradient(ellipse 120% 140% at 100% 0%, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 70%)',
-        }}
-      >
-        <div
-          className="absolute inset-0 opacity-[0.05] pointer-events-none"
-          style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
-        />
-        <TeamLogo seed={team.id} abbr={team.abbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
-
-        <div className="relative flex flex-wrap items-center justify-between gap-4 px-6 py-5">
-          <div>
-            <div className="label-sm">Depth Chart · {groupCount} Groups</div>
-            <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none mt-1" style={{ color: 'var(--team-text)' }}>
-              {team.city} {team.nickname}
-            </div>
-            <p className="text-muted text-sm mt-1.5">
-              Set who starts. Sim engine uses this order every game.
-              {thinGroups > 0 && <span className="text-warn"> {thinGroups} position{thinGroups > 1 ? 's' : ''} with no backup.</span>}
-            </p>
-          </div>
-          <AutoSortButton teamId={team.id} />
-        </div>
-      </div>
+      <PageMasthead
+        teamId={team.id}
+        teamAbbr={team.abbr}
+        eyebrow="Depth Chart"
+        title={`${team.city} ${team.nickname}`}
+        subtitle="Set who starts. The sim engine uses this order every game."
+        action={<AutoSortButton teamId={team.id} />}
+        facts={[
+          // Colour stays off the group count itself — 16 groups isn't the
+          // problem, an unmanned one is, and that gets its own tile below.
+          { label: 'Position Groups', value: String(groupCount), detail: 'with at least one player' },
+          {
+            label: 'Unmanned',
+            value: String(emptyGroups),
+            detail: emptyGroups > 0 ? 'nobody rostered there' : 'every spot covered',
+            color: emptyGroups > 0 ? 'text-bad' : 'text-accent',
+          },
+          { label: 'Starter OVR', value: starterAvgOvr.toFixed(1), detail: 'average across the ones', color: undefined },
+          { label: 'No Backup', value: String(thinGroups), detail: thinGroups > 0 ? 'one injury from a hole' : 'depth everywhere', color: thinGroups > 0 ? 'text-warn' : 'text-accent' },
+          { label: 'Injured Starters', value: String(injuredStarters), detail: injuredStarters > 0 ? 'reorder before kickoff' : 'none', color: injuredStarters > 0 ? 'text-bad' : 'text-accent' },
+        ]}
+      />
 
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
         {POSITIONS.filter((pos) => byPosition[pos].length > 0).map((pos) => (

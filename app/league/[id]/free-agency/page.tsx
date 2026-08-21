@@ -7,11 +7,10 @@ import { marketValue, formatMoney } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { positionSortKey } from '@/lib/league-data';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
-import { TeamLogo } from '@/components/TeamLogo';
-import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { RatingBadge } from '@/components/ds/RatingBadge';
 import { ScoutingRange } from '@/components/ds/ScoutingRange';
+import { PageMasthead } from '@/components/ds/PageMasthead';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'market';
 
@@ -36,7 +35,6 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   const reportMap = new Map(reports.map((r) => [r.playerId, r]));
 
   const capSummary = settings.capMode === 'OFF' ? null : await teamCapSummary(team.id, league.seasonYear, settings.capMode);
-  const teamColor = generateTeamLogoParams(team.id).primary;
 
   const topView = topAvailable ? buildScoutedView({
     position: topAvailable.position as any, trueAttrs: readJson(topAvailable.trueAttrs, {}), trueOvr: topAvailable.trueOvr, potential: topAvailable.potential,
@@ -68,6 +66,11 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
     }
   });
 
+  // How many of the listed free agents you could actually fit under the cap at
+  // their estimated rate — the difference between "100 available" and "100 you
+  // can do something about."
+  const affordable = capSummary ? rows.filter((r) => r.market <= capSummary.capSpace).length : null;
+
   const posQuery = searchParams.pos ? `pos=${searchParams.pos}&` : '';
   const sortHref = (key: SortKey) => {
     const nextDir = sortKey === key && dir === -1 ? 'asc' : 'desc';
@@ -80,41 +83,33 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
 
   return (
     <div className="space-y-6">
-      <div
-        className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
-        style={{
-          ['--team-accent' as never]: teamColor,
-          borderColor: 'var(--team-accent)',
-          background: 'radial-gradient(ellipse 120% 140% at 100% 0%, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 70%)',
-        }}
-      >
-        <div
-          className="absolute inset-0 opacity-[0.05] pointer-events-none"
-          style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
-        />
-        <TeamLogo seed={team.id} abbr={team.abbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
-
-        <div className="relative flex flex-wrap items-center justify-between gap-4 px-6 py-5">
-          <div>
-            <div className="label-sm">Free Agency</div>
-            <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none mt-1" style={{ color: 'var(--team-text)' }}>
-              {freeAgents.length} Available
-            </div>
-            <p className="text-muted text-sm mt-1.5">Offer a contract to open negotiations.</p>
-          </div>
-          {capSummary && (
-            <div className="text-right">
-              <div className="label-sm">Cap Space</div>
-              <div
-                className={`stat-value text-stat-lg leading-none mt-1 ${capSummary.capSpace < 0 ? 'text-bad' : ''}`}
-                style={capSummary.capSpace >= 0 ? { color: 'var(--team-text)' } : undefined}
-              >
-                {formatMoney(capSummary.capSpace)}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      <PageMasthead
+        teamId={team.id}
+        teamAbbr={team.abbr}
+        eyebrow="Free Agency"
+        title={`${freeAgents.length} Available`}
+        subtitle="Offer a contract to open negotiations. Rival teams bid on the same players, so a fair offer isn't always the winning one."
+        facts={[
+          ...(capSummary ? [{
+            label: 'Cap Space',
+            value: formatMoney(capSummary.capSpace),
+            detail: 'room to spend',
+            color: capSummary.capSpace >= 0 ? 'text-accent' : 'text-bad',
+          }] : []),
+          { label: 'On The Market', value: String(freeAgents.length), detail: searchParams.pos ? `filtered to ${searchParams.pos}` : 'all positions' },
+          ...(topAvailable && topView ? [{
+            label: 'Best Available',
+            value: String(topView.revealed || topView.confidence >= 90 ? topView.scoutedOvr : `${topView.ovrLow}-${topView.ovrHigh}`),
+            detail: `${topAvailable.position} · ${topAvailable.firstName} ${topAvailable.lastName}`,
+          }] : []),
+          ...(affordable !== null ? [{
+            label: 'Within Budget',
+            value: String(affordable),
+            detail: 'at estimated market rate',
+            color: affordable === 0 ? 'text-warn' : undefined,
+          }] : []),
+        ]}
+      />
 
       {topAvailable && topView && (
         <div className="panel p-4 flex items-center gap-4 flex-wrap">

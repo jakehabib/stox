@@ -4,6 +4,7 @@ import { teamCapSummary } from '@/lib/cap-summary';
 import { capHit, formatMoney } from '@/lib/cap';
 import { ResignRow } from '@/components/ResignRow';
 import { LetAiResignButton } from '@/components/LetAiResignButton';
+import { PageMasthead } from '@/components/ds/PageMasthead';
 
 export default async function ResignPage({ params }: { params: { id: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -27,31 +28,45 @@ export default async function ResignPage({ params }: { params: { id: string } })
     ? (await prisma.contract.findFirst({ where: { teamId: team.id, isFranchiseTag: true, signedYear: league.seasonYear } })) !== null
     : true;
 
+  // Cost to keep everyone at their current number — a floor, not a quote, but
+  // it answers "can I even afford this group" before you open a single deal.
+  const currentCost = settings.capMode === 'OFF'
+    ? 0
+    : expiring.reduce((s, p) => s + capHit(p.contract, settings.capMode), 0);
+
   return (
     <div className="space-y-5 max-w-4xl">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="max-w-2xl">
-          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Re-sign Window</h1>
-          <p className="text-muted text-sm mt-1">
-            Players whose deals are up or about to be. Extend anyone you want to keep — whoever's still undecided once the
-            re-sign phase ends gets released to free agency, and other teams can sign them from there.
-          </p>
-        </div>
-        {trulyExpiringCount > 0 && <LetAiResignButton leagueId={league.id} />}
-      </div>
-
-      {summary && (
-        <div className="panel p-4 flex items-center justify-between gap-4">
-          <div>
-            <div className="label-sm">Cap Space</div>
-            <div className={`stat-value text-stat-md leading-none mt-1 ${summary.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(summary.capSpace)}</div>
-          </div>
-          <div className="text-sm text-muted text-right">
-            {expiring.length} contract{expiring.length === 1 ? '' : 's'} to decide on
-            {trulyExpiringCount > 0 && <span className="text-bad"> · {trulyExpiringCount} already expired</span>}
-          </div>
-        </div>
-      )}
+      <PageMasthead
+        teamId={team.id}
+        teamAbbr={team.abbr}
+        eyebrow={`${league.seasonYear} Offseason`}
+        title="Re-sign Window"
+        subtitle="Players whose deals are up or about to be. Extend anyone you want to keep — whoever's still undecided once the re-sign phase ends gets released to free agency, and other teams can sign them from there."
+        action={trulyExpiringCount > 0 ? <LetAiResignButton leagueId={league.id} /> : undefined}
+        facts={[
+          { label: 'Decisions', value: String(expiring.length), detail: 'contracts on the clock' },
+          {
+            label: 'Already Expired',
+            value: String(trulyExpiringCount),
+            detail: trulyExpiringCount > 0 ? 'walk if not re-signed' : 'none yet',
+            color: trulyExpiringCount > 0 ? 'text-bad' : 'text-accent',
+          },
+          ...(summary ? [
+            {
+              label: 'Cap Space',
+              value: formatMoney(summary.capSpace),
+              detail: `${formatMoney(summary.capUsed)} committed`,
+              color: summary.capSpace >= 0 ? 'text-accent' : 'text-bad',
+            },
+            {
+              label: 'Cost To Keep All',
+              value: formatMoney(currentCost),
+              detail: 'at current cap hits',
+              color: currentCost > summary.capSpace ? 'text-warn' : undefined,
+            },
+          ] : []),
+        ]}
+      />
 
       {expiring.length === 0 ? (
         <div className="panel p-4 text-sm text-muted">Nobody's contract is expiring soon — nothing to do here. Advance whenever you're ready.</div>

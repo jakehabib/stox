@@ -10,6 +10,8 @@ import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { FillRosterButton } from '@/components/FillRosterButton';
 import { positionBadgeClass } from '@/components/ds/positionColor';
+import { PageMasthead } from '@/components/ds/PageMasthead';
+import { teamCapSummary } from '@/lib/cap-summary';
 
 type SortKey = 'pos' | 'ovr' | 'age' | 'potential' | 'cap' | 'years';
 
@@ -70,15 +72,47 @@ export default async function RosterPage({ params, searchParams }: { params: { i
     return `/league/${league.id}/roster?sort=${key}&dir=${nextDir}`;
   };
 
+  // Roster health at a glance — the questions you open this page to answer,
+  // rather than making you scan 50 rows to work them out.
+  const capSummary = settings.capMode === 'OFF'
+    ? null
+    : await teamCapSummary(team.id, league.seasonYear, settings.capMode);
+  const injured = players.filter((p) => p.injuryWeeks > 0).length;
+  const avgAge = players.length > 0 ? players.reduce((s, p) => s + p.age, 0) / players.length : 0;
+  const avgOvr = rows.length > 0 ? rows.reduce((s, r) => s + r.view.scoutedOvr, 0) / rows.length : 0;
+  const expiring = players.filter((p) => (p.contract?.yearsRemaining ?? 99) <= 1).length;
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Roster</h1>
-          <p className="text-muted text-sm mt-1">{players.length} players · {team.city} {team.nickname}</p>
-        </div>
-        <FillRosterButton leagueId={league.id} teamId={team.id} />
-      </div>
+      <PageMasthead
+        teamId={team.id}
+        teamAbbr={team.abbr}
+        eyebrow={`${league.seasonYear} Roster`}
+        title={`${team.city} ${team.nickname}`}
+        action={<FillRosterButton leagueId={league.id} teamId={team.id} />}
+        facts={[
+          {
+            label: 'Roster Size',
+            value: String(players.length),
+            detail: injured > 0 ? `${injured} injured` : 'all healthy',
+            color: injured > 0 ? 'text-warn' : undefined,
+          },
+          { label: `Average ${ovrLabel}`, value: avgOvr.toFixed(1), detail: 'across the roster' },
+          { label: 'Average Age', value: avgAge.toFixed(1), detail: 'years' },
+          {
+            label: 'Expiring',
+            value: String(expiring),
+            detail: expiring > 0 ? 'deals up within a year' : 'nothing up soon',
+            color: expiring > 0 ? 'text-warn' : undefined,
+          },
+          ...(capSummary ? [{
+            label: 'Cap Space',
+            value: formatMoney(capSummary.capSpace),
+            detail: `${formatMoney(capSummary.capUsed)} committed`,
+            color: capSummary.capSpace >= 0 ? 'text-accent' : 'text-bad',
+          }] : []),
+        ]}
+      />
 
       <div className="panel overflow-hidden">
         <div className="overflow-x-auto">

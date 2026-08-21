@@ -3,7 +3,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { TradeBuilder } from '@/components/TradeBuilder';
 import { PendingTradeOffers } from '@/components/PendingTradeOffers';
 import { parseGmProfile, philosophySummary } from '@/lib/ai/gm';
-import { capHit } from '@/lib/cap';
+import { capHit, capSavingsOnCut, proration, formatMoney } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { readJson } from '@/lib/json';
 import { isTradeDeadlinePassed } from '@/lib/trade';
@@ -11,6 +11,7 @@ import { projectedDraftOrder, imminentDraftYear } from '@/lib/draft';
 import type { TradeAsset } from '@/lib/trade';
 import { buildTradeRetrospectives } from '@/lib/tradeRetro';
 import { TradeRetrospectives } from '@/components/TradeRetrospectives';
+import { PageMasthead } from '@/components/ds/PageMasthead';
 
 export default async function TradePage({ params, searchParams }: { params: { id: string }; searchParams: { with?: string; reviewOffer?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -49,11 +50,21 @@ export default async function TradePage({ params, searchParams }: { params: { id
     buildTradeRetrospectives(league.id, team.id, settings.capMode, league.seasonYear),
   ]);
 
-  const toRosterP = (p: (typeof myRoster)[number]) => ({
-    id: p.id, name: `${p.firstName} ${p.lastName}`, position: p.position, ovr: p.trueOvr, age: p.age,
-    capHit: settings.capMode === 'OFF' ? 0 : capHit(p.contract, settings.capMode),
-    yearsRemaining: p.contract?.yearsRemaining ?? 0,
-  });
+  // Trading a player accelerates his remaining bonus onto the team giving him
+  // up (see executeTrade), so the two sides of a swap are NOT symmetric:
+  // sending him away frees his hit minus the dead money you keep, while
+  // receiving him only adds his base salary. Both figures are computed here
+  // so the builder's live cap readout matches what actually happens.
+  const toRosterP = (p: (typeof myRoster)[number]) => {
+    const off = settings.capMode === 'OFF';
+    return {
+      id: p.id, name: `${p.firstName} ${p.lastName}`, position: p.position, ovr: p.trueOvr, age: p.age,
+      capHit: off ? 0 : capHit(p.contract, settings.capMode),
+      freedIfSent: off ? 0 : capSavingsOnCut(p.contract, settings.capMode),
+      addedIfAcquired: off ? 0 : capHit(p.contract, settings.capMode) - (settings.capMode === 'REALISTIC' && p.contract ? proration(p.contract) : 0),
+      yearsRemaining: p.contract?.yearsRemaining ?? 0,
+    };
+  };
 
   // Only the next draft that hasn't happened yet gets a live projection — a
   // further-future year has no standings to project from at all. This is
@@ -66,10 +77,35 @@ export default async function TradePage({ params, searchParams }: { params: { id
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Trade Center</h1>
-        <p className="text-muted text-sm mt-1">Build an offer. The AI values players and picks the same way it does everywhere else — no free lunches.</p>
-      </div>
+      <PageMasthead
+        teamId={team.id}
+        teamAbbr={team.abbr}
+        eyebrow={deadlinePassed ? `${league.seasonYear} · Deadline Passed` : `${league.seasonYear} Trade Market`}
+        title="Trade Center"
+        subtitle="Build an offer. The AI values players and picks the same way it does everywhere else — no free lunches."
+        facts={[
+          {
+            label: 'Pending Offers',
+            value: String(pendingOffers.length),
+            detail: pendingOffers.length > 0 ? 'waiting on you' : 'nothing incoming',
+            color: pendingOffers.length > 0 ? 'text-accent2' : undefined,
+          },
+          { label: 'Tradeable Picks', value: String(myPicks.length), detail: 'across all future years' },
+          ...(capSummary ? [{
+            label: 'Cap Space',
+            value: formatMoney(capSummary.capSpace),
+            detail: 'before any deal',
+            color: capSummary.capSpace >= 0 ? 'text-accent' : 'text-bad',
+          }] : []),
+          {
+            label: 'Deadline',
+            value: deadlinePassed ? 'Passed' : settings.tradeDeadlineEnabled ? `Week ${settings.tradeDeadlineWeek}` : 'None',
+            detail: deadlinePassed ? 'reopens in free agency' : settings.tradeDeadlineEnabled ? 'trades close after this' : 'trade year-round',
+            color: deadlinePassed ? 'text-bad' : undefined,
+          },
+          { label: 'Trades Made', value: String(retrospectives.length), detail: 'graded below' },
+        ]}
+      />
 
       <PendingTradeOffers
         leagueId={league.id}
