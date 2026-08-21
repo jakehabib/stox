@@ -55,7 +55,21 @@ export default async function TeamDashboard({ params }: { params: { id: string }
     // lib/wireRank.ts). Fetching six most-recent rows and ranking them
     // would rank six injury reports against each other. 90% of this pool is
     // injuries, so the window has to be wide enough to reach real news.
-    prisma.transaction.findMany({ where: { leagueId: league.id, OR: [{ teamId: team.id }, { teamId: null }] }, orderBy: { createdAt: 'desc' }, take: 200 }),
+    // seasonYear floor: league creation seeds ~two decades of fictional
+    // backstory (a champion and five awards per year), all written at
+    // creation time, so `createdAt desc` put every one of them ahead of
+    // anything that has happened in the save. Ranking cannot recover from
+    // that on its own — createdAt is honest about when the row was written
+    // and silent about when the event happened.
+    prisma.transaction.findMany({
+      where: {
+        leagueId: league.id,
+        OR: [{ teamId: team.id }, { teamId: null }],
+        seasonYear: { gte: league.seasonYear - 1 },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    }),
     prisma.team.findMany({ where: { leagueId: league.id, conference: team.conference, division: team.division } }),
     // Only the clinch-scenario math needs the full conference (wildcard
     // race spans every division) — the standings panel itself stays
@@ -189,6 +203,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   // division, so resolve abbrs from exactly the teams referenced here. ---
   const { items: rankedTx, collapsedInjuries } = rankWire(transactions, {
     userTeamId: team.id,
+    currentSeasonYear: league.seasonYear,
     currentWeek: league.week,
     limit: 6,
   });

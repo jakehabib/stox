@@ -49,7 +49,19 @@ function baseWeight(c: WireCandidate): number {
   return TYPE_WEIGHT[c.type] ?? 15;
 }
 
-export function wireScore(c: WireCandidate, userTeamId: string | undefined, currentWeek: number): number {
+/**
+ * Weeks in a league year for staleness purposes — the regular season plus the
+ * postseason and the offseason phases. It only has to be roughly right: its
+ * job is to make one year ago read as much older than one month ago.
+ */
+const WEEKS_PER_LEAGUE_YEAR = 25;
+
+/** How far in the past an event is, in weeks of league time. */
+function weeksAgo(c: WireCandidate, now: { seasonYear: number; week: number }): number {
+  return (now.seasonYear - c.seasonYear) * WEEKS_PER_LEAGUE_YEAR + (now.week - c.week);
+}
+
+export function wireScore(c: WireCandidate, userTeamId: string | undefined, now: { seasonYear: number; week: number }): number {
   let score = baseWeight(c);
 
   // Your own club's news always outranks the same story happening elsewhere.
@@ -60,7 +72,15 @@ export function wireScore(c: WireCandidate, userTeamId: string | undefined, curr
   // Staleness decay rather than a hard recency sort, so a championship from
   // three weeks ago can still outrank today's hamstring, but this week's
   // trade outranks last month's.
-  score -= Math.max(0, currentWeek - c.week) * 4;
+  //
+  // This used to decay on `currentWeek - c.week` alone, which ignored the
+  // year. League creation seeds two decades of backstory, so a title won in
+  // 2014 — week 21 of its season, against a current week 5 — produced a
+  // NEGATIVE difference and therefore zero decay, and sat at its full weight
+  // of 100 forever. The dashboard wire showed nothing but ancient
+  // championships. Age has to be measured in league time, not in week
+  // numbers.
+  score -= Math.max(0, weeksAgo(c, now)) * 4;
 
   return score;
 }
@@ -75,7 +95,7 @@ export function wireScore(c: WireCandidate, userTeamId: string | undefined, curr
  */
 export function rankWire<T extends WireCandidate>(
   candidates: T[],
-  opts: { userTeamId?: string; currentWeek: number; limit: number },
+  opts: { userTeamId?: string; currentSeasonYear: number; currentWeek: number; limit: number },
 ): { items: T[]; collapsedInjuries: { count: number; representative: T } | null } {
   const mine = (c: WireCandidate) => opts.userTeamId && c.teamId === opts.userTeamId;
 
@@ -83,9 +103,10 @@ export function rankWire<T extends WireCandidate>(
   const strangersInjuries = candidates.filter((c) => c.type === 'INJURY' && !mine(c));
   const rest = candidates.filter((c) => !(c.type === 'INJURY' && !mine(c)));
 
+  const now = { seasonYear: opts.currentSeasonYear, week: opts.currentWeek };
   const ranked = [...rest].sort(
     (a, b) =>
-      wireScore(b, opts.userTeamId, opts.currentWeek) - wireScore(a, opts.userTeamId, opts.currentWeek) ||
+      wireScore(b, opts.userTeamId, now) - wireScore(a, opts.userTeamId, now) ||
       b.createdAt.getTime() - a.createdAt.getTime(),
   );
 

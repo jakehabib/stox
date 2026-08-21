@@ -40,12 +40,13 @@ const CATEGORIES: Category[] = [
       { href: '/history', label: 'History' },
     ],
   },
-  {
-    key: 'gm', label: 'GM Career', items: [
-      { href: '/gm', label: 'GM Career' },
-      { href: '/dynasty', label: 'Dynasty' },
-    ],
-  },
+  // Dynasty is its own top-level category rather than a sub-tab under GM
+  // Career. As a second-level item it only appeared once you were already in
+  // that category, so the whole progression system — levels, XP, the skill
+  // tree — was invisible to someone who had never clicked GM Career, and it
+  // was reported as missing entirely.
+  { key: 'gm', label: 'GM Career', items: [{ href: '/gm', label: 'GM Career' }] },
+  { key: 'dynasty', label: 'Dynasty', items: [{ href: '/dynasty', label: 'Dynasty' }] },
   { key: 'system', label: 'System', items: [{ href: '/settings', label: 'Settings' }] },
 ];
 

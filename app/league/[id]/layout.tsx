@@ -46,11 +46,33 @@ export default async function LeagueLayout({ children, params }: { children: Rea
       // per week — sixteen a week — so including the type here spent the whole
       // window on other clubs' training rooms and left mid-season leagues with
       // no ticker-eligible news at all within reach.
-      where: { leagueId: league.id, type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'DRAFT', 'FIRE', 'CHAMPION', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] } },
+      //
+      // The seasonYear floor is not an optimisation. League creation seeds two
+      // decades of fictional backstory — a CHAMPION row and five award rows for
+      // every year back to ~2004 — and every one of those is written at
+      // creation time, so `orderBy createdAt desc` put ALL of them ahead of
+      // anything that has actually happened in the save. A league in its fifth
+      // season showed a wire of nothing but "The Minneapolis Norsemen are your
+      // 2008 champions!". Ordering cannot fix this, because createdAt is
+      // honest about when the row was written and lying about when the event
+      // happened; only the league year the event belongs to can.
+      where: {
+        leagueId: league.id,
+        type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'DRAFT', 'FIRE', 'CHAMPION', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] },
+        seasonYear: { gte: league.seasonYear - 1 },
+      },
       orderBy: { createdAt: 'desc' },
       take: 120,
     }),
   ]);
+  // Last season's title and awards stay wire-worthy through the first few
+  // weeks of the new league year — that is still "what just happened" to a GM
+  // reporting for a new season — and go quiet after that. Everything older is
+  // history, and history has its own page.
+  const wireEligible = tickerTx.filter(
+    (t) => t.seasonYear === league.seasonYear || (t.seasonYear === league.seasonYear - 1 && league.week <= 4),
+  );
+
   // Injuries outnumber every other event type by an order of magnitude, so a
   // straight "most recent 14" is a wall of identical injury lines. Round-robin
   // across categories instead — recency still orders within each category.
@@ -60,13 +82,23 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // of identical lines late in a season — one lane counted fourteen items in
   // week 17, every one of them an injury report for a team the player had no
   // relationship with.
-  for (const t of tickerTx.filter((x) => isBreakingNews(x.type, x.headline))) {
+  for (const t of wireEligible.filter((x) => isBreakingNews(x.type, x.headline))) {
     const cat = transactionCategory(t.type, t.headline);
     if (!byCategory.has(cat)) byCategory.set(cat, []);
     byCategory.get(cat)!.push(t);
   }
+  // Capped, never padded. If four things have happened this season, the wire
+  // carries four; if nothing has, it does not render at all (the component
+  // returns null on an empty list). A strip that is always full is a strip
+  // that is reaching for filler, and filler is what put two-decade-old
+  // championships on it in the first place.
+  // Four per category, so a free-agency week cannot fill the whole strip with
+  // eight consecutive "Signed <name>" lines. Round-robin already interleaves
+  // categories when several are active; the cap is what handles the weeks
+  // where only one is.
+  const PER_CATEGORY_CAP = 4;
   const tickerItems: { category: ReturnType<typeof transactionCategory>; headline: string }[] = [];
-  for (let round = 0; tickerItems.length < 14; round++) {
+  for (let round = 0; round < PER_CATEGORY_CAP && tickerItems.length < 14; round++) {
     let added = false;
     for (const [cat, rows] of byCategory) {
       if (round >= rows.length || tickerItems.length >= 14) continue;
