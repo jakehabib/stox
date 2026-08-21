@@ -147,9 +147,13 @@ if (OFFENSE_POSITIONS.length + DEFENSE_POSITIONS.length + SPECIAL_POSITIONS.leng
 
 /**
  * Starter counts per position GROUP, DERIVED from the table above rather than
- * typed out again. This is the shape `lib/teamRating.ts` and
- * `lib/rosterShape.ts` used to keep their own copies of; deriving it is the
- * whole point, because two hand-maintained tables are what drifted.
+ * typed out again. `lib/teamRating.ts` and `lib/rosterShape.ts` import this;
+ * deriving it is the whole point, because two hand-maintained tables are what
+ * drifted. (For a long time this comment claimed they already did, while both
+ * still carried `LB: 3` — twelve men on defence. A comment asserting a cleanup
+ * that never landed is as wrong as a number that lies, and it hid this for
+ * months. If you are reading this because you are about to copy the table
+ * again: don't.)
  *
  * Comes out as QB 1, RB 1, WR 3, TE 1, OL 5 (offense = 11) and
  * DL 4, LB 2, DB 5 (defense = 11), with ST 2.

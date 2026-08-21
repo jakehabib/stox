@@ -1052,23 +1052,25 @@ async function buildRunLeaders(
   teamId: string,
   games: { seasonYear: number; week: number; kind: string; homeTeamId: string; awayTeamId: string; boxScore: string }[],
 ): Promise<TrophyPlayerLine[]> {
+  // buildSeasonLines walks BOTH sides of every box score, so the opponents in
+  // these games come back too — hence the teamId filter, not a trust in the
+  // input.
   const byPlayer = buildSeasonLines(games, new Map([[teamId, '']]));
-  const scored: { playerId: string; line: SeasonLine; score: number }[] = [];
+  const mine: { playerId: string; line: SeasonLine }[] = [];
   for (const [playerId, lines] of byPlayer) {
     for (const line of lines) {
-      if (line.teamId !== teamId || line.playoffGp === 0) continue;
-      scored.push({ playerId, line, score: 0 });
+      if (line.teamId === teamId && line.playoffGp > 0) mine.push({ playerId, line });
     }
   }
-  if (scored.length === 0) return [];
+  if (mine.length === 0) return [];
 
   const players = await prisma.player.findMany({
-    where: { id: { in: scored.map((s) => s.playerId) } },
+    where: { id: { in: mine.map((s) => s.playerId) } },
     select: { id: true, firstName: true, lastName: true, position: true, age: true, weightLb: true, heightIn: true },
   });
   const byId = new Map(players.map((p) => [p.id, p]));
 
-  const ranked = scored
+  const ranked = mine
     .map((s) => {
       const p = byId.get(s.playerId);
       const defensive = p ? DEFENSIVE_POSITIONS.has(p.position) : false;

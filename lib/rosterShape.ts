@@ -1,5 +1,6 @@
 import { prisma } from './db';
 import { POSITION_GROUPS, PositionGroup, positionGroup } from './positionGroups';
+import { STARTERS_AT_GROUP } from './lineup';
 
 /**
  * How a roster is actually built, measured against the rest of the league.
@@ -37,10 +38,19 @@ export interface RosterShape {
   agingStarters: number;
 }
 
-/** How many bodies at a group actually see the field, roughly. */
-const STARTERS_AT: Record<PositionGroup, number> = {
-  QB: 1, RB: 1, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 5, ST: 2,
-};
+/**
+ * How many at each unit are on the field — IMPORTED, not typed out again.
+ *
+ * This file kept its own copy, and the copy had drifted: `DL 4, LB 3, DB 5`
+ * is TWELVE men on defence. lib/lineup.ts derives the real answer from the
+ * per-position starting eleven (`DL 4, LB 2, DB 5`), and its own docstring
+ * already claimed this duplicate had been removed in favour of it — a comment
+ * describing a cleanup that never landed, which is the same defect class as a
+ * wrong number on screen. So every unit rating in the app was averaging the
+ * top THREE linebackers when two start, flattering deep linebacker groups and
+ * punishing thin ones, on every screen that reads a team rating.
+ */
+const STARTERS_AT: Record<PositionGroup, number> = STARTERS_AT_GROUP;
 
 /**
  * Averages the top N at a group rather than the whole group, because depth

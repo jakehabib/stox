@@ -381,9 +381,15 @@ function RunLeader({ p, accent }: { p: TrophyPlayerLine; accent: string }) {
 function verdict(d: TrophyData): string {
   const opp = d.finalScore ? `the ${d.finalScore.oppCity} ${d.finalScore.oppNickname}` : 'the field';
   const margin = d.finalScore ? Math.abs(d.finalScore.mine - d.finalScore.theirs) : 0;
-  const wall = `Knocked out in the ${d.roundLabel.toLowerCase()} by ${opp}, by ${margin}.`;
+  // ROUND_LABEL calls the title game "The Final", and this sentence supplies
+  // its own article — without the strip it reads "in the the final".
+  const round = d.roundLabel.toLowerCase().replace(/^the\s+/, '');
+  const wall = `Knocked out in the ${round} by ${opp}, by ${margin}.`;
   if (d.roundsWon === 0) return `${wall} One game, and it was over.`;
-  return `${wall} ${d.roundsWon} round${d.roundsWon === 1 ? '' : 's'} won before it.`;
+  // Spelled out because the clause opens the sentence, and a sentence cannot
+  // start "1 round won before it."
+  const won = ['no', 'One', 'Two', 'Three', 'Four'][d.roundsWon] ?? String(d.roundsWon);
+  return `${wall} ${won} round${d.roundsWon === 1 ? '' : 's'} won before it.`;
 }
 
 /** How many postseason games the club actually played. A bye is not a game. */
