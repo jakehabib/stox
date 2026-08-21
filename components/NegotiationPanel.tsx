@@ -121,6 +121,23 @@ export function NegotiationPanel({
   const over = signed || gone || walkedAway || !!disabled;
   const canSubmit = !over && decision.blocked === null;
 
+  /**
+   * Talks are finished and he did NOT sign — he walked, or somebody else got
+   * him. The meter must stop describing the sliders at this point.
+   *
+   * This became reachable the moment patience started surviving a reload: open
+   * the panel on a negotiation you had already burned out and `decideOffer`
+   * happily drew "Will sign — 85" for whatever the sliders defaulted to, three
+   * inches above a dead button reading "Talks are over". Both sentences on
+   * screen, describing the same instant, disagreeing. The bar is answering
+   * "would he sign this offer", and the true answer once his agent has stopped
+   * taking calls is no — so it reads zero, and the line under it says why
+   * rather than quoting a deal nobody is going to sign. (README, design
+   * principle 6.) `disabled` is deliberately not included: that is a screen
+   * saying "not here, not now", not the player ending the negotiation.
+   */
+  const talksDead = gone || walkedAway;
+
   const submit = async () => {
     const res = await onOffer(offer, structure, sessionFingerprint(session));
     setResult(res);
@@ -168,7 +185,15 @@ export function NegotiationPanel({
       {banner && <div className="px-4 pt-3 space-y-2">{banner}</div>}
 
       <div className="px-4 py-4 space-y-4">
-        <InterestMeter interest={ev.interest} verdict={ev.verdict} headline={ev.headline} />
+        <InterestMeter
+          interest={talksDead ? 0 : ev.interest}
+          verdict={talksDead ? 'COLD' : ev.verdict}
+          headline={
+            gone && result?.lostTo ? `He signed with the ${result.lostTo.teamName}.`
+              : walkedAway ? 'His agent is no longer taking your calls.'
+              : ev.headline
+          }
+        />
 
         <div className="space-y-3.5">
           <Slider

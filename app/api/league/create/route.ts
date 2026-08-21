@@ -3,7 +3,7 @@ import { createLeague } from '@/lib/gen/league';
 import { DEFAULT_SETTINGS, LeagueSettings } from '@/lib/settings';
 import { TEAM_SEEDS } from '@/lib/gen/names';
 import { prisma } from '@/lib/db';
-import { assertCanCreateLeague, ensureOwnerKey, LeagueLimitError } from '@/lib/owner';
+import { assertCanCreateLeague, currentViewer, ensureOwnerKey, LeagueLimitError } from '@/lib/owner';
 
 /**
  * Programmatic league creation. Nothing in the app calls this — the UI goes
@@ -27,7 +27,8 @@ export async function POST(req: NextRequest) {
     // Route Handlers may write cookies, so the same mint-then-count-then-stamp
     // sequence the server action uses works unchanged here.
     const ownerKey = ensureOwnerKey();
-    await assertCanCreateLeague(ownerKey);
+    const viewer = { ...(await currentViewer()), ownerKey };
+    await assertCanCreateLeague(viewer);
 
     const body = await req.json().catch(() => ({}));
     const userTeamAbbr: string = body.userTeamAbbr || TEAM_SEEDS[0].abbr;
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
     const settings: Partial<LeagueSettings> = { ...DEFAULT_SETTINGS, ...(body.settings ?? {}) };
 
     const leagueId = await createLeague({ name: leagueName, userTeamAbbr, settings });
-    await prisma.league.update({ where: { id: leagueId }, data: { ownerKey } });
+    await prisma.league.update({ where: { id: leagueId }, data: { ownerKey, userId: viewer.userId } });
     return NextResponse.json({ leagueId });
   } catch (err: any) {
     // A refused creation is a 429, not a 500 — it is the expected answer to a

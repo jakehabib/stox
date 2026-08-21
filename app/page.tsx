@@ -1,29 +1,36 @@
 import Link from 'next/link';
-import { listOwnedLeagues } from '@/lib/owner';
+import { currentViewer, listOwnedLeagues } from '@/lib/owner';
 import { createLeagueAction, deleteLeagueAction } from './actions/league';
 import { TEAM_SEEDS } from '@/lib/gen/names';
 import { PHASE_LABELS } from '@/lib/season';
 import { TeamLogo } from '@/components/TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { CreateLeagueForm } from '@/components/CreateLeagueForm';
+import { AccountBadge } from '@/components/auth/AccountBadge';
 
 export const dynamic = 'force-dynamic';
 
-export default async function HomePage() {
-  // Scoped to this browser's saves — see lib/owner.ts. This used to be an
+export default async function HomePage({ searchParams }: { searchParams: { claimed?: string } }) {
+  // Scoped to this viewer's saves — see lib/owner.ts. This used to be an
   // unfiltered findMany, which on any shared deployment listed every tester's
   // franchises to every other tester.
-  const leagues = await listOwnedLeagues();
+  const [viewer, leagues] = await Promise.all([currentViewer(), listOwnedLeagues()]);
+
+  // Set by the sign-in/sign-up redirect. Parsed defensively — it is a query
+  // string, so it is whatever anyone types, and the only thing it controls is
+  // a sentence.
+  const claimedRaw = Number(searchParams.claimed);
+  const claimed = Number.isInteger(claimedRaw) && claimedRaw > 0 ? claimedRaw : 0;
 
   return (
     <div className="min-h-screen">
       <header className="border-b border-line bg-surface/60 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-md bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-display font-bold">D</div>
             <span className="font-display font-bold tracking-wide uppercase text-lg">Dynasty GM</span>
           </div>
-          <span className="label-sm">Front Office Simulator</span>
+          <AccountBadge />
         </div>
       </header>
 
@@ -45,6 +52,41 @@ export default async function HomePage() {
           </div>
         </section>
 
+        {/* Proof, at the moment it happens. The pitch for making an account is
+            "you won't lose these", so the claim says exactly how many moved
+            rather than leaving the player to check. */}
+        {claimed > 0 && (
+          <div className="rounded-md border border-accent/40 bg-accent/10 px-5 py-4">
+            <div className="label-sm text-accent">Saves secured</div>
+            <p className="text-sm text-chalk/90 mt-1">
+              {claimed === 1 ? 'One save on this browser is' : `${claimed} saves on this browser are`} now attached to{' '}
+              <strong className="font-semibold">{viewer.username}</strong>. Clearing cookies won&apos;t lose{' '}
+              {claimed === 1 ? 'it' : 'them'}, and you can sign in on another device to keep playing.
+            </p>
+          </div>
+        )}
+
+        {/* The invitation. Only shown when there is something to lose — telling
+            somebody with no saves that their saves are at risk is noise, and a
+            wall in front of a single-player game costs every tester who was
+            only ever going to click once. */}
+        {!viewer.userId && leagues.length > 0 && (
+          <div className="rounded-md border border-warn/40 bg-warn/10 px-5 py-4 flex flex-wrap items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="label-sm text-warn">This browser is the only copy</div>
+              <p className="text-sm text-chalk/90 mt-1 max-w-2xl">
+                {leagues.length === 1 ? 'Your save lives' : 'Your saves live'} in a cookie on this browser.
+                Clear it and {leagues.length === 1 ? 'it is' : 'they are'} gone. Make an account and{' '}
+                {leagues.length === 1 ? 'it moves' : 'they move'} with you.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Link href="/sign-up" className="btn-primary">Save my dynasty</Link>
+              <Link href="/sign-in" className="btn-ghost text-sm">Sign in</Link>
+            </div>
+          </div>
+        )}
+
         <section className="section">
           <div className="section-head">
             <h2 className="section-title">Your Franchises</h2>
@@ -53,7 +95,16 @@ export default async function HomePage() {
 
           {leagues.length === 0 ? (
             <div className="panel p-8 text-center text-muted text-sm">
-              No leagues yet — start your first franchise below.
+              {viewer.userId
+                ? 'No leagues on this account yet — start your first franchise below.'
+                : 'No leagues yet — start your first franchise below.'}
+              {!viewer.userId && (
+                <span className="block mt-2">
+                  Already have an account?{' '}
+                  <Link href="/sign-in" className="text-accent2 hover:underline">Sign in</Link>{' '}
+                  to load your saves.
+                </span>
+              )}
             </div>
           ) : (
             <div className="panel divide-y divide-line/60">

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { assertCanCreateLeague, assertLeagueOwner, ensureOwnerKey } from '@/lib/owner';
+import { assertCanCreateLeague, assertLeagueOwner, currentViewer, ensureOwnerKey } from '@/lib/owner';
 import { createLeague } from '@/lib/gen/league';
 import { DEFAULT_SETTINGS, LeagueSettings, serializeSettings } from '@/lib/settings';
 import { advanceWeek } from '@/lib/season';
@@ -35,8 +35,13 @@ export async function createLeagueAction(formData: FormData) {
   // against until ~5,300 rows had already been written. The limit check needs
   // the key before any of that work starts, and stamping with the same value
   // afterwards keeps the count and the stamp in agreement.
+  //
+  // The cookie is minted even when signed in. It costs nothing, and it keeps
+  // one invariant true everywhere: every league has an ownerKey, so signing
+  // out never leaves a save with no route back to its creator.
   const ownerKey = ensureOwnerKey();
-  await assertCanCreateLeague(ownerKey);
+  const viewer = { ...(await currentViewer()), ownerKey };
+  await assertCanCreateLeague(viewer);
 
   const rawName = String(formData.get('name') || '').trim();
   const name = (rawName || 'My League').slice(0, MAX_LEAGUE_NAME);
@@ -52,8 +57,10 @@ export async function createLeagueAction(formData: FormData) {
   });
 
   // Stamp the save the moment it exists, so it is never briefly visible to,
-  // or deletable by, anyone else.
-  await prisma.league.update({ where: { id: leagueId }, data: { ownerKey } });
+  // or deletable by, anyone else. `userId` goes on in the same write when
+  // someone is signed in, so a league created by an account is account-owned
+  // immediately rather than waiting for the next claim.
+  await prisma.league.update({ where: { id: leagueId }, data: { ownerKey, userId: viewer.userId } });
 
   redirect(`/league/${leagueId}`);
 }

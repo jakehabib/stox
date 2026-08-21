@@ -201,14 +201,27 @@ Notes that matter:
   you are looking for is that it prints *nothing else*:
 
   - Empty (`-- This is an empty migration.`) — safe.
-  - Exactly the `CREATE TABLE "NegotiationTalks"` block and its indexes and
-    foreign keys, matching
-    `prisma/migrations/20260821165523_negotiation_patience/migration.sql`
-    statement for statement — safe. That migration has not run yet; `migrate
-    deploy` will apply it on the first build after you baseline.
-  - Anything else, and in particular **any `DROP` or any `ALTER` against a
-    table you did not expect** — stop. That is real drift, and baselining over
-    it will hide it. Resolve it before going further.
+  - Exactly the statements of the migrations that have not run yet, matching
+    their files statement for statement — safe. `migrate deploy` will apply
+    them on the first build after you baseline. As of now that is **two**
+    migrations, and nothing else may appear:
+
+    1. `20260821165523_negotiation_patience` — the `CREATE TABLE
+       "NegotiationTalks"` block with its indexes and foreign keys.
+    2. `20260821172156_user_accounts` — `CREATE TABLE "User"`, `"Session"` and
+       `"AuthAttempt"`, their indexes, one **nullable** `ALTER TABLE "League"
+       ADD COLUMN "userId" TEXT`, and two `ADD CONSTRAINT ... FOREIGN KEY`
+       (`League_userId_fkey` with `ON DELETE SET NULL`, `Session_userId_fkey`
+       with `ON DELETE CASCADE`).
+
+    The `ALTER TABLE "League"` in (2) is the one `ALTER` you *should* see. It
+    adds a nullable column and rewrites no existing row; every league already
+    in the database keeps working on its `ownerKey` exactly as before, and
+    becomes account-owned only when someone signs in and claims it (see
+    `docs/accounts.md`).
+  - Anything else, and in particular **any `DROP`, or any `ALTER` other than
+    that one nullable `ADD COLUMN`** — stop. That is real drift, and baselining
+    over it will hide it. Resolve it before going further.
 
   Diff the printed SQL against the migration files rather than skimming it. The
   point of the check is that the only pending changes are ones written down in
@@ -218,9 +231,10 @@ Then verify:
 
 ```bash
 DATABASE_URL="<production>" npx prisma migrate status
-# expect: the baseline recorded as applied, and any later migration listed as
-# pending — e.g. "1 migration found ... following migration have not yet been
-# applied: 20260821165523_negotiation_patience". The first deploy applies it.
+# expect: the baseline recorded as applied, and every later migration listed as
+# pending — currently "3 migrations found ... following migrations have not yet
+# been applied: 20260821165523_negotiation_patience,
+# 20260821172156_user_accounts". The first deploy applies them, in that order.
 ```
 
 ## 4. Verify after deploying

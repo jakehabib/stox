@@ -23,9 +23,9 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model League {
-  id         String @id @default(cuid())
-  name       String
-  createdAt  DateTime @default(now())
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
 
   // Which browser owns this save (see lib/owner.ts). Opaque random id from an
   // httpOnly cookie — not authentication, but the boundary that stops one
@@ -34,20 +34,20 @@ model League {
   // push` cannot add a required column to a database that already has rows.
   // A null here means "created before ownership existed"; lib/owner.ts adopts
   // those in development and hides them in production.
-  ownerKey   String?
+  ownerKey String?
 
-  seasonYear Int    @default(2025)
+  seasonYear        Int    @default(2025)
   // The season this league was FOUNDED in — the base year capForYear() grows
   // the salary cap from. Nullable ONLY so `prisma db push` can add it to an
   // existing database without a force-reset (adding it as required hard-fails
   // against existing rows, even with --accept-data-loss). Never read it
   // directly: lib/leagueYear.ts's resolveStartYear() derives and persists a
   // value for any save created before this column existed.
-  startYear  Int?
-  week       Int    @default(1)     // 1..REGULAR_SEASON_WEEKS during the season
+  startYear         Int?
+  week              Int    @default(1) // 1..REGULAR_SEASON_WEEKS during the season
   // Phase machine (see lib/season.ts): PRESEASON | REGULAR | PLAYOFFS | OFFSEASON
   // | RESIGN | FREE_AGENCY | DRAFT | FANTASY_DRAFT
-  phase      String @default("PRESEASON")
+  phase             String @default("PRESEASON")
   // The league year the CONTRACT ledger has already been stepped onto (see
   // ageContractsForYear in lib/season.ts). Contracts are aged the moment the
   // season ends rather than three offseason steps later, so dead money and
@@ -62,38 +62,55 @@ model League {
   // advance ONCE per year and then gets out of the way — letting players walk
   // is a legitimate choice, losing two thirds of a roster without being told
   // is not. Nullable for the same `prisma db push` reason as the column above.
-  resignWarnedYear Int?
+  resignWarnedYear  Int?
 
   userTeamId String?
 
-  // Full settings blob (see lib/settings.ts -> LeagueSettings). JSON string.
-  settings   String
+  // The ACCOUNT that owns this save, once it has been claimed (see
+  // docs/accounts.md and lib/owner.ts). Null means "still owned by a browser
+  // cookie alone" — ownerKey above stays the mechanism for a signed-out
+  // player, and is what the claim matches on.
+  //
+  // Nullable because `migrate deploy` runs against a database with live rows,
+  // every one of which predates accounts. SetNull rather than Cascade on
+  // purpose: deleting a user must never delete their dynasties. The save falls
+  // back to being cookie-owned, which is recoverable; a cascade is not.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  teams        Team[]
-  players      Player[]
-  games        Game[]
-  picks        DraftPick[]
-  transactions Transaction[]
-  draftState   DraftState?
-  tradeOffers  TradeOffer[]
+  // Full settings blob (see lib/settings.ts -> LeagueSettings). JSON string.
+  settings String
+
+  teams         Team[]
+  players       Player[]
+  games         Game[]
+  picks         DraftPick[]
+  transactions  Transaction[]
+  draftState    DraftState?
+  tradeOffers   TradeOffer[]
   seasonRecords TeamSeasonRecord[]
   leagueRecords LeagueRecord[]
   tradeRecords  TradeRecord[]
   dynasty       DynastyProfile?
   negotiations  NegotiationTalks[]
+
+  // The home-page list filters on one of these two every time, and the claim
+  // is `WHERE ownerKey = $1 AND userId IS NULL`.
+  @@index([userId])
+  @@index([ownerKey])
 }
 
 model DraftState {
-  id        String @id @default(cuid())
-  leagueId  String @unique
-  league    League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  leagueId String @unique
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
 
   // "ROOKIE" (annual rookie draft) or "FANTASY" (league-start blank-roster draft)
-  kind      String @default("ROOKIE")
-  round     Int    @default(1)
-  pickIndex Int    @default(0)   // 0-based index into the full serialized pick order
+  kind      String  @default("ROOKIE")
+  round     Int     @default(1)
+  pickIndex Int     @default(0) // 0-based index into the full serialized pick order
   // Serialized array of teamIds in pick order. JSON string.
-  order     String @default("[]")
+  order     String  @default("[]")
   complete  Boolean @default(false)
 }
 
@@ -102,56 +119,56 @@ model DraftState {
 // ---------------------------------------------------------------------------
 
 model Team {
-  id         String @id @default(cuid())
-  leagueId   String
-  league     League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
 
   city       String
   nickname   String
   abbr       String
-  conference String  // "AFC" | "NFC" (generic: "EAST CONF" style names are fine)
-  division   String  // "East" | "North" | "South" | "West"
+  conference String // "AFC" | "NFC" (generic: "EAST CONF" style names are fine)
+  division   String // "East" | "North" | "South" | "West"
   isUser     Boolean @default(false)
 
   // Team identity / AI personality --------------------------------------------
-  prestige     Int    @default(50)   // 0-100, drives FA attraction. PLACEHOLDER weight.
-  offScheme    String @default("Balanced")   // see lib/tuning.ts SCHEMES
-  defScheme    String @default("4-3 Base")
+  prestige  Int    @default(50) // 0-100, drives FA attraction. PLACEHOLDER weight.
+  offScheme String @default("Balanced") // see lib/tuning.ts SCHEMES
+  defScheme String @default("4-3 Base")
   // AI GM personality knobs, JSON string: { aggression, winNow, valueDraftPicks, ... }
-  gmProfile    String @default("{}")
+  gmProfile String @default("{}")
 
   // Season record --------------------------------------------------------------
-  wins       Int @default(0)
-  losses     Int @default(0)
-  ties       Int @default(0)
-  pointsFor  Int @default(0)
-  pointsAgnst Int @default(0)
-  divWins    Int @default(0)
-  divLosses  Int @default(0)
-  confWins   Int @default(0)
-  confLosses Int @default(0)
+  wins        Int     @default(0)
+  losses      Int     @default(0)
+  ties        Int     @default(0)
+  pointsFor   Int     @default(0)
+  pointsAgnst Int     @default(0)
+  divWins     Int     @default(0)
+  divLosses   Int     @default(0)
+  confWins    Int     @default(0)
+  confLosses  Int     @default(0)
   playoffSeed Int?
-  eliminated Boolean @default(false)
+  eliminated  Boolean @default(false)
 
   // Scouting economy (see lib/scoutingEconomy.ts) ------------------------------
   // Focus is a finite per-period allowance, not a growing pile. `scoutPeriod`
   // is the period key (year/phase/week) the current allowance was granted for;
   // when the league moves past it the balance is topped up and any unspent
   // carry-over above SCOUT_ECONOMY.CARRY_CAP_FRACTION of the new grant is lost.
-  scoutPoints      Int @default(0)   // unspent focus right now
-  scoutPeriod      Int @default(0)   // period key of the last replenishment (0 = never)
-  scoutPeriodGrant Int @default(0)   // size of the grant that opened this period (UI shows "x of y")
-  scoutSpentSeason Int @default(0)   // focus burned so far this league year, for the department UI
+  scoutPoints      Int @default(0) // unspent focus right now
+  scoutPeriod      Int @default(0) // period key of the last replenishment (0 = never)
+  scoutPeriodGrant Int @default(0) // size of the grant that opened this period (UI shows "x of y")
+  scoutSpentSeason Int @default(0) // focus burned so far this league year, for the department UI
 
-  players      Player[]
-  staff        Staff[]
-  scouts       Scout[]
-  homeGames    Game[]  @relation("HomeTeam")
-  awayGames    Game[]  @relation("AwayTeam")
-  ownedPicks   DraftPick[] @relation("PickOwner")
-  originalPicks DraftPick[] @relation("PickOrigin")
-  reports      ScoutingReport[]
-  depthChart   DepthChartSlot[]
+  players         Player[]
+  staff           Staff[]
+  scouts          Scout[]
+  homeGames       Game[]             @relation("HomeTeam")
+  awayGames       Game[]             @relation("AwayTeam")
+  ownedPicks      DraftPick[]        @relation("PickOwner")
+  originalPicks   DraftPick[]        @relation("PickOrigin")
+  reports         ScoutingReport[]
+  depthChart      DepthChartSlot[]
   tradeOffersFrom TradeOffer[]
   seasonRecords   TeamSeasonRecord[]
   shortlist       ShortlistEntry[]
@@ -161,32 +178,32 @@ model Team {
 }
 
 model Staff {
-  id       String @id @default(cuid())
-  teamId   String
-  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  teamId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
-  role     String // "HC" | "OC" | "DC" | "ST"
-  name     String
+  role          String // "HC" | "OC" | "DC" | "ST"
+  name          String
   // 0-100 ratings. PLACEHOLDER: exact impact curves live in lib/tuning.ts
-  rating       Int @default(50)
-  playCalling  Int @default(50)   // in-game boost to unit score
-  development  Int @default(50)   // offseason progression boost
-  scheme       String @default("Balanced")
-  contractYears Int @default(3)
-  salary       Int @default(3000000)
+  rating        Int    @default(50)
+  playCalling   Int    @default(50) // in-game boost to unit score
+  development   Int    @default(50) // offseason progression boost
+  scheme        String @default("Balanced")
+  contractYears Int    @default(3)
+  salary        Int    @default(3000000)
 
   @@index([teamId])
 }
 
 model Scout {
-  id       String @id @default(cuid())
-  teamId   String
-  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  teamId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   name      String
   // 0-100. Higher accuracy => narrower scouted ranges, faster confidence gain.
   accuracy  Int    @default(50)
-  speed     Int    @default(50)  // scouting points generated per week
+  speed     Int    @default(50) // scouting points generated per week
   // Position group this scout is best at: "OL" | "SKILL" | "FRONT7" | "SECONDARY" | "ALL"
   specialty String @default("ALL")
   salary    Int    @default(500000)
@@ -199,64 +216,64 @@ model Scout {
 // ---------------------------------------------------------------------------
 
 model Player {
-  id        String @id @default(cuid())
-  leagueId  String
-  league    League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
-  teamId    String?
-  team      Team?  @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  id       String  @id @default(cuid())
+  leagueId String
+  league   League  @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  teamId   String?
+  team     Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
 
-  firstName String
-  lastName  String
-  position  String   // QB RB WR TE LT LG C RG RT EDGE DT LB CB S K P
-  age       Int
-  experience Int     @default(0)   // completed pro seasons
-  heightIn  Int      @default(73)
-  weightLb  Int      @default(220)
-  college   String   @default("State")
+  firstName  String
+  lastName   String
+  position   String // QB RB WR TE LT LG C RG RT EDGE DT LB CB S K P
+  age        Int
+  experience Int    @default(0) // completed pro seasons
+  heightIn   Int    @default(73)
+  weightLb   Int    @default(220)
+  college    String @default("State")
 
   // TRUE ratings — never shown directly unless settings.revealTrueRatings ------
   // JSON string map of attributeKey -> 0..99 (see lib/ratings.ts ATTRIBUTES)
   trueAttrs String
-  trueOvr   Int      // cached overall from trueAttrs at current position
-  potential Int      // 0..99 ceiling
-  devTrait  String   @default("Normal")  // Slow | Normal | Star | Superstar
+  trueOvr   Int // cached overall from trueAttrs at current position
+  potential Int // 0..99 ceiling
+  devTrait  String @default("Normal") // Slow | Normal | Star | Superstar
 
   // Draft / status -------------------------------------------------------------
-  status      String  @default("ACTIVE")   // ACTIVE | INJURED | FREE_AGENT | RETIRED | ROOKIE_POOL
-  isDraftee   Boolean @default(false)      // in the current rookie/fantasy pool
+  status      String  @default("ACTIVE") // ACTIVE | INJURED | FREE_AGENT | RETIRED | ROOKIE_POOL
+  isDraftee   Boolean @default(false) // in the current rookie/fantasy pool
   draftYear   Int?
   draftRound  Int?
   draftPickNo Int?
 
   // College scouting profile — only meaningful while isDraftee is true.
   // JSON strings (see lib/gen/prospectProfile.ts CollegeProfile / CombineTesting).
-  collegeStats    String @default("{}")
-  combineTesting  String @default("{}")
+  collegeStats   String @default("{}")
+  combineTesting String @default("{}")
 
   // Coaching/development focus charges bought with scouting focus points.
   // Each charge multiplies the next in-season development checkpoint roll and
   // is consumed by it (see lib/development.ts). 0 for every existing save.
-  devFocus  Int      @default(0)
+  devFocus Int @default(0)
 
   // Consecutive offseasons this player has spent unsigned. Drives the
   // out-of-football attrition roll in lib/development.ts — without it the free
   // agent pool only ever grew, because nothing off a roster aged or retired.
   // Reset to 0 the moment he signs anywhere.
-  yearsUnsigned Int  @default(0)
+  yearsUnsigned Int @default(0)
 
-  injuryWeeks Int    @default(0)
-  injuryType  String?  // human-readable description, e.g. "Hamstring strain" — set when injured, cleared on recovery
-  fatigue     Int    @default(0)   // 0-100, restores between weeks
-  morale      Int    @default(70)  // 0-100. PLACEHOLDER effect on re-sign odds.
+  injuryWeeks Int     @default(0)
+  injuryType  String? // human-readable description, e.g. "Hamstring strain" — set when injured, cleared on recovery
+  fatigue     Int     @default(0) // 0-100, restores between weeks
+  morale      Int     @default(70) // 0-100. PLACEHOLDER effect on re-sign odds.
 
   // Season stat accumulators, JSON string (see lib/types.ts SeasonStats)
   seasonStats String @default("{}")
   careerStats String @default("{}")
 
-  contract  Contract?
-  reports   ScoutingReport[]
-  depthSlots DepthChartSlot[]
-  draftPick DraftPick?
+  contract      Contract?
+  reports       ScoutingReport[]
+  depthSlots    DepthChartSlot[]
+  draftPick     DraftPick?
   shortlistedBy ShortlistEntry[]
   negotiations  NegotiationTalks[]
 
@@ -277,7 +294,7 @@ model ScoutingReport {
   team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   // 0..100. Drives how tight the displayed range is around the true value.
-  confidence Int   @default(0)
+  confidence Int    @default(0)
   // Per-attribute noisy observations, JSON string: { attrKey: observedValue }
   // The displayed range is observed +/- error(confidence). Observations are
   // resampled (and re-centered) as confidence rises. See lib/scouting.ts
@@ -294,16 +311,16 @@ model ScoutingReport {
   // Total passes ever run on this player by this team. Drives BOTH the cost
   // escalation and the reveal decay, so hammering one prospect gets steadily
   // more expensive and steadily less informative.
-  passes       Int     @default(0)
+  passes        Int     @default(0)
   // Passes run inside the current period only — reset whenever lastWeek moves.
-  periodPasses Int     @default(0)
+  periodPasses  Int     @default(0)
   // Potential has its own confidence track: only a Deep Dive pushes it above
   // the general confidence, which is what makes the deep tier worth its price.
-  potConfidence Int    @default(0)
+  potConfidence Int     @default(0)
   // JSON array of attribute keys locked to their true value by an evaluation.
-  attrsRevealed String @default("[]")
+  attrsRevealed String  @default("[]")
   // True once a Deep Dive surfaced the player's hidden development trait.
-  devRevealed  Boolean @default(false)
+  devRevealed   Boolean @default(false)
   // Set ONLY by the Dynasty "Full Scout" ability (lib/dynasty.ts). When true,
   // buildScoutedView returns the player's TRUE attributes and an exact
   // potential — the one sanctioned hole in the fog of war, paid for with a
@@ -313,7 +330,7 @@ model ScoutingReport {
   // League year the Full Scout reveal was bought in — display only ("Fully
   // evaluated, 2027"), never gates the reveal itself: a perfect evaluation
   // you paid for does not expire.
-  revealedYear Int @default(0)
+  revealedYear  Int     @default(0)
   // League year a PRIVATE WORKOUT was held on this player by this team (see
   // lib/workouts.ts). Nullable: it is genuinely absent for every report that
   // predates workouts, and `prisma db push` cannot add a required column to a
@@ -322,7 +339,7 @@ model ScoutingReport {
   // what a page reads to say "worked him out in 2027". It does NOT gate the
   // reveal — the reveal lives in the confidence/attrsRevealed columns like
   // every other one.
-  workoutYear Int?
+  workoutYear   Int?
 
   @@unique([playerId, teamId])
   @@index([teamId])
@@ -347,34 +364,34 @@ model ShortlistEntry {
 // ---------------------------------------------------------------------------
 
 model Contract {
-  id        String @id @default(cuid())
-  playerId  String @unique
-  player    Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  teamId    String?
+  id       String  @id @default(cuid())
+  playerId String  @unique
+  player   Player  @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  teamId   String?
 
-  years         Int
+  years          Int
   yearsRemaining Int
-  signedYear    Int
+  signedYear     Int
   // Per-year base salaries, JSON string number[] (index 0 = current year)
-  baseSalaries  String
-  signingBonus  Int @default(0)   // fully prorated across min(years + voidYears, 5)
-  guaranteed    Int @default(0)
-  isRookieDeal  Boolean @default(false)
+  baseSalaries   String
+  signingBonus   Int     @default(0) // fully prorated across min(years + voidYears, 5)
+  guaranteed     Int     @default(0)
+  isRookieDeal   Boolean @default(false)
   isFranchiseTag Boolean @default(false)
   // Cap-only trailing years tacked on (usually via a restructure) purely to
   // spread signing-bonus proration further — the player is never actually
   // on the roster for these. All remaining proration accelerates as dead
   // money the moment the real contract ends or the player is cut.
-  voidYears     Int @default(0)
+  voidYears      Int     @default(0)
 }
 
 // Dead money left behind by cuts/trades, tracked per team-year.
 model CapCharge {
-  id       String @id @default(cuid())
-  teamId   String
-  year     Int
-  amount   Int
-  label    String
+  id     String @id @default(cuid())
+  teamId String
+  year   Int
+  amount Int
+  label  String
 
   @@index([teamId, year])
 }
@@ -384,21 +401,21 @@ model CapCharge {
 // ---------------------------------------------------------------------------
 
 model DraftPick {
-  id             String @id @default(cuid())
-  leagueId       String
-  league         League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
 
   year           Int
   round          Int
-  slot           Int    // 1..32 within the round; assigned by reverse standings
+  slot           Int // 1..32 within the round; assigned by reverse standings
   originalTeamId String
   originalTeam   Team   @relation("PickOrigin", fields: [originalTeamId], references: [id], onDelete: Cascade)
   ownerTeamId    String
   ownerTeam      Team   @relation("PickOwner", fields: [ownerTeamId], references: [id], onDelete: Cascade)
 
-  used           Boolean @default(false)
-  playerId       String? @unique
-  player         Player? @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  used     Boolean @default(false)
+  playerId String? @unique
+  player   Player? @relation(fields: [playerId], references: [id], onDelete: SetNull)
 
   @@index([leagueId, year, round, slot])
   @@index([ownerTeamId])
@@ -415,8 +432,8 @@ model DepthChartSlot {
   playerId String
   player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
-  position String  // depth chart position bucket (QB, RB, WR1..., etc.)
-  rank     Int     // 0 = starter
+  position String // depth chart position bucket (QB, RB, WR1..., etc.)
+  rank     Int // 0 = starter
 
   @@unique([teamId, position, rank])
   @@index([teamId])
@@ -427,9 +444,9 @@ model DepthChartSlot {
 // ---------------------------------------------------------------------------
 
 model Game {
-  id         String @id @default(cuid())
-  leagueId   String
-  league     League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
 
   seasonYear Int
   week       Int
@@ -441,13 +458,13 @@ model Game {
   awayTeamId String
   awayTeam   Team   @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
 
-  played     Boolean @default(false)
-  homeScore  Int @default(0)
-  awayScore  Int @default(0)
+  played    Boolean @default(false)
+  homeScore Int     @default(0)
+  awayScore Int     @default(0)
 
   // JSON string (see lib/types.ts BoxScore)
-  boxScore   String @default("{}")
-  recap      String @default("")
+  boxScore String @default("{}")
+  recap    String @default("")
 
   @@index([leagueId, seasonYear, week])
 }
@@ -457,9 +474,9 @@ model Game {
 // ---------------------------------------------------------------------------
 
 model Transaction {
-  id        String @id @default(cuid())
-  leagueId  String
-  league    League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
 
   seasonYear Int
   week       Int
@@ -482,19 +499,19 @@ model Transaction {
 // ---------------------------------------------------------------------------
 
 model TradeOffer {
-  id         String @id @default(cuid())
-  leagueId   String
-  league     League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
 
   fromTeamId String
   fromTeam   Team   @relation(fields: [fromTeamId], references: [id], onDelete: Cascade)
   toTeamId   String // always the user's team for now — AI-to-AI offers aren't surfaced
 
-  give       String @default("[]") // JSON TradeAsset[] — what fromTeam is offering
-  request    String @default("[]") // JSON TradeAsset[] — what fromTeam wants back
-  blurb      String
+  give    String @default("[]") // JSON TradeAsset[] — what fromTeam is offering
+  request String @default("[]") // JSON TradeAsset[] — what fromTeam wants back
+  blurb   String
 
-  status     String @default("PENDING") // PENDING | ACCEPTED | DECLINED | EXPIRED
+  status     String   @default("PENDING") // PENDING | ACCEPTED | DECLINED | EXPIRED
   seasonYear Int
   week       Int
   createdAt  DateTime @default(now())
@@ -510,18 +527,18 @@ model TradeOffer {
 // ---------------------------------------------------------------------------
 
 model TeamSeasonRecord {
-  id         String @id @default(cuid())
-  leagueId   String
-  league     League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
-  teamId     String
-  team       Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  teamId   String
+  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
-  year       Int
-  wins       Int
-  losses     Int
-  ties       Int
-  pointsFor  Int
-  pointsAgnst Int
+  year          Int
+  wins          Int
+  losses        Int
+  ties          Int
+  pointsFor     Int
+  pointsAgnst   Int
   // MISSED | WILDCARD | DIVISIONAL | CONFERENCE | RUNNER_UP | CHAMPION
   playoffResult String @default("MISSED")
 
@@ -537,13 +554,13 @@ model LeagueRecord {
   leagueId String
   league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
 
-  scope    String // SEASON | CAREER
-  category String // e.g. "passYds", "sacks" — matches SeasonStats keys
-  value    Int
-  playerId String
+  scope      String // SEASON | CAREER
+  category   String // e.g. "passYds", "sacks" — matches SeasonStats keys
+  value      Int
+  playerId   String
   playerName String // denormalized — a retired/traded holder still displays correctly
-  teamAbbr String   // team the record was set with (denormalized, same reason)
-  seasonYear Int    // season the record was set in (SEASON) or last improved in (CAREER)
+  teamAbbr   String // team the record was set with (denormalized, same reason)
+  seasonYear Int // season the record was set in (SEASON) or last improved in (CAREER)
 
   @@unique([leagueId, scope, category])
   @@index([leagueId])
@@ -599,19 +616,19 @@ model TradeRecord {
 /// leave null. Nothing reads leagueId except the lookup helper, so switching
 /// to per-account progression later is a resolver change, not a rewrite.
 model DynastyProfile {
-  id        String @id @default(cuid())
+  id String @id @default(cuid())
 
   // "LEAGUE" today. "ACCOUNT" would key on a user id instead. [TUNE-later]
   ownerKind String @default("LEAGUE")
   // == leagueId while ownerKind is "LEAGUE".
   ownerKey  String
 
-  leagueId  String? @unique
-  league    League? @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  leagueId String? @unique
+  league   League? @relation(fields: [leagueId], references: [id], onDelete: Cascade)
 
   /// JSON string map of skillId -> rank purchased, e.g. {"EVALUATIONS":2}.
   /// Absent key == rank 0. See lib/dynasty.ts DYNASTY_SKILLS.
-  skills    String @default("{}")
+  skills String @default("{}")
 
   /// FULL SCOUT charge ledger. `fullScoutYear` is the league year the counter
   /// applies to; when League.seasonYear moves past it the counter is treated
@@ -681,14 +698,14 @@ model DynastyProfile {
 /// source of truth for one fact, and the two would drift the first time a
 /// player's patience moved — which it does, with rival interest.
 model NegotiationTalks {
-  id         String @id @default(cuid())
+  id String @id @default(cuid())
 
-  leagueId   String
-  league     League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
-  teamId     String
-  team       Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  playerId   String
-  player     Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  teamId   String
+  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  playerId String
+  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   /// The league year these talks belong to. Part of the key, not a stamp.
   seasonYear Int
@@ -696,9 +713,90 @@ model NegotiationTalks {
   /// Pips burned so far. Never decreases within a league year.
   patienceSpent Int @default(0)
 
-  updatedAt  DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 
   @@unique([teamId, playerId, seasonYear])
   @@index([leagueId, seasonYear])
   @@index([playerId])
+}
+
+// ---------------------------------------------------------------------------
+// Accounts — see docs/accounts.md for the design, lib/auth.ts for the
+// mechanism and lib/owner.ts for what ownership means once an account exists.
+// ---------------------------------------------------------------------------
+
+model User {
+  id          String @id @default(cuid())
+  /// As typed, for display. Uniqueness is enforced on usernameKey, not here.
+  username    String @unique
+  /// username.toLowerCase() — the actual lookup key, so "Habib" and "habib"
+  /// cannot both exist. Postgres has no case-insensitive unique index without
+  /// citext or a functional index and Prisma models neither portably, so a
+  /// second column is the boring, migratable way to say the same thing.
+  usernameKey String @unique
+
+  /// Nullable, unique, and NEVER collected by the sign-up form today. It is
+  /// here so that adding a Discord login (which supplies one) or an opt-in
+  /// recovery address later is a write rather than a migration. An unverified
+  /// address is not a recovery mechanism, so asking for one now would be a
+  /// promise the app cannot keep — see docs/accounts.md §4.
+  email String? @unique
+
+  /// scrypt, in the versioned self-describing format lib/password.ts writes.
+  /// NULLABLE on purpose: an OAuth-only account has no password, and putting a
+  /// hash-shaped placeholder in a column where "no password set" is the
+  /// truthful answer is how a login path grows a bug.
+  passwordHash String?
+
+  createdAt DateTime @default(now())
+
+  sessions Session[]
+  leagues  League[]
+}
+
+/// Server-side sessions. The cookie carries a random 32-byte token; this table
+/// stores only its SHA-256, so a database dump contains no usable session.
+/// (SHA-256 is right HERE and wrong for a password: the token already has 256
+/// bits of entropy, so there is no dictionary to run and no salt to add.)
+///
+/// A table rather than a JWT because sign-out has to actually invalidate.
+model Session {
+  id        String @id @default(cuid())
+  tokenHash String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  /// Bumped at most once a day, so a sliding expiry is not a write on every
+  /// request of every page.
+  lastSeenAt DateTime @default(now())
+
+  /// Diagnostics only. NEVER consulted when deciding whether a session is
+  /// valid — a session is valid because its token hashes to a live row, not
+  /// because the request looked familiar.
+  userAgent String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Rate-limit ledger for sign-in and sign-up. Postgres rather than Redis: this
+/// deployment has one database, and a COUNT over an indexed time window
+/// answers the question correctly. A second stateful dependency that could be
+/// down — failing every login, or failing open — is worse than this.
+model AuthAttempt {
+  id String @id @default(cuid())
+
+  /// The bucket being counted. "u:<usernameKey>" throttles an attack on one
+  /// account; "ip:<addr>" throttles one source spraying many. Both are checked
+  /// on every sign-in, because they stop different attacks.
+  scope   String
+  kind    String /// SIGNIN | SIGNUP
+  success Boolean  @default(false)
+  at      DateTime @default(now())
+
+  @@index([scope, kind, at])
+  @@index([at])
 }

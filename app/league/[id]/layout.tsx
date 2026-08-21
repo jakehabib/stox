@@ -13,6 +13,7 @@ import { capComplianceDueNow } from '@/lib/season';
 import { capComplianceReport } from '@/lib/capEnforcement';
 import { transactionCategory } from '@/lib/newsCategory';
 import { prisma } from '@/lib/db';
+import { AccountBadge } from '@/components/auth/AccountBadge';
 
 export const dynamic = 'force-dynamic';
 
@@ -116,10 +117,17 @@ export default async function LeagueLayout({ children, params }: { children: Rea
       <LeagueWireTicker items={tickerItems} />
       <header className="border-b border-line bg-surface/80 backdrop-blur sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
-          <Link href="/" className="flex items-center gap-2 shrink-0">
-            <div className="w-7 h-7 rounded-md bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-display font-bold text-sm">D</div>
-            <span className="font-display font-bold text-base tracking-wide uppercase hidden sm:inline">Dynasty GM</span>
-          </Link>
+          <div className="flex items-center gap-3 shrink-0">
+            <Link href="/" className="flex items-center gap-2 shrink-0">
+              <div className="w-7 h-7 rounded-md bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-display font-bold text-sm">D</div>
+              <span className="font-display font-bold text-base tracking-wide uppercase hidden sm:inline">Dynasty GM</span>
+            </Link>
+            {/* Compact: this header already carries a crest, a cap figure, a
+                workout count and a phase tile. Signed out it is the nudge, in
+                the place a player actually spends their time — signed in it is
+                the indicator and the way out. */}
+            <div className="hidden md:block"><AccountBadge compact /></div>
+          </div>
           <div className="flex items-center gap-3 shrink-0">
             <div className="flex items-center gap-2">
               <TeamLogo seed={userTeam.id} abbr={userTeam.abbr} size={32} className="hidden sm:block" />

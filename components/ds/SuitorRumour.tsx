@@ -24,16 +24,36 @@ import { TeamLogo } from '../TeamLogo';
  * is precisely the lying metric README design principle 6 rules out, and this
  * project has shipped that bug more than once.
  *
- * WHAT IT DOES NOT CLAIM. Nobody may sign a player who is under contract to
- * you, so this is never presented as a bid you can lose right now. It is
- * leverage: his agent knows the number, so his asking price is harder and his
- * patience shorter. The panel says which of those it is, in the copy, by
- * window — and the window is read off his contract, not invented.
+ * WHAT IT CLAIMS DEPENDS ON WHERE HE IS, and the three cases are not
+ * interchangeable copy:
+ *
+ *   FREE AGENT  — they can sign him today. This IS the bid you have to beat,
+ *                 and `gate.competingApy` carries it, so the meter refuses to
+ *                 promise a signing the auction would lose.
+ *   FINAL_CALL  — his deal has expired. Nobody may sign a player who is under
+ *                 contract to you, so this is never dressed as a bid you can
+ *                 lose right now; it is leverage, and it is in his asking
+ *                 price and his patience rather than in the gate.
+ *   WALK_YEAR   — same, at a distance: a season still stands between him and
+ *                 the market, so the same club counts for much less
+ *                 (RESIGN_LEVERAGE).
+ *
+ * The window is read off his contract, not invented, and the copy for each is
+ * literally true. An earlier draft rendered the walk-year line — "they cannot
+ * touch him this season" — over free agents as well, which was false about a
+ * player anyone in the league could sign that minute. Caught in the browser,
+ * and worth the reminder that a shared component is a shared claim.
  */
 export function SuitorRumour({ session }: { session: NegotiationSession }) {
   const { ctx, suitor } = session;
-  const window = ctx.resignWindow;
-  const finalCall = window === 'FINAL_CALL';
+  // Three states, and they are genuinely different claims. On the open market
+  // he can be signed out from under you today; in the re-sign window he cannot,
+  // and how close the rumour is to becoming a bid depends on whether his
+  // contract still has a season on it. Saying "they cannot touch him this
+  // season" over a free agent would be flatly untrue, which is the whole class
+  // of bug this component is built to avoid.
+  const onTheMarket = !ctx.incumbent;
+  const finalCall = ctx.resignWindow === 'FINAL_CALL';
 
   if (!suitor) {
     // The honest version of "nobody is calling". It is a real state — a
@@ -51,17 +71,17 @@ export function SuitorRumour({ session }: { session: NegotiationSession }) {
   const severity = needSeverity(suitor.need);
 
   return (
-    <div className={`px-3 py-2.5 rounded-lg border ${finalCall ? 'border-bad/35 bg-bad/10' : 'border-warn/30 bg-warn/10'}`}>
+    <div className={`px-3 py-2.5 rounded-lg border ${finalCall || onTheMarket ? 'border-bad/35 bg-bad/10' : 'border-warn/30 bg-warn/10'}`}>
       <div className="flex items-center gap-2.5">
         <TeamLogo seed={suitor.teamId} abbr={suitor.teamAbbr} size={30} className="shrink-0" />
         <div className="min-w-0 flex-1">
-          <div className={`label-sm text-[10px] ${finalCall ? 'text-bad' : 'text-warn'}`}>
-            {finalCall ? 'His agent is taking calls' : 'Someone is watching this one'}
+          <div className={`label-sm text-[10px] ${finalCall || onTheMarket ? 'text-bad' : 'text-warn'}`}>
+            {onTheMarket ? 'Bidding against you' : finalCall ? 'His agent is taking calls' : 'Someone is watching this one'}
           </div>
           <div className="text-sm font-semibold truncate">{suitor.teamName}</div>
         </div>
         <div className="text-right shrink-0">
-          <div className="label-sm text-[10px]">Would go to</div>
+          <div className="label-sm text-[10px]">{onTheMarket ? 'Their bid' : 'Would go to'}</div>
           <div className="stat-value text-stat-sm">{formatMoney(suitor.apy)}/yr</div>
         </div>
       </div>
@@ -79,9 +99,11 @@ export function SuitorRumour({ session }: { session: NegotiationSession }) {
       </div>
 
       <p className="text-[11px] text-muted mt-2">
-        {finalCall
-          ? `They cannot sign him while he is yours — but his deal is up, and one Advance from here he is theirs to bid on. He is negotiating like a man who knows it.`
-          : `They cannot touch him this season. His agent has still done the arithmetic, and it is in his asking price.`}
+        {onTheMarket
+          ? 'He is on the open market and they can sign him today. This is the bid you have to beat, not a forecast.'
+          : finalCall
+            ? 'They cannot sign him while he is yours — but his deal is up, and one Advance from here he is theirs to bid on. He is negotiating like a man who knows it.'
+            : 'They cannot touch him this season. His agent has still done the arithmetic, and it is in his asking price.'}
       </p>
     </div>
   );

@@ -33,3 +33,4 @@ scripts/_pt_tmp_*/
 
 # Vercel CLI
 .vercel
+scripts/_tmp_*
