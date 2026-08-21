@@ -206,7 +206,7 @@ export function buildScoutedView(args: {
     const def = ATTRIBUTE_BY_KEY[key];
     const diff = def?.scoutDifficulty ?? 0.5;
     if (locked.has(key)) {
-      const truth = clamp(Math.round(trueAttrs[key] ?? 62), 20, 99);
+      const truth = clamp(Math.round(trueAttrs[key] ?? 68), 20, 99);
       return { key, label: def?.label ?? key, observed: truth, low: truth, high: truth, certainty: 1, actual: truth, locked: true };
     }
     // Film Room stacks on top of Better Evaluations, but only for the traits
@@ -216,7 +216,7 @@ export function buildScoutedView(args: {
     const band = tighten(errorBand(confidence, diff, penalty), mult);
     // If we have no observation yet, fall back to a blurred league-average read
     // rather than leaking the true value.
-    const center = observed[key] ?? 62;
+    const center = observed[key] ?? 68;
     return {
       key,
       label: def?.label ?? key,

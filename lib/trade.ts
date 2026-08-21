@@ -332,8 +332,8 @@ export async function maybeGenerateAiTradeOffer(leagueId: string, userTeamId: st
   // Offer from a position with real depth (need near 0) and a player who
   // isn't a core starter — the AI's own logic wouldn't shop its best guy.
   const depthPositions = Object.entries(needs).filter(([, n]) => n < 0.15).map(([pos]) => pos);
-  const candidates = roster.filter((p) => depthPositions.includes(p.position) && p.trueOvr >= 58 && p.trueOvr <= 84);
-  const surplus = candidates.length > 0 ? rng.pick(candidates) : rng.pick(roster.filter((p) => p.trueOvr >= 55 && p.trueOvr <= 78));
+  const candidates = roster.filter((p) => depthPositions.includes(p.position) && p.trueOvr >= 67 && p.trueOvr <= 89);
+  const surplus = candidates.length > 0 ? rng.pick(candidates) : rng.pick(roster.filter((p) => p.trueOvr >= 65 && p.trueOvr <= 83));
   if (!surplus) return null;
 
   const askValue = playerValueDetailed(surplus as unknown as RosterPlayer, { profile, needs, rng, capMode }).total;

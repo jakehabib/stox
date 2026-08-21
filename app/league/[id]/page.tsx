@@ -27,6 +27,8 @@ import { StorylineFeed } from '@/components/ds/StorylineFeed';
 import { InjuryReport, InjuryEntry } from '@/components/ds/InjuryReport';
 import { TeamLeaders, LeaderEntry } from '@/components/ds/TeamLeaders';
 import { SeasonStats } from '@/lib/types';
+import { AllStarHonorRoll, AllStarHonor } from '@/components/ds/AllStarHonorRoll';
+import { ALL_STAR_TYPE, allStarSnubFor } from '@/lib/allStars';
 
 const AWARD_TYPES: { type: string; code: string; label: string }[] = [
   { type: 'AWARD_MVP', code: 'MVP', label: 'MVP' },
@@ -108,6 +110,28 @@ export default async function TeamDashboard({ params }: { params: { id: string }
     }
   }
   const userSeasonRecord = seasonAnnouncement ? await prisma.teamSeasonRecord.findUnique({ where: { teamId_year: { teamId: team.id, year: league.seasonYear } } }) : null;
+
+  // --- Your All-Stars ------------------------------------------------------
+  // Rosters are named the week the regular season ends (lib/allStars.ts), so
+  // this appears the moment the user advances into the playoffs and stays up
+  // through the offseason, then goes away on its own when the league year
+  // rolls over and there are no rows for the new seasonYear. Read back from
+  // the Transaction rows selection already wrote — nothing is re-decided
+  // here, so a refresh cannot change who made it.
+  const allStarRows = await prisma.transaction.findMany({
+    where: { leagueId: league.id, seasonYear: league.seasonYear, type: ALL_STAR_TYPE, teamId: team.id },
+    orderBy: { headline: 'asc' },
+    select: { headline: true, detail: true },
+  });
+  const myAllStars: AllStarHonor[] = allStarRows.map((t) => {
+    const m = /^(.*) \(([^)]+)\)$/.exec(t.headline);
+    return { name: m?.[1] ?? t.headline, position: m?.[2] ?? '', statLine: t.detail };
+  });
+  // The near-miss is READ, never re-ranked. It was frozen into its own row at
+  // selection time precisely because seasonStats keep climbing through the
+  // playoffs — recomputing it here would let the page change its mind in
+  // February about who was snubbed in January. See ALL_STAR_SNUB_TYPE.
+  const snub = myAllStars.length === 0 ? await allStarSnubFor(league.id, team.id, league.seasonYear) : null;
 
   const expiringCount = league.phase === 'RESIGN'
     ? await prisma.player.count({ where: { teamId: team.id, status: 'ACTIVE', contract: { yearsRemaining: 0 } } })
@@ -344,6 +368,13 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           awards={seasonAnnouncement.awards}
         />
       )}
+      <AllStarHonorRoll
+        seasonYear={league.seasonYear}
+        leagueId={league.id}
+        teamAbbr={team.abbr}
+        honors={myAllStars}
+        nearMiss={snub}
+      />
       <OffseasonRoadmap currentPhase={league.phase} />
       {league.phase === 'RESIGN' && (
         <Link href={`/league/${league.id}/resign`} className="card card-pad flex items-center justify-between gap-4 border-warn/40 hover:bg-raised transition-colors">

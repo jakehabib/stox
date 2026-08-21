@@ -81,7 +81,7 @@ export interface TeamRating {
  * special teams at literally zero, which is not what a team without a kicker
  * looks like. This is roughly practice-squad level.
  */
-const REPLACEMENT_LEVEL = 40;
+const REPLACEMENT_LEVEL = 52;
 
 /**
  * Averages the top N at a unit, where N is how many actually play — a team is

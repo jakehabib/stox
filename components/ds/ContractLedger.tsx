@@ -182,9 +182,11 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
                 +{voidYears} void year{voidYears === 1 ? '' : 's'}
               </span>{' '}
               — not seasons he plays, and not years he is paid for.{' '}
-              {voidDeadMoney > 0
-                ? `Whatever bonus is still prorated across them lands as dead money the moment this deal ends, in ${thisYear + contract.yearsRemaining}.`
-                : 'The bonus finished prorating inside the real years of this deal, so they carry nothing — there is no charge waiting at the end.'}
+              {!realistic
+                ? 'With the simplified cap there is no bonus proration for them to stretch, so they do nothing at all here.'
+                : voidDeadMoney > 0
+                  ? `Whatever bonus is still prorated across them lands as dead money the moment this deal ends, in ${thisYear + contract.yearsRemaining}.`
+                  : 'The bonus finished prorating inside the real years of this deal, so they carry nothing — there is no charge waiting at the end.'}
             </div>
             {voidDeadMoney > 0 && (
               <StatNumber value={formatMoney(voidDeadMoney)} label="Lands after the deal" size="sm" color="text-warn" />

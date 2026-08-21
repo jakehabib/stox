@@ -650,7 +650,7 @@ function buildStars(
   for (const team of teams) {
     // --- the living anchor, if this roster has one worth building on
     const candidates = (byTeam.get(team.id) ?? [])
-      .filter((p) => p.experience >= 3 && p.trueOvr >= 78)
+      .filter((p) => p.experience >= 3 && p.trueOvr >= 83)
       .sort((a, b) => b.trueOvr - a.trueOvr);
 
     let coveredFrom = eraEnd + 1;

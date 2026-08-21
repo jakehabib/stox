@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
-import type { WeekReport, ReportSide } from '@/lib/weekReport';
+import type { WeekReport, ReportSide, CoachPayload } from '@/lib/weekReport';
 import { ordinal } from '@/lib/standingsOrder';
 import { marginPhrase } from '@/lib/gameShape';
 import { TeamLogo } from '../TeamLogo';
@@ -11,6 +11,7 @@ import { PlayerAvatar } from '../PlayerAvatar';
 import { GameShapePath, ArchetypeTag, QuarterAxis } from './GameShapePath';
 import { QuarterLinescore } from './QuarterLinescore';
 import { ResultKicker } from './ResultWeight';
+import { CoachComments } from './CoachComments';
 
 /**
  * ===========================================================================
@@ -43,9 +44,16 @@ export interface WeekReportSpan {
   gamesPlayed: number;
 }
 
-export function WeekReportPanel({ report, span, onClose, leagueId }: {
+export function WeekReportPanel({ report, span, coach, onClose, leagueId }: {
   report: WeekReport;
   span?: WeekReportSpan | null;
+  /**
+   * Every week of the advance, oldest first — not just the one being
+   * rendered. Coach's Comments summarises a SPAN rather than repeating seven
+   * single-week blocks, and it cannot do that from the last week alone.
+   * Defaults to this report's own payload for a single advance.
+   */
+  coach?: (CoachPayload | null | undefined)[];
   onClose: () => void;
   leagueId: string;
 }) {
@@ -261,6 +269,19 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
               </div>
             </div>
           </div>
+
+          {/* --- Coach's comments (collapsed) --------------------------- */}
+          {/* Expandable, and closed every time it is opened fresh: this panel
+              sits on a path the user walks seventeen times a season, so
+              nothing that is not mandatory may be on it by default. Nothing
+              inside CoachComments runs until it is opened. */}
+          <CoachComments
+            payloads={coach && coach.length > 0 ? coach : [report.coach]}
+            leagueId={leagueId}
+            teamColor={report.teamColor}
+            gameBallId={report.gameBall?.playerId ?? null}
+            onNavigate={onClose}
+          />
 
           {/* --- band 5: what's next ------------------------------------ */}
           {report.next ? (

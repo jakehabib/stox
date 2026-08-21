@@ -183,13 +183,13 @@ export function playerValueDetailed(
   const curve = TRADE_VALUE.TIER_CURVE[tier];
   const base = tierCurveValue(p.trueOvr, curve);
 
-  if (tier === 'QB' && p.trueOvr >= 82) {
+  if (tier === 'QB' && p.trueOvr >= 87) {
     reasons.push({ text: 'Quarterbacks at this level are extremely difficult to replace — that alone drives a huge price.', weight: base * 0.6 });
-  } else if (tier === 'PREMIUM' && p.trueOvr >= 85) {
+  } else if (tier === 'PREMIUM' && p.trueOvr >= 90) {
     reasons.push({ text: "He's a premium-position difference-maker — the market pays up for that.", weight: base * 0.4 });
-  } else if (tier === 'MINIMAL' && p.trueOvr >= 88) {
+  } else if (tier === 'MINIMAL' && p.trueOvr >= 93) {
     reasons.push({ text: `He grades as one of the best at his position, but that position carries limited trade-market value no matter how well he plays it.`, weight: base * 0.1 });
-  } else if (tier === 'LOW' && p.trueOvr >= 85) {
+  } else if (tier === 'LOW' && p.trueOvr >= 90) {
     reasons.push({ text: `${p.position === 'RB' ? 'Running back' : 'This position'} has real value, but positional economics and the age curve cap how high it goes.`, weight: base * 0.15 });
   }
 

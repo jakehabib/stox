@@ -32,6 +32,9 @@ export interface WireCandidate {
 const TYPE_WEIGHT: Record<string, number> = {
   CHAMPION: 100,
   AWARD_SBMVP: 90, AWARD_MVP: 90, AWARD_OPOY: 70, AWARD_DPOY: 70, AWARD_ROTY: 70,
+  // The All-Star rosters coming out is the story of the week the regular
+  // season ends — below a title and the individual trophies, above a firing.
+  ALL_STAR_ROSTER: 65,
   FIRE: 60,
   TRADE: 55,
   DRAFT: 45,
@@ -39,6 +42,12 @@ const TYPE_WEIGHT: Record<string, number> = {
   SIGN: 30,
   CUT: 25,
   NEWS: 20,
+  // Deliberately quiet. Seventy-odd of these land in one week, and league-wide
+  // they are a list, not news. The user-team bonus below (+60) is what makes
+  // them matter: YOUR player being selected clears every other story on the
+  // page, which is the whole excitement of the thing, while the other
+  // seventy-odd stay out of the way.
+  ALL_STAR: 18,
   DEV_MILESTONE: 10,
   INJURY: 5,
 };

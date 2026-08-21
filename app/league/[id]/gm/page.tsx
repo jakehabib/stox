@@ -88,7 +88,7 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
         ))}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div className="stat-tile">
           <div className="label-sm">Record</div>
           <div className="text-lg font-mono font-semibold">{s.wins}-{s.losses}{s.ties ? `-${s.ties}` : ''}</div>
@@ -108,6 +108,20 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
           <div className="label-sm">Trades Made</div>
           <div className="text-lg font-mono font-semibold">{s.trades}</div>
           <div className="text-xs text-muted">{s.tagsUsed} franchise tag{s.tagsUsed === 1 ? '' : 's'} used</div>
+        </div>
+        {/* DISTINCT players, on the owner's call — a five-time All-Star
+            quarterback is one All-Star player, not five. The selections count
+            sits underneath rather than in the headline slot so the two can
+            never be read as each other. Both are bounded to this GM's tenure
+            (lib/allStars.ts allStarTallyForTeam). */}
+        <div className="stat-tile">
+          <div className="label-sm">All-Star Players</div>
+          <div className={`text-lg font-mono font-semibold ${s.allStars.players > 0 ? 'text-gold' : ''}`}>{s.allStars.players}</div>
+          <div className="text-xs text-muted">
+            {s.allStars.selections === 0
+              ? 'None selected yet'
+              : `${s.allStars.selections} selection${s.allStars.selections === 1 ? '' : 's'} since ${s.firstYear}`}
+          </div>
         </div>
       </div>
 
@@ -212,6 +226,33 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
           </div>
         </div>
       </div>
+
+      {s.allStars.entries.length > 0 && (
+        <div className="panel overflow-hidden">
+          <div className="px-4 py-3 border-b border-line/70 flex items-baseline justify-between gap-3 flex-wrap">
+            <div className="label-sm">All-Stars You Developed</div>
+            <div className="text-xs text-muted">
+              {s.allStars.players} player{s.allStars.players === 1 ? '' : 's'} · {s.allStars.selections} selection{s.allStars.selections === 1 ? '' : 's'}
+            </div>
+          </div>
+          <table className="table-clean">
+            <thead><tr><th>Year</th><th>Player</th><th>Pos</th><th>Season</th></tr></thead>
+            <tbody>
+              {/* One row per SELECTION, so a repeat All-Star appears once per
+                  year he earned it — the tile above counts the men, this
+                  counts the seasons, and each says which it is. */}
+              {s.allStars.entries.map((a, i) => (
+                <tr key={i}>
+                  <td className="font-mono text-muted">{a.year}</td>
+                  <td className="text-gold">⭐ {a.name}</td>
+                  <td className="font-mono text-xs text-muted">{a.position}</td>
+                  <td className="text-xs text-muted">{a.statLine}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {s.awards.length > 0 && (
         <div className="panel overflow-hidden">

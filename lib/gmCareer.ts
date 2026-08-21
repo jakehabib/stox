@@ -1,5 +1,6 @@
 import { prisma } from './db';
 import { resolveStartYear } from './leagueYear';
+import { allStarTallyForTeam, GmAllStarTally } from './allStars';
 
 /**
  * ===========================================================================
@@ -59,6 +60,20 @@ export interface GmCareerSummary {
   avgDeadMoneyPerYear: number;
   tagsUsed: number;
   awards: GmAward[];
+  /**
+   * All-Stars produced during this tenure — the honour players EARNED from
+   * their production while on his roster (lib/allStars.ts), not a count of
+   * high ratings he happened to own.
+   *
+   * The headline figure is `players`, DISTINCT men, on the owner's call: a
+   * five-time All-Star quarterback is one All-Star player. `selections` is
+   * carried alongside because the two say different things — "seven All-Star
+   * players" is a statement about how many stars a front office assembled or
+   * developed, "fourteen selections" is a statement about how long it kept
+   * them — and neither number is allowed to be printed under the other's
+   * label.
+   */
+  allStars: GmAllStarTally;
   badges: GmBadge[];
 }
 
@@ -117,6 +132,11 @@ export async function buildGmCareerSummary(
     }),
   ]);
 
+  // Bounded by `hiredIn` for the same reason every other number on this page
+  // is: All-Stars this franchise produced before he was hired are the
+  // franchise's, not his.
+  const allStars = await allStarTallyForTeam(leagueId, team.id, hiredIn);
+
   // TeamSeasonRecord only gets a row once a season fully wraps (playoffs
   // done) — until then the games already played this year live only on
   // Team.wins/losses/ties, which resets to 0 at the next RESET_STANDINGS.
@@ -165,18 +185,20 @@ export async function buildGmCareerSummary(
   const badges = computeBadges({
     tenureYears, wins, losses, championships, playoffAppearances, trades,
     draftHitRate, draftPicksMade, avgDeadMoneyPerYear, tagsUsed: tagCount, awardsCount: awards.length,
+    allStarPlayers: allStars.players, allStarSelections: allStars.selections,
   });
 
   return {
     tenureYears, firstYear, wins, losses, ties, playoffAppearances, championships, runnerUps, bestSeason,
-    trades, draftPicksMade, draftHits, draftHitRate, avgDeadMoneyPerYear, tagsUsed: tagCount, awards, badges,
+    trades, draftPicksMade, draftHits, draftHitRate, avgDeadMoneyPerYear, tagsUsed: tagCount, awards,
+    allStars, badges,
   };
 }
 
 function computeBadges(s: {
   tenureYears: number; wins: number; losses: number; championships: number; playoffAppearances: number;
   trades: number; draftHitRate: number | null; draftPicksMade: number; avgDeadMoneyPerYear: number;
-  tagsUsed: number; awardsCount: number;
+  tagsUsed: number; awardsCount: number; allStarPlayers: number; allStarSelections: number;
 }): GmBadge[] {
   const badges: GmBadge[] = [];
   const games = s.wins + s.losses;
@@ -219,7 +241,19 @@ function computeBadges(s: {
   }
 
   if (s.awardsCount >= 3) {
-    badges.push({ icon: '⭐', title: 'Star Factory', blurb: `${s.awardsCount} major awards won by players on your roster.` });
+    badges.push({ icon: '🏅', title: 'Trophy Case', blurb: `${s.awardsCount} major awards won by players on your roster.` });
+  }
+
+  // Distinct men, not selections — a badge that read "8 All-Stars" off one
+  // quarterback's eight straight years would be the same player counted eight
+  // times, which is the sort of number this project has a standing rule
+  // against. The blurb prints both so the figure cannot be misread.
+  if (s.allStarPlayers >= 4) {
+    badges.push({
+      icon: '⭐', title: 'Star Factory',
+      blurb: `${s.allStarPlayers} different players have made an All-Star roster under you`
+        + `${s.allStarSelections > s.allStarPlayers ? ` — ${s.allStarSelections} selections in all.` : '.'}`,
+    });
   }
 
   if (badges.length === 0) {

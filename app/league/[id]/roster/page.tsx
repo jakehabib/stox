@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
-import { ratingColor } from '@/lib/ratings';
+import { ratingColor, ratingMark, ratingPlateClass } from '@/lib/ratings';
 import { formatMoney, capHit } from '@/lib/cap';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
@@ -223,7 +223,15 @@ export default async function RosterPage({ params, searchParams }: { params: { i
           </td>
           <td className="text-muted">{p.age}</td>
           <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>
-            {view.revealed || view.confidence >= 90 ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}
+            {view.revealed || view.confidence >= 90 ? (
+              // The mark is the non-colour channel for the top two steps; it
+              // only appears when we are actually showing a number, never
+              // beside a scouting range.
+              <span className={ratingPlateClass(view.scoutedOvr) ?? undefined}>
+                {view.scoutedOvr}
+                {ratingMark(view.scoutedOvr) && <span className="ml-0.5 text-[0.7em] align-super not-italic">{ratingMark(view.scoutedOvr)}</span>}
+              </span>
+            ) : `${view.ovrLow}-${view.ovrHigh}`}
           </td>
           <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
           <td>

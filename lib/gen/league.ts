@@ -1,6 +1,6 @@
 import { prisma } from '../db';
 import { Rng, clamp } from '../rng';
-import { LEAGUE, CAP, OFF_SCHEMES, DEF_SCHEMES, Position, SCOUTING } from '../tuning';
+import { LEAGUE, CAP, OFF_SCHEMES, DEF_SCHEMES, Position, SCOUTING, GENERATION } from '../tuning';
 import { LeagueSettings, serializeSettings, DEFAULT_SETTINGS } from '../settings';
 import { TEAM_SEEDS, COACH_FIRST, COACH_LAST, FIRST_NAMES, LAST_NAMES, NameRegistry } from './names';
 import { generateRoster, generatePlayer, toPlayerCreate, GeneratedPlayer } from './players';
@@ -231,7 +231,7 @@ export async function createLeague(opts: {
     // Free agent pool — leftovers, mostly replacement level with a few real
     // players still unsigned. [TUNE] 140 free agents at league start.
     for (let i = 0; i < 140; i++) {
-      const p = generatePlayer(rng, { ovrTarget: rng.normalClamped(58, 8, 38, 84), names });
+      const p = generatePlayer(rng, { ovrTarget: rng.normalClamped(GENERATION.FREE_AGENT_OVR_MEAN, GENERATION.FREE_AGENT_OVR_SD, GENERATION.FREE_AGENT_OVR_MIN, GENERATION.FREE_AGENT_OVR_MAX), names });
       registerPlayer(p, { status: 'FREE_AGENT', teamId: null }, false);
     }
   }

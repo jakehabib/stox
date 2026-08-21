@@ -109,6 +109,93 @@ export interface ReportGameBall {
   teamColor: string;
 }
 
+/**
+ * ===========================================================================
+ * COACH'S COMMENTS — the raw material, not the prose
+ * ===========================================================================
+ * The report ships the NUMBERS for the expandable Coach's Comments section
+ * and nothing else: no grades, no ranking, no sentences. Three reasons, and
+ * they are all the same reason.
+ *
+ * 1. LATENCY. This section is collapsed by default, so the work that turns
+ *    these rows into comments must not happen on the path to the report
+ *    painting. Assembling it here is one already-needed database read and a
+ *    handful of array copies; ranking and phrasing happen in
+ *    components/ds/CoachComments.tsx, and only when a user opens it.
+ * 2. THE SPAN. AdvanceWeekButton collects every week of a multi-week advance
+ *    and shows ONE report. Seven weeks of finished prose cannot be merged
+ *    into a summary of the stretch, but seven weeks of stat lines can — the
+ *    same player's seven rows add up, and only then does "who carried the
+ *    stretch" have an answer.
+ * 3. Grading is position-relative (see lib/gamePerformance.ts) and the
+ *    ladders it grades against are baked constants, so doing it on the
+ *    client costs a database nothing.
+ * ===========================================================================
+ */
+
+export interface CoachLine {
+  playerId: string;
+  name: string;
+  position: string;
+  /** This game's line, exactly as the box score stored it. */
+  stats: SeasonStats;
+  /** Portrait inputs — the avatar is identity, so it travels with the row. */
+  age: number;
+  heightIn: number;
+  weightLb: number;
+  /** Completed pro seasons. 0 is a rookie, and that is worth a sentence. */
+  experience: number;
+}
+
+/**
+ * Team-level truth for the week, and a deliberately short list of it.
+ *
+ * Everything here is either a real accumulator off the sim or summed from the
+ * player lines. What is NOT here is what lib/sim/engine.ts's toTeamStats()
+ * derives rather than counts: `thirdDownConv` is `plays/6` over `plays/4`, a
+ * flat ~67% for every team in every game ever played; `penalties` is
+ * `plays/12`; and the team `passYards`/`rushYards` are a fixed 60/40 split of
+ * total yards while the player lines carry the real one. Shipping those would
+ * let the comments say "we were unstoppable on third down" on a week when the
+ * offence never converted anything, which is the exact failure this project
+ * calls a lying metric. The split below is summed off the lines instead.
+ */
+export interface CoachTeamContext {
+  points: number;
+  oppPoints: number;
+  totalYards: number;
+  oppTotalYards: number;
+  /** Summed from the player lines, not the box's 60/40 estimate. */
+  rushYards: number;
+  rushAtt: number;
+  passYards: number;
+  passAtt: number;
+  turnovers: number;
+  oppTurnovers: number;
+  /** Sacks this defence recorded, and sacks this offence gave up. */
+  sacksFor: number;
+  sacksAgainst: number;
+  /** Share of the game's plays, 0..1. */
+  possession: number;
+  drives: number;
+  scoringDrives: number;
+  /** Possessions that ended in a punt, a turnover or on downs. */
+  emptyDrives: number;
+}
+
+export interface CoachPayload {
+  weekLabel: string;
+  /** null when the user's club was not on the slate that week. */
+  gameId: string | null;
+  outcome: 'W' | 'L' | 'T' | null;
+  margin: number;
+  oppAbbr: string | null;
+  lines: CoachLine[];
+  team: CoachTeamContext | null;
+  shape: GameShape | null;
+  injuries: (ReportInjury & { playerId: string })[];
+}
+
 export interface ReportInjury {
   name: string;
   position: string;
@@ -149,6 +236,8 @@ export interface WeekReport {
   result: ReportResult | null;
   changed: ReportChange | null;
   gameBall: ReportGameBall | null;
+  /** Raw material for the collapsed Coach's Comments section. */
+  coach: CoachPayload | null;
   injuries: ReportInjury[];
   /** Everyone else's training room, collapsed the way the wire already does. */
   otherInjuryCount: number;
@@ -382,6 +471,7 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
     result: null,
     changed: null,
     gameBall: null,
+    coach: null,
     injuries: [],
     otherInjuryCount: 0,
     headlines: [],
@@ -467,19 +557,45 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
     }
   }
 
+  // --- Bands 3-4: the game ball, the room, and the coach's raw material ----
+  //
+  // ONE player lookup serves all three. It used to be two — a findUnique for
+  // the game ball and a findMany for the injured — so adding Coach's Comments
+  // on top of them without merging would have made it three round trips on
+  // the path to the report painting, which is the one thing this section is
+  // not allowed to cost. Merged, it is a single indexed `id IN (...)` over
+  // roughly two dozen rows, and the report is measurably no slower than it
+  // was before any of this existed.
+  const userIsHome = game ? game.homeTeamId === userTeam.id : false;
+  const myLines: BoxLine[] = box ? (userIsHome ? (box.lines?.home ?? []) : (box.lines?.away ?? [])) : [];
+  const myInjuries = (box?.injuries ?? []).filter((i) => i.teamId === userTeam.id);
+
+  const wantedIds = Array.from(new Set([
+    ...myLines.map((l) => l.playerId),
+    ...myInjuries.map((i) => i.playerId),
+  ]));
+  const roster = wantedIds.length
+    ? await prisma.player.findMany({
+        where: { id: { in: wantedIds } },
+        select: { id: true, age: true, heightIn: true, weightLb: true, position: true, experience: true },
+      })
+    : [];
+  const byId = new Map(roster.map((p) => [p.id, p]));
+
   // --- Band 3: the game ball ----------------------------------------------
   if (box) {
-    const userIsHome = game!.homeTeamId === userTeam.id;
-    const myLines: BoxLine[] = userIsHome ? (box.lines?.home ?? []) : (box.lines?.away ?? []);
     // Exactly one, every week, no exceptions — a predictable section rather
     // than a lottery. Ranked by the same statScore lib/news.ts uses to pick
     // which performances become headlines, so the two never disagree.
+    //
+    // Deliberately NOT re-pointed at lib/gamePerformance.ts. The game ball
+    // is the league's answer to "who had the loudest afternoon", the same
+    // question the wire answers, and the two agreeing is the point of it.
+    // Coach's Comments below asks a different question — "who beat what is
+    // normal for his job" — and gets a different, position-diverse answer.
     const best = [...myLines].sort((a, b) => statScore(b) - statScore(a))[0];
     if (best && statScore(best) > 0) {
-      const player = await prisma.player.findUnique({
-        where: { id: best.playerId },
-        select: { age: true, heightIn: true, weightLb: true, position: true },
-      });
+      const player = byId.get(best.playerId);
       base.gameBall = {
         playerId: best.playerId,
         name: best.name,
@@ -495,16 +611,68 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
   }
 
   // --- Band 4: the room ----------------------------------------------------
-  if (box?.injuries?.length) {
-    const mine = box.injuries.filter((i) => i.teamId === userTeam.id);
-    const positions = await prisma.player.findMany({
-      where: { id: { in: mine.map((i) => i.playerId) } },
-      select: { id: true, position: true },
-    });
-    const posById = new Map(positions.map((p) => [p.id, p.position]));
-    base.injuries = mine.map((i) => ({
-      name: i.name, position: posById.get(i.playerId) ?? '', weeks: i.weeks, type: i.type,
-    }));
+  base.injuries = myInjuries.map((i) => ({
+    name: i.name, position: byId.get(i.playerId)?.position ?? '', weeks: i.weeks, type: i.type,
+  }));
+
+  // --- Coach's Comments: numbers only -------------------------------------
+  if (box && game) {
+    const opp = userIsHome ? box.teamStats.away : box.teamStats.home;
+    const own = userIsHome ? box.teamStats.home : box.teamStats.away;
+    const mineScore = userIsHome ? game.homeScore : game.awayScore;
+    const theirScore = userIsHome ? game.awayScore : game.homeScore;
+    const side = userIsHome ? 'home' : 'away';
+    const myDrives = (box.drives ?? []).filter((d) => d.team === side);
+    const plays = own.timeOfPossession > 0 ? own.timeOfPossession / 3600 : 0.5;
+
+    base.coach = {
+      weekLabel: opts.weekLabel,
+      gameId: game.id,
+      outcome: mineScore > theirScore ? 'W' : mineScore < theirScore ? 'L' : 'T',
+      margin: mineScore - theirScore,
+      oppAbbr: userIsHome ? game.awayTeam.abbr : game.homeTeam.abbr,
+      lines: myLines.map((l) => {
+        const p = byId.get(l.playerId);
+        return {
+          playerId: l.playerId,
+          name: l.name,
+          position: String(l.position),
+          stats: l.stats,
+          age: p?.age ?? 26,
+          heightIn: p?.heightIn ?? 73,
+          weightLb: p?.weightLb ?? 220,
+          experience: p?.experience ?? 1,
+        };
+      }),
+      team: {
+        points: mineScore,
+        oppPoints: theirScore,
+        totalYards: own.totalYards,
+        oppTotalYards: opp.totalYards,
+        // Summed off the lines. See CoachTeamContext's header for why the
+        // box score's own pass/rush split is not usable.
+        rushYards: myLines.reduce((n, l) => n + (l.stats.rushYds ?? 0), 0),
+        rushAtt: myLines.reduce((n, l) => n + (l.stats.rushAtt ?? 0), 0),
+        passYards: myLines.reduce((n, l) => n + (l.stats.passYds ?? 0), 0),
+        passAtt: myLines.reduce((n, l) => n + (l.stats.passAtt ?? 0), 0),
+        turnovers: own.turnovers,
+        oppTurnovers: opp.turnovers,
+        sacksFor: own.sacks,
+        sacksAgainst: opp.sacks,
+        possession: plays,
+        drives: myDrives.length,
+        scoringDrives: myDrives.filter((d) => d.points > 0).length,
+        emptyDrives: myDrives.filter((d) => d.result === 'PUNT' || d.result === 'TURNOVER' || d.result === 'DOWNS').length,
+      },
+      shape: base.result?.shape ?? null,
+      injuries: myInjuries.map((i) => ({
+        playerId: i.playerId,
+        name: i.name,
+        position: byId.get(i.playerId)?.position ?? '',
+        weeks: i.weeks,
+        type: i.type,
+      })),
+    };
   }
 
   const wireRows = await prisma.transaction.findMany({

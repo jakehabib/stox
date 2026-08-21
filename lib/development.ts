@@ -96,7 +96,7 @@ export async function applyInSeasonProgression(
     rated.forEach((p, i) => {
       const pct = i / n;
       if (pct < 0.15) tierById.set(p.id, 'breakout');
-      else if (pct > 0.85 && p.trueOvr >= 65) tierById.set(p.id, 'slump');
+      else if (pct > 0.85 && p.trueOvr >= 72) tierById.set(p.id, 'slump');
     });
   }
 

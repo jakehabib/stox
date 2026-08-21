@@ -63,7 +63,14 @@ export default async function LeagueLayout({ children, params }: { children: Rea
       // happened; only the league year the event belongs to can.
       where: {
         leagueId: league.id,
-        type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'DRAFT', 'FIRE', 'CHAMPION', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] },
+        // 'ALL_STAR' (one row per selection, ~76 of them in the week the
+        // regular season ends) is deliberately absent for the same reason
+        // 'INJURY' is: it would spend the whole window on other clubs' honour
+        // rolls. The single 'ALL_STAR_ROSTER' announcement is the
+        // ticker-worthy half; the individual selections are the record, and
+        // they are read where they belong — the player's card and the GM's
+        // career page.
+        type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'DRAFT', 'FIRE', 'CHAMPION', 'ALL_STAR_ROSTER', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] },
         seasonYear: { gte: league.seasonYear - 1 },
       },
       orderBy: { createdAt: 'desc' },

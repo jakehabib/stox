@@ -199,21 +199,31 @@ export function generateRoster(rng: Rng, teamStrength: number, names?: NameRegis
     const target = ROSTER_TARGETS[pos];
     const count = rng.int(target.min, target.ideal);
     for (let i = 0; i < count; i++) {
-      // Starters are better than backups — depth decays down the chart.
-      const depthPenalty = i * rng.float(4, 8); // [TUNE]
+      // Starters are better than backups — depth decays down the chart,
+      // asymptotically rather than linearly so it is front-loaded like a real
+      // one and bounded. See GENERATION.DEPTH_DECAY_MAX for why.
+      const jitter = GENERATION.DEPTH_DECAY_JITTER;
+      const depthPenalty = GENERATION.DEPTH_DECAY_MAX
+        * (1 - Math.exp(-i / GENERATION.DEPTH_DECAY_TAU))
+        * rng.float(1 - jitter, 1 + jitter);
+      // Kickers and punters carry one roster slot, so they never take a depth
+      // penalty and would otherwise outrank the whole league on average.
+      const specialist = (pos === 'K' || pos === 'P') ? GENERATION.SPECIALIST_OVR_PENALTY : 0;
       const ovrTarget = clamp(
-        Math.round(rng.normal(GENERATION.VETERAN_OVR_MEAN + teamStrength - depthPenalty, GENERATION.VETERAN_OVR_SD * 0.8)),
-        40, 99,
+        Math.round(rng.normal(GENERATION.VETERAN_OVR_MEAN + teamStrength - depthPenalty - specialist, GENERATION.VETERAN_OVR_SD * 0.8)),
+        GENERATION.ROSTER_OVR_FLOOR, 99,
       );
       out.push(generatePlayer(rng, { position: pos, ovrTarget, names }));
     }
   }
 
-  // Seed 1-3 legitimate stars per team so rosters have identity. [TUNE]
-  const starCount = rng.int(1, 3);
-  const premiumPositions: Position[] = ['QB', 'WR', 'EDGE', 'CB', 'LT', 'DT', 'TE', 'RB', 'S', 'LB'];
+  // Seed a few legitimate stars per team so rosters have identity. [TUNE]
+  const starCount = rng.int(GENERATION.STAR_COUNT_MIN, GENERATION.STAR_COUNT_MAX);
   for (let i = 0; i < starCount; i++) {
-    const pos = rng.pick(premiumPositions);
+    // Weighted, not a flat pick: see GENERATION.STAR_POSITION_WEIGHTS. An
+    // unweighted pick gave a 79-man tight-end pool as many stars as a 193-man
+    // receiver pool.
+    const pos = rng.weighted(GENERATION.STAR_POSITION_WEIGHTS) as Position;
     // Age band: a star used to be capped at 29, which meant a brand-new
     // league contained no elite veterans at all — nobody old enough to have
     // a decade of production, an MVP and a couple of rings behind him, which
@@ -225,12 +235,22 @@ export function generateRoster(rng: Rng, teamStrength: number, names?: NameRegis
     const ageOverride = era === 'RISING' ? rng.int(23, 25) : era === 'PRIME' ? rng.int(26, 29) : rng.int(30, 34);
     const star = generatePlayer(rng, {
       position: pos,
-      ovrTarget: clamp(Math.round(rng.normal(85 + teamStrength * 0.3, 4)), 78, 99),
+      ovrTarget: clamp(Math.round(rng.normal(GENERATION.STAR_OVR_MEAN + teamStrength * 0.3, GENERATION.STAR_OVR_SD)), GENERATION.STAR_OVR_MIN, 99),
       ageOverride,
       names,
     });
-    const replaceIdx = out.findIndex((p) => p.position === pos);
-    if (replaceIdx >= 0) out[replaceIdx] = star;
+    // Replace the WEAKEST man at the position, and only if the star is
+    // actually an upgrade. This was findIndex(), which — because `out` is
+    // built depth-slot-0 first — returned the team's BEST player at the
+    // position: measured over 660 star seeds, 8% of them overwrote someone
+    // already as good or better, and the mean net gain was +12.5 rather than
+    // the ~+20 it should have been.
+    let replaceIdx = -1;
+    let weakest = Infinity;
+    for (let j = 0; j < out.length; j++) {
+      if (out[j].position === pos && out[j].trueOvr < weakest) { weakest = out[j].trueOvr; replaceIdx = j; }
+    }
+    if (replaceIdx >= 0 && weakest < star.trueOvr) out[replaceIdx] = star;
     else out.push(star);
   }
 
@@ -249,14 +269,18 @@ export function generateDraftClass(rng: Rng, size: number, names?: NameRegistry)
   const out: GeneratedPlayer[] = [];
   for (let i = 0; i < size; i++) {
     // Top of the class is meaningfully better than the back half. [TUNE]
-    const pct = i / size;
+    // The class is longer than the draft (DRAFT_CLASS_EXTRA_UDFA), so cap the
+    // ramp at the last pick: otherwise it only traverses 56% of its range
+    // across all seven rounds and the undrafted eat the rest, which is why a
+    // seventh-rounder used to grade the same as a first-rounder.
+    const pct = Math.min(1, i / GENERATION.DRAFT_CLASS_SIZE);
     const position = weightedPosition(rng);
     const bias = strengthByGroup[positionGroup(position)] ?? 0;
-    const tierMean = GENERATION.ROOKIE_OVR_MEAN + (1 - pct) * 14 - 6 + bias;
+    const tierMean = GENERATION.ROOKIE_OVR_MEAN + (1 - pct) * GENERATION.DRAFT_TIER_SPREAD - GENERATION.DRAFT_TIER_OFFSET + bias;
     const player = generatePlayer(rng, {
       position,
       rookie: true,
-      ovrTarget: clamp(Math.round(rng.normal(tierMean, GENERATION.ROOKIE_OVR_SD)), 38, 95),
+      ovrTarget: clamp(Math.round(rng.normal(tierMean, GENERATION.ROOKIE_OVR_SD)), GENERATION.DRAFT_OVR_MIN, GENERATION.DRAFT_OVR_MAX),
       names,
     });
     player.collegeProfile = generateCollegeProfile(rng, player.position, player.trueAttrs, player.trueOvr);

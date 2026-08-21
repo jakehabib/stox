@@ -814,7 +814,7 @@ export function planFromLeagueFile(file: LeagueFile, rng: Rng): LeagueImportPlan
   );
   const floor = file.freeAgents === undefined ? FREE_AGENT_DEFAULT : FREE_AGENT_FLOOR;
   while (freeAgents.length < floor) {
-    freeAgents.push(generatePlayer(rng, { ovrTarget: rng.normalClamped(58, 8, 38, 84), names }));
+    freeAgents.push(generatePlayer(rng, { ovrTarget: rng.normalClamped(GENERATION.FREE_AGENT_OVR_MEAN, GENERATION.FREE_AGENT_OVR_SD, GENERATION.FREE_AGENT_OVR_MIN, GENERATION.FREE_AGENT_OVR_MAX), names }));
   }
 
   return {

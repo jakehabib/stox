@@ -18,16 +18,23 @@ export interface HonorAward {
  * should simply not have a trophy shelf on his card.
  */
 export function CareerHonors({
-  position, ringYears, awards, careerHighlights, seasons,
+  position, ringYears, awards, allStarYears = [], careerHighlights, seasons,
 }: {
   position: string;
   ringYears: number[];
   awards: HonorAward[];
+  /**
+   * Seasons he was named an All-Star, oldest first — the years he EARNED it
+   * from his production (lib/allStars.ts), never a read of his rating. It
+   * accumulates the way a real résumé does: three of these make him a
+   * "3x All-Star", and that is a sentence about three seasons that happened.
+   */
+  allStarYears?: number[];
   /** Two or three headline career totals, pre-formatted by the caller. */
   careerHighlights: { label: string; value: string }[];
   seasons: number;
 }) {
-  if (ringYears.length === 0 && awards.length === 0 && careerHighlights.length === 0) return null;
+  if (ringYears.length === 0 && awards.length === 0 && allStarYears.length === 0 && careerHighlights.length === 0) return null;
 
   return (
     <div className="panel overflow-hidden">
@@ -39,7 +46,7 @@ export function CareerHonors({
         </div>
       </div>
 
-      {(ringYears.length > 0 || awards.length > 0) && (
+      {(ringYears.length > 0 || awards.length > 0 || allStarYears.length > 0) && (
         <div className="grid sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-line/40 border-b border-line/60">
           <div className="px-4 py-3">
             <div className="label-sm">Championships</div>
@@ -55,6 +62,21 @@ export function CareerHonors({
             )}
           </div>
           <div className="px-4 py-3 sm:col-span-2">
+            {allStarYears.length > 0 && (
+              <div className="mb-3 pb-3 border-b border-line/40">
+                <div className="label-sm">All-Star</div>
+                <div className="flex items-baseline gap-2 flex-wrap mt-1">
+                  <span className="stat-value text-stat-md leading-none text-gold">
+                    {allStarYears.length}&times;
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {allStarYears.map((y) => (
+                      <span key={y} className="pill border-gold/40 text-gold bg-gold/10 text-[10px]">&#11088; {y}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="label-sm">Awards</div>
             {awards.length === 0 ? (
               <div className="text-sm text-muted mt-1.5">None — he has never finished a season as a league honoree.</div>

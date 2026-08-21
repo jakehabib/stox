@@ -15,6 +15,9 @@ export function transactionCategory(type: string, headline: string): NewsCategor
     case 'DRAFT': return 'DRAFT';
     case 'CHAMPION':
     case 'AWARD_MVP': case 'AWARD_OPOY': case 'AWARD_DPOY': case 'AWARD_ROTY': case 'AWARD_SBMVP':
+    // An All-Star selection and the roster announcement are honours, not
+    // league admin — see lib/allStars.ts. Both read as AWARD in a feed.
+    case 'ALL_STAR': case 'ALL_STAR_ROSTER':
       return 'AWARD';
     default: return 'LEAGUE';
   }

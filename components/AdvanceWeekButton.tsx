@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { advanceWeekAction, getLeaguePhaseAction, AdvanceMode } from '@/app/actions/league';
 import { formatMoney } from '@/lib/cap';
-import type { WeekReport, TrophyMoment as TrophyData } from '@/lib/weekReport';
+import type { WeekReport, TrophyMoment as TrophyData, CoachPayload } from '@/lib/weekReport';
 import { WeekReportPanel, WeekReportSpan } from '@/components/ds/WeekReportPanel';
 import { TrophyMoment } from '@/components/ds/TrophyMoment';
 
@@ -156,7 +156,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
   // The week report and the Tier-0 moment. Both are transient results of an
   // advance, not standing conditions, and both are dismissible without a
   // decision — so neither blocks anything the user wants to do next.
-  const [report, setReport] = useState<{ report: WeekReport; span: WeekReportSpan | null } | null>(null);
+  const [report, setReport] = useState<{ report: WeekReport; span: WeekReportSpan | null; coach: (CoachPayload | null)[] } | null>(null);
   const [trophy, setTrophy] = useState<TrophyData | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
@@ -257,7 +257,10 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
     if (reports.length > 0) {
       setToast(null);
       setTrophy(null);
-      setReport({ report: reports[reports.length - 1], span: foldSpan(reports) });
+      // Every week's coach payload travels, not just the last one. The
+      // panel renders the final week's standings and the WHOLE span's
+      // comments — "who carried the stretch" has no meaning inside one game.
+      setReport({ report: reports[reports.length - 1], span: foldSpan(reports), coach: reports.map((r) => r.coach) });
       return;
     }
     showToast(text);
@@ -287,6 +290,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
         <WeekReportPanel
           report={report.report}
           span={report.span}
+          coach={report.coach}
           leagueId={leagueId}
           onClose={() => setReport(null)}
         />

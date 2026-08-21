@@ -226,11 +226,11 @@ export const GENERATION = {
    * never — roughly a Madden-style ratings spread rather than a bell curve
    * centered on mediocrity. [TUNE]
    */
-  VETERAN_OVR_MEAN: 72,
-  VETERAN_OVR_SD: 8,
+  VETERAN_OVR_MEAN: 77,
+  VETERAN_OVR_SD: 7,
   /** Rookie class skews lower and much wider — that's the point of scouting. */
-  ROOKIE_OVR_MEAN: 65,
-  ROOKIE_OVR_SD: 10,
+  ROOKIE_OVR_MEAN: 68,
+  ROOKIE_OVR_SD: 7.5,
   /** Potential is overall + this roll, capped at 99. */
   POTENTIAL_BONUS_MEAN: 8,
   POTENTIAL_BONUS_SD: 7,
@@ -255,6 +255,75 @@ export const GENERATION = {
   DEV_TRAIT_WEIGHTS: { Slow: 0.25, Normal: 0.55, Star: 0.15, Superstar: 0.05 },
   /** Attribute noise around the position-implied value. */
   ATTR_SD: 7,
+  /**
+   * ---------------------------------------------------------------------
+   * DEPTH-CHART DECAY, THE ROSTER FLOOR, AND THE STAR TIER
+   * ---------------------------------------------------------------------
+   * The full derivation, with measurements against Madden's published
+   * numbers, is docs/rating-distribution.md. The short version:
+   *
+   * Depth used to be `i * rng.float(4, 8)` — linear and unbounded. With
+   * ROSTER_TARGETS.WR.ideal at 7 that put the seventh receiver 36 points
+   * below his team's mean, and it was where the whole sub-50 population
+   * came from. Worse, it made a POSITION's mean rating a function of how
+   * many of them a roster carries: receivers averaged 58 and left tackles
+   * 74, purely because a roster holds seven of one and two of the other.
+   *
+   * The decay is now asymptotic, so it is front-loaded like a real depth
+   * chart (slot 1 -5.1, slot 2 -8.2, slot 4 -11.2, slot 6 -12.4) and can
+   * never drag anyone more than DEPTH_DECAY_MAX below his team's mean.
+   */
+  DEPTH_DECAY_MAX: 13,
+  DEPTH_DECAY_TAU: 2.0,
+  DEPTH_DECAY_JITTER: 0.25,
+  /** Nobody on a 53-man roster is worse than this. Madden's floor is ~57. */
+  ROSTER_OVR_FLOOR: 56,
+  /**
+   * Kickers and punters are the only positions with exactly one roster
+   * slot, so they never take a depth penalty and used to sit at the raw
+   * team mean while every other position was dragged down by its backups.
+   * The result was a league whose best player was a 99 PUNTER, with
+   * punters holding three of the top twenty-five slots. This is the
+   * offset that puts a specialist's overall back on the same scale as
+   * everyone else's. [TUNE]
+   */
+  SPECIALIST_OVR_PENALTY: 5,
+  /**
+   * The star tier. The old roll — normal(85, 4) clamped to [78, 99] —
+   * put 99 at +3.5 standard deviations, i.e. structurally unreachable:
+   * the league had never generated one. This is not a limitation of
+   * computeOverall, which reaches 99 fine; it was only ever this roll.
+   */
+  STAR_OVR_MEAN: 89,
+  STAR_OVR_SD: 5.5,
+  STAR_OVR_MIN: 82,
+  STAR_COUNT_MIN: 2,
+  STAR_COUNT_MAX: 4,
+  /**
+   * Which positions stars land at. This used to be an unweighted
+   * rng.pick over ten positions, which handed a 79-man tight-end pool as
+   * many stars as a 193-man receiver pool — tight ends took five of the
+   * league's top twenty-five and left tackles were the highest-rated
+   * position in the game. Weighted, the league's top hundred reads
+   * QB 21, EDGE 13, WR 13, CB 12, DT 10, which is what a Madden top-100
+   * looks like. [TUNE]
+   */
+  STAR_POSITION_WEIGHTS: { QB: 2.2, WR: 1.8, EDGE: 1.6, CB: 1.3, DT: 1.1, LB: 0.9, LT: 0.7, S: 0.7, RB: 0.6, TE: 0.45 } as Record<string, number>,
+  /** Draft-class tier ramp: top of round one down to the last pick. */
+  DRAFT_TIER_SPREAD: 17,
+  DRAFT_TIER_OFFSET: 9,
+  DRAFT_OVR_MIN: 54,
+  DRAFT_OVR_MAX: 88,
+  /**
+   * The unsigned pool. Hardcoded in TWO places before this (lib/gen/league.ts
+   * and lib/leagueFile.ts) and following nothing, so raising the roster
+   * curve without raising this would have left free agents 13 points below
+   * the rostered mean instead of the 7 they sat at.
+   */
+  FREE_AGENT_OVR_MEAN: 64,
+  FREE_AGENT_OVR_SD: 8,
+  FREE_AGENT_OVR_MIN: 52,
+  FREE_AGENT_OVR_MAX: 88,
   DRAFT_CLASS_SIZE: 224, // 7 rounds x 32 — exactly the number of picks
   /** Extra prospects generated beyond the pick count, so a real share of the class goes undrafted into UDFA free agency instead of every prospect getting picked. */
   DRAFT_CLASS_EXTRA_UDFA: 176,
@@ -451,11 +520,11 @@ export const CONTRACT = {
   AGE_TWO_YEAR: 32,
   AGE_THREE_YEAR: 30,
   /** Prime-age stars — the only players who get the maximum term. */
-  MAX_DEAL_OVR: 80,
+  MAX_DEAL_OVR: 85, // +5 with the curve — see docs/rating-distribution.md
   MAX_DEAL_MAX_AGE: 28,
   MAX_DEAL_YEARS: 5,
   /** Everyone else who is a real roster player. */
-  STANDARD_OVR: 60,
+  STANDARD_OVR: 68, // percentile-matched to the old 60
   STANDARD_YEARS: 4,
   /** Fringe/camp-body depth — short deals, high churn at the bottom. */
   FRINGE_YEARS: 3,
@@ -475,9 +544,9 @@ export const CONTRACT = {
  */
 export const RESIGN = {
   /** Nobody below this rating is worth a contract at any price. */
-  FLOOR_OVR: 58,
+  FLOOR_OVR: 67, // percentile-matched to the old 58
   /** At/above this rating a player is kept regardless of depth behind him. */
-  PREMIUM_OVR: 74,
+  PREMIUM_OVR: 80, // percentile-matched to the old 74
   /**
    * How much higher the keep bar sits for a fully rebuilding GM than for a
    * fully win-now one. This is what "how hard a team competes" means for a
@@ -517,7 +586,18 @@ export const MARKET = {
    * of ten figures. [FRAGILE PLACEHOLDER] — previous values here produced
    * a $101M/yr CB at merely "good" tier; this curve is much gentler.
    */
-  PIVOT: 70,
+  /**
+   * Moved 70 -> 77 in lockstep with GENERATION.VETERAN_OVR_MEAN (72 -> 77).
+   * `ovr` enters this curve ONLY as `(ovr - PIVOT)`, so shifting the rating
+   * curve and the pivot together cancels exactly and every player's price is
+   * unchanged at his new number: an average-starter quarterback was a 70 at
+   * $13.0M and is now a 77 at $13.0M; an elite receiver was a 90 at $25.7M
+   * and is now a 97 at $25.7M. SCALE would NOT have worked — it rescales
+   * every price by a constant and so changes the star-to-backup ratio.
+   * Solved empirically against median team payroll; see
+   * docs/rating-distribution.md section 4.
+   */
+  PIVOT: 77,
   /** Growth rate ABOVE pivot — kept gentle so stars stay bounded. */
   STEEPNESS: 0.058,
   /**
@@ -593,7 +673,7 @@ export const SCOUTING = {
   /** How hard potential specifically is to project — higher than any single physical attribute, since it's a projection of a whole career, not a measurement. */
   POTENTIAL_DIFFICULTY: 0.95,
   /** Unscouted default center for potential — a blurred league-average read, same idea as the 62 default used for individual attributes. */
-  POTENTIAL_DEFAULT_CENTER: 75,
+  POTENTIAL_DEFAULT_CENTER: 80,
 };
 
 // ---------------------------------------------------------------------------

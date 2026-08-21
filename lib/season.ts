@@ -389,6 +389,16 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   const nextWeek = week + 1;
   const seasonOver = nextWeek > settings.seasonLength;
   if (seasonOver) {
+    // All-Stars are selected HERE, at the last moment this season's stat lines
+    // are purely regular season. simulateAndSaveGame gates only the STANDINGS
+    // on kind === 'REGULAR' — seasonStats keep accumulating through the
+    // playoffs — so selecting alongside the other awards after the final would
+    // fold two to four postseason games into the totals of the twelve teams
+    // that got there and none of the twenty that didn't, then rank them
+    // against each other. See lib/allStars.ts. Dynamic import to match
+    // recordSeasonAwards below.
+    const { recordAllStars } = await import('./allStars');
+    await recordAllStars(leagueId, league.seasonYear, week, settings.seasonLength);
     await seedPlayoffs(leagueId);
   } else {
     await prisma.league.update({ where: { id: leagueId }, data: { week: nextWeek } });

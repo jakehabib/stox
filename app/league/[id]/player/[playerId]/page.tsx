@@ -5,9 +5,9 @@ import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
-import { ratingColor, playerLabel } from '@/lib/ratings';
+import { ratingColor, playerLabel, ratingMark, ratingPlateClass } from '@/lib/ratings';
 import { rankProspectCombine, ordinal, CombineMeasurable } from '@/lib/combineRank';
-import { formatMoney, capHit, remainingValue, marketValue, deadMoneyOnCut } from '@/lib/cap';
+import { formatMoney, capHit, marketValue, deadMoneyOnCut } from '@/lib/cap';
 import { classifyContractValue } from '@/lib/analytics';
 import { generateScoutingReport } from '@/lib/scoutingProse';
 import { teamCapSummary } from '@/lib/cap-summary';
@@ -18,6 +18,7 @@ import {
 } from '@/lib/playerSeasons';
 import { CutButton } from '@/components/CutButton';
 import { ContractActions } from '@/components/ContractActions';
+import { ContractLedger } from '@/components/ds/ContractLedger';
 import { FullScoutButton } from '@/components/FullScoutButton';
 import { ShortlistStar } from '@/components/ShortlistStar';
 import { WorkoutButton } from '@/components/ds/WorkoutButton';
@@ -80,7 +81,6 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
   const seasonStats = readJson<Record<string, number>>(player.seasonStats, {});
   const careerStats = readJson<Record<string, number>>(player.careerStats, {});
   const hit = capHit(player.contract, settings.capMode);
-  const remaining = player.contract ? remainingValue(player.contract, settings.capMode) : 0;
   const capSummary = userTeam && settings.capMode !== 'OFF'
     ? await teamCapSummary(userTeam.id, league.seasonYear, settings.capMode)
     : null;
@@ -396,7 +396,10 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
                 style={{ borderColor: 'var(--team-accent, #38bdf8)', background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 16%, transparent)` : undefined }}
               >
                 <div className="label-sm">Overall</div>
-                <div className={`stat-value text-stat-xl leading-none mt-1 ${ratingColor(view.scoutedOvr)}`}>{view.scoutedOvr}</div>
+                <div className={`stat-value text-stat-xl leading-none mt-1 ${ratingColor(view.scoutedOvr)}`}>
+                  <span className={ratingPlateClass(view.scoutedOvr) ?? undefined}>{view.scoutedOvr}</span>
+                  {ratingMark(view.scoutedOvr) && <span className="ml-1 text-[0.45em] align-super">{ratingMark(view.scoutedOvr)}</span>}
+                </div>
               </div>
             ) : (
               <div className="panel p-3">
@@ -454,38 +457,16 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
         <div className="panel p-5">
           {player.contract ? (
             <div className="space-y-4">
-              <StatNumber value={formatMoney(hit)} label="Cap hit this year" size="lg" />
-
-              <div>
-                <div className="flex gap-1">
-                  {Array.from({ length: player.contract.years }, (_, i) => (
-                    <div
-                      key={i}
-                      className={`h-1.5 flex-1 rounded-full ${i < player.contract!.years - player.contract!.yearsRemaining ? 'bg-line' : 'bg-accent'}`}
-                    />
-                  ))}
-                </div>
-                <div className="text-xs text-muted mt-1">
-                  {player.contract.yearsRemaining} yr{player.contract.yearsRemaining === 1 ? '' : 's'} remaining of {player.contract.years}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 text-sm pt-3 border-t border-line/60">
-                <div>
-                  <div className="label-sm mb-0.5">Remaining Value</div>
-                  <div className="font-mono">{formatMoney(remaining)}</div>
-                </div>
-                <div>
-                  <div className="label-sm mb-0.5">Guaranteed</div>
-                  <div className="font-mono">{formatMoney(player.contract.guaranteed)}</div>
-                </div>
-                {player.contract.voidYears > 0 && (
-                  <div>
-                    <div className="label-sm mb-0.5">Void Years</div>
-                    <div className="font-mono text-warn">+{player.contract.voidYears}</div>
-                  </div>
-                )}
-              </div>
+              {/* One component rather than a headline figure plus two summary
+                  cells: the question this box answers is "what does he cost me
+                  for the rest of the deal, and what does it cost to get out",
+                  and that is a per-year table. Dead-money-if-cut is the column
+                  that turns it from a statement into a decision. */}
+              <ContractLedger
+                contract={player.contract}
+                capMode={settings.capMode}
+                seasonYear={league.seasonYear}
+              />
 
               {isOwnRoster && userTeam && (
                 <div className="pt-3 space-y-3 border-t border-line/60">

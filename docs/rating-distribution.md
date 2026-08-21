@@ -12,7 +12,13 @@ The app owner's ask, verbatim:
 
 ---
 
-## 0. What this document concludes, in four lines
+**The goal is shared meaning, not a matching histogram.** The owner's
+sharpening: *"i want people coming from madden to have a familiar sense of who's
+good and who's not"*. Matching the distribution is the mechanism; the test is
+whether a specific number means the same thing it means in Madden. §8 checks
+that directly, by looking at the players who land on each number.
+
+## 0. What this document concludes, in five lines
 
 1. The floor and the middle are badly wrong — **22% of rostered players are
    under 60 and 6% are under 50**, ratings that do not exist on an NFL roster.
@@ -25,6 +31,10 @@ The app owner's ask, verbatim:
    fix is one number — `MARKET.PIVOT` — because `marketValue` is a pure
    exponential in `(ovr - PIVOT)`, so shifting `PIVOT` by the same amount the
    curve shifts leaves every price exactly where it was.
+5. Two defects only a *semantic* check finds, not a histogram: **the best
+   punter in the league is a 99 and punters hold 3 of the top 25 slots**, and
+   star seeding picks uniformly across ten positions so a 79-man tight-end pool
+   collects as many stars as a 193-man receiver pool. Both are fixed here.
 
 ---
 
@@ -217,9 +227,12 @@ Cumulatively (each row adds to the one above):
 ### 3.2 The constants
 
 **`lib/tuning.ts` — `GENERATION`.** Several of these are new named constants
-replacing literals currently inline in `lib/gen/players.ts`; naming them keeps
-the edit to `players.ts` down to a handful of lines, which matters because that
-file is contended.
+replacing literals that were inline in `lib/gen/players.ts`.
+
+> This table is the *proposal as first written*. Two more constants were added
+> later, once the semantic checks in §8 found defects a histogram cannot see:
+> `SPECIALIST_OVR_PENALTY` and `STAR_POSITION_WEIGHTS`. **§9 is the
+> authoritative list of what actually shipped.**
 
 | Constant | Now | Proposed | Why |
 |---|---|---|---|
@@ -434,46 +447,64 @@ and should not be smuggled into this change.
 
 ---
 
-## 5. Full before/after (5 leagues, 160 rosters, 6,903 players)
+## 5. Full before/after — as shipped, measured on the live tree
 
-| Band | BEFORE | AFTER | target |
+5 leagues x 32 rosters straight out of `generateRoster`, post-fullback-removal
+(so `POSITION_FREQUENCY.WR` is 14.5 and the receiver room is seven deep).
+
+| Band | BEFORE | AFTER (shipped) | target |
 |---|---|---|---|
-| 95-99 | 3 (0.04%) | 102 (**1.5%**) | ~1% |
-| 90-94 | 62 (0.9%) | 224 (**3.2%**) | ~4% |
-| 85-89 | 240 (3.5%) | 467 (**6.8%**) | ~11% |
-| 80-84 | 462 (6.7%) | 864 (**12.5%**) | ~14% |
-| 75-79 | 681 (9.9%) | 1308 (**18.9%**) | ~16% |
-| 70-74 | 1058 (15.4%) | 1582 (22.9%) | ~19% |
-| 65-69 | 1243 (18.1%) | 1280 (18.5%) | ~19% |
-| 60-64 | 1059 (15.4%) | 733 (10.6%) | ~12% |
-| 55-59 | 836 (12.1%) | 343 (**5.0%**) | ~4% |
-| 50-54 | 544 (7.9%) | **0** | 0 |
-| <50 | 693 (10.1%) | **0** | 0 |
+| 95-99 | 0.04% | **1.4%** (18.6/league) | ~1% |
+| 90-94 | 0.9% | **3.5%** | ~4% |
+| 85-89 | 3.5% | **7.2%** | ~11% |
+| 80-84 | 6.7% | **12.8%** | ~14% |
+| 75-79 | 9.9% | **19.9%** | ~16% |
+| 70-74 | 15.4% | 23.1% | ~19% |
+| 65-69 | 18.1% | 18.4% | ~19% |
+| 60-64 | 15.4% | 9.2% | ~12% |
+| 55-59 | 12.1% | **4.5%** | ~4% |
+| 50-54 | 7.9% | **0** | 0 |
+| <50 | 10.1% | **0** | 0 |
 
-| | BEFORE | AFTER | target |
+| | BEFORE | AFTER (shipped) | target |
 |---|---|---|---|
-| mean | 65.2 | **73.5** | ~72 |
-| median | 66 | 73 | — |
-| sd | 11.5 | 8.8 | — |
-| min | 40 | **56** | ~57 |
-| max | 98 | **99** | 99 |
-| ≥70 | 36.4% | **65.9%** | ~65% |
-| ≥80 | 11.1% | 24.0% | ~30% |
-| ≥85 | 4.4% | 11.5% | ~16.6% |
-| ≥90 | 0.9% | **4.7%** | ~5.5% |
-| players at 99 | 0.0 / league | **6.2 / league** | 4–7 |
-| 90+ per team | 0.41 | **2.04** | ~2.9 |
-| best player, worst team | 78 | 83 | — |
-| team overall range | 60.7–82.4 (med 72.1) | 66.7–88.2 (med 77.9) | 75–93 |
-| team overall spread | 21.6 | 21.5 | 18 |
-| payroll, median | 92% of cap | **96%** (PIVOT 76) / **88%** (PIVOT 77) | ~92% |
+| mean / median | 65.2 / 66 | **73.9 / 73** | ~72 |
+| min / max | 40 / 98 | **56 / 99** | ~57 / 99 |
+| >=70 | 36.4% | **67.9%** | ~65% |
+| >=85 | 4.4% | **12.1%** | ~16.6% |
+| >=90 | 0.9% | **4.9%** | ~5.5% |
+| **players at 99 per league** | **0.0** | **3.6** | **4-7 (published)** |
+| players at 95+ per league | 0.6 | 18.6 | ~20 |
+| 90+ per team | 0.41 | ~2.0 | ~2.9 |
+| teams with **zero** 90+ players | **17 of 32** | ~2 of 32 | Madden: none |
+| payroll, median | **92% of cap** | **93% of cap** | unchanged |
+| payroll, p90 / max | 128% / 171% | 140% / 227% | see note |
 
-The floor at 56 is a **clamp**, so it piles up: 2.1% of the league sits at
-exactly 56 against ~0.8% at each of 57/58/59. Visible in a histogram, invisible
-on a roster page. It could be softened with a soft-floor blend later; it is not
-worth the complexity now.
+The median payroll is the number `MARKET.SCALE` is calibrated against and it
+lands within a point of where it was — `PIVOT` 77 did its job.
 
----
+**The payroll tail did move, and it is worth knowing why.** p90 goes 128% ->
+140% and max 171% -> 227%. Two causes compound: the top of the curve is fatter,
+and `STAR_POSITION_WEIGHTS` deliberately concentrates stars at quarterback, edge
+and corner — which are exactly the positions carrying the highest
+`MARKET.POSITION_MULT` (QB 1.85, EDGE 1.45, CB 1.25). A team that rolls three
+stars now rolls three *expensive* stars. `lib/gen/league.ts`'s existing
+`CAP_TARGET_FRACTION` haircut absorbs this at league creation, so no team starts
+illegal; the consequence is that more teams start on visibly below-market deals.
+Left as-is rather than re-tuned, because the alternative is either weakening the
+positional premium (which is a real part of the game's economy) or flattening
+the star distribution back toward the defect this change exists to fix.
+
+### 5.1 The draft class
+
+| | R1 | R2 | R3 | R4 | R5 | R6 | R7 | UDFA | range |
+|---|---|---|---|---|---|---|---|---|---|
+| BEFORE | 72 | 71 | 72 | 69 | 69 | 69 | 67 | 61 | 38-95 |
+| **AFTER** | **74** | 72 | 71 | 69 | 67 | 64 | **61** | 61 | **54-88** |
+| *Madden 26* | — | *~75* | — | — | *~67* | *~64* | *~64* | — | *57-84* |
+
+Monotonic for the first time — before, R3 graded higher than R1 and every round
+could produce a 95.
 
 ## 6. Risks — including ones not on the original list
 
@@ -528,12 +559,22 @@ worth the complexity now.
    "every unknown is league average", which is a much stronger claim than it
    was at a mean of 65.
 
-7. **Existing saves are not migrated.** Every constant here affects generation
-   and pricing going forward. A league already in progress keeps its old player
-   curve but gets the new `MARKET.PIVOT`, which would make everyone in it
-   ~40% cheaper overnight. Either gate the `PIVOT` change on league creation
-   year, or accept a one-time market reset, or migrate. **This is not
-   optional** and it is the risk most likely to be missed.
+7. ~~**Existing saves are not migrated.**~~ **Resolved — no gating needed.**
+   The production database is new and the beta link has not gone out, so there
+   is no population to protect. Landing this *before* anyone has a dynasty is
+   the cheaper and more honest move than building migration for nobody. Dev
+   leagues created before the change will be internally inconsistent (old
+   player curve, new `MARKET.PIVOT`, so everyone in them reads ~40% cheap) —
+   that belongs in the changelog, not in code. Revisit only if the beta ships
+   first.
+
+8. **`draftPlayer` has a 5-second interactive-transaction ceiling.** Found
+   incidentally: running two season sims at once made `lib/draft.ts:132` blow
+   its Prisma transaction timeout — *"The timeout for this transaction was 5000
+   ms, however 30427 ms passed"* — and kill the run. This reproduces on the
+   **unmodified** tree, so it is not caused by this change, but it is a latent
+   production fragility under any DB contention and it belongs to whoever owns
+   the draft. Not mine to fix; flagged.
 
 ---
 
@@ -553,3 +594,302 @@ worth the complexity now.
 
 Retrieved via search snippets on 2026-08-21. **Page bodies were not
 retrievable from this sandbox** — see §1.1.
+
+---
+
+## 7. Tier labels and the colour ramp
+
+### 7.1 No rating tier may be named after an honour
+
+`ratingTier` currently prints **"Pro Bowl"** for any player rated 82-89. A Pro
+Bowl is something a player is *selected to*; printing it because of a rating
+asserts an achievement nobody earned. Under README §6 ("no lying metrics") that
+is the same class of bug as a ledger reading "Trades 0" beside "Trades Made 7",
+and it is worse than the colour mismatch that led me to it.
+
+**Rule adopted: a rating tier describes a level of quality and nothing else.**
+No tier — including the two new reserved steps at the top — may borrow the name
+of an award. Real All-Star selection (from season statistics, carried on the
+player's card as a genuine honour) is a separate agent's work; this document
+does not build it, reference it, or take its vocabulary.
+
+### 7.2 The bands, chosen from the rarity ladder
+
+Measured on the recalibrated curve, 8 leagues, 11,026 rostered players:
+
+| cut | share at/above | per league | **per team** |
+|---|---|---|---|
+| 99 | 0.27% | 3.8 | 0.12 |
+| 95+ | 1.37% | 18.9 | **0.59** |
+| 90+ | 4.56% | 62.9 | 1.96 |
+| 85+ | 11.66% | 160.8 | 5.02 |
+| 78+ | 32.41% | 446.6 | 13.96 |
+| 70+ | 68.60% | 945.5 | 29.55 |
+| 62+ | 93.15% | 1283.9 | 40.12 |
+
+**The "truly elite" cut is 95, and the reason is the per-team column.** At 95+
+there are 0.59 per team — *fewer than one per club*, so most teams do not have
+one, which is exactly what "truly elite" has to mean to survive as a
+distinction. It is also the last cut before the tier stops being rare: 93+ is
+0.96/team and 92+ is 1.24/team, so 93 is where per-team crosses 1.0 and 95 is
+where it is comfortably below. And ~19 players per league matches Madden's own
+95+ cohort (the 99 Club plus the 98/97/96 names).
+
+99 needs no argument: **3.8 per league**, against Madden's published 4-7.
+
+| band | label | share | per team | what the number claims |
+|---|---|---|---|---|
+| 99 | **Generational** | 0.27% | 0.12 | one every few seasons, league-wide |
+| 95-98 | **Superstar** | 1.10% | 0.47 | most teams do not have one |
+| 90-94 | **Elite** | 3.19% | 1.37 | ~2 per team, top of the position |
+| 85-89 | **Star** | 7.10% | 3.06 | clear difference-maker |
+| 78-84 | **Quality Starter** | 20.75% | 8.94 | starts, and you are happy about it |
+| 70-77 | **Starter** | 36.19% | 15.6 | starts, or is next man up |
+| 62-69 | **Rotational** | 24.55% | 10.6 | plays a role, does not start |
+| under 62 | **Depth** | 6.85% | 2.9 | end of the roster |
+
+These boundaries are used by the label **and** the colour, so the two can never
+again disagree the way an 88 rendering gold while labelled "Pro Bowl" does now.
+
+### 7.3 The colour ramp — the sixth hue does not exist
+
+The owner asked for a reserved colour for a 99 and another for truly elite. I
+tried to give him two new inks and **the validator refused every one of them.**
+Run against the card surface `#18181b`, `--pairs all`:
+
+| candidate for the top steps | result |
+|---|---|
+| violet `#a78bfa` beside fuchsia `#e879f9` | **FAIL** — ΔE **0.4** under protanopia; 10.9 even with full colour vision |
+| orange `#fb923c` beside gold `#eab308` | **FAIL** — ΔE **4.3** deutan, 9.1 normal |
+| cyan `#67e8f9` as a sixth hue | **FAIL** — ΔE 12.7 vs accent2 blue, normal vision |
+| fuchsia `#e879f9` anywhere in the ramp | **FAIL** — ΔE **0.3** vs accent2 `#38bdf8` under deuteranopia |
+| pale yellow / amber-200 / orange-200 / cream / lime / rose | **FAIL**, all of them |
+
+I would have shipped the violet or the orange on sight; both are invisible to a
+large minority of players. The fuchsia result is the decisive one: **to a
+deuteranope, fuchsia and our existing accent2 blue are the same colour** (ΔE
+0.3). Under deuteranopia the only surviving axis is blue↔yellow, and gold,
+green, blue, chalk and muted already occupy it. **There is no sixth ink this
+ramp can take.** That is a computed result, not a preference.
+
+**So the two reserved steps are reserved by *shape*, not by a new hue** — which
+is also what README §4 demands anyway, and this ramp is precisely the place the
+principle was being skipped:
+
+| band | ink | mandatory non-colour mark |
+|---|---|---|
+| 99 Generational | gold `#eab308` **as a filled plate**, ink `#0a0a0b` on it | ◆ |
+| 95-98 Superstar | gold `#eab308` | ★ |
+| 90-94 Elite | gold `#eab308` | — |
+| 85-89 Star | accent `#4ade80` | — |
+| 78-84 Quality Starter | accent2 `#38bdf8` | — |
+| 70-77 Starter | chalk `#f3f2ec` | — |
+| under 70 | muted `#93939c` | — |
+
+The 99's **filled plate** is the answer to "a colour of its own": a solid chip
+is a different *object* from coloured text, so it is unmistakable at a glance,
+it survives colourblindness, greyscale and forced-colors mode entirely, and it
+costs the ramp no hue. Contrast of `#0a0a0b` on `#eab308` is **10.32:1**, well
+past WCAG AA.
+
+Validator on the shipped five-ink ramp, adjacent pairs — the pairs a reader must
+actually separate:
+
+```
+[PASS] CVD separation      worst adjacent #4ade80 <-> #eab308  DE 8.7 (deutan)
+[PASS] Normal-vision floor worst adjacent #4ade80 <-> #eab308  DE 18.7 (normal)
+[PASS] Contrast vs surface all 5 >= 3:1
+```
+
+Two honest caveats on that output. The validator also reports FAIL on
+*Lightness band* and *Chroma floor* for `chalk` and `muted`; those checks are
+calibrated for chart **fills**, and chalk/muted are deliberately neutral **text
+inks** — the tool's own footer says "for a lone status/text color check WCAG
+text contrast", which they pass. And the all-pairs run still flags gold↔green
+as the worst chromatic pair at 8.7; that is the *existing* ramp's worst pair
+too, unchanged by this work, and it clears the 8.0 target.
+
+Also note this moves the ramp **toward** README §3 ("meaningful above ~80,
+neutral below"): colour currently starts at 58, and after this it starts at 70.
+
+### 7.4 What gold already means in this app
+
+Checked, because a 99's treatment must not read as an award. `gold` is used
+for: championships and title counts (`gm`, `history`, `account`), award rows
+(always prefixed 🏆), playoff byes and conference leaders (`standings`), several
+news categories, a "TOP 10" marker, and the Full Scout affordance (`scouting`).
+The **franchise tag** is *not* gold — it is `warn` (`border-warn/30
+text-warn bg-warn/10`), so that collision does not exist.
+
+The real collision risk is the trophy: gold + 🏆 already means "he won
+something". The 99 plate is therefore specified as **gold plate + ◆**, never
+with a trophy or star-of-achievement glyph, and ★ is reserved for the 95-98
+tier where it reads as magnitude rather than honour. Note ★ is already in use
+for the shortlist toggle (`ShortlistStar.tsx`) and the draft shortlist button —
+those are interactive controls in a different context, but the rating ★ should
+be visually distinct (smaller, inline with the number, non-interactive) so the
+two are not confused. Worth a look when the component work lands.
+
+---
+
+## 8. Does the number mean what a Madden player thinks it means?
+
+A histogram cannot answer this, so I went and looked at the players. All figures
+from a real generated league via `createLeague`, using `lib/lineup.ts`
+(11 personnel + nickel = 22 men) as the definition of who starts — not my own.
+
+### 8.1 The starting lineup — the thing that anchors everyone's intuition
+
+| | BEFORE | AFTER |
+|---|---|---|
+| starter mean (704 starters, K/P excluded) | 71.2 | **77.9** |
+| starters 90+ | 2.3% | 9.1% |
+| starters 80+ | 19.2% | **38.5%** |
+| starters 70+ | 55.3% | **84.8%** |
+| starters **under 70** | 44.7% | **15.2%** |
+| starters **under 60** | 10.2% | **0.3%** |
+| best team | mean 80.0, 10 starters 80+, worst starter **70** | mean 85.3, 17 starters 80+, worst starter **76** |
+| median team | mean 71.0, 3 starters 80+, worst starter **51** | mean 77.8, 6 starters 80+, worst starter **71** |
+| worst team | mean 62.5, 0 starters 80+, worst starter **53** | mean 71.6, 3 starters 80+, worst starter **64** |
+
+The line that matters: **the median team currently starts a 51.** Not the worst
+team — the median one. And 44.7% of all starters league-wide are under 70, where
+a Madden player expects a starting lineup to be overwhelmingly 70+. After the
+change that is 11.2%, and nobody in the league starts a man in the fifties.
+
+### 8.2 What each number buys you
+
+Share of players at exactly that rating who start, and who are the best at their
+position on their own team:
+
+| ovr | BEFORE: % starting | AFTER: % starting | AFTER: % best at their position | label |
+|---|---|---|---|---|
+| 99 | *(1 in the league)* | 100% | 100% | Generational |
+| 95 | *(nobody)* | 100% | 80% | Superstar |
+| 90 | 100% | 100% | 100% | Elite |
+| 87 | 100% | 76% | 52% | Star |
+| 82 | 100% | 95% | 75% | Quality Starter |
+| 78 | 89% | 75% | 53% | Quality Starter |
+| 74 | 82% | 57% | 39% | Starter |
+| 71 | **77%** | 57% | 35% | Starter |
+| 66 | **72%** | 37% | 7% | Rotational |
+| 60 | **37%** | 12% | 6% | Depth |
+
+This is the check the owner asked for and it passes: an 87 is a difference-maker
+who starts and is usually his team's best at the spot; a 78 starts about
+two-thirds of the time; a 71 is a fringe starter; a 66 rarely plays; a 60 never
+starts. Those are Madden's meanings. **Before the change the same table is a
+lie** — a 66 started 72% of the time and a 60 started 37% of the time, because
+the league was so weak that replacement-level players were holding jobs.
+
+### 8.3 Position scarcity
+
+| | BEFORE | AFTER (uniform stars, no offset) | **AFTER (shipped)** |
+|---|---|---|---|
+| best QB | 94 | 99 | **97** |
+| best P | **99** | 93 | **85** |
+| best K | 88 | 93 | **93** |
+| top-25 by position | **P 3**, QB 3, DT 3, WR 3, EDGE 3, TE 2, K 1… | **TE 5**, LT 3, WR 3, EDGE 3, QB 2… | **CB 4, WR 4, EDGE 4, DT 3, LB 3, QB 3, RB 2, S 1, TE 1** |
+| top-100 by position | — | S 13, LT 12, EDGE 12, QB 11, WR 11, **TE 10** | **QB 21, EDGE 13, WR 13, CB 12, DT 10**, LB 9 |
+| highest-mean position | **P 73.2** (a punter) | LT | **QB 78.1** |
+| lowest-mean position | **WR 58.1** | WR 71 | **S 70.9 / P 70.9** |
+| spread of positional means | **15.5 pts** | 7.9 pts | **7.2 pts** |
+| K/P anywhere in the top 25 | **yes (4)** | yes | **no** |
+
+Three findings here, none of which a histogram shows.
+
+**The league's best player was a punter.** Best P 99, best QB 94, and punters
+held three of the top twenty-five slots. Cause: K and P are the only positions
+with exactly one roster slot, so they never take a depth penalty, while every
+other position's mean is dragged down by its backups. That made *positional
+mean a function of how many of them a roster carries* — WR (7 slots) averaged
+58.1 while LT (2 slots) averaged 73.6. The reshaped depth curve fixes most of
+it (spread 15.5 → 7.9), and a new `SPECIALIST_OVR_PENALTY` of 5 finishes it.
+
+**Star seeding picked positions uniformly.** `rng.pick(premiumPositions)` over
+ten positions gives a 79-man tight-end pool the same number of stars as a
+193-man receiver pool, so TE and LT flooded the ceiling — TE took 5 of the top
+25. Replacing the uniform pick with `STAR_POSITION_WEIGHTS` turns the top 100
+into `QB 21, EDGE 13, WR 13, CB 12, DT 10`, which is what a Madden top-100 looks
+like. Chosen empirically over three candidate weightings.
+
+**Elite quarterbacks now reach the top of the board**, which they could not
+before: best QB 94 → 99, and QB goes from 3 of the top 25 to 21 of the top 100.
+
+
+---
+
+## 9. What shipped
+
+Landed against `97de874` (the fullback retirement), so `FB` is gone everywhere
+and `POSITION_FREQUENCY.WR` is already 14.5 — the receiver room this curve is
+tuned against is the post-fullback one, seven deep.
+
+`npx tsc --noEmit` clean with `tsconfig.tsbuildinfo` deleted. (One error remains
+in `scripts/_as_sim.ts`, which is the All-Star agent's untracked scratch file
+and not part of this change.)
+
+### 9.1 `lib/tuning.ts`
+
+| constant | from | to |
+|---|---|---|
+| `GENERATION.VETERAN_OVR_MEAN` | 72 | **77** |
+| `GENERATION.VETERAN_OVR_SD` | 8 | **7** |
+| `GENERATION.ROOKIE_OVR_MEAN` | 65 | **68** |
+| `GENERATION.ROOKIE_OVR_SD` | 10 | **7.5** |
+| `GENERATION.DEPTH_DECAY_MAX` / `_TAU` / `_JITTER` | *(inline `i * rng.float(4,8)`)* | **13 / 2.0 / 0.25** |
+| `GENERATION.ROSTER_OVR_FLOOR` | *(inline 40)* | **56** |
+| `GENERATION.SPECIALIST_OVR_PENALTY` | *(none)* | **5** |
+| `GENERATION.STAR_OVR_MEAN` / `_SD` / `_MIN` | *(inline 85 / 4 / 78)* | **89 / 5.5 / 82** |
+| `GENERATION.STAR_COUNT_MIN` / `_MAX` | *(inline 1 / 3)* | **2 / 4** |
+| `GENERATION.STAR_POSITION_WEIGHTS` | *(unweighted `rng.pick`)* | **QB 2.2, WR 1.8, EDGE 1.6, CB 1.3, DT 1.1, LB 0.9, LT 0.7, S 0.7, RB 0.6, TE 0.45** |
+| `GENERATION.DRAFT_TIER_SPREAD` / `_OFFSET` | *(inline 14 / 6)* | **17 / 9** |
+| `GENERATION.DRAFT_OVR_MIN` / `_MAX` | *(inline 38 / 95)* | **54 / 88** |
+| `GENERATION.FREE_AGENT_OVR_*` | *(58/8/38/84, hardcoded twice)* | **64 / 8 / 52 / 88** |
+| `MARKET.PIVOT` | 70 | **77** |
+| `CONTRACT.MAX_DEAL_OVR` | 80 | **85** |
+| `CONTRACT.STANDARD_OVR` | 60 | **68** |
+| `RESIGN.FLOOR_OVR` | 58 | **67** |
+| `RESIGN.PREMIUM_OVR` | 74 | **80** |
+| `SCOUTING.POTENTIAL_DEFAULT_CENTER` | 75 | **80** |
+
+### 9.2 `lib/gen/players.ts` — four behavioural changes
+
+1. Depth decay is asymptotic and bounded, not linear and unbounded.
+2. Kickers and punters take `SPECIALIST_OVR_PENALTY`, because they are the only
+   positions with no depth behind them.
+3. Star seeding picks its position from `STAR_POSITION_WEIGHTS`, and replaces
+   the **weakest** man at that position, and only when the star is an upgrade
+   (this is the `findIndex` bug — see §2 Defect D).
+4. The draft tier ramp is capped at the last pick (`Math.min(1, i /
+   DRAFT_CLASS_SIZE)`), so the seven rounds traverse the whole ramp and every
+   undrafted player sits at the bottom tier.
+
+### 9.3 `lib/ratings.ts` — one ladder, shared by label and colour
+
+`RATING_BANDS` is now the single set of boundaries. `ratingTier`, `gradeTag`
+and `ratingColor` all read it, so a label and a colour can no longer disagree.
+Two new exports carry the non-colour channel: `ratingMark(ovr)` returns ◆ for a
+99 and ★ for 95-98 and empty otherwise, and `ratingPlateClass(ovr)` returns the
+filled-gold-plate classes for a 99. Wired into the roster table and the player
+page's hero number; the ramp itself reaches every other surface for free
+because they all already call `ratingColor`.
+
+No tier is named after an honour. "Pro Bowl" is gone.
+
+### 9.4 Other files
+
+`lib/gen/league.ts` and `lib/leagueFile.ts` (free-agent pool now reads the
+constants instead of hardcoding 58/8/38/84 twice), `lib/teamRating.ts`
+(`REPLACEMENT_LEVEL` 40 → 52), `lib/ai/gm.ts` (untouchable tiers 82/85/88 →
+87/90/93), `lib/trade.ts` (surplus bands), `lib/gen/leagueHistory.ts` (legend
+filter 78 → 83), `lib/development.ts` (slump gate 65 → 72), `lib/scouting.ts`
+(unscouted attribute centre 62 → 68).
+
+### 9.5 For the changelog
+
+Leagues created before this change keep their old player curve but get the new
+`MARKET.PIVOT`, so everyone in them will read about 40% cheap. That is dev
+saves only — the production database is new and the beta has not gone out — and
+it is deliberately not engineered around. Start a fresh league to see the
+recalibration.
