@@ -10,7 +10,9 @@ import { VIZ, TXT, signed, ordinal } from './viz';
  * the recap on the game page gives; it is not a second classification invented
  * for this screen.
  */
-export function MarginPanel({ games, profile, thresholds, teamRatingRank, seasonYear, playoffGamesExcluded, seasonLabel }: {
+export function MarginPanel({ span = 7, games, profile, thresholds, teamRatingRank, seasonYear, playoffGamesExcluded, seasonLabel }: {
+  /** Seven columns beside "What Is Left" in Advanced; the full width alone in Simple. */
+  span?: 7 | 12;
   games: MarginGame[];
   profile: MarginProfile;
   thresholds: { oneScore: number; blowout: number };
@@ -25,7 +27,7 @@ export function MarginPanel({ games, profile, thresholds, teamRatingRank, season
 
   return (
     <Panel
-      span={7}
+      span={span}
       eyebrow={`Every final margin · ${seasonLabel}`}
       title="How These Games Are Actually Being Decided"
       flag={games.length === 0 ? undefined : {

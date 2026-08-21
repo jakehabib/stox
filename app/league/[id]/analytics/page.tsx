@@ -8,7 +8,7 @@ import { buildLeagueRatings, estimateGameWinChance } from '@/lib/teamRating';
 import { positionGroup } from '@/lib/positionGroups';
 import { STARTERS_AT_GROUP, splitStarters } from '@/lib/lineup';
 import { computeGameShape, BLOWOUT_MARGIN, ONE_SCORE_MARGIN } from '@/lib/gameShape';
-import { loadPlayerSeasons, reconstructPlayerSeasons, withAges, ageBasisYear, SeasonLine } from '@/lib/playerSeasons';
+import { loadPlayerSeasons, reconstructPlayerSeasons, withAges, ageBasisYear, buildSeasonLines, SeasonLine } from '@/lib/playerSeasons';
 import { leadColumnKey, statLabel } from '@/lib/statLabels';
 import { canonicalPosition, Position } from '@/lib/tuning';
 import { isRankablePosition } from '@/lib/performanceScore';
@@ -19,7 +19,8 @@ import {
   buildPythagoreanTable, buildLuckLedger, buildUnitSpendTable, buildMarginProfile,
   buildAgeProfile, buildDraftReturn, buildCapHealth, strengthOfSchedule,
   classifyContractValue, rankContractValue,
-  type SurplusRow, type MarginGame, type DraftPickRow,
+  blankDriveAgg, addDrive, buildDriveMetrics, buildRateBoards,
+  type SurplusRow, type MarginGame, type DraftPickRow, type DriveAgg,
 } from '@/lib/analytics';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { AnalyticsShell } from '@/components/analytics/AnalyticsShell';
@@ -31,6 +32,10 @@ import { ContractValuePanel, type ValueRow } from '@/components/analytics/Contra
 import { CliffPanel } from '@/components/analytics/CliffPanel';
 import { DraftReturnPanel } from '@/components/analytics/DraftReturnPanel';
 import { ProductionPanel, type ProductionMan } from '@/components/analytics/ProductionPanel';
+import { DriveBoardPanel } from '@/components/analytics/DriveBoardPanel';
+import { PerPlayPanel } from '@/components/analytics/PerPlayPanel';
+import { HeadlineRead, type ReadLine } from '@/components/analytics/HeadlineRead';
+import { PanelBoundary } from '@/components/analytics/PanelBoundary';
 import { ordinal, pct1, signed } from '@/components/analytics/viz';
 
 /**
@@ -67,9 +72,20 @@ import { ordinal, pct1, signed } from '@/components/analytics/viz';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AnalyticsPage({ params }: { params: { id: string } }) {
+/** A league with a corrupt or zero season length still needs a divisor. */
+const seasonLengthFor = (n: number) => n || 17;
+
+export default async function AnalyticsPage({ params, searchParams }: {
+  params: { id: string };
+  searchParams: { view?: string };
+}) {
   const startedAt = Date.now();
   const { league, settings, userTeam } = await getLeagueContext(params.id);
+  // Same param, same vocabulary and same pills as the Cap and Stats screens —
+  // ?view=advanced. Simple is the default because most of what a player wants
+  // from this page is four questions, and the war room behind the switch is
+  // where the density lives.
+  const advanced = searchParams.view === 'advanced';
 
   if (!userTeam) {
     return (
@@ -95,7 +111,7 @@ export default async function AnalyticsPage({ params }: { params: { id: string }
     // in the masthead rather than to a number nothing else in the app states.
     prisma.player.findMany({
       where: { leagueId: league.id, teamId: { not: null }, status: 'ACTIVE' },
-      select: { teamId: true, position: true, trueOvr: true, contract: true },
+      select: { id: true, firstName: true, lastName: true, teamId: true, position: true, trueOvr: true, contract: true },
     }),
     prisma.teamSeasonRecord.findMany({ where: { teamId: me.id }, orderBy: { year: 'asc' } }),
     prisma.game.findMany({
@@ -117,6 +133,22 @@ export default async function AnalyticsPage({ params }: { params: { id: string }
   const teamById = new Map(teams.map((t) => [t.id, t]));
   const myRating = ratings.get(me.id);
   const accent = generateTeamLogoParams(me.abbr).primary;
+
+  // buildLeagueRatings() rates every club in the league, so a missing entry
+  // means the user's club is not in this league — a corrupt save rather than
+  // an empty one. Refuse the page with a sentence instead of throwing eight
+  // panels' worth of null dereferences.
+  if (!myRating) {
+    return (
+      <div className="space-y-4">
+        <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Analytics Department</h1>
+        <div className="panel p-4 text-muted text-sm">
+          Your club could not be rated against this league, so none of the comparisons on this page would mean
+          anything. Nothing has been rendered rather than rendering something wrong.
+        </div>
+      </div>
+    );
+  }
 
   // --- who starts ----------------------------------------------------------
   // splitStarters() from lib/lineup.ts is THE definition of who is on the
@@ -213,13 +245,20 @@ export default async function AnalyticsPage({ params }: { params: { id: string }
 
   const remaining: RemainingGame[] = myGames
     .filter((g) => !g.played && g.kind === 'REGULAR')
+    // A fixture whose opponent row has been deleted cannot be rated, and a
+    // forecast that silently drops it would still be summed into the projected
+    // finish. Filtered before the map so it is absent from both.
+    .filter((g) => {
+      const oppId = g.homeTeamId === me.id ? g.awayTeamId : g.homeTeamId;
+      return teamById.has(oppId) && ratings.has(oppId);
+    })
     .map((g) => {
       const home = g.homeTeamId === me.id;
       const oppId = home ? g.awayTeamId : g.homeTeamId;
       const opp = teamById.get(oppId)!;
       const oppRating = ratings.get(oppId)!;
       const est = estimateGameWinChance({
-        me: myRating!,
+        me: myRating,
         opp: oppRating,
         atHome: home,
         myRecord: { wins: me.wins, losses: me.losses, ties: me.ties },
@@ -350,6 +389,81 @@ export default async function AnalyticsPage({ params }: { params: { id: string }
     };
   }));
 
+  // --- the war room, computed only when it is going to be rendered ---------
+  // THE ONE EXPENSIVE READ ON THIS PAGE. Every team-level and per-play figure
+  // in the sim lives inside Game.boxScore as JSON, so a league-wide rank means
+  // selecting and parsing every played game of the season — 176 rows at week
+  // 12, 272 by the end. It is paid ONLY on the Advanced view, and the Simple
+  // view never touches it. One query serves both boards below.
+  const driveOffense = new Map<string, DriveAgg>();
+  const driveDefense = new Map<string, DriveAgg>();
+  let rateBoards: ReturnType<typeof buildRateBoards> = [];
+  let leagueGamesPlayed = 0;
+
+  if (advanced) {
+    const boxGames = await prisma.game.findMany({
+      where: { leagueId: league.id, seasonYear: league.seasonYear, kind: 'REGULAR', played: true },
+      select: { seasonYear: true, week: true, kind: true, homeTeamId: true, awayTeamId: true, boxScore: true },
+    });
+    leagueGamesPlayed = teams.length > 0 ? Math.round((boxGames.length * 2) / teams.length) : 0;
+
+    for (const t of teams) {
+      driveOffense.set(t.id, blankDriveAgg());
+      driveDefense.set(t.id, blankDriveAgg());
+    }
+    for (const g of boxGames) {
+      const box = readJson<BoxScore | null>(g.boxScore, null);
+      if (!box?.drives) continue;
+      for (const d of box.drives) {
+        const owner = d.team === 'home' ? g.homeTeamId : g.awayTeamId;
+        const facing = d.team === 'home' ? g.awayTeamId : g.homeTeamId;
+        const off = driveOffense.get(owner);
+        const def = driveDefense.get(facing);
+        if (off) addDrive(off, d);
+        if (def) addDrive(def, d);
+      }
+    }
+
+    // Season stat lines come out of lib/playerSeasons.ts rather than being
+    // re-derived here, so the regular/postseason split this page depends on is
+    // the same split the player page and the stats screen use. Only REGULAR
+    // games were selected above, so `stats` is exactly the regular season.
+    const abbrByTeamId = new Map(teams.map((t) => [t.id, t.abbr]));
+    const linesByPlayer = buildSeasonLines(boxGames, abbrByTeamId);
+    const identity = new Map(leaguePlayers.map((p) => [p.id, p]));
+
+    const pool = [...linesByPlayer.entries()]
+      .map(([playerId, lines]) => {
+        const who = identity.get(playerId);
+        // No roster row means no position, and a rate cannot be placed on a
+        // positional strip without one. Left out rather than guessed at.
+        if (!who) return null;
+        // Season totals: a man traded mid-year has a line per club, and the
+        // convention every stat page uses is to add them and attribute the
+        // row to where he plays now.
+        const stats = lines.reduce((acc, l) => {
+          for (const [k, v] of Object.entries(l.stats)) acc[k] = (acc[k] ?? 0) + (v ?? 0);
+          return acc;
+        }, {} as Record<string, number>);
+        return {
+          playerId,
+          name: `${who.firstName} ${who.lastName}`,
+          position: who.position,
+          teamId: who.teamId,
+          teamAbbr: who.teamId ? (abbrByTeamId.get(who.teamId) ?? '—') : '—',
+          gp: lines.reduce((a, l) => a + l.gp, 0),
+          stats,
+        };
+      })
+      .filter((p): p is NonNullable<typeof p> => p !== null);
+
+    rateBoards = buildRateBoards(pool, me.id, leagueGamesPlayed, seasonLengthFor(settings.seasonLength));
+  }
+
+  const driveMetrics = advanced ? buildDriveMetrics(driveOffense, driveDefense, me.id) : [];
+  const myDriveOffense = driveOffense.get(me.id) ?? blankDriveAgg();
+  const myDriveDefense = driveDefense.get(me.id) ?? blankDriveAgg();
+
   // --- masthead -------------------------------------------------------------
   const played = me.wins + me.losses + me.ties;
   const divPos = divisionTable.findIndex((r) => r.isUser) + 1;
@@ -404,7 +518,135 @@ export default async function AnalyticsPage({ params }: { params: { id: string }
     },
   ];
 
+  // --- the read, in sentences ----------------------------------------------
+  // Composed from the panels' own figures. Every clause is guarded on the data
+  // existing, so a league in week one gets fewer sentences rather than a
+  // sentence built out of zeroes.
+  const worstUnit = [...groups].sort((a, b) => a.shareDelta - b.shareDelta)[0];
+  const biggestOverpay = value.overpays[0];
+  const overpayStory = biggestOverpay
+    ? men.find((m) => m.playerId === biggestOverpay.playerId && m.series.length > 1)
+    : undefined;
+  const decliningStory = overpayStory && overpayStory.series[overpayStory.series.length - 1].value < overpayStory.series[0].value
+    ? overpayStory
+    : undefined;
+
+  const readLines: ReadLine[] = [];
+  readLines.push({
+    topic: 'Where you stand',
+    text: <>
+      <b>{me.city} {me.nickname}</b> field the {ordinal(myRating.rank)}-rated roster of {teams.length} and sit
+      {' '}<b>{me.wins}-{me.losses}{me.ties ? `-${me.ties}` : ''}</b>
+      {myLuck && Math.abs(myLuck.luck) >= 0.5 ? (
+        <>. The points say the record should be <b>{myLuck.expectedWins.toFixed(1)}-{(played - myLuck.expectedWins).toFixed(1)}</b>,
+          {' '}so {myLuck.luck < 0 ? 'the scoreboard owes you' : 'you have banked'} {Math.abs(myLuck.luck).toFixed(1)} wins
+          {' '}— {ordinal(pythLeague.length - myLuckIdx)}-unluckiest of {pythLeague.length}.</>
+      ) : played > 0 ? <>, which is close to what the scoring deserved.</> : <> with nothing played yet.</>}
+    </>,
+  });
+  if (cap.capEnabled && worstUnit) {
+    readLines.push({
+      topic: 'Where the money is not',
+      text: <>
+        The widest gap between what you spend and what the league spends is at <b>{worstUnit.group}</b>:
+        {' '}<b>{pct1(worstUnit.share)}</b> of your active salary against a league average of {pct1(worstUnit.leagueMeanShare)},
+        {' '}for a unit rated {worstUnit.rating} — {ordinal(worstUnit.rank)} of {teams.length}
+        {worstUnit.ratingDelta < 0 ? ', below the league mean.' : ', still above the league mean.'}
+      </>,
+    });
+  }
+  if (marginGames.length > 0) {
+    readLines.push({
+      topic: 'How the games went',
+      text: <>
+        {marginGames.length} game{marginGames.length === 1 ? '' : 's'} in, you are
+        {' '}<b>{marginProfile.oneScoreWins}-{marginProfile.oneScoreLosses}</b> when it comes down to one score
+        {' '}and <b>{marginProfile.blowoutWins}-{marginProfile.blowoutLosses}</b> in games decided early
+        {marginProfile.blownLeads.length > 0
+          ? <>. {marginProfile.blownLeads.length} of those defeats came after leading by ten or more
+            — {marginProfile.blownLeads.map((g) => g.oppAbbr).join(', ')}.</>
+          : <>, and you have not surrendered a lead of ten.</>}
+      </>,
+    });
+  }
+  if (biggestOverpay) {
+    readLines.push({
+      topic: 'The contract to look at',
+      text: <>
+        <b>{biggestOverpay.name}</b> ({biggestOverpay.position}, {biggestOverpay.age}) carries {formatMoney(biggestOverpay.hit)}
+        {' '}against a {formatMoney(biggestOverpay.marketValue)} market — the widest gap on the roster
+        {decliningStory
+          ? <>, and the box score agrees: his {decliningStory.statLabel} have gone
+            {' '}<b>{decliningStory.series[0].value} → {decliningStory.series[decliningStory.series.length - 1].value}</b>
+            {' '}between {decliningStory.series[0].year} and {decliningStory.series[decliningStory.series.length - 1].year}.</>
+          : <>.</>}
+      </>,
+    });
+  }
+  if (ageProfile.cliff.startersOver30InTwo > 0 && cap.capEnabled) {
+    readLines.push({
+      topic: 'Two years out',
+      text: <>
+        <b>{ageProfile.cliff.startersOver30InTwo}</b> of your {ageProfile.cliff.starterCount} first-teamers will be 30 or older
+        {' '}in {league.seasonYear + 2}, and they hold <b>{formatMoney(ageProfile.cliff.starterSpendOver30InTwo)}</b> of the cap today.
+      </>,
+    });
+  }
+
   const elapsedMs = Date.now() - startedAt;
+
+  // --- the sentence under each war-room board ------------------------------
+  const ppd = driveMetrics.find((m) => m.key === 'ppd');
+  const ppdAllowed = driveMetrics.find((m) => m.key === 'ppdAllowed');
+  const threeOut = driveMetrics.find((m) => m.key === 'threeOut');
+  const driveHeadline = ppd && ppdAllowed ? (
+    <>
+      <b>{me.abbr} score {ppd.value.toFixed(2)} points a drive and give up {ppdAllowed.value.toFixed(2)}.</b>{' '}
+      That is {ordinal(ppd.rank)} of {ppd.clubs} with the ball and {ordinal(ppdAllowed.rank)} without it, over
+      {' '}{myDriveOffense.drives} drives run and {myDriveDefense.drives} faced.
+      {threeOut && <> {threeOut.value.toFixed(1)}% of your possessions end inside three plays, {ordinal(threeOut.rank)} of {threeOut.clubs}.</>}
+      {' '}Points per drive is the measure a front office argues about because it removes pace: a club that runs
+      twelve possessions a game and one that runs nine are finally comparable.
+    </>
+  ) : <>Not enough drives on record yet to rank this club against the league.</>;
+
+  const bestRate = [...rateBoards]
+    .filter((b) => b.mine.length > 0)
+    .sort((a, b) => (b.mine[0]?.percentile ?? 0) - (a.mine[0]?.percentile ?? 0))[0];
+  const worstRate = [...rateBoards]
+    .filter((b) => b.mine.length > 0)
+    .sort((a, b) => (a.mine[0]?.percentile ?? 0) - (b.mine[0]?.percentile ?? 0))[0];
+  const sameMan = bestRate && worstRate && bestRate.mine[0]?.playerId === worstRate.mine[0]?.playerId;
+  const rateHeadline = bestRate && worstRate ? (
+    <>
+      {sameMan && bestRate.key !== worstRate.key ? (
+        <>
+          <b>{bestRate.mine[0].name}</b> is both ends of this club&apos;s per-play board:
+          {' '}{bestRate.label.toLowerCase()} of {bestRate.mine[0].value.toFixed(bestRate.decimals)}{bestRate.unit}
+          {' '}({ordinal(bestRate.mine[0].rank)} of {bestRate.mine[0].qualified}) against
+          {' '}{worstRate.label.toLowerCase()} of {worstRate.mine[0].value.toFixed(worstRate.decimals)}{worstRate.unit}
+          {' '}({ordinal(worstRate.mine[0].rank)}). One man, two very different readings — which is the argument for
+          {' '}reading rates in a set rather than one at a time.
+        </>
+      ) : (
+        <>
+          <b>{bestRate.mine[0].name}</b> is this club&apos;s strongest per-play number:
+          {' '}{bestRate.label.toLowerCase()} of {bestRate.mine[0].value.toFixed(bestRate.decimals)}{bestRate.unit},
+          {' '}{ordinal(bestRate.mine[0].rank)} of {bestRate.mine[0].qualified} qualifiers.
+          {bestRate.key !== worstRate.key && (
+            <> The other end is {worstRate.label.toLowerCase()}: <b>{worstRate.mine[0].name}</b> at
+              {' '}{worstRate.mine[0].value.toFixed(worstRate.decimals)}{worstRate.unit},
+              {' '}{ordinal(worstRate.mine[0].rank)} of {worstRate.mine[0].qualified}.</>
+          )}
+        </>
+      )}
+      {' '}A rate is a claim about a player; the volume beside it in the tooltip is how much that claim is worth.
+    </>
+  ) : <>Nobody on this roster has cleared a volume qualifier yet, so there is no per-play claim to make.</>;
+
+  /** Every link rebuilds the whole query string, so no pill drops another's state. */
+  const href = (wantAdvanced: boolean) =>
+    `/league/${league.id}/analytics${wantAdvanced ? '?view=advanced' : ''}`;
 
   return (
     <div className="space-y-4" style={{ ['--team-accent' as never]: accent }}>
@@ -422,88 +664,149 @@ export default async function AnalyticsPage({ params }: { params: { id: string }
             the places to act on any of it.
           </>
         }
+        action={
+          <div className="flex gap-1.5">
+            <Link href={href(false)} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Simple</Link>
+            <Link href={href(true)} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
+          </div>
+        }
         facts={facts}
       />
 
-      <AnalyticsShell showEra={hasPreHistory}>
-        <LuckLedgerPanel
-          rows={ledger}
-          tenureStartYear={startYear}
-          seasonYear={league.seasonYear}
-          seasonLength={seasonLength}
-          teamAbbr={me.abbr}
-          hasPreHistory={hasPreHistory}
-          seasonOnLedger={seasonOnLedger}
-          thisSeason={myLuck ? {
-            wins: me.wins, losses: me.losses, ties: me.ties,
-            expectedWins: myLuck.expectedWins, luck: myLuck.luck,
-            unluckRank: pythLeague.length - myLuckIdx, clubs: pythLeague.length, played,
-          } : null}
-        />
+      <AnalyticsShell showEra={hasPreHistory && advanced} showUnits={advanced}>
+        <HeadlineRead lines={readLines} leagueId={league.id} teamName={`${me.city} ${me.nickname}`} />
 
-        <SpendVsRatingPanel rows={groups} capEnabled={cap.capEnabled} />
+        {/* SIMPLE — the four questions a GM asks out loud, at full width so each
+            one has room to be read rather than scanned. */}
+        <PanelBoundary span={12} title="Are You Paying For What You're Getting?">
+          <SpendVsRatingPanel rows={groups} capEnabled={cap.capEnabled} />
+        </PanelBoundary>
 
-        <MarginPanel
-          games={marginGames}
-          profile={marginProfile}
-          thresholds={{ oneScore: ONE_SCORE_MARGIN, blowout: BLOWOUT_MARGIN }}
-          teamRatingRank={myRating?.rank ?? 0}
-          seasonYear={league.seasonYear}
-          playoffGamesExcluded={myGames.filter((g) => g.played && g.kind !== 'REGULAR').length}
-          seasonLabel="Regular season"
-        />
+        <PanelBoundary span={advanced ? 7 : 12} title="How These Games Are Actually Being Decided">
+          <MarginPanel
+            span={advanced ? 7 : 12}
+            games={marginGames}
+            profile={marginProfile}
+            thresholds={{ oneScore: ONE_SCORE_MARGIN, blowout: BLOWOUT_MARGIN }}
+            teamRatingRank={myRating.rank}
+            seasonYear={league.seasonYear}
+            playoffGamesExcluded={myGames.filter((g) => g.played && g.kind !== 'REGULAR').length}
+            seasonLabel="Regular season"
+          />
+        </PanelBoundary>
 
-        <WhatIsLeftPanel
-          remaining={remaining}
-          sosPlayed={sosPlayed}
-          remainingOppWinRate={remainingOppWinRate}
-          record={{ wins: me.wins, losses: me.losses, ties: me.ties }}
-          seasonLength={seasonLength}
-          division={divisionTable}
-          divisionLabel={`${me.conference} ${me.division}`}
-          teamId={me.id}
-        />
+        {advanced && (
+          <PanelBoundary span={5} title="What Is Left">
+            <WhatIsLeftPanel
+              remaining={remaining}
+              sosPlayed={sosPlayed}
+              remainingOppWinRate={remainingOppWinRate}
+              record={{ wins: me.wins, losses: me.losses, ties: me.ties }}
+              seasonLength={seasonLength}
+              division={divisionTable}
+              divisionLabel={`${me.conference} ${me.division}`}
+              teamId={me.id}
+            />
+          </PanelBoundary>
+        )}
 
-        <ContractValuePanel
-          bargains={withBody(value.bargains)}
-          overpays={withBody(value.overpays)}
-          leagueId={league.id}
-          teamAccent={accent}
-          capEnabled={cap.capEnabled}
-          rosterSize={surplusRows.length}
-        />
+        <PanelBoundary span={advanced ? 7 : 12} title="Who Outperforms The Deal, Who Is An Anchor">
+          <ContractValuePanel
+            span={advanced ? 7 : 12}
+            bargains={withBody(value.bargains)}
+            overpays={withBody(value.overpays)}
+            leagueId={league.id}
+            teamAccent={accent}
+            capEnabled={cap.capEnabled}
+            rosterSize={surplusRows.length}
+          />
+        </PanelBoundary>
 
-        <CliffPanel
-          bands={ageProfile.bands}
-          cliff={ageProfile.cliff}
-          capHealth={capHealth}
-          groups={groups}
-          seasonYear={league.seasonYear}
-          nextYearCap={capForYear(league.seasonYear + 1, startYear)}
-          activeSalary={cap.activeSalary}
-          contractCount={rosterRows.length}
-          expiringCount={expiringCount}
-          capEnabled={cap.capEnabled}
-        />
+        {advanced && (
+          <PanelBoundary span={5} title="The Cliff, Two Years Out">
+            <CliffPanel
+              bands={ageProfile.bands}
+              cliff={ageProfile.cliff}
+              capHealth={capHealth}
+              groups={groups}
+              seasonYear={league.seasonYear}
+              nextYearCap={capForYear(league.seasonYear + 1, startYear)}
+              activeSalary={cap.activeSalary}
+              contractCount={rosterRows.length}
+              expiringCount={expiringCount}
+              capEnabled={cap.capEnabled}
+            />
+          </PanelBoundary>
+        )}
 
-        <DraftReturnPanel
-          bands={draftBands}
-          picks={draftRows}
-          leagueMeanOvr={leagueMeanOvr}
-          years={draftRows.length ? { first: Math.min(...draftRows.map((d) => d.year)), last: Math.max(...draftRows.map((d) => d.year)) } : null}
-        />
+        <PanelBoundary span={12} title="The Luck Ledger">
+          <LuckLedgerPanel
+            rows={ledger}
+            tenureStartYear={startYear}
+            seasonYear={league.seasonYear}
+            seasonLength={seasonLength}
+            teamAbbr={me.abbr}
+            hasPreHistory={hasPreHistory && advanced}
+            seasonOnLedger={seasonOnLedger}
+            thisSeason={myLuck ? {
+              wins: me.wins, losses: me.losses, ties: me.ties,
+              expectedWins: myLuck.expectedWins, luck: myLuck.luck,
+              unluckRank: pythLeague.length - myLuckIdx, clubs: pythLeague.length, played,
+            } : null}
+          />
+        </PanelBoundary>
 
-        <ProductionPanel
-          men={men}
-          leagueId={league.id}
-          teamAccent={accent}
-          teamAbbr={me.abbr}
-          seasonYear={league.seasonYear}
-          syncedFromTable={syncedFromTable}
-        />
+        {/* ADVANCED — the war room. Everything below costs an extra read or an
+            extra thirty seconds of study, and neither is charged to a player
+            who only wanted to know whether he is getting value for money. */}
+        {advanced && (
+          <>
+            <PanelBoundary span={12} title="The Drive Board">
+              <DriveBoardPanel
+                metrics={driveMetrics}
+                offense={myDriveOffense}
+                defense={myDriveDefense}
+                teamAbbr={me.abbr}
+                gamesPlayed={marginGames.length}
+                headline={driveHeadline}
+              />
+            </PanelBoundary>
+
+            <PanelBoundary span={12} title="The Efficiency Room">
+              <PerPlayPanel
+                boards={rateBoards}
+                leagueId={league.id}
+                teamAbbr={me.abbr}
+                gamesPlayed={leagueGamesPlayed}
+                missingPositions={rateBoards.filter((b) => b.league.length > 0 && b.mine.length === 0).map((b) => b.label.toLowerCase())}
+                headline={rateHeadline}
+              />
+            </PanelBoundary>
+
+            <PanelBoundary span={12} title="Draft Return By Round">
+              <DraftReturnPanel
+                bands={draftBands}
+                picks={draftRows}
+                leagueMeanOvr={leagueMeanOvr}
+                years={draftRows.length ? { first: Math.min(...draftRows.map((d) => d.year)), last: Math.max(...draftRows.map((d) => d.year)) } : null}
+              />
+            </PanelBoundary>
+
+            <PanelBoundary span={12} title="Is The Money Still Climbing?">
+              <ProductionPanel
+                men={men}
+                leagueId={league.id}
+                teamAccent={accent}
+                teamAbbr={me.abbr}
+                seasonYear={league.seasonYear}
+                syncedFromTable={syncedFromTable}
+              />
+            </PanelBoundary>
+          </>
+        )}
       </AnalyticsShell>
 
-      <NotBuilt elapsedMs={elapsedMs} groups={groups} />
+      <NotBuilt elapsedMs={elapsedMs} groups={groups} advanced={advanced} />
     </div>
   );
 }
@@ -513,7 +816,7 @@ export default async function AnalyticsPage({ params }: { params: { id: string }
  * rather than eight times in eight panels. A screen that quietly omits what it
  * cannot compute is worse than one that has nothing to say.
  */
-function NotBuilt({ elapsedMs, groups }: { elapsedMs: number; groups: ReturnType<typeof buildUnitSpendTable> }) {
+function NotBuilt({ elapsedMs, groups, advanced }: { elapsedMs: number; groups: ReturnType<typeof buildUnitSpendTable>; advanced: boolean }) {
   const worst = [...groups].sort((a, b) => a.ratingDelta - b.ratingDelta)[0];
   return (
     <div className="panel p-4 mt-4 text-[11.5px] text-muted leading-relaxed">
@@ -541,8 +844,11 @@ function NotBuilt({ elapsedMs, groups }: { elapsedMs: number; groups: ReturnType
         player has a season behind him.
       </p>
       <p className="mt-3 pt-2 border-t border-line/60">
-        Computed live from the database in <span className="tabular-nums text-chalk">{elapsedMs}ms</span>. Nothing on
-        this page is cached, and nothing on it is stored.
+        Computed live from the database in <span className="tabular-nums text-chalk">{elapsedMs}ms</span>
+        {advanced
+          ? ', including one full read of every played box score in the league — the only expensive query on this screen, and the Simple view never makes it.'
+          : '. The Simple view makes no league-wide box-score read at all.'} Nothing on this page is cached, and
+        nothing on it is stored.
       </p>
     </div>
   );

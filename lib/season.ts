@@ -722,7 +722,7 @@ async function createWildcardRound(leagueId: string, seasonYear: number) {
 
 async function simulatePlayoffRound(leagueId: string, settings: ReturnType<typeof parseSettings>, rng: Rng) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  const pending = await prisma.game.findMany({ where: { leagueId, played: false, kind: { not: 'REGULAR' } } });
+  const pending = await prisma.game.findMany({ where: { leagueId, seasonYear: league.seasonYear, played: false, kind: { not: 'REGULAR' } } });
 
   // Same snapshot rule as the regular season: the pre-game win chance for the
   // user's own postseason game only exists before it is played.
@@ -733,7 +733,26 @@ async function simulatePlayoffRound(leagueId: string, settings: ReturnType<typeo
     await simulateAndSaveGame(leagueId, game.id, settings, new Rng(`${rng.next()}-${game.id}`));
   }
 
-  const kindsPlayed = new Set((await prisma.game.findMany({ where: { leagueId, kind: { not: 'REGULAR' } } })).map((g) => g.kind));
+  // WHICH ROUNDS THIS SEASON HAS PLAYED. Both filters are load-bearing.
+  //
+  // Without `seasonYear`, last year's FINAL is still in the set, so the
+  // wild-card branch's `!kindsPlayed.has('DIVISIONAL')` is false on the very
+  // first postseason game of year two and control falls through to
+  // `kindsPlayed.has('FINAL')` — a champion crowned straight out of the wild
+  // card round, for every season after the first, forever. Measured across
+  // the dev database: RD DRIFT BEFORE-B played a full bracket in 2026 and
+  // then WILDCARD-only in 2027 through 2034, eight seasons of one-round
+  // playoffs and eight fake champions.
+  //
+  // Without `played`, `createNextPlayoffRound` has already written the NEXT
+  // round's unplayed rows by the time the following advance reads this, so
+  // the set would report a round complete before it kicked off.
+  const kindsPlayed = new Set(
+    (await prisma.game.findMany({
+      where: { leagueId, seasonYear: league.seasonYear, played: true, kind: { not: 'REGULAR' } },
+      select: { kind: true },
+    })).map((g) => g.kind),
+  );
 
   // Playoff standings are deliberately NOT tracked here — postseason results
   // never touch Team.wins (see simulateAndSaveGame), so a "record went from
@@ -885,7 +904,10 @@ async function applyAwardDevelopmentBump(playerId: string) {
 }
 
 async function createNextPlayoffRound(leagueId: string, seasonYear: number, fromKind: string, toKind: string) {
-  const games = await prisma.game.findMany({ where: { leagueId, kind: fromKind, played: true } });
+  // THIS SEASON's winners. Unbounded, year two collected 2026's wild-card
+  // winners alongside 2027's and built a divisional round out of both: a
+  // measured 2027 postseason came out WILDCARD 4, DIVISIONAL 6, CONFERENCE 4.
+  const games = await prisma.game.findMany({ where: { leagueId, seasonYear, kind: fromKind, played: true } });
   const winners: { id: string; conference: string; seed: number }[] = [];
   for (const g of games) {
     const winnerId = g.homeScore >= g.awayScore ? g.homeTeamId : g.awayTeamId;
@@ -910,7 +932,10 @@ async function createNextPlayoffRound(leagueId: string, seasonYear: number, from
 }
 
 async function createFinal(leagueId: string, seasonYear: number) {
-  const games = await prisma.game.findMany({ where: { leagueId, kind: 'CONFERENCE', played: true } });
+  // Same year bound, and here the missing one was silently fatal rather than
+  // merely wrong: by year two this returned four conference games, the
+  // `length === 2` guard failed, and NO FINAL WAS EVER CREATED.
+  const games = await prisma.game.findMany({ where: { leagueId, seasonYear, kind: 'CONFERENCE', played: true } });
   const winners = games.map((g) => (g.homeScore >= g.awayScore ? g.homeTeamId : g.awayTeamId));
   if (winners.length === 2) {
     await prisma.game.create({

@@ -24,7 +24,9 @@ export interface ValueRow extends SurplusRow {
  * neutral midpoint. Surplus is a polarity, not a status, so the app's status
  * green and red stay out of it.
  */
-export function ContractValuePanel({ bargains, overpays, leagueId, teamAccent, capEnabled, rosterSize }: {
+export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, teamAccent, capEnabled, rosterSize }: {
+  /** Seven columns beside the age cliff in Advanced; the full width alone in Simple. */
+  span?: 7 | 12;
   bargains: ValueRow[];
   overpays: ValueRow[];
   leagueId: string;
@@ -39,7 +41,7 @@ export function ContractValuePanel({ bargains, overpays, leagueId, teamAccent, c
 
   return (
     <Panel
-      span={7}
+      span={span}
       eyebrow="Cap hit against what the rating is worth"
       title="Who Outperforms The Deal, Who Is An Anchor"
       aside="Market-rate deals excluded"

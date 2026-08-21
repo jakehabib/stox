@@ -129,7 +129,7 @@ export function TrophyMoment({ data, onClose, leagueId }: {
         ✕
       </button>
 
-      <div className="trophy-inner relative min-h-full flex items-center justify-center px-5 py-10">
+      <div className="trophy-inner relative min-h-full flex items-center justify-center px-5 py-6">
         <div className="w-full max-w-4xl">
 
           {/* ---- The headline -------------------------------------------- */}
@@ -138,7 +138,7 @@ export function TrophyMoment({ data, onClose, leagueId }: {
               {data.seasonYear} · {champion ? 'League Champions' : data.roundLabel}
             </div>
             <h1
-              className="stat-value uppercase mt-2 leading-[0.9] text-[clamp(2.75rem,10vw,4.5rem)]"
+              className="stat-value uppercase mt-2 leading-[0.9] text-[clamp(2.5rem,9vw,4rem)]"
               style={{ color: champion ? textColor : '#d8d5cc' }}
             >
               {champion ? 'Champions' : 'Season Over'}
@@ -148,7 +148,7 @@ export function TrophyMoment({ data, onClose, leagueId }: {
             </div>
 
             {data.finalScore && (
-              <div className="mt-6">
+              <div className="mt-5">
                 <div className="stat-value text-stat-lg">
                   <span style={{ color: champion ? textColor : '#93939c' }}>{data.finalScore.mine}</span>
                   <span className="text-muted mx-2">–</span>
@@ -160,98 +160,99 @@ export function TrophyMoment({ data, onClose, leagueId }: {
               </div>
             )}
 
-            {/* One true sentence about how the year actually ended. */}
-            <p className="text-sm text-muted mt-4 max-w-xl mx-auto">{verdict(data)}</p>
+            {/* One true sentence naming what happened. The champion's score
+                and opponent are already three lines up, so this is spent only
+                where it adds something: on the year that just ended. */}
+            {!champion && <p className="text-sm text-muted mt-4 max-w-xl mx-auto">{verdict(data)}</p>}
           </div>
 
-          {/* ---- The championship MVP ------------------------------------ */}
-          {champion && data.mvp && (
-            <section className="mt-9">
-              <Rule label="Championship MVP" accent />
-              <div
-                className="panel p-5 flex flex-wrap items-center gap-5"
-                style={{
-                  borderColor: 'color-mix(in srgb, var(--team-accent) 45%, transparent)',
-                  background: `linear-gradient(90deg, color-mix(in srgb, var(--team-accent) 14%, transparent), transparent 62%)`,
-                }}
-              >
-                {data.mvp.age !== null && (
-                  <div className="shrink-0 rounded-lg p-2" style={{ background: 'color-mix(in srgb, var(--team-accent) 16%, transparent)' }}>
-                    <PlayerAvatar
-                      seed={data.mvp.playerId}
-                      age={data.mvp.age}
-                      size={96}
-                      teamColor={accent}
-                      weightLb={data.mvp.weightLb ?? undefined}
-                      heightIn={data.mvp.heightIn ?? undefined}
-                      position={data.mvp.position}
-                    />
-                  </div>
-                )}
-                <div className="flex-1 min-w-[240px]">
-                  <div className="flex items-center gap-2">
-                    <span className={`pill border ${positionBadgeClass(data.mvp.position)}`}>{data.mvp.position}</span>
-                    {data.mvpAward && <span className="font-mono text-[11px] text-muted">{data.mvpAward}</span>}
-                  </div>
-                  <div className="font-display font-extrabold uppercase tracking-wide text-3xl leading-none mt-2">
-                    {data.mvp.name}
-                  </div>
-                  {data.mvp.stats.length > 0 && (
-                    <div className="flex gap-6 mt-3">
-                      {data.mvp.stats.map((s) => (
-                        <div key={s.label}>
-                          <div className="stat-value text-stat-sm" style={{ color: textColor }}>{s.value}</div>
-                          <div className="label-sm">{s.label}</div>
-                        </div>
-                      ))}
+          {/* ---- The MVP, and how the game was actually won -------------- */}
+          <section className="mt-5 grid md:grid-cols-2 gap-4 items-stretch">
+            {champion && data.mvp && (
+              <div>
+                <Rule label="Championship MVP" accent />
+                <div
+                  className="panel p-4 h-[calc(100%-2rem)] flex flex-wrap items-center gap-4"
+                  style={{
+                    borderColor: 'color-mix(in srgb, var(--team-accent) 45%, transparent)',
+                    background: 'linear-gradient(120deg, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 70%)',
+                  }}
+                >
+                  {data.mvp.age !== null && (
+                    <div className="shrink-0 rounded-lg p-1.5" style={{ background: 'color-mix(in srgb, var(--team-accent) 16%, transparent)' }}>
+                      <PlayerAvatar
+                        seed={data.mvp.playerId}
+                        age={data.mvp.age}
+                        size={84}
+                        teamColor={accent}
+                        weightLb={data.mvp.weightLb ?? undefined}
+                        heightIn={data.mvp.heightIn ?? undefined}
+                        position={data.mvp.position}
+                      />
                     </div>
                   )}
-                  <p className="text-xs text-muted mt-3">
-                    Chosen off his line in the final itself, from the winning roster.
-                  </p>
+                  <div className="flex-1 min-w-[190px]">
+                    <span className={`pill border ${positionBadgeClass(data.mvp.position)}`}>{data.mvp.position}</span>
+                    <div className="font-display font-extrabold uppercase tracking-wide text-[1.7rem] leading-none mt-2">
+                      {data.mvp.name}
+                    </div>
+                    {/* The cells and the award transaction's own sentence are the
+                        same numbers off the same box line, so only one is shown:
+                        the cells when the line could be matched back, the stored
+                        sentence when it couldn't. */}
+                    {data.mvp.stats.length > 0 ? (
+                      <div className="flex gap-5 mt-2.5">
+                        {data.mvp.stats.map((st) => (
+                          <div key={st.label}>
+                            <div className="stat-value text-stat-sm" style={{ color: textColor }}>{st.value}</div>
+                            <div className="label-sm">{st.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : data.mvpAward && (
+                      <p className="font-mono text-xs text-muted mt-2.5">{data.mvpAward}</p>
+                    )}
+                    <p className="text-[11px] text-muted mt-2.5">Scored off his line in the final itself, winning roster only.</p>
+                  </div>
                 </div>
               </div>
-            </section>
-          )}
+            )}
 
-          {/* ---- How the last game actually went -------------------------- */}
-          {data.final && (
-            <section className="mt-8">
-              <Rule label={champion ? 'The final' : 'The game that ended it'} />
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="panel p-4">
+            {data.final && (
+              <div className={champion && data.mvp ? '' : 'md:col-span-2'}>
+                <Rule label={champion ? 'The final' : 'The game that ended it'} />
+                <div className={`panel p-4 ${champion && data.mvp ? '' : 'md:grid md:grid-cols-2 md:gap-5'}`}>
                   <QuarterLinescore
                     away={{ teamId: data.final.away.teamId, abbr: data.final.away.abbr, score: data.final.away.score }}
                     home={{ teamId: data.final.home.teamId, abbr: data.final.home.abbr, score: data.final.home.score }}
                     quarters={data.final.quarters}
                     overtime={data.final.overtime}
                   />
-                </div>
-                {data.final.shape && (
-                  <div className="panel p-4">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <div className="label-sm">{data.final.shape.archetype}</div>
-                      <div className="text-[11px] text-muted">{data.abbr} view</div>
+                  {data.final.shape && (
+                    <div className={champion && data.mvp ? 'mt-2.5 pt-2.5 border-t border-line/50' : 'mt-3 md:mt-0'}>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <div className="label-sm">{data.final.shape.archetype}</div>
+                        <div className="text-[11px] text-muted">{data.final.shape.note}</div>
+                      </div>
+                      <GameShapePath
+                        shape={data.final.shape}
+                        variant="full"
+                        width={420}
+                        height={84}
+                        color={champion ? accent : '#93939c'}
+                        animate
+                        className="mt-1"
+                      />
                     </div>
-                    <GameShapePath
-                      shape={data.final.shape}
-                      variant="full"
-                      width={420}
-                      height={132}
-                      color={champion ? accent : '#93939c'}
-                      animate
-                      className="mt-1"
-                    />
-                    <p className="text-xs text-muted mt-1">{data.final.shape.note}</p>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </section>
-          )}
+            )}
+          </section>
 
           {/* ---- The road there ------------------------------------------ */}
           {data.road.length > 0 && (
-            <section className="mt-8">
+            <section className="mt-5">
               <Rule label={champion ? 'The road there' : 'The run'} />
               <div className="flex gap-2 justify-center flex-wrap">
                 {/* A bye is something the bracket gave them, not a missing
@@ -291,7 +292,7 @@ export function TrophyMoment({ data, onClose, leagueId }: {
 
           {/* ---- Who carried it ------------------------------------------- */}
           {data.runLeaders.length > 0 && (
-            <section className="mt-8">
+            <section className="mt-5">
               <Rule label={`Across the postseason · ${postseasonGames(data)} game${postseasonGames(data) === 1 ? '' : 's'}`} />
               <div className="grid sm:grid-cols-3 gap-3">
                 {data.runLeaders.map((p) => <RunLeader key={p.playerId} p={p} accent={accent} />)}
@@ -299,34 +300,27 @@ export function TrophyMoment({ data, onClose, leagueId }: {
             </section>
           )}
 
-          {/* ---- What it means -------------------------------------------- */}
-          <section className="mt-8">
+          {/* ---- What it means, and the season underneath it --------------- */}
+          <section className="mt-5">
             <Rule label={champion ? 'What it means' : 'Where that leaves you'} />
-            <div className="panel p-4 flex flex-wrap gap-x-10 gap-y-4 justify-center text-center">
+            <div className="panel p-4 flex flex-wrap gap-x-9 gap-y-4 justify-center text-center">
               {meaning(data).map((m) => (
-                <div key={m.k}>
-                  <div className="label-sm">{m.k}</div>
-                  <div className="stat-value text-stat-sm mt-1" style={m.team ? { color: textColor } : undefined}>{m.v}</div>
-                  {m.sub && <div className="text-[11px] text-muted mt-1">{m.sub}</div>}
-                </div>
+                <Fact key={m.k} k={m.k} v={m.v} sub={m.sub} tone={m.team ? 'text-team' : undefined} />
               ))}
+              <div aria-hidden className="w-px self-stretch bg-line/70 hidden sm:block" />
+              <Fact k="Regular season" v={data.record} />
+              {data.seed !== null && <Fact k="Seed" v={`${data.seed}${suffix(data.seed)}`} />}
+              <Fact
+                k="Point diff"
+                v={`${data.pointDiff > 0 ? '+' : ''}${data.pointDiff}`}
+                tone={champion && data.pointDiff > 0 ? 'text-accent' : undefined}
+              />
+              <Fact k="Postseason" v={`${data.roundsWon}-${data.road.length - data.roundsWon}`} />
             </div>
           </section>
 
-          {/* ---- The season underneath it --------------------------------- */}
-          <div className="flex gap-x-8 gap-y-3 justify-center flex-wrap mt-6">
-            <Fact k="Regular season" v={data.record} />
-            {data.seed !== null && <Fact k="Seed" v={`${data.seed}${suffix(data.seed)}`} />}
-            <Fact
-              k="Point diff"
-              v={`${data.pointDiff > 0 ? '+' : ''}${data.pointDiff}`}
-              tone={champion && data.pointDiff > 0 ? 'text-accent' : undefined}
-            />
-            <Fact k="Postseason" v={`${data.roundsWon}-${data.road.length - data.roundsWon}`} />
-          </div>
-
           {!champion && data.nextPick && (
-            <p className="text-sm text-muted mt-5 text-center">{data.nextPick}</p>
+            <p className="text-sm text-muted mt-4 text-center">{data.nextPick}</p>
           )}
 
           <div className="mt-8 flex items-center justify-center gap-3">
@@ -377,19 +371,15 @@ function RunLeader({ p, accent }: { p: TrophyPlayerLine; accent: string }) {
 
 /**
  * One sentence naming what actually happened, built only from figures on the
- * payload. The losing copy never softens the result and never inflates it:
- * rounds won are stated because they happened, and the wall is stated because
- * it is where the season stopped.
+ * payload. Shown on defeat only — the champion's own score, opponent and
+ * margin are already the three biggest things on his screen, so a sentence
+ * restating them would be filler. This one never softens the result and never
+ * inflates it: rounds won are stated because they happened, and the wall is
+ * stated because it is where the season stopped.
  */
 function verdict(d: TrophyData): string {
   const opp = d.finalScore ? `the ${d.finalScore.oppCity} ${d.finalScore.oppNickname}` : 'the field';
   const margin = d.finalScore ? Math.abs(d.finalScore.mine - d.finalScore.theirs) : 0;
-  if (d.kind === 'CHAMPION') {
-    const runs = d.roundsWon === d.road.length
-      ? `${d.roundsWon} for ${d.road.length} in the postseason`
-      : `${d.roundsWon} postseason wins`;
-    return `${runs}, and the last one by ${margin} over ${opp}.`;
-  }
   const wall = `Knocked out in the ${d.roundLabel.toLowerCase()} by ${opp}, by ${margin}.`;
   if (d.roundsWon === 0) return `${wall} One game, and it was over.`;
   return `${wall} ${d.roundsWon} round${d.roundsWon === 1 ? '' : 's'} won before it.`;
@@ -455,11 +445,12 @@ function Rule({ label, accent }: { label: string; accent?: boolean }) {
   );
 }
 
-function Fact({ k, v, tone }: { k: string; v: string; tone?: string }) {
+function Fact({ k, v, sub, tone }: { k: string; v: string; sub?: string; tone?: string }) {
   return (
     <div className="text-center">
       <div className="text-[10px] tracking-[0.14em] uppercase text-muted font-bold">{k}</div>
       <div className={`stat-value mt-1 text-stat-sm ${tone ?? ''}`}>{v}</div>
+      {sub && <div className="text-[11px] text-muted mt-0.5">{sub}</div>}
     </div>
   );
 }

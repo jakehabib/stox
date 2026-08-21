@@ -523,3 +523,317 @@ export function buildDraftReturn(picks: DraftPickRow[], rounds: number): DraftRo
     };
   });
 }
+
+// ---------------------------------------------------------------------------
+// THE ADVANCED VIEW — drive efficiency and per-play efficiency
+// ---------------------------------------------------------------------------
+// Everything below is computed from what the sim already stores: DriveResult
+// rows inside Game.boxScore, and the per-player BoxLine stats those same box
+// scores carry.
+//
+// WHAT IS DELIBERATELY ABSENT. A stored drive is
+// `{ team, result, points, plays, yards }` — there is no down, no distance and
+// no field position. So expected points added, success rate, red-zone
+// efficiency and third-and-long conversion are not computable, and nothing
+// here is named after them or approximated in their place. Drive `yards` is
+// what the drive GAINED, not where it started, so "scoring rate by starting
+// field position" is not computable either. Points per drive, scoring rate,
+// three-and-out rate and the rest below are the real front-office measures
+// this data does support.
+// ---------------------------------------------------------------------------
+
+/** One club's drives, both the ones it ran and the ones it faced. */
+export interface DriveAgg {
+  /** Drives that had a chance to score — END_HALF excluded, see below. */
+  drives: number;
+  points: number;
+  tds: number;
+  fgs: number;
+  puntsOrDowns: number;
+  turnovers: number;
+  /** Drives the clock ended. Counted, never used as a denominator. */
+  clockOuts: number;
+  yards: number;
+  plays: number;
+  /** A punt or a turnover on downs inside three plays. */
+  threeAndOuts: number;
+}
+
+export function blankDriveAgg(): DriveAgg {
+  return { drives: 0, points: 0, tds: 0, fgs: 0, puntsOrDowns: 0, turnovers: 0, clockOuts: 0, yards: 0, plays: 0, threeAndOuts: 0 };
+}
+
+/**
+ * Fold one stored drive into a club's aggregate.
+ *
+ * A drive the clock ended is counted separately and kept out of every
+ * denominator: it never had the chance to score, so including it would drag
+ * every club's scoring rate down by however many halves ended on their
+ * possession — an artefact of the clock, not of the offence.
+ */
+export function addDrive(agg: DriveAgg, d: { result: string; points: number; plays: number; yards: number }): void {
+  if (d.result === 'END_HALF') {
+    agg.clockOuts++;
+    return;
+  }
+  agg.drives++;
+  agg.points += d.points;
+  agg.yards += d.yards;
+  agg.plays += d.plays;
+  if (d.result === 'TD') agg.tds++;
+  else if (d.result === 'FG') agg.fgs++;
+  else if (d.result === 'TURNOVER') agg.turnovers++;
+  else agg.puntsOrDowns++;
+  // Three plays and out. The sim gives no down or distance, so this is the
+  // literal reading: the possession ended without a score inside three plays.
+  if ((d.result === 'PUNT' || d.result === 'DOWNS') && d.plays <= 3) agg.threeAndOuts++;
+}
+
+export interface LeagueMetric {
+  key: string;
+  label: string;
+  /** Suffix printed after the number — "/drive", "%", "" … */
+  unit: string;
+  decimals: number;
+  better: 'high' | 'low';
+  /** One sentence saying exactly what the number counts. Rendered as the tooltip. */
+  definition: string;
+  value: number;
+  rank: number;
+  clubs: number;
+  leagueMean: number;
+  leagueMin: number;
+  leagueMax: number;
+  /** Every club's value, for the distribution strip behind the marker. */
+  all: number[];
+}
+
+const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
+
+/**
+ * Ten drive-level measures, each ranked across every club that has played.
+ *
+ * A rank with no spread behind it is a lying metric — "17th of 32" says
+ * nothing until you can see that the whole league sits inside a tenth of a
+ * point per drive. So every measure carries the full distribution.
+ */
+export function buildDriveMetrics(
+  offense: Map<string, DriveAgg>,
+  defense: Map<string, DriveAgg>,
+  teamId: string,
+): LeagueMetric[] {
+  const ids = [...offense.keys()].filter((id) => (offense.get(id)?.drives ?? 0) > 0);
+  if (!ids.includes(teamId)) return [];
+
+  const defs: { key: string; label: string; unit: string; decimals: number; better: 'high' | 'low'; definition: string; of: (o: DriveAgg, d: DriveAgg) => number }[] = [
+    { key: 'ppd', label: 'Points per drive', unit: '', decimals: 2, better: 'high', definition: 'Points scored divided by drives run, excluding drives the clock ended.', of: (o) => safeDiv(o.points, o.drives) },
+    { key: 'ppdAllowed', label: 'Points per drive allowed', unit: '', decimals: 2, better: 'low', definition: 'Points the defence gave up divided by the drives it faced.', of: (_o, d) => safeDiv(d.points, d.drives) },
+    { key: 'ppdNet', label: 'Net points per drive', unit: '', decimals: 2, better: 'high', definition: 'Points per drive minus points per drive allowed — the whole club in one number.', of: (o, d) => safeDiv(o.points, o.drives) - safeDiv(d.points, d.drives) },
+    { key: 'scoreRate', label: 'Drives ending in points', unit: '%', decimals: 1, better: 'high', definition: 'Share of drives that finished with a touchdown or a field goal.', of: (o) => 100 * safeDiv(o.tds + o.fgs, o.drives) },
+    { key: 'tdRate', label: 'Touchdown rate per drive', unit: '%', decimals: 1, better: 'high', definition: 'Share of drives that finished in the end zone.', of: (o) => 100 * safeDiv(o.tds, o.drives) },
+    { key: 'threeOut', label: 'Three-and-out rate', unit: '%', decimals: 1, better: 'low', definition: 'Share of drives that ended in a punt or on downs inside three plays.', of: (o) => 100 * safeDiv(o.threeAndOuts, o.drives) },
+    { key: 'toRate', label: 'Turnovers per drive', unit: '%', decimals: 1, better: 'low', definition: 'Share of drives that ended in a turnover.', of: (o) => 100 * safeDiv(o.turnovers, o.drives) },
+    { key: 'ypd', label: 'Yards per drive', unit: '', decimals: 1, better: 'high', definition: 'Yards gained divided by drives run.', of: (o) => safeDiv(o.yards, o.drives) },
+    { key: 'ypp', label: 'Yards per play', unit: '', decimals: 2, better: 'high', definition: 'Drive yards divided by drive plays — the sim counts both on every possession.', of: (o) => safeDiv(o.yards, o.plays) },
+    { key: 'stopRate', label: 'Drives stopped without points', unit: '%', decimals: 1, better: 'high', definition: 'Share of the drives this defence faced that ended without a score.', of: (_o, d) => 100 * safeDiv(d.drives - d.tds - d.fgs, d.drives) },
+  ];
+
+  return defs.map((m) => {
+    const vals = ids.map((id) => ({ id, v: m.of(offense.get(id) ?? blankDriveAgg(), defense.get(id) ?? blankDriveAgg()) }));
+    const sorted = [...vals].sort((a, b) => (m.better === 'high' ? b.v - a.v : a.v - b.v));
+    const mine = vals.find((v) => v.id === teamId)!;
+    return {
+      key: m.key, label: m.label, unit: m.unit, decimals: m.decimals, better: m.better, definition: m.definition,
+      value: mine.v,
+      rank: sorted.findIndex((v) => v.id === teamId) + 1,
+      clubs: ids.length,
+      leagueMean: vals.reduce((a, v) => a + v.v, 0) / vals.length,
+      leagueMin: Math.min(...vals.map((v) => v.v)),
+      leagueMax: Math.max(...vals.map((v) => v.v)),
+      all: vals.map((v) => v.v),
+    };
+  });
+}
+
+// --- Per-play efficiency ----------------------------------------------------
+
+/**
+ * The NFL passer rating, exactly as the league defines it. Included because it
+ * is a real, published formula with fixed constants — not a weighting invented
+ * for this screen.
+ */
+export function passerRating(s: { passAtt?: number; passCmp?: number; passYds?: number; passTd?: number; int?: number }): number | null {
+  const att = s.passAtt ?? 0;
+  if (att <= 0) return null;
+  const cl = (v: number) => Math.max(0, Math.min(2.375, v));
+  const a = cl(((s.passCmp ?? 0) / att - 0.3) * 5);
+  const b = cl(((s.passYds ?? 0) / att - 3) * 0.25);
+  const c = cl(((s.passTd ?? 0) / att) * 20);
+  const d = cl(2.375 - ((s.int ?? 0) / att) * 25);
+  return ((a + b + c + d) / 6) * 100;
+}
+
+export interface PlayerRate {
+  playerId: string;
+  name: string;
+  position: string;
+  teamId: string | null;
+  teamAbbr: string;
+  gp: number;
+  /** The measured rate. */
+  value: number;
+  /** The volume it was measured over — the reason a qualifier exists at all. */
+  volume: number;
+  /** 0-100 among every qualifying player at the same position. */
+  percentile: number;
+  rank: number;
+  qualified: number;
+}
+
+export interface RateBoard {
+  key: string;
+  label: string;
+  unit: string;
+  decimals: number;
+  better: 'high' | 'low';
+  /** Which positions it is measured over, and what qualifies. */
+  scope: string;
+  definition: string;
+  /** Every qualifying player league-wide, for the distribution behind the marks. */
+  league: number[];
+  /** This club's qualifying players at the measure, best first. */
+  mine: PlayerRate[];
+  /** The league leader, so the club's number has somebody to be compared to. */
+  leader: PlayerRate | null;
+  leagueMean: number;
+}
+
+/**
+ * Per-play efficiency, from the stat lines the box score already writes.
+ *
+ * These are RATES, so they need a volume qualifier or the leaderboard fills up
+ * with a receiver who caught his only target. The qualifier scales with how
+ * much of the season has been played, so week 4 does not need a full year's
+ * attempts, and it is stated on the page rather than hidden in here.
+ */
+export function buildRateBoards(
+  players: {
+    playerId: string; name: string; position: string; teamId: string | null; teamAbbr: string;
+    gp: number; stats: { passAtt?: number; passCmp?: number; passYds?: number; passTd?: number; int?: number; rushAtt?: number; rushYds?: number; rec?: number; recYds?: number; targets?: number };
+  }[],
+  myTeamId: string,
+  /** Games the average club has played — what the volume qualifier scales on. */
+  gamesPlayed: number,
+  seasonLength: number,
+): RateBoard[] {
+  // [TUNE] Volume needed over a full season, scaled down to the games actually
+  // played. The floors keep a two-week sample from producing a leaderboard.
+  const scale = Math.max(0.15, Math.min(1, gamesPlayed / Math.max(1, seasonLength)));
+  const minPass = Math.max(20, Math.round(150 * scale));
+  const minRush = Math.max(12, Math.round(60 * scale));
+  const minTgt = Math.max(8, Math.round(40 * scale));
+
+  const defs: {
+    key: string; label: string; unit: string; decimals: number; better: 'high' | 'low';
+    scope: string; definition: string;
+    minVolume: number;
+    volume: (s: PlayerLike) => number;
+    positions: (p: string) => boolean;
+    of: (s: PlayerLike) => number | null;
+  }[] = [
+    {
+      key: 'ya', label: 'Yards per attempt', unit: '', decimals: 2, better: 'high',
+      scope: `quarterbacks, ${minPass}+ attempts`, definition: 'Passing yards divided by pass attempts. The single most predictive passing rate there is.',
+      minVolume: minPass, volume: (s) => s.passAtt ?? 0, positions: (p) => p === 'QB',
+      of: (s) => ((s.passAtt ?? 0) > 0 ? (s.passYds ?? 0) / (s.passAtt ?? 1) : null),
+    },
+    {
+      key: 'cmpPct', label: 'Completion rate', unit: '%', decimals: 1, better: 'high',
+      scope: `quarterbacks, ${minPass}+ attempts`, definition: 'Completions divided by attempts.',
+      minVolume: minPass, volume: (s) => s.passAtt ?? 0, positions: (p) => p === 'QB',
+      of: (s) => ((s.passAtt ?? 0) > 0 ? (100 * (s.passCmp ?? 0)) / (s.passAtt ?? 1) : null),
+    },
+    {
+      key: 'rating', label: 'Passer rating', unit: '', decimals: 1, better: 'high',
+      scope: `quarterbacks, ${minPass}+ attempts`, definition: 'The NFL passer rating formula, unchanged — completions, yards, touchdowns and interceptions per attempt.',
+      minVolume: minPass, volume: (s) => s.passAtt ?? 0, positions: (p) => p === 'QB',
+      of: (s) => passerRating(s),
+    },
+    {
+      key: 'tdPct', label: 'Touchdown rate', unit: '%', decimals: 1, better: 'high',
+      scope: `quarterbacks, ${minPass}+ attempts`, definition: 'Touchdown passes as a share of attempts.',
+      minVolume: minPass, volume: (s) => s.passAtt ?? 0, positions: (p) => p === 'QB',
+      of: (s) => ((s.passAtt ?? 0) > 0 ? (100 * (s.passTd ?? 0)) / (s.passAtt ?? 1) : null),
+    },
+    {
+      key: 'intPct', label: 'Interception rate', unit: '%', decimals: 1, better: 'low',
+      scope: `quarterbacks, ${minPass}+ attempts`, definition: 'Interceptions as a share of attempts. Lower is better.',
+      minVolume: minPass, volume: (s) => s.passAtt ?? 0, positions: (p) => p === 'QB',
+      of: (s) => ((s.passAtt ?? 0) > 0 ? (100 * (s.int ?? 0)) / (s.passAtt ?? 1) : null),
+    },
+    {
+      key: 'ypc', label: 'Yards per carry', unit: '', decimals: 2, better: 'high',
+      scope: `running backs, ${minRush}+ carries`, definition: 'Rushing yards divided by carries.',
+      minVolume: minRush, volume: (s) => s.rushAtt ?? 0, positions: (p) => p === 'RB',
+      of: (s) => ((s.rushAtt ?? 0) > 0 ? (s.rushYds ?? 0) / (s.rushAtt ?? 1) : null),
+    },
+    {
+      key: 'ypt', label: 'Yards per touch', unit: '', decimals: 2, better: 'high',
+      scope: `running backs, ${minRush}+ touches`, definition: 'Rushing and receiving yards divided by carries plus catches — the whole workload, not just the handoffs.',
+      minVolume: minRush, volume: (s) => (s.rushAtt ?? 0) + (s.rec ?? 0), positions: (p) => p === 'RB',
+      of: (s) => {
+        const touches = (s.rushAtt ?? 0) + (s.rec ?? 0);
+        return touches > 0 ? ((s.rushYds ?? 0) + (s.recYds ?? 0)) / touches : null;
+      },
+    },
+    {
+      key: 'catchRate', label: 'Catch rate', unit: '%', decimals: 1, better: 'high',
+      scope: `receivers and tight ends, ${minTgt}+ targets`, definition: 'Receptions divided by targets.',
+      minVolume: minTgt, volume: (s) => s.targets ?? 0, positions: (p) => p === 'WR' || p === 'TE',
+      of: (s) => ((s.targets ?? 0) > 0 ? (100 * (s.rec ?? 0)) / (s.targets ?? 1) : null),
+    },
+    {
+      key: 'ypr', label: 'Yards per reception', unit: '', decimals: 2, better: 'high',
+      scope: `receivers and tight ends, ${minTgt}+ targets`, definition: 'Receiving yards divided by catches — how far the ball travels when it is caught.',
+      minVolume: minTgt, volume: (s) => s.targets ?? 0, positions: (p) => p === 'WR' || p === 'TE',
+      of: (s) => ((s.rec ?? 0) > 0 ? (s.recYds ?? 0) / (s.rec ?? 1) : null),
+    },
+    {
+      key: 'ypTgt', label: 'Yards per target', unit: '', decimals: 2, better: 'high',
+      scope: `receivers and tight ends, ${minTgt}+ targets`, definition: 'Receiving yards divided by targets — catch rate and yards per catch in one number.',
+      minVolume: minTgt, volume: (s) => s.targets ?? 0, positions: (p) => p === 'WR' || p === 'TE',
+      of: (s) => ((s.targets ?? 0) > 0 ? (s.recYds ?? 0) / (s.targets ?? 1) : null),
+    },
+  ];
+
+  return defs.map((m) => {
+    const pool = players
+      .filter((p) => m.positions(p.position))
+      .map((p) => ({ p, volume: m.volume(p.stats), value: m.of(p.stats) }))
+      .filter((r): r is { p: (typeof players)[number]; volume: number; value: number } => r.value !== null && r.volume >= m.minVolume);
+
+    const sorted = [...pool].sort((a, b) => (m.better === 'high' ? b.value - a.value : a.value - b.value));
+    const toRate = (r: (typeof pool)[number]): PlayerRate => {
+      const rank = sorted.findIndex((x) => x.p.playerId === r.p.playerId) + 1;
+      return {
+        playerId: r.p.playerId, name: r.p.name, position: r.p.position,
+        teamId: r.p.teamId, teamAbbr: r.p.teamAbbr, gp: r.p.gp,
+        value: r.value, volume: r.volume,
+        percentile: sorted.length > 1 ? (100 * (sorted.length - rank)) / (sorted.length - 1) : 100,
+        rank, qualified: sorted.length,
+      };
+    };
+
+    const mine = sorted.filter((r) => r.p.teamId === myTeamId).map(toRate);
+    return {
+      key: m.key, label: m.label, unit: m.unit, decimals: m.decimals, better: m.better,
+      scope: m.scope, definition: m.definition,
+      league: sorted.map((r) => r.value),
+      mine,
+      leader: sorted.length ? toRate(sorted[0]) : null,
+      leagueMean: sorted.length ? sorted.reduce((a, r) => a + r.value, 0) / sorted.length : 0,
+    };
+  });
+}
+
+type PlayerLike = { passAtt?: number; passCmp?: number; passYds?: number; passTd?: number; int?: number; rushAtt?: number; rushYds?: number; rec?: number; recYds?: number; targets?: number };

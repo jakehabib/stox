@@ -16,9 +16,11 @@ export type UnitScope = 'all' | 'OFF' | 'DEF';
  * selection), and a table twin that is already in the DOM is a table twin that
  * a screen reader and a Ctrl-F both find whether or not the switch is on.
  */
-export function AnalyticsShell({ showEra, children }: {
+export function AnalyticsShell({ showEra, showUnits, children }: {
   /** Hidden when the club has no pre-history — one option is not a choice. */
   showEra: boolean;
+  /** The unit filter only scopes panels the Simple view does not show. */
+  showUnits: boolean;
   children: React.ReactNode;
 }) {
   const [era, setEra] = useState<EraScope>('franchise');
@@ -36,12 +38,14 @@ export function AnalyticsShell({ showEra, children }: {
             options={[{ v: 'franchise', l: 'Franchise' }, { v: 'tenure', l: 'Your tenure' }]}
           />
         )}
-        <Segmented
-          label="Units in view"
-          value={units}
-          onChange={(v) => setUnits(v as UnitScope)}
-          options={[{ v: 'all', l: 'All units' }, { v: 'OFF', l: 'Offense' }, { v: 'DEF', l: 'Defense' }]}
-        />
+        {showUnits && (
+          <Segmented
+            label="Units in view"
+            value={units}
+            onChange={(v) => setUnits(v as UnitScope)}
+            options={[{ v: 'all', l: 'All units' }, { v: 'OFF', l: 'Offense' }, { v: 'DEF', l: 'Defense' }]}
+          />
+        )}
         <label className="ml-auto inline-flex items-center gap-2 text-[12.5px] text-muted cursor-pointer select-none">
           <input
             type="checkbox"
