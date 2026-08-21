@@ -80,6 +80,7 @@ model League {
   leagueRecords LeagueRecord[]
   tradeRecords  TradeRecord[]
   dynasty       DynastyProfile?
+  negotiations  NegotiationTalks[]
 }
 
 model DraftState {
@@ -154,6 +155,7 @@ model Team {
   tradeOffersFrom TradeOffer[]
   seasonRecords   TeamSeasonRecord[]
   shortlist       ShortlistEntry[]
+  negotiations    NegotiationTalks[]
 
   @@index([leagueId])
 }
@@ -256,6 +258,7 @@ model Player {
   depthSlots DepthChartSlot[]
   draftPick DraftPick?
   shortlistedBy ShortlistEntry[]
+  negotiations  NegotiationTalks[]
 
   @@index([leagueId])
   @@index([teamId])
@@ -637,4 +640,65 @@ model DynastyProfile {
   updatedAt DateTime @updatedAt
 
   @@unique([ownerKind, ownerKey])
+}
+
+// ---------------------------------------------------------------------------
+// Contract negotiation (server-authoritative)
+// ---------------------------------------------------------------------------
+
+/// How much patience a GM has already burned in one negotiation.
+///
+/// Patience is the loss condition of the contract minigame: every offer he
+/// turns down costs a pip, a genuine lowball costs two, and when they run out
+/// his agent stops taking calls — on the open market he signs with whoever
+/// else is bidding and he is gone for good. That only means anything if it
+/// SURVIVES. The first version passed the count up from the browser, so
+/// pressing F5 reset it to zero and a GM could lowball the same free agent
+/// forever. That is the "they accept everything" behaviour this whole minigame
+/// was built to remove, wearing a slider.
+///
+/// So the count lives here, and the server is the only thing that ever writes
+/// it. The client does not send a count at all — it renders whatever the
+/// server hands back (see `negotiateOffer` in lib/freeagency.ts).
+///
+/// KEYED ON (team, player, league year), which is exactly the set of things
+/// that make a negotiation the same negotiation:
+///   - a new league year is a new negotiation — new asking price, new market —
+///     so the year is part of the key, and prior-year rows are pruned;
+///   - him signing anywhere deletes his rows, so a player who is cut and
+///     comes back to the market starts fresh;
+///   - reloading, navigating away, or restarting the server change nothing.
+///
+/// WHAT THIS DELIBERATELY DOES NOT STORE: a row per opened panel. A row is
+/// written only when patience is actually SPENT. A GM who opens talks with
+/// forty free agents and walks away from all forty writes nothing at all —
+/// opening the panel is free, and it should be, because it is free in the
+/// fiction too. With the prior-year prune on every write, the table is bounded
+/// by "negotiations you actually made an offer in, this league year".
+///
+/// "Walked away" is NOT a column: it is `patienceSpent >= ctx.patience`,
+/// re-derived from the live context every time. Storing it would be a second
+/// source of truth for one fact, and the two would drift the first time a
+/// player's patience moved — which it does, with rival interest.
+model NegotiationTalks {
+  id         String @id @default(cuid())
+
+  leagueId   String
+  league     League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  teamId     String
+  team       Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  playerId   String
+  player     Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  /// The league year these talks belong to. Part of the key, not a stamp.
+  seasonYear Int
+
+  /// Pips burned so far. Never decreases within a league year.
+  patienceSpent Int @default(0)
+
+  updatedAt  DateTime @updatedAt
+
+  @@unique([teamId, playerId, seasonYear])
+  @@index([leagueId, seasonYear])
+  @@index([playerId])
 }

@@ -37,6 +37,15 @@ import { ActionButton } from './ds/ActionButton';
  * formally submitted offer he rejects costs one, and a genuine lowball costs
  * two. Dragging sliders is free; *submitting* is not.
  *
+ * PATIENCE IS THE SERVER'S. This component displays it and never decides it.
+ * `patienceSpent` is seeded from the session the server resolved and replaced
+ * by whatever the server hands back on each submit; there is no local counter
+ * and nothing is sent up. Before that, the count was passed to the Server
+ * Action from here — so a reload sent zero, the pips came back full, and the
+ * loss condition (with it, the entire cost of a lowball) could be cleared with
+ * F5. It is stored per team/player/league year now; see the NegotiationTalks
+ * model.
+ *
  * Which is why the patience pips DRAIN rather than flipping colour between
  * renders. The cost of pressing the button is the mechanic this whole panel
  * is built around, and a dot quietly changing colour on the next paint was
@@ -59,7 +68,7 @@ export function NegotiationPanel({
   banner?: ReactNode;
   /** Executes the offer. The server re-decides; this component never signs anything. */
   onOffer: (
-    offer: Offer, structure: DealStructure, patienceSpent: number, fingerprint: string,
+    offer: Offer, structure: DealStructure, fingerprint: string,
   ) => Promise<NegotiationOutcome>;
   onSigned?: () => void;
   disabled?: boolean;
@@ -82,7 +91,13 @@ export function NegotiationPanel({
   const [years, setYears] = useState(() => Math.min(ctx.desiredYears, gate.maxYears));
   const [guaranteePct, setGuaranteePct] = useState(0.5);
 
-  const [patienceSpent, setPatienceSpent] = useState(0);
+  // Seeded from the SERVER's count, not from zero. This is the whole fix for
+  // the reload exploit on the client's side of it: the panel opens already
+  // knowing what previous visits burned, so a negotiation you walked out of is
+  // still over when you come back to it, and the pips you see on load are the
+  // pips the server will charge against. The component never increments this
+  // itself — every value it ever holds came out of the database.
+  const [patienceSpent, setPatienceSpent] = useState(initialSession.patienceSpent);
   // The outcome line describes the offer that was submitted, so it is cleared
   // the moment the offer stops being that one. Leaving it up next to a meter
   // reading "he'll sign this" was the same offer being described two
@@ -107,7 +122,7 @@ export function NegotiationPanel({
   const canSubmit = !over && decision.blocked === null;
 
   const submit = async () => {
-    const res = await onOffer(offer, structure, patienceSpent, sessionFingerprint(session));
+    const res = await onOffer(offer, structure, sessionFingerprint(session));
     setResult(res);
     setSession(res.session);
     setPatienceSpent(res.patienceSpent);

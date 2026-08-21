@@ -8,6 +8,7 @@ import { formatMoney } from '@/lib/cap';
 import type { DealStructure, NegotiationSession } from '@/lib/negotiation';
 import { CapMode } from '@/lib/types';
 import { NegotiationPanel } from './NegotiationPanel';
+import { SuitorRumour } from './ds/SuitorRumour';
 
 /**
  * Free agency, the user's side of the table.
@@ -73,8 +74,8 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
       initialSession={session}
       structure={structure}
       onSigned={() => router.refresh()}
-      onOffer={(offer, str, patienceSpent, fingerprint) =>
-        submitOfferAction(leagueId, playerId, teamId, offer, str, patienceSpent, fingerprint)}
+      onOffer={(offer, str, fingerprint) =>
+        submitOfferAction(leagueId, playerId, teamId, offer, str, fingerprint)}
       banner={
         <>
           {/* Free agency frenzy — what the leading rival offer actually is,
@@ -86,6 +87,13 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
               ? `${gate.competingTeam} is in the mix at ~${formatMoney(gate.competingApy)}/yr — you have to beat that.`
               : 'No other teams appear to be bidding on him right now.'}
           </div>
+
+          {/* The same rival, with the two figures his own GM bid on. It was
+              always a real threat; it was just quoted as a name and a number,
+              which is indistinguishable from a made-up name and number. The
+              re-sign window needed the evidence shown, and there is no reason
+              the open market should show less of it. */}
+          {session.suitor && <SuitorRumour session={session} />}
 
           {/* The public market estimate is priced off what you can SEE of him;
               this is your staff's read on what he will actually put his name

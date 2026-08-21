@@ -97,6 +97,31 @@ migrations directory"*. **Commit both files.**
 `schema.prisma` was deliberately not modified. The baseline describes the
 schema as it is.
 
+### Migrations after the baseline
+
+The tree is no longer a single file. Migrations apply in directory-name order,
+and `migrate deploy` applies whichever ones the target database has no record
+of:
+
+| Migration | What it does |
+| --- | --- |
+| `20260821160357_init` | The baseline. 19 tables. |
+| `20260821165523_negotiation_patience` | Adds the `NegotiationTalks` table. |
+
+`negotiation_patience` is **purely additive** — one `CREATE TABLE`, three
+indexes, three foreign keys, and not a single statement that touches an
+existing table. That is deliberate and it is the standing rule for anything
+that ships here: `migrate deploy` runs against a database with live rows in
+it, so a new column on an existing table must be nullable or defaulted, and a
+new table is safer than either. Read the SQL before you commit one; if it
+contains `DROP`, decide that on purpose.
+
+The table it adds stores how much patience a GM has burned in a contract
+negotiation (see the model's own comment in `schema.prisma`). It is game state,
+not user data, and it is bounded: rows are written only when an offer is
+actually refused, are deleted when the player signs, and are pruned when the
+league year rolls over. Nothing else in the app reads it.
+
 ---
 
 ## 1. Prerequisites
@@ -160,8 +185,8 @@ Notes that matter:
   reported "No pending migrations to apply", and the row was still there
   afterwards with zero schema drift.
 - Do this while nothing is deploying, so a build cannot race you.
-- **Before you run it**, confirm the database really does match the current
-  schema. If it drifted from `schema.prisma` at some point, marking the
+- **Before you run it**, confirm the database really does match the schema the
+  baseline describes. If it drifted from that at some point, marking the
   baseline applied will make Prisma believe a schema you do not have. Check:
 
   ```bash
@@ -170,16 +195,32 @@ Notes that matter:
     --to-schema-datamodel prisma/schema.prisma --script
   ```
 
-  If that prints `-- This is an empty migration.` you are safe to proceed. If
-  it prints actual SQL, **stop** — your database differs from the schema.
-  Resolve that difference first (the printed SQL is what would be needed to
-  bring the database up to the schema; review it, especially any `DROP`).
+  **This check changed once there was more than one migration.** It compares
+  your database against the *current* schema, so it now legitimately prints the
+  SQL of every migration after the baseline that has not been applied yet. What
+  you are looking for is that it prints *nothing else*:
+
+  - Empty (`-- This is an empty migration.`) — safe.
+  - Exactly the `CREATE TABLE "NegotiationTalks"` block and its indexes and
+    foreign keys, matching
+    `prisma/migrations/20260821165523_negotiation_patience/migration.sql`
+    statement for statement — safe. That migration has not run yet; `migrate
+    deploy` will apply it on the first build after you baseline.
+  - Anything else, and in particular **any `DROP` or any `ALTER` against a
+    table you did not expect** — stop. That is real drift, and baselining over
+    it will hide it. Resolve it before going further.
+
+  Diff the printed SQL against the migration files rather than skimming it. The
+  point of the check is that the only pending changes are ones written down in
+  `prisma/migrations/`.
 
 Then verify:
 
 ```bash
 DATABASE_URL="<production>" npx prisma migrate status
-# expect: "Database schema is up to date!"
+# expect: the baseline recorded as applied, and any later migration listed as
+# pending — e.g. "1 migration found ... following migration have not yet been
+# applied: 20260821165523_negotiation_patience". The first deploy applies it.
 ```
 
 ## 4. Verify after deploying
@@ -622,7 +663,9 @@ DATABASE_URL="<production>" npx prisma migrate resolve --applied 20260821160357_
 # Check state at any time:
 DATABASE_URL="<production>" npx prisma migrate status
 
-# Confirm the database matches the schema (empty output = match):
+# Confirm the database matches the schema. Empty output = match; otherwise the
+# output must be exactly the migrations in prisma/migrations/ that have not been
+# applied yet, and nothing else:
 DATABASE_URL="<production>" npx prisma migrate diff \
   --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --script
 

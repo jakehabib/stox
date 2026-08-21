@@ -11,6 +11,7 @@ import { CapMode } from '@/lib/types';
 import type { NegotiationSession } from '@/lib/negotiation';
 import { cutPlayerAction, applyFranchiseTagAction } from '@/app/actions/roster';
 import { openResignNegotiationAction, submitResignOfferAction } from '@/app/actions/resign';
+import { SuitorRumour, LoyaltyLine } from './ds/SuitorRumour';
 
 /**
  * One expiring contract, and the decision it forces.
@@ -23,10 +24,15 @@ import { openResignNegotiationAction, submitResignOfferAction } from '@/app/acti
  * that the server resolves, not this component:
  *
  *   - He is an INCUMBENT, so a player who wants to stay will take a real
- *     discount to do it, and the longer he has been here the bigger it is.
- *   - Nobody else is bidding yet. That is the entire argument for getting
- *     this done before he reaches the open market, and it is why the same
- *     player costs more in free agency than he does here.
+ *     discount to do it, and the longer he has been here the bigger it is —
+ *     but that discount now DECAYS as his deal runs out, which is what makes
+ *     "when" a question with an answer. LoyaltyLine states which side of it
+ *     you are on before you touch a slider.
+ *   - Nobody else may SIGN him yet — but somebody already wants him, and the
+ *     panel names them. SuitorRumour is a real club with real room and a real
+ *     hole at his position, resolved by the same function free agency uses, so
+ *     the pressure in this window is checkable rather than atmospheric. That
+ *     is the difference between "how much do I overpay" and a negotiation.
  *
  * Talks are opened lazily, when the row is expanded, so a re-sign page with
  * twelve expiring contracts does not resolve twelve negotiations on load.
@@ -105,12 +111,19 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
               title="Re-sign Talks"
               initialSession={session}
               onSigned={() => { setOpen(false); router.refresh(); }}
-              onOffer={(offer, structure, patienceSpent, fingerprint) =>
-                submitResignOfferAction(leagueId, playerId, offer, structure, patienceSpent, fingerprint)}
+              onOffer={(offer, structure, fingerprint) =>
+                submitResignOfferAction(leagueId, playerId, offer, structure, fingerprint)}
               banner={
-                <div className="text-xs px-3 py-2 rounded-lg border border-accent/30 bg-accent/10 text-accent">
-                  Nobody else can bid on him until he reaches free agency. That discount is only on the table while he is still yours.
-                </div>
+                <>
+                  {/* Both halves of the same clock, above the meter and before
+                      any control is touched: what staying is worth to him right
+                      now, and who is waiting if it stops being worth enough.
+                      Neither is revealed after the fact — a pressure you only
+                      learn about once you have committed is a gotcha, not a
+                      mechanic. */}
+                  <LoyaltyLine session={session} />
+                  <SuitorRumour session={session} />
+                </>
               }
             />
           )}

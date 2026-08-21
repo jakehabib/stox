@@ -118,17 +118,24 @@ export async function openNegotiationAction(
  * `decideOffer` to draw the meter. It is re-run here anyway, against a
  * session re-resolved from the database, because a client-computed acceptance
  * is not evidence of anything.
+ *
+ * Note what is NOT in this signature: how much patience the user has spent.
+ * It used to be an argument, and a reload set it back to zero, which handed
+ * anyone with an F5 key an unlimited supply of lowballs. The count now lives
+ * in the database and the server reads it for itself (see negotiateOffer);
+ * there is deliberately no parameter here for a client to get wrong or to lie
+ * about.
  */
 export async function submitOfferAction(
   leagueId: string, playerId: string, teamId: string,
-  offer: Offer, structure: DealStructure, patienceSpent: number, fingerprint: string,
+  offer: Offer, structure: DealStructure, fingerprint: string,
 ): Promise<NegotiationOutcome> {
   await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const outcome = await negotiateOffer({
     leagueId, playerId, teamId, seasonYear: league.seasonYear, week: league.week,
-    settings, incumbent: false, offer, structure, patienceSpent, fingerprint,
+    settings, incumbent: false, offer, structure, fingerprint,
   });
   // Only a SIGNING revalidates. Losing him to a rival changes the league too,
   // but revalidating on that path tears the panel out from under the user at

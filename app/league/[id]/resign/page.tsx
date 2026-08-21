@@ -45,14 +45,14 @@ export default async function ResignPage({ params }: { params: { id: string } })
         teamAbbr={team.abbr}
         eyebrow={`${league.seasonYear} Offseason`}
         title="Re-sign Window"
-        subtitle="Players whose deals are up or about to be. Nobody else can bid on them while they are still yours, which is the only discount you will ever get on them — once the re-sign phase ends, whoever is undecided is released to free agency and the rest of the league can call. Open talks to make an offer; he decides whether to take it."
+        subtitle="Players whose deals are up or about to be. Nobody else may sign them while they are still yours — but somebody is already watching, and open talks will tell you who, what room they have and what they would pay. The hometown discount is real and it is on a clock: it is at its biggest while a contract still has a season to run and mostly gone once it has expired. Whoever you leave undecided is released to free agency when this phase ends, and the rest of the league can call."
         action={expiring.length > 0 ? <LetAiResignButton leagueId={league.id} /> : undefined}
         facts={[
           { label: 'Decisions', value: String(expiring.length), detail: 'contracts on the clock' },
           {
             label: 'Already Expired',
             value: String(trulyExpiringCount),
-            detail: trulyExpiringCount > 0 ? 'walk if not re-signed' : 'none yet',
+            detail: trulyExpiringCount > 0 ? 'last call — discount is gone' : 'none yet',
             color: trulyExpiringCount > 0 ? 'text-bad' : 'text-accent',
           },
           ...(summary ? [

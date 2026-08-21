@@ -24,7 +24,20 @@ import { CapMode } from './types';
  * SECOND: the player's number is never shown. You get qualitative feedback and
  * have to probe for it. A visible reservation price would turn this into
  * arithmetic; hiding it is what makes it a negotiation. Patience is what stops
- * you brute-forcing the hidden number by spamming offers.
+ * you brute-forcing the hidden number by spamming offers — and patience is
+ * PERSISTED (prisma NegotiationTalks, keyed on team + player + league year),
+ * because a resource that resets on F5 is not a resource. The client is told
+ * what it has spent and is never asked.
+ *
+ * THIRD: both screens are the same negotiation, and both have a rival. The
+ * re-sign window used to have none, which quietly made it a different and
+ * lesser game: with nobody else bidding, the only question left was how far
+ * you overpaid. It now resolves the same real, checkable suitor free agency
+ * does — the same function, the same seed, the same cap-and-need test the AI
+ * bids on — with the leverage scaled by how close he is to actually reaching
+ * the market (`RESIGN_LEVERAGE`), and a loyalty discount that decays as that
+ * window closes (`LOYALTY_WINDOW`). Both are stated in the panel before you
+ * commit; neither is a hidden roll.
  */
 
 export type Personality = 'MERCENARY' | 'LOYAL' | 'WINNER' | 'PROVE_IT';
@@ -45,6 +58,50 @@ export const PERSONALITY_BLURB: Record<Personality, string> = {
 
 export type Verdict = 'ACCEPT' | 'CLOSE' | 'CONSIDERING' | 'COLD' | 'INSULTED';
 
+/**
+ * Where a re-sign sits on its own clock. Not flavour — it is read off the
+ * contract (`yearsRemaining`), it moves the price, and the panel states which
+ * one you are in before you commit.
+ *
+ *   WALK_YEAR   — his deal still has this season to run. Nobody may sign him,
+ *                 the market is a forecast rather than a bid, and the loyalty
+ *                 discount is at its largest. This is the cheap window.
+ *   FINAL_CALL  — his deal is up. He is one Advance away from free agency, his
+ *                 agent is already taking calls, and the discount for staying
+ *                 has mostly gone.
+ *
+ * Free agency has no clock of this kind (he is already on the market), so it
+ * is null there.
+ */
+export type ResignWindow = 'WALK_YEAR' | 'FINAL_CALL';
+
+/**
+ * A rival club with a real, checkable interest in this player.
+ *
+ * The point of this type is that every field is evidence rather than
+ * atmosphere. `capSpace` and `need` come out of the same `teamCapSummary` and
+ * `teamNeeds` the AI's own bidding uses, and `apy` is the number
+ * `leadingCompetingBid` produces from that team's GM profile at the same seed
+ * the free-agency wave will use — so a suitor named in the re-sign window is
+ * the club that actually pursues him if he reaches the market, at roughly the
+ * number quoted. Anything shown about a suitor must come from this object; a
+ * team named without one of these behind it would be exactly the invented
+ * "someone is interested" line the README's sixth design principle forbids.
+ */
+export interface Suitor {
+  teamId: string;
+  teamName: string;
+  teamAbbr: string;
+  /** What they would actually put on him. Their real bid, not a guess. */
+  apy: number;
+  /** Their room this league year, off teamCapSummary. */
+  capSpace: number;
+  /** Their need at his position, 0..1, off teamNeeds — the same score the AI bids on. */
+  need: number;
+  /** Best man they currently have there, or null if the cupboard is bare. */
+  starterOvr: number | null;
+}
+
 export interface NegotiationContext {
   playerId: string;
   playerName: string;
@@ -63,7 +120,12 @@ export interface NegotiationContext {
   desiredYears: number;
   /** Share of the deal he wants guaranteed, 0..1. */
   desiredGuarantee: number;
-  /** How many rejected offers before he stops taking calls. */
+  /**
+   * How many rejected offers before he stops taking calls. How many he has
+   * ALREADY had is not here — it is on the session, because it is a fact about
+   * the save rather than about the man, and it is read from the database
+   * rather than from the browser (see NegotiationSession.patienceSpent).
+   */
   patience: number;
   /**
    * Rival interest, 0..1. Free agency has it and it rises as the window runs;
@@ -73,6 +135,21 @@ export interface NegotiationContext {
   competition: number;
   /** True for a re-sign — unlocks the loyalty discount. */
   incumbent: boolean;
+  /** Which half of the re-sign window this is. Null in free agency. */
+  resignWindow: ResignWindow | null;
+  /**
+   * The share he is knocking off his own price to stay, 0..1, AFTER the
+   * window has been applied to it. Carried on the context so the panel can
+   * say out loud that the discount exists and that it is shrinking — the
+   * whole "talk to him early" lesson is unlearnable if the discount is only
+   * ever visible as a slightly lower hidden number.
+   *
+   * Deliberately reported as a BAND in the UI, never as the exact figure:
+   * quoting it precisely next to the market estimate would hand over most of
+   * the reservation price, and the reservation price is the thing you are
+   * supposed to have to probe for.
+   */
+  loyaltyDiscount: number;
 }
 
 export interface Offer {
@@ -140,6 +217,11 @@ export function buildNegotiationContext(opts: {
   yearsWithTeam: number;
   /** 0..1 rival interest. Free agency should raise this as the window runs. */
   competition: number;
+  /**
+   * Which half of the re-sign window this is, or null in free agency. It is
+   * the clock the loyalty discount decays on — see LOYALTY_WINDOW below.
+   */
+  resignWindow?: ResignWindow | null;
   rng: Rng;
 }): NegotiationContext {
   const personality = opts.rng.weighted<Personality>({
@@ -151,12 +233,29 @@ export function buildNegotiationContext(opts: {
 
   let multiplier = 1;
 
-  // A player who wants to stay will take less to do it, and the longer he has
-  // been here the bigger that discount — but it is capped, because "he loves
-  // it here" is not a licence to pay him nothing.
-  if (personality === 'LOYAL' && opts.incumbent) {
-    multiplier -= Math.min(0.14, 0.04 + opts.yearsWithTeam * 0.02);
-  }
+  // --- The loyalty discount, and the clock it runs down on -----------------
+  //
+  // A player who is already here will take less to stay, and the longer he
+  // has been here the bigger that discount — capped, because "he loves it
+  // here" is not a licence to pay him nothing. A man who actively wants to
+  // stay knocks off more again.
+  //
+  // What is new is that it DECAYS. The re-sign window used to be a flat
+  // discount with no clock on it, which made "when do I do this" a question
+  // with no answer: the offer you could make in week 1 of his walk year was
+  // the identical offer you could make on the last screen before free agency,
+  // so there was nothing to be early for and nothing to be late about. Now
+  // the discount is at its full size while his deal still has a season to run
+  // and mostly gone once it has actually expired, which is both what happens
+  // in real football and a thing the panel can state in front of the user
+  // BEFORE he commits (see NegotiationPanel's loyalty line).
+  const resignWindow = opts.incumbent ? (opts.resignWindow ?? 'FINAL_CALL') : null;
+  const loyaltyDiscount = opts.incumbent
+    ? (Math.min(LOYALTY_TENURE_CAP, LOYALTY_BASE + opts.yearsWithTeam * LOYALTY_PER_YEAR)
+        + (personality === 'LOYAL' ? LOYALTY_WANTS_TO_STAY : 0))
+      * LOYALTY_WINDOW[resignWindow ?? 'FINAL_CALL']
+    : 0;
+  multiplier -= loyaltyDiscount;
   // Ring-chasers discount a contender and charge a rebuild a premium.
   if (personality === 'WINNER') multiplier -= (opts.teamStrength - 0.5) * 0.20;
   // He thinks he is better than his tape. That costs money.
@@ -193,7 +292,52 @@ export function buildNegotiationContext(opts: {
     patience,
     competition: opts.competition,
     incumbent: opts.incumbent,
+    resignWindow,
+    loyaltyDiscount,
   };
+}
+
+/**
+ * Loyalty discount tuning. [TUNE]
+ *
+ * Every incumbent gets something (LOYALTY_BASE, growing with tenure to
+ * LOYALTY_TENURE_CAP); a player whose personality is "wants to stay" gets
+ * LOYALTY_WANTS_TO_STAY on top. LOYALTY_WINDOW is the decay: full value while
+ * his contract still has a season on it, well under half of it once the deal
+ * has actually expired and his agent has started taking calls.
+ *
+ * FINAL_CALL is not zero on purpose. He would still rather stay than move his
+ * family; what he will no longer do is fund the difference himself.
+ */
+const LOYALTY_BASE = 0.03;
+const LOYALTY_PER_YEAR = 0.015;
+const LOYALTY_TENURE_CAP = 0.10;
+const LOYALTY_WANTS_TO_STAY = 0.06;
+export const LOYALTY_WINDOW: Record<ResignWindow, number> = { WALK_YEAR: 1, FINAL_CALL: 0.45 };
+
+/**
+ * How much of a rumoured suitor's interest actually reaches the table in a
+ * re-sign, by window. [TUNE]
+ *
+ * Never 1: a club that cannot legally sign him today does not have the
+ * leverage over you that a club bidding against you in an open market does.
+ * In his walk year it is a forecast his agent files away; once his deal is up
+ * it is very nearly a bid. Applied in resolveNegotiationSession, which is
+ * also where the suitor is resolved.
+ */
+export const RESIGN_LEVERAGE: Record<ResignWindow, number> = { WALK_YEAR: 0.4, FINAL_CALL: 0.85 };
+
+/**
+ * The discount stated in words, because stating it as a percentage next to
+ * the public market estimate would hand over most of the hidden reservation
+ * price. A band is honest — it is derived from the real number — without
+ * turning the negotiation back into arithmetic.
+ */
+export function loyaltyBand(discount: number): 'NONE' | 'SLIGHT' | 'REAL' | 'LARGE' {
+  if (discount < 0.02) return 'NONE';
+  if (discount < 0.055) return 'SLIGHT';
+  if (discount < 0.10) return 'REAL';
+  return 'LARGE';
 }
 
 // --- Evaluation (pure; runs on the client on every keystroke) ---------------
@@ -489,6 +633,22 @@ export function decideOffer(
 export interface NegotiationSession {
   ctx: NegotiationContext;
   gate: NegotiationGate;
+  /**
+   * Pips already burned against this player, this league year, by this team —
+   * read from the database, not from the browser. This is what makes the loss
+   * condition survive a reload: the panel opens showing what you have already
+   * spent, and a negotiation you walked out of is still over when you come
+   * back to it. See the NegotiationTalks model in prisma/schema.prisma.
+   */
+  patienceSpent: number;
+  /**
+   * The rival who actually wants him, or null when nobody in the league has
+   * both the room and the need. In free agency this is the same club as
+   * `gate.competingApy`/`competingTeam` with its evidence attached; in a
+   * re-sign it is the pressure the window used to lack — a real team, checkable
+   * against the rest of the league, that will be there when he hits the market.
+   */
+  suitor: Suitor | null;
 }
 
 /**
@@ -505,9 +665,17 @@ export interface NegotiationSession {
 export function sessionFingerprint(s: NegotiationSession): string {
   return [
     s.ctx.playerId, s.ctx.personality, s.ctx.reservationApy, s.ctx.desiredYears,
-    s.ctx.desiredGuarantee.toFixed(3), s.ctx.patience,
+    s.ctx.desiredGuarantee.toFixed(3), s.ctx.patience, s.ctx.resignWindow ?? '-',
     s.gate.capMode, s.gate.capSpace, s.gate.minSalary, s.gate.maxYears, s.gate.competingApy,
+    // The suitor is named on screen and it moves his asking price, so a suitor
+    // that changed under the user is a session that moved under the user.
+    s.suitor?.teamId ?? '-', s.suitor?.apy ?? 0,
   ].join('|');
+  // NOT fingerprinted: `patienceSpent`. It is a ledger, not a term — it never
+  // changes what `decideOffer` answers, and it necessarily differs between the
+  // session the client is holding and the one the server resolves the instant
+  // an offer is charged. Putting it in here would make every second offer
+  // refuse itself as "the terms moved".
 }
 
 /** What a submitted offer did. Returned by both negotiation Server Actions. */
@@ -515,8 +683,10 @@ export interface NegotiationOutcome {
   ok: boolean;
   message: string;
   /**
-   * Total patience burned so far, decided by the SERVER. The client renders
-   * this rather than its own count, so the pips and the rules never drift.
+   * Total patience burned so far, decided AND STORED by the server. The client
+   * renders this rather than its own count — it has no count of its own to
+   * render — so the pips and the rules never drift, and a reload cannot roll
+   * them back.
    */
   patienceSpent: number;
   /** He is done talking. */

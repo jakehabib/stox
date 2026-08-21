@@ -8,9 +8,9 @@ import { buildScoutedView } from './scouting';
 import { loadScoutMods } from './dynasty';
 import {
   buildNegotiationContext, contractShapeFor, decideOffer, sessionFingerprint,
-  DEFAULT_STRUCTURE,
+  DEFAULT_STRUCTURE, RESIGN_LEVERAGE,
   type DealStructure, type NegotiationGate, type NegotiationOutcome,
-  type NegotiationSession, type Offer,
+  type NegotiationSession, type Offer, type ResignWindow, type Suitor,
 } from './negotiation';
 import { maxOffer, parseGmProfile, teamNeeds, RosterPlayer } from './ai/gm';
 import { teamCapSummary } from './cap-summary';
@@ -52,7 +52,13 @@ import { assertCapRoom } from './capEnforcement';
  * ---------------------------------------------------------------------------
  */
 
-export interface CompetingBid { teamId: string; teamName: string; teamAbbr: string; apy: number }
+/**
+ * The leading rival, with the evidence for it attached. `Suitor` (in
+ * lib/negotiation.ts) is the shape; this alias is kept because the free-agency
+ * side of the file has always called it a competing bid, and in free agency
+ * that is exactly what it is.
+ */
+export type CompetingBid = Suitor;
 
 /**
  * The "auction" side of free agency: what's the single best offer an AI
@@ -79,7 +85,23 @@ export async function leadingCompetingBid(
     const profile = parseGmProfile(team.gmProfile, rng);
     const offer = maxOffer(player as unknown as RosterPlayer, { profile, needs, capSpace: Math.max(0, summary.capSpace - 4_000_000), rng });
     if (offer >= CAP.MIN_SALARY && (!best || offer > best.apy)) {
-      best = { teamId: team.id, teamName: `${team.city} ${team.nickname}`, teamAbbr: team.abbr, apy: Math.round(offer) };
+      // The evidence travels with the bid. A club is only ever NAMED on screen
+      // out of one of these, and the two figures beside its name are the two
+      // figures its own AI bid on: the room it really has and the need it
+      // really has. That is what stops "Chicago is interested" from being
+      // decoration — you can go and look at Chicago.
+      const atPosition = (roster as RosterPlayer[])
+        .filter((p) => p.position === player.position)
+        .sort((a, b) => b.trueOvr - a.trueOvr);
+      best = {
+        teamId: team.id,
+        teamName: `${team.city} ${team.nickname}`,
+        teamAbbr: team.abbr,
+        apy: Math.round(offer),
+        capSpace: summary.capSpace,
+        need: needs[player.position] ?? 0,
+        starterOvr: atPosition[0]?.trueOvr ?? null,
+      };
     }
   }
   return best;
@@ -120,6 +142,12 @@ export async function signFreeAgent(opts: {
     // lib/development.ts, which rolls attrition off it).
     await tx.player.update({ where: { id: playerId }, data: { teamId, status: 'ACTIVE', yearsUnsigned: 0 } });
     await tx.contract.deleteMany({ where: { playerId } });
+    // Signing ENDS every negotiation about him, including the ones he is not
+    // party to. This is one of the two things that reset persisted patience
+    // (the other is the league year rolling over): if he is later cut and
+    // comes back onto the market, that is a genuinely new negotiation and it
+    // starts with a full set of pips. See the NegotiationTalks model.
+    await tx.negotiationTalks.deleteMany({ where: { playerId } });
     await tx.contract.create({
       data: {
         playerId,
@@ -206,6 +234,9 @@ export async function extendContract(opts: {
 
   await prisma.$transaction(async (tx) => {
     await tx.contract.deleteMany({ where: { playerId } });
+    // Same rule as signFreeAgent: putting his name on a deal ends the talks,
+    // so the persisted patience for him goes with it.
+    await tx.negotiationTalks.deleteMany({ where: { playerId } });
     await tx.contract.create({
       data: {
         playerId,
@@ -454,8 +485,15 @@ export async function cutPlayer(opts: {
  * and all, and the signing runs through the ordinary assertCapRoom path, so
  * upgrading is a cap decision like every other.
  */
-/** Share of market value a free agent will actually sign for. [TUNE] */
-const MARKET_FLOOR = 0.85;
+/**
+ * Share of market value a free agent will actually sign for. [TUNE]
+ *
+ * Exported because it is the threshold a bid has to clear to be a real bid,
+ * and scripts/checkNegotiationAgreement.ts checks a named suitor against the
+ * same number the wave resolves on — a rumour that names a club which would
+ * not survive this line would be a rumour about nothing.
+ */
+export const MARKET_FLOOR = 0.85;
 
 export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, week: number, settings: LeagueSettings, rng: Rng) {
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
@@ -794,13 +832,42 @@ export async function resolveNegotiationSession(opts: {
     ovr: player.trueOvr, position: player.position as Position, age: player.age, potential: player.potential,
   });
 
-  // Rival interest. A free agent is being shopped by his agent; your own
-  // expiring player is not on the market yet, which is precisely the reason
-  // to get ahead of it — see the re-sign window's own copy.
-  const competing = incumbent
-    ? null
-    : await leadingCompetingBid(leagueId, playerId, teamId, seasonYear, capMode);
-  const competition = competing ? clamp(competing.apy / Math.max(1, trueMarketApy), 0.3, 1) : 0;
+  // --- Who else wants him ---------------------------------------------------
+  //
+  // THE SAME QUESTION IS NOW ASKED ON BOTH SCREENS, and that is the change
+  // that gives the re-sign window a contest.
+  //
+  // Free agency was a minigame because it put three unknowns in front of you —
+  // his number, his term, and the rival's bid — two of them hidden, against a
+  // resource that runs out. Re-signing your own player had the first two and
+  // no rival at all, so the only live question was how far you overpaid: a
+  // cost-efficiency puzzle, not a negotiation.
+  //
+  // So `leadingCompetingBid` runs for an incumbent too. It is the identical
+  // function, at the identical seed (`fa-bid-<player>-<team>`), over the same
+  // cap summaries and the same `teamNeeds` the sealed-bid wave uses — which is
+  // what makes the club it names honest rather than atmospheric: if he reaches
+  // the market, that is the team with the room and the hole, and that is
+  // roughly the number. Nothing about the rumour is invented for the panel.
+  //
+  // What differs is LEVERAGE, and it differs for a reason the user can state.
+  // Nobody may sign a player who is under contract to you, so a suitor in the
+  // re-sign window is not bidding against you — he is a fact about next spring
+  // that his agent already knows. In his walk year that is a distant forecast
+  // (RESIGN_LEVERAGE.WALK_YEAR); once his deal has actually expired and he is
+  // one Advance from the open market it is very nearly a bid
+  // (RESIGN_LEVERAGE.FINAL_CALL). Hence: it moves his ASKING PRICE and his
+  // patience, and it never touches `gate.competingApy`, because you cannot be
+  // outbid today by a team that cannot sign him today. Claiming otherwise
+  // would be exactly the lying metric the README forbids.
+  const resignWindow: ResignWindow | null = incumbent
+    ? ((player.contract?.yearsRemaining ?? 0) <= 0 ? 'FINAL_CALL' : 'WALK_YEAR')
+    : null;
+  const suitor = await leadingCompetingBid(leagueId, playerId, teamId, seasonYear, capMode);
+  const rawCompetition = suitor ? clamp(suitor.apy / Math.max(1, trueMarketApy), 0.3, 1) : 0;
+  const competition = resignWindow ? rawCompetition * RESIGN_LEVERAGE[resignWindow] : rawCompetition;
+  /** Bidding against you RIGHT NOW. Only ever true on the open market. */
+  const competing = incumbent ? null : suitor;
 
   const played = team.wins + team.losses + team.ties;
   const winPct = played > 0 ? (team.wins + team.ties * 0.5) / played : team.prestige / 100;
@@ -818,6 +885,7 @@ export async function resolveNegotiationSession(opts: {
     teamStrength,
     yearsWithTeam: incumbent && player.contract ? Math.max(0, seasonYear - player.contract.signedYear) : 0,
     competition,
+    resignWindow,
     // Seeded on the matchup and the league year — NOT the clock. Re-opening
     // the panel, refreshing the page or submitting an offer all rebuild the
     // identical man with the identical asking price; only the season rolling
@@ -841,25 +909,80 @@ export async function resolveNegotiationSession(opts: {
     capSpace,
     minSalary: CAP.MIN_SALARY,
     // The ceiling has to clear a rival's bid, or the one control that could
-    // win the auction would stop short of the number that wins it.
-    maxSalary: Math.max(ceilingFloor, competing ? Math.round(competing.apy * 1.15) : 0),
+    // win the auction would stop short of the number that wins it. A re-sign
+    // is not an auction, but the same reasoning applies to the rumour: if the
+    // panel says a club will go to $18M, the salary slider has to reach $18M.
+    maxSalary: Math.max(ceilingFloor, suitor ? Math.round(suitor.apy * 1.15) : 0),
     maxYears,
     competingApy: competing?.apy ?? 0,
     competingTeam: competing?.teamName ?? null,
   };
 
-  return { ctx, gate };
+  return { ctx, gate, patienceSpent: await readPatienceSpent(teamId, playerId, seasonYear), suitor };
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * PATIENCE, PERSISTED
+ * ---------------------------------------------------------------------------
+ * The count of pips burned is read and written HERE and nowhere else, and it
+ * is never taken from the client. `negotiateOffer` used to accept a
+ * `patienceSpent` argument from the browser; that argument no longer exists,
+ * because there was no verifying it — a reload sent zero, and zero was
+ * indistinguishable from an honest zero. The loss condition, and with it the
+ * entire cost of a lowball, was defeated by F5.
+ *
+ * The bookkeeping rules, all three of them, are in one place so they can be
+ * checked against each other:
+ *
+ *   READ   is free and creates nothing. Opening the panel writes no row.
+ *   CHARGE upserts, and only ever on a refusal the PLAYER made (a cap-illegal
+ *          or term-illegal offer never reached him and costs nothing — see
+ *          `decideOffer`'s `costsPatience`).
+ *   PRUNE  runs on every charge and drops this league's rows from earlier
+ *          league years. A new league year is a new negotiation — new asking
+ *          price, new market, fresh pips — so those rows can never be read
+ *          again, and leaving them would grow the table forever.
+ * ---------------------------------------------------------------------------
+ */
+async function readPatienceSpent(teamId: string, playerId: string, seasonYear: number): Promise<number> {
+  const row = await prisma.negotiationTalks.findUnique({
+    where: { teamId_playerId_seasonYear: { teamId, playerId, seasonYear } },
+    select: { patienceSpent: true },
+  });
+  return row?.patienceSpent ?? 0;
+}
+
+async function chargePatience(opts: {
+  leagueId: string; teamId: string; playerId: string; seasonYear: number; cost: number;
+}): Promise<number> {
+  const { leagueId, teamId, playerId, seasonYear, cost } = opts;
+  // `increment` rather than a read-then-write so two submits racing each other
+  // cannot both read the same number and charge one pip between them.
+  const row = await prisma.negotiationTalks.upsert({
+    where: { teamId_playerId_seasonYear: { teamId, playerId, seasonYear } },
+    create: { leagueId, teamId, playerId, seasonYear, patienceSpent: cost },
+    update: { patienceSpent: { increment: cost } },
+    select: { patienceSpent: true },
+  });
+  await prisma.negotiationTalks.deleteMany({ where: { leagueId, seasonYear: { lt: seasonYear } } });
+  return row.patienceSpent;
 }
 
 /**
  * Submit an offer for real.
  *
- * `patienceSpent` is what the client believes it has burned so far. It is not
- * trusted for anything except pacing: the server recomputes the COST of this
- * offer itself, and every consequence that touches the database (he signs
- * elsewhere) is decided here. A client that lied about it can only give
- * itself a negotiation that never ends, which is the behaviour this feature
- * replaced.
+ * THE SERVER OWNS THE PATIENCE COUNT. There is deliberately no
+ * `patienceSpent` parameter: the count is read from NegotiationTalks, keyed on
+ * (team, player, league year), and written back here. The browser is told what
+ * it has spent; it never says.
+ *
+ * It used to be an argument, and that was an exploit rather than a rough edge.
+ * A reload reset the client's counter to zero, the server had nothing to check
+ * it against, and so a GM could lowball the same free agent an unlimited
+ * number of times by pressing F5 between offers — which is precisely the
+ * "they accept everything" behaviour the whole minigame exists to remove, just
+ * with more clicks. Persisting it is what makes a lowball cost something.
  */
 export async function negotiateOffer(opts: {
   leagueId: string;
@@ -871,7 +994,6 @@ export async function negotiateOffer(opts: {
   incumbent: boolean;
   offer: Offer;
   structure?: DealStructure;
-  patienceSpent: number;
   /** Fingerprint of the session the user was actually looking at. */
   fingerprint?: string;
 }): Promise<NegotiationOutcome> {
@@ -879,7 +1001,11 @@ export async function negotiateOffer(opts: {
   const structure = opts.structure ?? DEFAULT_STRUCTURE;
   const session = await resolveNegotiationSession({ leagueId, playerId, teamId, seasonYear, settings, incumbent });
   const decision = decideOffer(session.ctx, opts.offer, session.gate, structure);
-  const spentBefore = clamp(Math.round(opts.patienceSpent) || 0, 0, session.ctx.patience);
+  // Straight off the row `resolveNegotiationSession` just read. Clamped only
+  // because his patience can legitimately have SHRUNK since the pips were
+  // burned (rival interest moves it), and a count above the ceiling should
+  // read as "out", not as a negative number of pips left.
+  const spentBefore = clamp(session.patienceSpent, 0, session.ctx.patience);
 
   const base = { session, decision, patienceSpent: spentBefore, walkedAway: spentBefore >= session.ctx.patience };
 
@@ -950,34 +1076,39 @@ export async function negotiateOffer(opts: {
   // run out, which is a thing the panel has been counting down in front of
   // you the whole time.
   const cost = decision.patienceCost;
-  const patienceSpent = Math.min(session.ctx.patience, spentBefore + cost);
+  const patienceSpent = cost > 0
+    ? Math.min(session.ctx.patience, await chargePatience({ leagueId, teamId, playerId, seasonYear, cost }))
+    : spentBefore;
   const walkedAway = patienceSpent >= session.ctx.patience;
+  // The session goes back to the client on every refusal so the meter
+  // re-reads. It has to carry the count the pips are about to be drawn from,
+  // or a reload would silently correct a panel that had been rendering the
+  // pre-charge number.
+  const charged = { ...base, session: { ...session, patienceSpent }, patienceSpent, walkedAway };
 
   if (walkedAway && !incumbent) {
     // Out of patience on the open market is not a soft ending: he takes the
-    // best offer on the table and he is gone. This is the one part of the
-    // patience mechanic that survives a page reload, and it is the part that
-    // matters — the counter is pacing, the loss is the consequence.
+    // best offer on the table and he is gone. It is also, now, unreachable by
+    // reloading — the pips that got you here are in the database, so the
+    // counter is real pacing and the loss is a real consequence of it.
     const lost = await loseToCompetingBid({
       leagueId, playerId, teamId, seasonYear, capMode: settings.capMode, week,
     });
     if (lost) {
       return {
-        ...base, ok: false, patienceSpent, walkedAway, lostTo: lost,
+        ...charged, ok: false, lostTo: lost,
         message: `He is done with you — signed with the ${lost.teamName} at ${formatMoney(lost.apy)}/yr.`,
       };
     }
     return {
-      ...base, ok: false, patienceSpent, walkedAway,
+      ...charged, ok: false,
       message: 'His agent has stopped returning your calls. He will wait for a better offer than yours.',
     };
   }
 
   return {
-    ...base,
+    ...charged,
     ok: false,
-    patienceSpent,
-    walkedAway,
     message: walkedAway
       ? `${session.ctx.playerName} has ended talks. He will test the market.`
       : decision.outbid

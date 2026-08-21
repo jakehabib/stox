@@ -31,6 +31,27 @@
  *      three that can catch a disagreement introduced by the signing path
  *      itself (cap enforcement, a competing bid closing first).
  *
+ * Two more were added when the model grew a persisted resource and a rival on
+ * both screens, because both are places a meter can start lying:
+ *
+ *   4. PATIENCE SURVIVES. The count of pips burned is server state now
+ *      (prisma NegotiationTalks) rather than a number the browser sends up.
+ *      It used to be the latter, which meant a page reload set it to zero and
+ *      the loss condition — the entire cost of a lowball — could be cleared
+ *      with F5. Section 6 below burns patience, throws the client away, and
+ *      re-resolves from the database the way a reload does. It also pins the
+ *      three bookkeeping rules: opening talks writes NO row, signing clears
+ *      the row, and prior league years are pruned.
+ *
+ *   5. THE RUMOUR IS REAL. The re-sign window now names a rival club, with its
+ *      cap room and its need at the position printed beside it. Section 7
+ *      re-derives all three from the database, checks the quoted bid is the
+ *      number that club's own `maxOffer` produces, and then puts the player on
+ *      the open market and runs the actual AI wave to confirm somebody who was
+ *      claimed to want him actually comes for him. A suitor that could not be
+ *      checked would be the invented-metric bug class this file exists to
+ *      police, moved from the meter into the flavour text.
+ *
  * Run: npx tsx scripts/checkNegotiationAgreement.ts
  * ===========================================================================
  */
@@ -38,12 +59,14 @@
 import { prisma } from '../lib/db';
 import { createLeague } from '../lib/gen/league';
 import { parseSettings } from '../lib/settings';
-import { resolveNegotiationSession, negotiateOffer } from '../lib/freeagency';
+import { resolveNegotiationSession, negotiateOffer, runAiFreeAgencyWave, MARKET_FLOOR } from '../lib/freeagency';
 import {
   decideOffer, minimumAcceptableApy, sessionFingerprint,
   DEFAULT_STRUCTURE, type NegotiationSession, type Offer, type OfferDecision,
 } from '../lib/negotiation';
-import { formatMoney } from '../lib/cap';
+import { formatMoney, marketValue } from '../lib/cap';
+import { teamCapSummary } from '../lib/cap-summary';
+import { maxOffer, parseGmProfile, teamNeeds, type RosterPlayer } from '../lib/ai/gm';
 import { Rng } from '../lib/rng';
 
 let failures = 0;
@@ -80,16 +103,36 @@ async function main() {
   });
   const own = await prisma.player.findMany({
     where: { teamId: team.id, status: 'ACTIVE' },
+    include: { contract: true },
     orderBy: { trueOvr: 'desc' },
-    take: 6,
+    take: 10,
   });
+
+  // WIDENING THE SWEEP FOR THE RE-SIGN CLOCK.
+  //
+  // An incumbent's context is no longer one shape. It now depends on which
+  // half of the re-sign window he is in (lib/negotiation.ts, ResignWindow):
+  // in his WALK_YEAR the loyalty discount is at full size and a rumoured
+  // suitor barely registers, at FINAL_CALL the discount has mostly gone and
+  // the same suitor is nearly a bid. Different reservation price, different
+  // patience, different slider ceiling — a sweep that only ever saw one of the
+  // two would be checking half the state space the panel can actually be in.
+  //
+  // The window is read off `contract.yearsRemaining`, so the scratch league's
+  // contracts are pinned to give us both. This league is created and dropped
+  // by this script; nothing else ever sees it.
+  const walkYear = own.slice(0, 3);
+  const finalCall = own.slice(3, 6);
+  await prisma.contract.updateMany({ where: { playerId: { in: walkYear.map((p) => p.id) } }, data: { yearsRemaining: 1 } });
+  await prisma.contract.updateMany({ where: { playerId: { in: finalCall.map((p) => p.id) } }, data: { yearsRemaining: 0 } });
 
   // A spread of the market, not just the top of it: the model's shape changes
   // with age (term limits), rating (patience) and rival interest.
   const sweepSubjects = [
     ...freeAgents.slice(0, 4).map((p) => ({ p, incumbent: false })),
     ...freeAgents.slice(20, 23).map((p) => ({ p, incumbent: false })),
-    ...own.slice(0, 3).map((p) => ({ p, incumbent: true })),
+    ...walkYear.map((p) => ({ p, incumbent: true })),
+    ...finalCall.map((p) => ({ p, incumbent: true })),
   ];
 
   console.log(`\nLeague ${leagueId} — ${sweepSubjects.length} negotiations under test\n`);
@@ -166,9 +209,10 @@ async function main() {
 
     console.log(
       `  ${(p.firstName + ' ' + p.lastName).padEnd(22)} ${p.position.padEnd(4)} ${String(p.trueOvr).padStart(2)}ovr ` +
-      `${incumbent ? 're-sign' : 'free agent'} — ${ctx.personality.padEnd(10)} ` +
+      `${(incumbent ? `re-sign/${ctx.resignWindow}` : 'free agent').padEnd(18)} ${ctx.personality.padEnd(10)} ` +
       `asks ~${formatMoney(ctx.reservationApy)}/yr, patience ${ctx.patience}, ` +
-      `rival ${gate.competingApy ? formatMoney(gate.competingApy) : 'none'}, ` +
+      `loyalty ${(ctx.loyaltyDiscount * 100).toFixed(1)}%, ` +
+      `suitor ${clientSession.suitor ? `${clientSession.suitor.teamAbbr} ${formatMoney(clientSession.suitor.apy)}` : 'none'}, ` +
       `${acceptedCount} signable offers on the grid`,
     );
   }
@@ -196,7 +240,7 @@ async function main() {
 
     const outcome = await negotiateOffer({
       leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
-      settings, incumbent: false, offer, structure: DEFAULT_STRUCTURE, patienceSpent: 0,
+      settings, incumbent: false, offer, structure: DEFAULT_STRUCTURE,
       fingerprint: sessionFingerprint(session),
     });
 
@@ -255,12 +299,21 @@ async function main() {
       const predicted = decideOffer(session.ctx, offer, session.gate, DEFAULT_STRUCTURE);
       const outcome = await negotiateOffer({
         leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
-        settings, incumbent: false, offer, structure: DEFAULT_STRUCTURE, patienceSpent: spent,
+        settings, incumbent: false, offer, structure: DEFAULT_STRUCTURE,
         fingerprint: sessionFingerprint(session),
       });
       comparisons++;
       if (outcome.ok !== predicted.accepted) fail(`${p.lastName}: burn-down meter/server disagreement`);
       console.log(`  ${p.lastName.padEnd(14)} offer ${formatMoney(offer.apy)} vs ~${formatMoney(session.ctx.reservationApy)} — patience ${outcome.patienceSpent}/${session.ctx.patience}${outcome.lostTo ? ` — LOST to the ${outcome.lostTo.teamName} at ${formatMoney(outcome.lostTo.apy)}/yr` : ''}`);
+      // Nothing is carried between iterations any more — each pass re-resolves
+      // the session from scratch, exactly as a reloaded page does. If the count
+      // did not persist, this loop would never terminate.
+      if (outcome.patienceSpent <= spent) {
+        fail(`${p.lastName}: patience did not advance across a fresh resolve (${spent} -> ${outcome.patienceSpent})`);
+      }
+      if (session.patienceSpent !== spent) {
+        fail(`${p.lastName}: re-resolved session reported ${session.patienceSpent} spent, ${spent} was charged`);
+      }
       spent = outcome.patienceSpent;
       if (outcome.walkedAway || outcome.lostTo) {
         const after = await prisma.player.findUniqueOrThrow({ where: { id: p.id }, select: { teamId: true } });
@@ -282,7 +335,7 @@ async function main() {
     const predicted = decideOffer(session.ctx, offer, session.gate, DEFAULT_STRUCTURE);
     const outcome = await negotiateOffer({
       leagueId, playerId: poor.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
-      settings, incumbent: false, offer, structure: DEFAULT_STRUCTURE, patienceSpent: 0,
+      settings, incumbent: false, offer, structure: DEFAULT_STRUCTURE,
       fingerprint: sessionFingerprint(session),
     });
     comparisons++;
@@ -291,6 +344,232 @@ async function main() {
     if (outcome.patienceSpent !== 0) fail('a cap refusal cost patience');
     console.log(`\nCap gate: ${formatMoney(offer.apy)}/yr against ${formatMoney(session.gate.capSpace)} of room — meter blocked=${predicted.blocked}, server refused, patience ${outcome.patienceSpent}. "${outcome.message}"`);
   }
+
+  // --- 6. Patience survives a reload, and the ledger stays bounded ---------
+  //
+  // THE EXPLOIT THIS CLOSED. `patienceSpent` used to be a number the browser
+  // handed to the Server Action. Pressing F5 sent zero, the server had nothing
+  // to check it against, and the loss condition evaporated — you could lowball
+  // one free agent forever. The whole point of the minigame is that a lowball
+  // costs something, so this section is the guard on it.
+  //
+  // "Reload" is modelled honestly: every client object is thrown away and the
+  // session is resolved fresh from the database, which is exactly what a new
+  // page load does. Nothing is passed between the two halves.
+  console.log('\nPatience across a reload (client state discarded between offers):\n');
+  {
+    const subject = freeAgents.slice(1, 4).find((p) => p.id !== poor.id)!;
+    const key = { teamId_playerId_seasonYear: { teamId: team.id, playerId: subject.id, seasonYear: league.seasonYear } };
+
+    // (a) OPENING TALKS IS FREE. A GM who opens forty negotiations and walks
+    //     away from all forty must not leave forty rows behind, so a row is
+    //     only ever written when patience is actually spent.
+    const beforeOpen = await prisma.negotiationTalks.findUnique({ where: key });
+    const opened = await resolveNegotiationSession({
+      leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+    });
+    const afterOpen = await prisma.negotiationTalks.findUnique({ where: key });
+    comparisons++;
+    if (beforeOpen !== null || afterOpen !== null) fail('opening talks wrote a NegotiationTalks row — abandoned negotiations would accumulate');
+    if (opened.patienceSpent !== 0) fail(`fresh talks opened with ${opened.patienceSpent} patience already spent`);
+
+    // (b) A REFUSAL IS CHARGED, AND IT IS IN THE DATABASE.
+    const lowball: Offer = {
+      apy: Math.max(opened.gate.minSalary, Math.round(opened.ctx.reservationApy * 0.5 / 100_000) * 100_000),
+      years: Math.min(opened.ctx.desiredYears, opened.gate.maxYears),
+      guaranteePct: 0.5,
+    };
+    const first = await negotiateOffer({
+      leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
+      settings, incumbent: false, offer: lowball, structure: DEFAULT_STRUCTURE,
+      fingerprint: sessionFingerprint(opened),
+    });
+    const row = await prisma.negotiationTalks.findUnique({ where: key });
+    comparisons++;
+    if (!row) fail('a refused offer left no NegotiationTalks row');
+    if (row && row.patienceSpent !== first.patienceSpent) {
+      fail(`database says ${row.patienceSpent} spent, the outcome said ${first.patienceSpent}`);
+    }
+
+    // (c) THE RELOAD. Everything above is discarded; the session is resolved
+    //     the way a cold page load resolves it. The count has to still be there.
+    const reloaded = await resolveNegotiationSession({
+      leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+    });
+    comparisons++;
+    if (reloaded.patienceSpent !== first.patienceSpent) {
+      fail(`patience did not survive a reload: ${first.patienceSpent} spent, session reloaded with ${reloaded.patienceSpent}`);
+    }
+    console.log(`  ${subject.lastName}: lowballed once (cost ${first.patienceSpent}), session re-resolved from the database -> ${reloaded.patienceSpent}/${reloaded.ctx.patience} spent`);
+
+    // (d) A SECOND OFFER CONTINUES THE COUNT rather than restarting it — the
+    //     actual shape of the exploit, which was "reload, offer again, free".
+    const second = await negotiateOffer({
+      leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
+      settings, incumbent: false, offer: lowball, structure: DEFAULT_STRUCTURE,
+      fingerprint: sessionFingerprint(reloaded),
+    });
+    comparisons++;
+    if (!second.lostTo && second.patienceSpent <= first.patienceSpent) {
+      fail(`a post-reload offer restarted the count (${first.patienceSpent} -> ${second.patienceSpent})`);
+    }
+    console.log(`  ${subject.lastName}: offered again after the reload -> ${second.patienceSpent}/${reloaded.ctx.patience} spent${second.lostTo ? ` — LOST to the ${second.lostTo.teamName}` : ''}`);
+
+    // (e) PRIOR LEAGUE YEARS ARE PRUNED. A new year is a new negotiation, so
+    //     last year's rows can never be read again; leaving them would grow the
+    //     table for the life of the save.
+    await prisma.negotiationTalks.create({
+      data: { leagueId, teamId: team.id, playerId: poor.id, seasonYear: league.seasonYear - 1, patienceSpent: 3 },
+    });
+    await negotiateOffer({
+      leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
+      settings, incumbent: false, offer: lowball, structure: DEFAULT_STRUCTURE,
+    });
+    const stale = await prisma.negotiationTalks.count({ where: { leagueId, seasonYear: { lt: league.seasonYear } } });
+    comparisons++;
+    if (stale !== 0) fail(`${stale} row(s) from a previous league year survived a charge — the ledger is unbounded`);
+    console.log(`  Prior-year rows after a charge: ${stale} (pruned)`);
+
+    // (f) SIGNING CLEARS THE ROW. He is no longer a negotiation, and if he is
+    //     ever cut back onto the market that is a NEW one, with full pips.
+    //     A different player, untouched so far, so there is patience left to
+    //     burn before the closing offer — the point being that a row exists to
+    //     be cleared.
+    const signSubject = freeAgents.find((f) => f.id !== subject.id && f.id !== poor.id && f.teamId === null)!;
+    const signKey = { teamId_playerId_seasonYear: { teamId: team.id, playerId: signSubject.id, seasonYear: league.seasonYear } };
+    const openTalks = await resolveNegotiationSession({
+      leagueId, playerId: signSubject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+    });
+    await negotiateOffer({
+      leagueId, playerId: signSubject.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
+      settings, incumbent: false, structure: DEFAULT_STRUCTURE,
+      offer: { apy: openTalks.gate.minSalary, years: 1, guaranteePct: 0 },
+    });
+    const rowBeforeSigning = await prisma.negotiationTalks.findUnique({ where: signKey });
+    const closing = await resolveNegotiationSession({
+      leagueId, playerId: signSubject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+    });
+    const generous = await negotiateOffer({
+      leagueId, playerId: signSubject.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
+      settings, incumbent: false,
+      offer: {
+        apy: Math.min(closing.gate.maxSalary, Math.round(Math.max(closing.ctx.reservationApy * 1.4, closing.gate.competingApy * 1.25) / 100_000) * 100_000),
+        years: Math.min(closing.ctx.desiredYears, closing.gate.maxYears),
+        guaranteePct: 0.8,
+      },
+      structure: DEFAULT_STRUCTURE,
+    });
+    const afterSigning = await prisma.negotiationTalks.findUnique({ where: signKey });
+    comparisons++;
+    if (!rowBeforeSigning) fail(`${signSubject.lastName}: no row to clear — the refusal before the signing was not charged`);
+    if (!generous.ok) fail(`${signSubject.lastName}: could not be signed to test that signing clears his row — "${generous.message}"`);
+    if (generous.ok && afterSigning !== null) fail(`${signSubject.lastName}: signing him left his negotiation row behind`);
+    console.log(
+      `  ${signSubject.lastName}: ${rowBeforeSigning?.patienceSpent ?? 0} pip(s) on record, then signed -> ` +
+      `row is ${afterSigning === null ? 'gone' : 'STILL THERE'}`,
+    );
+  }
+
+  // --- 7. The rumoured suitor is a real club, not flavour text -------------
+  //
+  // The re-sign window names a team, prints its cap room and its need beside
+  // the name, and quotes what it would pay. Every one of those is re-derived
+  // here straight from the database, and then the claim is tested the only way
+  // that really settles it: the player is put on the open market and the
+  // actual AI free-agency wave is run.
+  console.log('\nSuitor reality check (re-sign rumours, re-derived from the database):\n');
+  {
+    for (const p of finalCall) {
+      const session = await resolveNegotiationSession({
+        leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: true,
+      });
+      const suitor = session.suitor;
+      comparisons++;
+      if (!suitor) { console.log(`  ${p.lastName.padEnd(14)} ${p.position} — no suitor claimed`); continue; }
+
+      // A re-sign is NOT an auction: a club that cannot legally sign him must
+      // never appear as a bid the meter can make you lose.
+      if (session.gate.competingApy !== 0) {
+        fail(`${p.lastName}: a re-sign gate carried a competing bid of ${formatMoney(session.gate.competingApy)} — nobody may bid on a player under contract`);
+      }
+
+      const roster = await prisma.player.findMany({
+        where: { teamId: suitor.teamId },
+        select: { id: true, position: true, trueOvr: true, age: true, potential: true },
+      });
+      const needs = teamNeeds(roster as RosterPlayer[]);
+      const summary = await teamCapSummary(suitor.teamId, league.seasonYear, settings.capMode);
+      const best = roster.filter((r) => r.position === p.position).sort((a, b) => b.trueOvr - a.trueOvr)[0] ?? null;
+      const rng = new Rng(`fa-bid-${p.id}-${suitor.teamId}`);
+      const gm = await prisma.team.findUniqueOrThrow({ where: { id: suitor.teamId } });
+      const reBid = Math.round(maxOffer(p as unknown as RosterPlayer, {
+        profile: parseGmProfile(gm.gmProfile, rng), needs,
+        capSpace: Math.max(0, summary.capSpace - 4_000_000), rng,
+      }));
+
+      if (suitor.capSpace !== summary.capSpace) fail(`${p.lastName}: quoted ${formatMoney(suitor.capSpace)} of ${suitor.teamAbbr} room, the books say ${formatMoney(summary.capSpace)}`);
+      if (Math.abs(suitor.need - (needs[p.position] ?? 0)) > 1e-9) fail(`${p.lastName}: quoted need ${suitor.need} at ${p.position}, teamNeeds says ${needs[p.position]}`);
+      if (suitor.need < 0.15) fail(`${p.lastName}: ${suitor.teamAbbr} was named as interested but scores below the threshold its own AI bids at`);
+      if (suitor.starterOvr !== (best?.trueOvr ?? null)) fail(`${p.lastName}: quoted best-at-position ${suitor.starterOvr}, roster says ${best?.trueOvr ?? null}`);
+      if (suitor.apy !== reBid) fail(`${p.lastName}: quoted ${formatMoney(suitor.apy)} from ${suitor.teamAbbr}, their own maxOffer produces ${formatMoney(reBid)}`);
+
+      console.log(
+        `  ${p.lastName.padEnd(14)} ${p.position.padEnd(4)} — ${suitor.teamAbbr} would go ${formatMoney(suitor.apy)}/yr; ` +
+        `room ${formatMoney(summary.capSpace)}, need ${(suitor.need * 100).toFixed(0)}%, best they have ${best?.trueOvr ?? 'nobody'}`,
+      );
+    }
+
+    // AND HE IS ACTUALLY PURSUED. The strongest form of the claim: release the
+    // most-wanted of them to free agency and run the real sealed-bid wave. If
+    // the rumour were decoration, nobody would come.
+    const wanted: { id: string; lastName: string; position: string; trueOvr: number; apy: number; abbr: string; need: number }[] = [];
+    for (const p of finalCall) {
+      const s = await resolveNegotiationSession({
+        leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: true,
+      });
+      if (s.suitor) wanted.push({ id: p.id, lastName: p.lastName, position: p.position, trueOvr: p.trueOvr, apy: s.suitor.apy, abbr: s.suitor.teamAbbr, need: s.suitor.need });
+    }
+    const target = wanted.sort((a, b) => b.trueOvr - a.trueOvr)[0];
+    if (!target) {
+      console.log('  (no rumoured suitor among the re-sign subjects to market-test)');
+    } else {
+      const player = await prisma.player.findUniqueOrThrow({ where: { id: target.id } });
+      const market = marketValue({ ovr: player.trueOvr, position: player.position as any, age: player.age, potential: player.potential });
+
+      // WHAT THE PANEL ACTUALLY CLAIMS is that this club would go to this
+      // number for him — not that he ends up there. An open market has other
+      // bidders, and the highest one wins; a panel that promised the outcome
+      // would be lying about a contest it does not run. So the claim is tested
+      // as stated: does the named club clear both bars the wave itself uses —
+      // enough need to bid at all, and a bid big enough to be resolved rather
+      // than thrown out under the market floor?
+      const qualifiesToBid = target.need >= 0.15;
+      const clearsFloor = target.apy >= market * MARKET_FLOOR;
+      comparisons++;
+      if (!qualifiesToBid) fail(`${target.lastName}: ${target.abbr} was named but its need would keep it out of the bidding entirely`);
+      if (!clearsFloor) {
+        fail(`${target.lastName}: ${target.abbr} was named at ${formatMoney(target.apy)}/yr, under the ${formatMoney(Math.round(market * MARKET_FLOOR))} floor a bid has to clear to count`);
+      }
+
+      await prisma.contract.deleteMany({ where: { playerId: target.id } });
+      await prisma.player.update({ where: { id: target.id }, data: { teamId: null, status: 'FREE_AGENT' } });
+      await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings, new Rng('suitor-reality'));
+      const landed = await prisma.player.findUniqueOrThrow({
+        where: { id: target.id }, include: { team: true, contract: true },
+      });
+      comparisons++;
+      if (!landed.teamId) {
+        fail(`${target.lastName}: the re-sign panel named ${target.abbr} as chasing him at ${formatMoney(target.apy)}/yr, but nobody signed him when he reached the market`);
+      }
+      console.log(
+        `\n  Market test: ${target.lastName} (${target.position}, ${target.trueOvr}ovr) was rumoured to ${target.abbr} at ${formatMoney(target.apy)}/yr ` +
+        `(need ${(target.need * 100).toFixed(0)}%, floor ${formatMoney(Math.round(market * MARKET_FLOOR))} — a qualifying bid).\n` +
+        `  Released to free agency and ran the real AI wave -> ${landed.team ? `signed by ${landed.team.abbr}` : 'UNSIGNED'}` +
+        `${landed.team && landed.team.abbr !== target.abbr ? ` (outbid; the rumour is a bid, not a promise)` : ''}.`,
+      );
+    }
+  }
+
   console.log(`\n${comparisons.toLocaleString()} comparisons, ${failures} disagreement${failures === 1 ? '' : 's'}.`);
 
   await prisma.league.delete({ where: { id: leagueId } });
