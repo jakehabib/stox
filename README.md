@@ -493,3 +493,32 @@ ever force-pushed over, so every state below still exists in git history).
     the ticker's marquee animation itself (not just its static layout)
     causes zero console errors and pauses correctly under
     `prefers-reduced-motion`.
+- **2026-08-21 — Redesign Stage 9: Stats, News, History, GM Career,
+  Settings.** Checkpoint before this change: `1053772`. The last of the
+  league pages, brought to the same bar as the rest:
+  - **Stats** — leader tables switched to `.panel`, every leader's
+    headline number now uses `.stat-value`, position labels use
+    `positionBadgeClass` (both in the league-leader lists and the My
+    Team roster stat line), and point-differential in Team Stats reads
+    as a real signed display number. The Advanced-view chart panels
+    moved to `.panel` too.
+  - **News** — rebuilt each row into an editorial dispatch: a colored
+    category kicker above the headline (reusing the existing per-type
+    color map rather than a new one), the headline in the display face,
+    detail beneath, and the year/week as a quiet monospace byline —
+    instead of a plain line of text with a pill floating on the right.
+  - **History** — the selected franchise's block became a team-tinted
+    hero (watermark logo, team name in `--team-text`); Dynasty Score,
+    the record tables, and Award Winners moved to `.panel`, and
+    "Franchise History" picked up the display-face heading.
+  - **GM Career** — the plain logo+title row became a team-tinted hero
+    panel naming the franchise, with tenure underneath; badges, cap
+    management, best season, and the awards table moved to `.panel`,
+    and average dead money reads as a `.stat-value` figure.
+  - **Settings** — form sections moved to `.panel` with `label-sm`
+    section headers.
+  - No changes to any stat math (passer rating, dynasty score, GM
+    career aggregation all untouched), the news type filter, the
+    history team selector, or the settings form action. Verified all
+    five routes plus the Stats Advanced view via Playwright with zero
+    console errors.

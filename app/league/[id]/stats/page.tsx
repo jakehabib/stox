@@ -9,6 +9,7 @@ import { Tooltip } from '@/components/Tooltip';
 import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
 import { LineChart } from '@/components/charts/LineChart';
 import { ScatterChart } from '@/components/charts/ScatterChart';
+import { positionBadgeClass } from '@/components/ds/positionColor';
 
 interface LeaderCol { key: keyof SeasonStats; label: string; format?: (n: number) => string }
 interface LeaderCategory { title: string; primary: LeaderCol; extra: LeaderCol[] }
@@ -171,12 +172,12 @@ export default async function StatsPage({ params, searchParams }: { params: { id
       </div>
 
       {withStats.length === 0 ? (
-        <div className="card card-pad text-sm text-muted">No stats recorded yet this season — check back after Week 1.</div>
+        <div className="panel p-4 text-sm text-muted">No stats recorded yet this season — check back after Week 1.</div>
       ) : (
         <>
           {advanced && (
             <div className="grid lg:grid-cols-2 gap-5">
-              <div className="card card-pad">
+              <div className="panel p-4">
                 <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
                   Passer Rating
                   <Tooltip text="The real NFL passer rating formula — completion %, yards/attempt, TD rate, and INT rate, each capped and blended into one number. 100 is a solid, unspectacular season; 158.3 is the mathematical maximum." />
@@ -185,7 +186,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                 {ratingBars.length > 0 ? <HorizontalBarChart bars={ratingBars} maxValue={158.3} /> : <p className="text-sm text-muted">No qualifying passers yet.</p>}
               </div>
 
-              <div className="card card-pad">
+              <div className="panel p-4">
                 <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
                   Offense vs. Defense
                   <Tooltip text="Every team by points scored per game (up) and points allowed per game (right, so lower/left is better defense). Dashed lines mark the league average on each axis — top-left is the most complete quadrant: score a lot, allow little." />
@@ -200,7 +201,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
               </div>
 
               {weeklyTrend.length > 0 && weeklyTrend[0].points.length > 0 && (
-                <div className="card card-pad lg:col-span-2">
+                <div className="panel p-4 lg:col-span-2">
                   <h2 className="font-semibold mb-1">Your Team — Scoring Trend</h2>
                   <p className="text-xs text-muted mb-3">Points for/against by week, season-to-date.</p>
                   <LineChart series={weeklyTrend} formatY="integer" />
@@ -210,8 +211,8 @@ export default async function StatsPage({ params, searchParams }: { params: { id
           )}
 
           {myTeam ? (
-            <div className="card overflow-hidden">
-              <div className="px-4 py-3 border-b border-line font-semibold text-sm">Full Roster Stat Line</div>
+            <div className="panel overflow-hidden">
+              <div className="px-4 py-3 border-b border-line/70 label-sm">Full Roster Stat Line</div>
               <div className="overflow-x-auto">
                 <table className="table-clean">
                   <thead>
@@ -231,7 +232,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                               <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
                             </Link>
                           </td>
-                          <td className="font-mono text-xs text-muted">{p.position}</td>
+                          <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                           {line.length === 0 ? (
                             <td colSpan={5} className="text-xs text-muted">—</td>
                           ) : (
@@ -256,8 +257,8 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                 .sort((a, b) => (b.stats[cat.primary.key] ?? 0) - (a.stats[cat.primary.key] ?? 0))
                 .slice(0, 10);
               return (
-                <div key={cat.title} className="card overflow-hidden">
-                  <div className="px-4 py-3 border-b border-line font-semibold text-sm">{cat.title}</div>
+                <div key={cat.title} className="panel overflow-hidden">
+                  <div className="px-4 py-3 border-b border-line/70 label-sm">{cat.title}</div>
                   <table className="table-clean">
                     <thead>
                       <tr>
@@ -274,10 +275,10 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                               <span className="text-xs text-muted w-4 shrink-0">{i + 1}</span>
                               <PlayerAvatar seed={p.id} age={p.age} size={22} />
                               <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
-                              <span className="text-xs text-muted font-mono shrink-0">{p.position}</span>
+                              <span className={`text-xs font-semibold shrink-0 ${positionBadgeClass(p.position)}`}>{p.position}</span>
                             </Link>
                           </td>
-                          <td className="font-mono font-semibold">{stats[cat.primary.key] ?? 0}</td>
+                          <td className="stat-value text-stat-sm">{stats[cat.primary.key] ?? 0}</td>
                           {cat.extra.map((c) => <td key={c.key} className="font-mono text-muted">{stats[c.key] ?? 0}</td>)}
                         </tr>
                       ))}
@@ -295,8 +296,8 @@ export default async function StatsPage({ params, searchParams }: { params: { id
       )}
 
       {!myTeam && (
-        <div className="card overflow-hidden">
-          <div className="px-4 py-3 border-b border-line font-semibold text-sm">Team Stats</div>
+        <div className="panel overflow-hidden">
+          <div className="px-4 py-3 border-b border-line/70 label-sm">Team Stats</div>
           <table className="table-clean">
             <thead><tr><th>Team</th><th>Record</th><th>PF</th><th>PA</th><th>Diff</th><th>Off. Yards</th></tr></thead>
             <tbody>
@@ -310,7 +311,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                   <td className="font-mono text-muted">{t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ''}</td>
                   <td className="font-mono">{t.pointsFor}</td>
                   <td className="font-mono text-muted">{t.pointsAgnst}</td>
-                  <td className={`font-mono ${diff >= 0 ? 'text-accent' : 'text-bad'}`}>{diff >= 0 ? '+' : ''}{diff}</td>
+                  <td className={`stat-value text-stat-sm ${diff >= 0 ? 'text-accent' : 'text-bad'}`}>{diff >= 0 ? '+' : ''}{diff}</td>
                   <td className="font-mono text-muted">{offYards.toLocaleString()}</td>
                 </tr>
               ))}

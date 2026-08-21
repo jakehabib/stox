@@ -131,8 +131,8 @@ export default async function SettingsPage({ params }: { params: { id: string } 
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="card card-pad space-y-3">
-      <h2 className="font-semibold text-sm">{title}</h2>
+    <div className="panel p-4 space-y-3">
+      <h2 className="label-sm">{title}</h2>
       <div className="space-y-3">{children}</div>
     </div>
   );

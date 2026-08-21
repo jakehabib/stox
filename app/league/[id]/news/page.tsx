@@ -61,21 +61,19 @@ export default async function NewsPage({ params, searchParams }: { params: { id:
         ))}
       </div>
 
-      <div className="card divide-y divide-line/60">
-        {items.length === 0 && <div className="card-pad text-sm text-muted">Nothing here yet.</div>}
+      <div className="panel divide-y divide-line/60">
+        {items.length === 0 && <div className="p-4 text-sm text-muted">Nothing here yet.</div>}
         {items.map((item) => {
           const team = item.teamId ? teamById.get(item.teamId) : null;
           return (
-            <div key={item.id} className="px-4 py-3 flex items-start gap-3">
-              {team ? <TeamLogo seed={team.id} abbr={team.abbr} size={26} className="mt-0.5 shrink-0" /> : <div className="w-[26px] h-[26px] shrink-0" />}
+            <div key={item.id} className="px-4 py-3.5 flex items-start gap-3">
+              {team ? <TeamLogo seed={team.id} abbr={team.abbr} size={28} className="mt-0.5 shrink-0" /> : <div className="w-7 h-7 rounded-full bg-raised shrink-0" />}
               <div className="flex-1 min-w-0">
-                <div className="text-sm">{item.headline}</div>
+                <div className={`label-sm ${TYPE_STYLE[item.type] ? TYPE_STYLE[item.type].split(' ')[1] : 'text-muted'}`}>{TYPE_LABELS[item.type] ?? item.type}</div>
+                <div className="font-display font-bold text-sm mt-0.5">{item.headline}</div>
                 {item.detail && <div className="text-xs text-muted mt-0.5">{item.detail}</div>}
               </div>
-              <div className="flex flex-col items-end gap-1 shrink-0">
-                <span className={`pill text-[10px] ${TYPE_STYLE[item.type] ?? 'border-line text-muted'}`}>{TYPE_LABELS[item.type] ?? item.type}</span>
-                <span className="text-[10px] text-muted">Yr {item.seasonYear} Wk {item.week}</span>
-              </div>
+              <span className="text-[11px] text-muted font-mono shrink-0 pt-0.5">Yr {item.seasonYear} Wk {item.week}</span>
             </div>
           );
         })}

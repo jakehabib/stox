@@ -4,6 +4,7 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { HistoryTeamSelect } from '@/components/HistoryTeamSelect';
 import { statLabel } from '@/lib/statLabels';
 import { buildDynastyLeaderboard } from '@/lib/dynastyScore';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 const RESULT_LABEL: Record<string, string> = {
   MISSED: 'Missed Playoffs', WILDCARD: 'Lost Wild Card', DIVISIONAL: 'Lost Divisional',
@@ -45,9 +46,9 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
         <p className="text-muted text-sm mt-1">League-wide records and award winners — every franchise's story feeds into this one.</p>
       </div>
 
-      <div className="card overflow-hidden">
-        <div className="px-4 py-3 border-b border-line">
-          <div className="font-semibold text-sm">Dynasty Score</div>
+      <div className="panel overflow-hidden">
+        <div className="px-4 py-3 border-b border-line/70">
+          <div className="label-sm">Dynasty Score</div>
           <div className="text-xs text-muted mt-0.5">Championships, playoff depth, win rate, draft hits, cap discipline, awards, and league records held — rolled into one ranking.</div>
         </div>
         <table className="table-clean">
@@ -73,8 +74,8 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
 
       {leagueRecords.length > 0 && (
         <div className="grid md:grid-cols-2 gap-5">
-          <div className="card overflow-hidden">
-            <div className="px-4 py-3 border-b border-line font-semibold text-sm">Single-Season Records</div>
+          <div className="panel overflow-hidden">
+            <div className="px-4 py-3 border-b border-line/70 label-sm">Single-Season Records</div>
             <table className="table-clean">
               <thead><tr><th>Category</th><th>Record</th><th>Player</th><th>Year</th></tr></thead>
               <tbody>
@@ -89,8 +90,8 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
               </tbody>
             </table>
           </div>
-          <div className="card overflow-hidden">
-            <div className="px-4 py-3 border-b border-line font-semibold text-sm">Career Records</div>
+          <div className="panel overflow-hidden">
+            <div className="px-4 py-3 border-b border-line/70 label-sm">Career Records</div>
             <table className="table-clean">
               <thead><tr><th>Category</th><th>Record</th><th>Player</th><th>As Of</th></tr></thead>
               <tbody>
@@ -109,8 +110,8 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
       )}
 
       {awardWinners.length > 0 && (
-        <div className="card overflow-hidden">
-          <div className="px-4 py-3 border-b border-line font-semibold text-sm">Award Winners</div>
+        <div className="panel overflow-hidden">
+          <div className="px-4 py-3 border-b border-line/70 label-sm">Award Winners</div>
           <table className="table-clean">
             <thead><tr><th>Year</th><th>Award</th><th>Player</th><th>Team</th><th>Stat Line</th></tr></thead>
             <tbody>
@@ -134,18 +135,26 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
       <div className="border-t border-line/60 pt-5 space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Franchise History</h2>
+          <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide">Franchise History</h2>
           <p className="text-muted text-sm mt-1">Every completed season survives here, even after standings reset for the new year.</p>
         </div>
         <HistoryTeamSelect leagueId={league.id} teamId={teamId} options={allTeams.map((t) => ({ id: t.id, label: `${t.city} ${t.nickname}` }))} />
       </div>
 
       {team && (
-        <div className="card card-pad flex items-center gap-4">
-          <TeamLogo seed={team.id} abbr={team.abbr} size={56} />
-          <div>
-            <div className="font-semibold text-lg">{team.city} {team.nickname}</div>
-            <div className="text-sm text-muted">
+        <div
+          className="relative overflow-hidden rounded-lg border-2 shadow-elevated flex items-center gap-4 px-6 py-5"
+          style={{
+            ['--team-accent' as never]: generateTeamLogoParams(team.id).primary,
+            borderColor: 'var(--team-accent)',
+            background: 'radial-gradient(ellipse 120% 140% at 100% 0%, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 70%)',
+          }}
+        >
+          <TeamLogo seed={team.id} abbr={team.abbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
+          <TeamLogo seed={team.id} abbr={team.abbr} size={56} className="relative" />
+          <div className="relative">
+            <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none" style={{ color: 'var(--team-text)' }}>{team.city} {team.nickname}</div>
+            <div className="text-sm text-muted mt-1.5">
               {records.length} season{records.length === 1 ? '' : 's'} on record
               {championships.length > 0 && <span className="text-gold"> · {championships.length}× Champion</span>}
             </div>
@@ -161,7 +170,7 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
         </div>
       )}
 
-      <div className="card overflow-hidden">
+      <div className="panel overflow-hidden">
         <table className="table-clean">
           <thead>
             <tr><th>Year</th><th>W</th><th>L</th><th>T</th><th>PF</th><th>PA</th><th>Result</th></tr>

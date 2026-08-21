@@ -2,6 +2,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { buildGmCareerSummary } from '@/lib/gmCareer';
 import { formatMoney } from '@/lib/cap';
 import { TeamLogo } from '@/components/TeamLogo';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 const RESULT_LABEL: Record<string, string> = {
   MISSED: 'Missed Playoffs', WILDCARD: 'Lost Wild Card', DIVISIONAL: 'Lost Divisional',
@@ -18,19 +19,32 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-4">
-        <TeamLogo seed={team.id} abbr={team.abbr} size={48} />
-        <div>
-          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">GM Career</h1>
-          <p className="text-muted text-sm mt-1">
-            Running the {team.city} {team.nickname} since {s.firstYear} — {s.tenureYears} season{s.tenureYears === 1 ? '' : 's'} on the job.
-          </p>
+      <div
+        className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
+        style={{
+          ['--team-accent' as never]: generateTeamLogoParams(team.id).primary,
+          borderColor: 'var(--team-accent)',
+          background: 'radial-gradient(ellipse 120% 140% at 0% 0%, color-mix(in srgb, var(--team-accent) 16%, transparent), transparent 70%)',
+        }}
+      >
+        <TeamLogo seed={team.id} abbr={team.abbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
+        <div className="relative flex items-center gap-4 px-6 py-5">
+          <TeamLogo seed={team.id} abbr={team.abbr} size={48} />
+          <div>
+            <div className="label-sm">GM Career</div>
+            <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none mt-1" style={{ color: 'var(--team-text)' }}>
+              {team.city} {team.nickname}
+            </div>
+            <p className="text-muted text-sm mt-1.5">
+              On the job since {s.firstYear} — {s.tenureYears} season{s.tenureYears === 1 ? '' : 's'} and counting.
+            </p>
+          </div>
         </div>
       </div>
 
       <div className="grid sm:grid-cols-2 gap-3">
         {s.badges.map((b) => (
-          <div key={b.title} className="card card-pad flex items-start gap-3">
+          <div key={b.title} className="panel p-4 flex items-start gap-3">
             <span className="text-2xl leading-none">{b.icon}</span>
             <div>
               <div className="font-semibold text-sm">{b.title}</div>
@@ -64,13 +78,13 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
       </div>
 
       <div className="grid md:grid-cols-2 gap-5">
-        <div className="card card-pad">
-          <div className="font-semibold text-sm mb-3">Cap Management</div>
+        <div className="panel p-4">
+          <div className="label-sm mb-3">Cap Management</div>
           <div className="text-sm text-muted">Average dead money per season</div>
-          <div className="text-xl font-mono font-semibold mt-1">{formatMoney(s.avgDeadMoneyPerYear)}</div>
+          <div className="stat-value text-stat-md mt-1">{formatMoney(s.avgDeadMoneyPerYear)}</div>
         </div>
-        <div className="card card-pad">
-          <div className="font-semibold text-sm mb-3">Best Season</div>
+        <div className="panel p-4">
+          <div className="label-sm mb-3">Best Season</div>
           {s.bestSeason ? (
             <div className="flex items-center justify-between">
               <div>
@@ -87,8 +101,8 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
       </div>
 
       {s.awards.length > 0 && (
-        <div className="card overflow-hidden">
-          <div className="px-4 py-3 border-b border-line font-semibold text-sm">Awards Won By Your Players</div>
+        <div className="panel overflow-hidden">
+          <div className="px-4 py-3 border-b border-line/70 label-sm">Awards Won By Your Players</div>
           <table className="table-clean">
             <thead><tr><th>Year</th><th>Award</th><th>Player</th></tr></thead>
             <tbody>
