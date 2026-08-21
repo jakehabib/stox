@@ -1,8 +1,9 @@
 import { Rng, clamp } from './rng';
 import { readJson } from './json';
 import type { AttrMap } from './ratings';
-import { AI } from './tuning';
+import { AI, CONSENSUS } from './tuning';
 import type { Position } from './tuning';
+import { BASE_40 } from './gen/prospectProfile';
 import type { CollegeProfile, CombineTesting, CompetitionGrade } from './gen/prospectProfile';
 
 /**
@@ -39,6 +40,12 @@ import type { CollegeProfile, CombineTesting, CompetitionGrade } from './gen/pro
  * ScoutingReport. The consensus is talk. It is allowed to be badly wrong, and
  * on the prospects that matter most it usually is.
  *
+ * TUNING. Every constant this file reads lives in lib/tuning.ts's CONSENSUS
+ * block, with the rest of the game's tunables. The positional 40 baselines
+ * come from lib/gen/prospectProfile.ts's exported BASE_40 — the generator's
+ * own table — because publicAthleticism() below inverts that generator's
+ * formulas exactly and a second copy drifting would misread testing silently.
+ *
  * DETERMINISM. Seeded off the player id alone (never Math.random), so the
  * same prospect grades identically on every render, in every process, for the
  * whole life of the save. Each random draw gets its OWN seeded stream rather
@@ -46,86 +53,6 @@ import type { CollegeProfile, CombineTesting, CompetitionGrade } from './gen/pro
  * that already exist in players' saves.
  * ===========================================================================
  */
-
-// ---------------------------------------------------------------------------
-// TUNING [TUNE]
-// ---------------------------------------------------------------------------
-
-export const CONSENSUS = {
-  /**
-   * How the room blends "what he is" against "what he might become". Draft
-   * boards are forward-looking, but not entirely — a polished 78 goes ahead
-   * of a raw 64 with the same ceiling, every year.
-   */
-  CURRENT_WEIGHT: 0.62,
-  POTENTIAL_WEIGHT: 0.38,
-
-  /**
-   * Random disagreement between evaluators, on the grade scale. Kept SMALL
-   * relative to the bias pulls below — the whole design rests on the board's
-   * error being learnable rather than random. If this ever grows past the
-   * bias magnitudes, finding a steal becomes a coin flip.
-   */
-  NOISE_SD: 2.4,
-
-  /** Max swing from the room over-indexing on the stopwatch. */
-  TESTING_PULL: 9,
-  /**
-   * Grade adjustment by strength of competition faced. Only the two extremes
-   * move the grade enough to be worth naming: a genuine blue blood and a
-   * genuine small school. B and D are where most of a class plays and the room
-   * has no strong feeling about either.
-   */
-  PROGRAM_PULL: { A: 4, B: 1.2, C: 0, D: -1.2, F: -4 } as Record<CompetitionGrade, number>,
-  /** Max markdown applied to a raw, high-ceiling developmental player. */
-  DEVELOPMENTAL_PULL: 6,
-  /**
-   * Ceiling-minus-current gap at which the room starts calling a player "a
-   * project". Set above the class median gap on purpose — nearly every
-   * prospect has SOME room to grow, and a tag that lands on half the board
-   * tells the user nothing.
-   */
-  DEVELOPMENTAL_GAP_MIN: 16,
-  /** Flat markdown the room applies to anyone carrying a medical flag. */
-  MEDICAL_PULL: 6.5,
-  /**
-   * Odds a prospect picks up a public medical flag at all. Correlated with
-   * true durability but floored well above zero: the exploitable case is the
-   * flagged player whose shoulder is genuinely fine, and that case has to
-   * exist often enough to be worth scouting for.
-   */
-  MEDICAL_BASE_ODDS: 0.06,
-  MEDICAL_MIN_ODDS: 0.03,
-  MEDICAL_MAX_ODDS: 0.3,
-
-  /** A bias is only NAMED to the user once its pull clears this. Below it, it is rounding. */
-  BIAS_REPORT_THRESHOLD: 2,
-
-  /**
-   * How far positional value moves a prospect's BOARD SLOT, in board-score
-   * points, at AI.DRAFT_POSITION_VALUE's extremes. This does not touch the
-   * grade — a guard and a quarterback who grade out the same are the same
-   * football player, they just do not come off the board at the same pick.
-   * It is the room's fifth bias and the most exploitable one: nothing stops a
-   * GM taking the guard.
-   */
-  POSITION_PULL: 8,
-
-  /**
-   * Band cutoffs as PICK NUMBERS, so they mean what they say — a
-   * "first-round grade" is a player the room expects inside the first round.
-   * Scaled to the actual draft (teams x rounds) rather than hard-coded, so a
-   * league running 4 rounds does not label a hundred players Day 3.
-   */
-  BANDS: [
-    { id: 'BLUE_CHIP', label: 'Blue chip', blurb: 'Top of the board. The room does not expect him to get past the first handful of picks.' },
-    { id: 'FIRST_ROUND', label: 'First-round grade', blurb: 'A consensus first rounder.' },
-    { id: 'DAY_TWO', label: 'Day 2 grade', blurb: 'Second or third round on most boards.' },
-    { id: 'DAY_THREE', label: 'Day 3 grade', blurb: 'A rotational bet in the middle rounds.' },
-    { id: 'LATE_FLIER', label: 'Late flier', blurb: 'Last-day name. Special teams and a roster spot to win.' },
-    { id: 'PRIORITY_FA', label: 'Priority free agent', blurb: 'Expected to go undrafted. Somebody signs him after the phones stop.' },
-  ] as const,
-};
 
 export type ConsensusBandId = (typeof CONSENSUS.BANDS)[number]['id'];
 
@@ -163,18 +90,6 @@ export function bandCutoffs(shape: BoardShape = DEFAULT_SHAPE) {
 // ---------------------------------------------------------------------------
 // Public athleticism read
 // ---------------------------------------------------------------------------
-
-/**
- * Positional 40 baselines. DUPLICATED from generateCombineTesting's BASE_40 in
- * lib/gen/prospectProfile.ts, which keeps its table private. The inversion
- * below is exact against that generator, so if these two ever drift the board
- * starts misreading testing — see docs/scouting-pivot.md for the one-line
- * handoff that exports the table and deletes this copy.
- */
-const BASE_40: Partial<Record<Position, number>> = {
-  WR: 4.48, CB: 4.47, RB: 4.52, S: 4.55, TE: 4.68, LB: 4.72, QB: 4.75, EDGE: 4.68,
-  FB: 4.85, DT: 5.05, RT: 5.25, LT: 5.25, RG: 5.3, LG: 5.3, C: 5.28, K: 4.95, P: 4.95,
-};
 
 /**
  * 0..1 "how did he test", 1 = best, position-adjusted. Recovered by inverting

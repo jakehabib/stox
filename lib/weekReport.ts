@@ -3,7 +3,7 @@ import { readJson } from './json';
 import { BoxScore, BoxLine, SeasonStats } from './types';
 import { computeGameShape, GameShape, wentToOvertime } from './gameShape';
 import {
-  StandingsRow, conferenceSeedOrder, gamesBackOfCutLine, ordinal, rankAmong, recordString, PLAYOFF_SPOTS,
+  StandingsRow, conferenceSeedOrder, gamesBackOfCutLine, ordinal, rankAmong, recordString,
 } from './standingsOrder';
 import { computeClinchStatus, clinchScenarioTag, StandingsTeam } from './clinchScenario';
 import { generateTeamLogoParams } from './gen/teamLogo';
@@ -729,6 +729,3 @@ export async function buildTrophyMoment(leagueId: string, seasonYear: number, ro
     nextPick,
   };
 }
-
-/** Exported for the report panel's "playoff picture" phrasing. */
-export const PLAYOFF_CUT_LINE = PLAYOFF_SPOTS;

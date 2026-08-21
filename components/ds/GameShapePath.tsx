@@ -46,8 +46,8 @@ export function GameShapePath({
   shape, color, width = 120, height = 36, variant = 'spark', className, animate = false,
 }: Props) {
   const stroke = color ?? TONE_HEX[shape.tone];
-  const padY = variant === 'full' ? 18 : 4;
-  const padX = variant === 'full' ? 10 : 2;
+  const padY = variant === 'full' ? 22 : 4;
+  const padX = variant === 'full' ? 14 : 2;
   const mid = height / 2;
 
   const maxAbs = Math.max(7, ...shape.points.map((p) => Math.abs(p.diff)));
@@ -76,11 +76,14 @@ export function GameShapePath({
           @media (prefers-reduced-motion: reduce) { .shape-draw { animation: none; } }
         ` }} />
       )}
+      {/* Scales uniformly rather than stretching. An earlier pass used
+          preserveAspectRatio="none" to fill the width, which turned the
+          moment markers into ellipses and would have smeared any label
+          sideways — the silhouette has to be readable, not merely wide. */}
       <svg
         viewBox={`0 0 ${width} ${height}`}
         width="100%"
-        height={height}
-        preserveAspectRatio="none"
+        style={{ height: 'auto', display: 'block' }}
         className={className}
         role="img"
         aria-label={ariaLabel(shape)}
@@ -118,14 +121,32 @@ export function GameShapePath({
         />
 
         {showMarkers && deepest !== null && shape.largestDeficit > 0 && (
-          <circle cx={x(deepest)} cy={y(shape.points[deepest].diff)} r={3.5} fill={TONE_HEX.bad} />
+          <>
+            <circle cx={x(deepest)} cy={y(shape.points[deepest].diff)} r={3.2} fill={TONE_HEX.bad} />
+            <text
+              x={clampLabel(x(deepest), width)} y={y(shape.points[deepest].diff) + 13}
+              textAnchor="middle" fontSize={8.5} fill={TONE_HEX.bad}
+              fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+            >
+              −{shape.largestDeficit}
+            </text>
+          </>
         )}
         {/* The go-ahead marker only means something when there was a lead to
             take back: on a wire-to-wire game the "go-ahead" is the opening
             score, which is not a moment, and from the losing bench a green
             dot on the winner's decisive drive reads backwards. */}
         {showMarkers && goAhead !== null && shape.finalMargin > 0 && shape.largestDeficit > 0 && (
-          <circle cx={x(goAhead)} cy={y(shape.points[goAhead].diff)} r={4} fill={TONE_HEX.good} />
+          <>
+            <circle cx={x(goAhead)} cy={y(shape.points[goAhead].diff)} r={3.6} fill={TONE_HEX.good} />
+            <text
+              x={clampLabel(x(goAhead), width)} y={y(shape.points[goAhead].diff) - 8}
+              textAnchor="middle" fontSize={7.5} fill={TONE_HEX.good} letterSpacing={0.6}
+              fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+            >
+              GO-AHEAD
+            </text>
+          </>
         )}
       </svg>
     </>
@@ -146,10 +167,45 @@ function ariaLabel(shape: GameShape): string {
   return `Score differential across ${shape.points.length - 1} drives. ${bits.join(', ')}.`;
 }
 
+/** Keeps a marker label from running off either end of the viewBox. */
+function clampLabel(cx: number, width: number): number {
+  return Math.min(width - 26, Math.max(26, cx));
+}
+
 function hash(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
   return h;
+}
+
+/**
+ * Quarter labels placed under a `full` path, at the midpoint of the x-range
+ * each quarter actually occupies.
+ *
+ * They are NOT evenly spaced, and that is the point: the engine runs 11
+ * rounds of drives and stamps quarters as floor(round / 11 * 4), which gives
+ * Q1-Q3 three rounds each and Q4 only two. A tidy four-column grid would put
+ * "Q4" somewhere the fourth quarter isn't — a small lie, but the same class
+ * of lie as a rank that isn't the real rank.
+ */
+export function QuarterAxis({ shape, width = 640, className = '' }: { shape: GameShape; width?: number; className?: string }) {
+  const padX = 14;
+  const n = shape.points.length - 1;
+  const x = (i: number) => padX + (i / Math.max(1, n)) * (width - padX * 2);
+  const starts = shape.quarterStarts.length > 0 ? shape.quarterStarts : [1];
+  const bounds = [0, ...starts.slice(1), shape.points.length - 1];
+  const labels: { label: string; pct: number }[] = [];
+  for (let q = 0; q < bounds.length - 1; q++) {
+    const mid = (x(bounds[q]) + x(bounds[q + 1])) / 2;
+    labels.push({ label: q >= 4 ? 'OT' : `Q${q + 1}`, pct: (mid / width) * 100 });
+  }
+  return (
+    <div className={`relative h-4 font-mono text-[10px] text-muted ${className}`}>
+      {labels.map((l) => (
+        <span key={l.label} className="absolute -translate-x-1/2" style={{ left: `${l.pct}%` }}>{l.label}</span>
+      ))}
+    </div>
+  );
 }
 
 /** The archetype word, in its own tone. One word, never a sentence. */

@@ -3,17 +3,47 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { assertLeagueOwner, ensureOwnerKey } from '@/lib/owner';
+import { assertCanCreateLeague, assertLeagueOwner, ensureOwnerKey } from '@/lib/owner';
 import { createLeague } from '@/lib/gen/league';
 import { DEFAULT_SETTINGS, LeagueSettings, serializeSettings } from '@/lib/settings';
 import { advanceWeek } from '@/lib/season';
 
+/**
+ * Whitelists for the three enum-ish fields. These arrive as raw FormData, and
+ * a Server Action is a public POST endpoint — the form is not the only thing
+ * that can call it. Casting an arbitrary string straight into the settings
+ * JSON let a crafted request write a difficulty of "" or a capMode nothing in
+ * the codebase handles, which then fails much later, somewhere else, in a
+ * league that already exists.
+ */
+const LEAGUE_STARTS = ['RANDOM_ROSTERS', 'FANTASY_DRAFT'] as const;
+const CAP_MODES = ['REALISTIC', 'SIMPLIFIED', 'OFF'] as const;
+const DIFFICULTIES = ['ROOKIE', 'PRO', 'ALL_PRO', 'LEGEND'] as const;
+
+function pick<T extends string>(raw: FormDataEntryValue | null, allowed: readonly T[], fallback: T): T {
+  const v = String(raw ?? '');
+  return (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+}
+
+/** League names are shown in lists and page titles; an unbounded one is a
+ *  layout problem in every one of them, and a free text column to fill. */
+const MAX_LEAGUE_NAME = 60;
+
 export async function createLeagueAction(formData: FormData) {
-  const name = String(formData.get('name') || 'My League');
+  // Mint the owner key FIRST. It used to be read after generation, purely to
+  // stamp the finished league — which meant there was no identity to count
+  // against until ~5,300 rows had already been written. The limit check needs
+  // the key before any of that work starts, and stamping with the same value
+  // afterwards keeps the count and the stamp in agreement.
+  const ownerKey = ensureOwnerKey();
+  await assertCanCreateLeague(ownerKey);
+
+  const rawName = String(formData.get('name') || '').trim();
+  const name = (rawName || 'My League').slice(0, MAX_LEAGUE_NAME);
   const userTeamAbbr = String(formData.get('userTeamAbbr') || 'STL');
-  const leagueStart = String(formData.get('leagueStart') || 'RANDOM_ROSTERS') as LeagueSettings['leagueStart'];
-  const capMode = String(formData.get('capMode') || 'REALISTIC') as LeagueSettings['capMode'];
-  const difficulty = String(formData.get('difficulty') || 'PRO') as LeagueSettings['difficulty'];
+  const leagueStart = pick(formData.get('leagueStart'), LEAGUE_STARTS, 'RANDOM_ROSTERS');
+  const capMode = pick(formData.get('capMode'), CAP_MODES, 'REALISTIC');
+  const difficulty = pick(formData.get('difficulty'), DIFFICULTIES, 'PRO');
 
   const leagueId = await createLeague({
     name,
@@ -21,10 +51,9 @@ export async function createLeagueAction(formData: FormData) {
     settings: { ...DEFAULT_SETTINGS, leagueStart, capMode, difficulty },
   });
 
-  // Stamp the save with this browser's owner key the moment it exists, so it
-  // is never briefly visible to, or deletable by, anyone else. ensureOwnerKey
-  // mints the cookie on the first league a browser creates.
-  await prisma.league.update({ where: { id: leagueId }, data: { ownerKey: ensureOwnerKey() } });
+  // Stamp the save the moment it exists, so it is never briefly visible to,
+  // or deletable by, anyone else.
+  await prisma.league.update({ where: { id: leagueId }, data: { ownerKey } });
 
   redirect(`/league/${leagueId}`);
 }

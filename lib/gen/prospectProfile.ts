@@ -254,6 +254,18 @@ function testingQuality(rng: Rng, archetype: TestingArchetype, truePercentile: n
 }
 
 /**
+ * Positional 40 baselines, and the anchor every other measurable below is
+ * calibrated against. EXPORTED because lib/consensus.ts inverts these exact
+ * formulas to recover the public testing read from the published numbers — it
+ * used to keep its own copy of this table, and two copies drifting apart
+ * would silently make the consensus board misread testing.
+ */
+export const BASE_40: Partial<Record<Position, number>> = {
+  WR: 4.48, CB: 4.47, RB: 4.52, S: 4.55, TE: 4.68, LB: 4.72, QB: 4.75, EDGE: 4.68,
+  FB: 4.85, DT: 5.05, RT: 5.25, LT: 5.25, RG: 5.3, LG: 5.3, C: 5.28, K: 4.95, P: 4.95,
+};
+
+/**
  * Combine or pro-day testing numbers — always public knowledge, unlike
  * scouted attribute ranges. [TUNE]
  *
@@ -278,10 +290,6 @@ export function generateCombineTesting(rng: Rng, position: Position, trueAttrs: 
   // quality instead of the raw attribute), not the position calibration.
   const proxy = 20 + quality * 79;
 
-  const BASE_40: Partial<Record<Position, number>> = {
-    WR: 4.48, CB: 4.47, RB: 4.52, S: 4.55, TE: 4.68, LB: 4.72, QB: 4.75, EDGE: 4.68,
-    FB: 4.85, DT: 5.05, RT: 5.25, LT: 5.25, RG: 5.3, LG: 5.3, C: 5.28, K: 4.95, P: 4.95,
-  };
   const base40 = BASE_40[position] ?? 4.9;
   const fortyYard = clamp(base40 - (proxy - 50) / 160 + rng.float(-0.05, 0.05), 4.22, 5.9);
 

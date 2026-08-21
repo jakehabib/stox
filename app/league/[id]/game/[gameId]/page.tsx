@@ -6,7 +6,7 @@ import { BoxScore } from '@/lib/types';
 import { TeamLogo } from '@/components/TeamLogo';
 import { computeGameShape, marginPhrase, wentToOvertime } from '@/lib/gameShape';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
-import { GameShapePath, ArchetypeTag } from '@/components/ds/GameShapePath';
+import { GameShapePath, ArchetypeTag, QuarterAxis } from '@/components/ds/GameShapePath';
 import { QuarterLinescore } from '@/components/ds/QuarterLinescore';
 
 export default async function GamePage({ params }: { params: { id: string; gameId: string } }) {
@@ -61,11 +61,7 @@ export default async function GamePage({ params }: { params: { id: string; gameI
             </span>
           </div>
           <GameShapePath shape={shape} color={shapeColor} width={640} height={150} variant="full" />
-          {/* Centred inside each quarter, not on the boundaries — the faint
-              rules in the path already mark where the quarters break. */}
-          <div className="grid grid-cols-4 px-2 font-mono text-[10px] text-muted text-center">
-            <span>Q1</span><span>Q2</span><span>Q3</span><span>Q4</span>
-          </div>
+          <QuarterAxis shape={shape} width={640} />
           <div className="flex flex-wrap gap-x-6 gap-y-2 mt-4 pt-3 border-t border-line/60">
             <ShapeFact label="Shape" value={shape.archetype} />
             <ShapeFact label="Lead changes" value={String(shape.leadChanges)} />

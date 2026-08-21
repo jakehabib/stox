@@ -3,7 +3,15 @@ import { Rng, clamp } from './rng';
 import { CAP, LEAGUE, FREE_AGENCY, ROSTER_TARGETS, Position, rosterMinFor } from './tuning';
 import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
-import { buildContract, marketValue, suggestedYears, capHit, capSavingsOnCut, formatMoney } from './cap';
+import { buildContract, marketValue, suggestedYears, capHit, capSavingsOnCut, formatMoney, maxYearsForAge } from './cap';
+import { buildScoutedView } from './scouting';
+import { loadScoutMods } from './dynasty';
+import {
+  buildNegotiationContext, contractShapeFor, decideOffer, sessionFingerprint,
+  DEFAULT_STRUCTURE,
+  type DealStructure, type NegotiationGate, type NegotiationOutcome,
+  type NegotiationSession, type Offer,
+} from './negotiation';
 import { maxOffer, parseGmProfile, teamNeeds, RosterPlayer } from './ai/gm';
 import { teamCapSummary } from './cap-summary';
 import { assertCapRoom } from './capEnforcement';
@@ -21,14 +29,28 @@ import { assertCapRoom } from './capEnforcement';
  * ===========================================================================
  */
 
-export async function evaluateOffer(playerId: string, teamId: string, apy: number, years: number) {
-  const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId } });
-  const market = marketValue({ ovr: player.trueOvr, position: player.position as any, age: player.age, potential: player.potential });
-  // [TUNE] player accepts anything >= 90% of market; below that, a soft counter.
-  const ratio = apy / market;
-  if (ratio >= 0.9) return { accepted: true, ratio, market };
-  return { accepted: false, ratio, market, counterApy: Math.round(market * 0.97) };
-}
+/**
+ * ---------------------------------------------------------------------------
+ * WHERE `evaluateOffer` WENT
+ * ---------------------------------------------------------------------------
+ * There used to be a second acceptance model here:
+ *
+ *     const ratio = apy / market;
+ *     if (ratio >= 0.9) return { accepted: true, ... };
+ *
+ * — four lines, no personality, no term, no guarantee, no patience, no rival.
+ * That was the function the server actually used, while lib/negotiation.ts's
+ * full model (interest meter, personalities, reservation price, patience) sat
+ * unimported. Two evaluators is one more than a game may have: the meter can
+ * only be honest if the thing it draws is the thing that decides.
+ *
+ * So this one is gone. Acceptance now lives in exactly one place —
+ * `decideOffer` in lib/negotiation.ts — and both the browser (per drag) and
+ * the Server Action (on submit) call it. `resolveNegotiationSession` below
+ * builds the input from the database; `negotiateOffer` is the only path that
+ * signs anything a user negotiated.
+ * ---------------------------------------------------------------------------
+ */
 
 export interface CompetingBid { teamId: string; teamName: string; teamAbbr: string; apy: number }
 
@@ -74,13 +96,19 @@ export async function signFreeAgent(opts: {
   week: number;
   /** <1 front-loaded, >1 back-loaded. Same structuring the extension path allows. */
   escalation?: number;
+  /** Share of total value paid as signing bonus — what the guarantee slider buys. */
+  bonusPct?: number;
+  guaranteedPct?: number;
   /** Cap-only trailing years. Settled as a cap charge when the deal expires (see lib/season.ts). */
   voidYears?: number;
 }) {
   const { playerId, teamId, apy, years, seasonYear, capMode, week } = opts;
   const voidYears = Math.max(0, opts.voidYears ?? 0);
 
-  const contract = buildContract({ apy, years, signedYear: seasonYear, escalation: opts.escalation });
+  const contract = buildContract({
+    apy, years, signedYear: seasonYear, escalation: opts.escalation,
+    bonusPct: opts.bonusPct, guaranteedPct: opts.guaranteedPct,
+  });
   // Void years widen the proration divisor, so they change the year-1 hit the
   // cap check has to clear — build the check off the same shape that gets stored.
   const hit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries), voidYears }, capMode);
@@ -139,6 +167,7 @@ export async function extendContract(opts: {
   escalation?: number; // <1 front-loaded, >1 back-loaded
   voidYears?: number;
   bonusPct?: number;
+  guaranteedPct?: number;
   /**
    * True when this is a team keeping its OWN expiring player rather than
    * tearing up a deal with years left on it. Writes a RESIGN transaction
@@ -163,7 +192,10 @@ export async function extendContract(opts: {
 
   const oldHit = player.contract ? capHit(player.contract, capMode) : 0;
   const reSign = opts.reSign ?? (player.contract ? player.contract.yearsRemaining <= 1 : false);
-  const contract = buildContract({ apy, years, signedYear: seasonYear, escalation: opts.escalation, bonusPct: opts.bonusPct });
+  const contract = buildContract({
+    apy, years, signedYear: seasonYear, escalation: opts.escalation,
+    bonusPct: opts.bonusPct, guaranteedPct: opts.guaranteedPct,
+  });
   const newHit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries) }, capMode);
   // The old deal is torn up the instant this one is signed, so its hit is
   // credited back before the new one is measured against the ceiling.
@@ -344,7 +376,7 @@ export async function restructureContract(opts: {
 export async function signFreeAgentWithCompetition(opts: {
   leagueId: string; playerId: string; teamId: string; apy: number; years: number;
   seasonYear: number; capMode: LeagueSettings['capMode']; week: number;
-  escalation?: number; voidYears?: number;
+  escalation?: number; voidYears?: number; bonusPct?: number; guaranteedPct?: number;
 }) {
   const competing = await leadingCompetingBid(opts.leagueId, opts.playerId, opts.teamId, opts.seasonYear, opts.capMode);
   if (competing && competing.apy > opts.apy) {
@@ -701,4 +733,287 @@ export async function fillRosterForTeam(opts: {
   }
 
   return { signed };
+}
+
+/**
+ * ===========================================================================
+ * NEGOTIATION (the user's side of the table)
+ * ===========================================================================
+ * Two entry points, both used by both screens (free agency and the re-sign
+ * window):
+ *
+ *   resolveNegotiationSession  — read the world once, resolve every random
+ *                                draw, hand the client a NegotiationSession.
+ *   negotiateOffer             — re-resolve, re-decide, and act.
+ *
+ * The client re-runs `decideOffer` on the session it was given for every
+ * pixel of every slider, which is the only reason the interest meter can move
+ * without a request per frame. Nothing it computes is trusted: the session is
+ * resolved again here from the database, the decision is taken again with the
+ * same function, and a session that has MOVED under the user (a rival's cap
+ * space changed, your own cap changed) is refused outright rather than
+ * silently re-priced — acting on terms the meter was not describing is the
+ * lying-metric failure this whole exercise exists to remove.
+ * ===========================================================================
+ */
+
+export async function resolveNegotiationSession(opts: {
+  leagueId: string;
+  playerId: string;
+  teamId: string;
+  seasonYear: number;
+  settings: LeagueSettings;
+  /** True when this is your own expiring player, not an outside free agent. */
+  incumbent: boolean;
+}): Promise<NegotiationSession> {
+  const { leagueId, playerId, teamId, seasonYear, settings, incumbent } = opts;
+  const capMode = settings.capMode;
+
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
+
+  // The market number the user SEES is priced off what they know of him —
+  // the same scouted view the free-agency table and the player page render,
+  // so the panel never quotes a different estimate than the row you clicked.
+  const report = await prisma.scoutingReport.findUnique({
+    where: { playerId_teamId: { playerId, teamId } },
+  });
+  const view = buildScoutedView({
+    position: player.position as Position,
+    trueAttrs: readJson(player.trueAttrs, {}),
+    trueOvr: player.trueOvr,
+    potential: player.potential,
+    report,
+    settings,
+    isOwnRoster: incumbent,
+    isUserView: true,
+    dynasty: await loadScoutMods(leagueId),
+  });
+  const marketApy = marketValue({ ovr: view.scoutedOvr, position: player.position as Position, age: player.age });
+  const trueMarketApy = marketValue({
+    ovr: player.trueOvr, position: player.position as Position, age: player.age, potential: player.potential,
+  });
+
+  // Rival interest. A free agent is being shopped by his agent; your own
+  // expiring player is not on the market yet, which is precisely the reason
+  // to get ahead of it — see the re-sign window's own copy.
+  const competing = incumbent
+    ? null
+    : await leadingCompetingBid(leagueId, playerId, teamId, seasonYear, capMode);
+  const competition = competing ? clamp(competing.apy / Math.max(1, trueMarketApy), 0.3, 1) : 0;
+
+  const played = team.wins + team.losses + team.ties;
+  const winPct = played > 0 ? (team.wins + team.ties * 0.5) / played : team.prestige / 100;
+  const teamStrength = clamp(winPct * 0.5 + (team.prestige / 100) * 0.5, 0, 1);
+
+  const ctx = buildNegotiationContext({
+    playerId,
+    playerName: `${player.firstName} ${player.lastName}`,
+    position: player.position,
+    age: player.age,
+    ovr: player.trueOvr,
+    marketApy,
+    trueMarketApy,
+    incumbent,
+    teamStrength,
+    yearsWithTeam: incumbent && player.contract ? Math.max(0, seasonYear - player.contract.signedYear) : 0,
+    competition,
+    // Seeded on the matchup and the league year — NOT the clock. Re-opening
+    // the panel, refreshing the page or submitting an offer all rebuild the
+    // identical man with the identical asking price; only the season rolling
+    // over gives him a new read on himself.
+    rng: new Rng(`nego-${playerId}-${teamId}-${seasonYear}`),
+  });
+
+  // Cap room. An extension credits back the deal it replaces, exactly as
+  // assertCapRoom will when it runs for real — the gate has to measure
+  // against the same number the enforcement does or the meter would refuse
+  // deals the server would have allowed.
+  const oldHit = incumbent && player.contract ? capHit(player.contract, capMode) : 0;
+  const capSpace = capMode === 'OFF'
+    ? Number.MAX_SAFE_INTEGER
+    : (await teamCapSummary(teamId, seasonYear, capMode)).capSpace + oldHit;
+
+  const maxYears = maxYearsForAge(player.age);
+  const ceilingFloor = Math.max(CAP.MIN_SALARY * 2, Math.round(marketApy * 2.5));
+  const gate: NegotiationGate = {
+    capMode,
+    capSpace,
+    minSalary: CAP.MIN_SALARY,
+    // The ceiling has to clear a rival's bid, or the one control that could
+    // win the auction would stop short of the number that wins it.
+    maxSalary: Math.max(ceilingFloor, competing ? Math.round(competing.apy * 1.15) : 0),
+    maxYears,
+    competingApy: competing?.apy ?? 0,
+    competingTeam: competing?.teamName ?? null,
+  };
+
+  return { ctx, gate };
+}
+
+/**
+ * Submit an offer for real.
+ *
+ * `patienceSpent` is what the client believes it has burned so far. It is not
+ * trusted for anything except pacing: the server recomputes the COST of this
+ * offer itself, and every consequence that touches the database (he signs
+ * elsewhere) is decided here. A client that lied about it can only give
+ * itself a negotiation that never ends, which is the behaviour this feature
+ * replaced.
+ */
+export async function negotiateOffer(opts: {
+  leagueId: string;
+  playerId: string;
+  teamId: string;
+  seasonYear: number;
+  week: number;
+  settings: LeagueSettings;
+  incumbent: boolean;
+  offer: Offer;
+  structure?: DealStructure;
+  patienceSpent: number;
+  /** Fingerprint of the session the user was actually looking at. */
+  fingerprint?: string;
+}): Promise<NegotiationOutcome> {
+  const { leagueId, playerId, teamId, seasonYear, week, settings, incumbent } = opts;
+  const structure = opts.structure ?? DEFAULT_STRUCTURE;
+  const session = await resolveNegotiationSession({ leagueId, playerId, teamId, seasonYear, settings, incumbent });
+  const decision = decideOffer(session.ctx, opts.offer, session.gate, structure);
+  const spentBefore = clamp(Math.round(opts.patienceSpent) || 0, 0, session.ctx.patience);
+
+  const base = { session, decision, patienceSpent: spentBefore, walkedAway: spentBefore >= session.ctx.patience };
+
+  // The world moved between opening the panel and pressing the button. The
+  // meter was describing a negotiation that no longer exists, so nothing is
+  // charged and nothing is signed — the fresh session goes back and the meter
+  // re-reads in front of the user.
+  if (opts.fingerprint && opts.fingerprint !== sessionFingerprint(session)) {
+    return {
+      ...base,
+      ok: false,
+      message: 'The terms moved while you were deciding — the meter has been re-read. Look again before you offer.',
+    };
+  }
+
+  if (base.walkedAway) {
+    return { ...base, ok: false, message: 'His agent is no longer taking your calls.' };
+  }
+
+  // --- He would sign it -----------------------------------------------------
+  if (decision.accepted) {
+    const shape = contractShapeFor(opts.offer);
+    try {
+      if (incumbent) {
+        await extendContract({
+          leagueId, playerId, apy: opts.offer.apy, years: opts.offer.years, seasonYear,
+          capMode: settings.capMode, week, escalation: structure.escalation, voidYears: structure.voidYears,
+          bonusPct: shape.bonusPct, guaranteedPct: shape.guaranteedPct, reSign: true,
+        });
+      } else {
+        // Still goes through the competition path: between resolving the
+        // session and this line an AI team can have moved, and if it has, the
+        // player leaves with them. That is the drama of an open market and it
+        // is not something the user's click may override.
+        await signFreeAgentWithCompetition({
+          leagueId, playerId, teamId, apy: opts.offer.apy, years: opts.offer.years, seasonYear,
+          capMode: settings.capMode, week, escalation: structure.escalation, voidYears: structure.voidYears,
+          bonusPct: shape.bonusPct, guaranteedPct: shape.guaranteedPct,
+        });
+      }
+    } catch (err) {
+      // Cap refusals and last-second outbids are foreseeable, user-recoverable
+      // outcomes, not bugs — they must never escape a Server Action uncaught.
+      return { ...base, ok: false, message: err instanceof Error ? err.message : 'The deal fell through.' };
+    }
+    return {
+      ...base,
+      ok: true,
+      message: incumbent
+        ? `${session.ctx.playerName} is staying — ${opts.offer.years} year${opts.offer.years === 1 ? '' : 's'} at ${formatMoney(opts.offer.apy)}/yr.`
+        : `${session.ctx.playerName} signs — ${opts.offer.years} year${opts.offer.years === 1 ? '' : 's'} at ${formatMoney(opts.offer.apy)}/yr.`,
+    };
+  }
+
+  // --- Somebody else is paying more ----------------------------------------
+  // He liked the deal; he liked theirs more. Submitting anyway is how you find
+  // out, and it costs you the player rather than a unit of patience.
+  if (decision.outbid) {
+    const lost = await loseToCompetingBid({
+      leagueId, playerId, teamId, seasonYear, capMode: settings.capMode, week,
+    });
+    if (lost) {
+      return {
+        ...base, ok: false, lostTo: lost,
+        message: `Outbid — the ${lost.teamName} closed him at ${formatMoney(lost.apy)}/yr while you were still talking.`,
+      };
+    }
+    return { ...base, ok: false, message: decision.reason ?? 'Someone else is offering more.' };
+  }
+
+  // --- The ledger said no, not the player ----------------------------------
+  if (decision.blocked) {
+    return { ...base, ok: false, message: decision.reason ?? 'This offer cannot be made.' };
+  }
+
+  // --- He turned it down ---------------------------------------------------
+  const cost = decision.evaluation.insulting ? 2 : 1;
+  const patienceSpent = Math.min(session.ctx.patience, spentBefore + cost);
+  const walkedAway = patienceSpent >= session.ctx.patience;
+
+  if (walkedAway && !incumbent) {
+    // Out of patience on the open market is not a soft ending: he takes the
+    // best offer on the table and he is gone. This is the one part of the
+    // patience mechanic that survives a page reload, and it is the part that
+    // matters — the counter is pacing, the loss is the consequence.
+    const lost = await loseToCompetingBid({
+      leagueId, playerId, teamId, seasonYear, capMode: settings.capMode, week,
+    });
+    if (lost) {
+      return {
+        ...base, ok: false, patienceSpent, walkedAway, lostTo: lost,
+        message: `He is done with you — signed with the ${lost.teamName} at ${formatMoney(lost.apy)}/yr.`,
+      };
+    }
+    return {
+      ...base, ok: false, patienceSpent, walkedAway,
+      message: 'His agent has stopped returning your calls. He will wait for a better offer than yours.',
+    };
+  }
+
+  return {
+    ...base,
+    ok: false,
+    patienceSpent,
+    walkedAway,
+    message: walkedAway
+      ? `${session.ctx.playerName} has ended talks. He will test the market.`
+      : decision.evaluation.insulting
+        ? `${decision.evaluation.headline} That one cost you.`
+        : decision.evaluation.headline,
+  };
+}
+
+/**
+ * Hand the player to the leading rival, for real. Used both when the user
+ * submits into a losing auction and when he runs out of patience with them
+ * still bidding. Returns null when nobody could actually close it — the
+ * player simply stays on the market, same as `signFreeAgentWithCompetition`.
+ */
+async function loseToCompetingBid(opts: {
+  leagueId: string; playerId: string; teamId: string; seasonYear: number;
+  capMode: LeagueSettings['capMode']; week: number;
+}): Promise<{ teamName: string; apy: number } | null> {
+  const competing = await leadingCompetingBid(opts.leagueId, opts.playerId, opts.teamId, opts.seasonYear, opts.capMode);
+  if (!competing) return null;
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId } });
+  try {
+    await signFreeAgent({
+      leagueId: opts.leagueId, playerId: opts.playerId, teamId: competing.teamId,
+      apy: competing.apy, years: suggestedYears(player.trueOvr, player.age),
+      seasonYear: opts.seasonYear, capMode: opts.capMode, week: opts.week,
+    });
+  } catch {
+    return null; // rival couldn't fit it either — he stays on the market
+  }
+  return { teamName: competing.teamName, apy: competing.apy };
 }

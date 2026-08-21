@@ -8,7 +8,7 @@ import { ordinal } from '@/lib/standingsOrder';
 import { marginPhrase } from '@/lib/gameShape';
 import { TeamLogo } from '../TeamLogo';
 import { PlayerAvatar } from '../PlayerAvatar';
-import { GameShapePath, ArchetypeTag } from './GameShapePath';
+import { GameShapePath, ArchetypeTag, QuarterAxis } from './GameShapePath';
 import { QuarterLinescore } from './QuarterLinescore';
 import { ResultKicker } from './ResultWeight';
 
@@ -175,9 +175,7 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
                     variant="full"
                     animate
                   />
-                  <div className="grid grid-cols-4 px-2 font-mono text-[10px] text-muted text-center">
-                    <span>Q1</span><span>Q2</span><span>Q3</span><span>Q4</span>
-                  </div>
+                  <QuarterAxis shape={r.shape} width={640} />
                   <p className="text-[11px] text-muted mt-1.5">
                     Score differential across {r.shape.points.length - 1} drives · {r.shape.note}
                     {r.shape.leadChanges > 0 && ` · ${r.shape.leadChanges} lead change${r.shape.leadChanges === 1 ? '' : 's'}`}

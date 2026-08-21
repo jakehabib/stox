@@ -25,7 +25,6 @@ import { reseedDraftOrder, startRookieDraft } from './draft';
 import { ensureSeasonSchedule } from './scheduleSeason';
 import { autoDepthChartAll } from './gen/league';
 import { observe } from './scouting';
-import { replenishLeagueScoutingBudgets } from './scoutingEconomy';
 import { applyShortlistAttention } from './shortlistAttention';
 import { resetWorkoutSlots } from './workouts';
 import { standingsCompare } from './standingsOrder';
@@ -49,28 +48,17 @@ import {
  */
 
 /**
- * Public entrypoint. Wraps the phase machine so that whatever the step did to
- * the clock, every team's scouting allowance is brought onto the new period
- * before the UI reads it: this is the replenishment tick for the focus
- * economy (lib/scoutingEconomy.ts). It is idempotent — a team already on the
- * current period is skipped — so a no-op advance never hands out free focus.
- *
- * DEPRECATED CALL. Focus points are being removed (see the header of
- * lib/scoutingEconomy.ts). The replenish stays only so the header tile still
- * reading that balance keeps showing a coherent number until the UI landing
- * separately drops it; it comes out with the call sites in
- * docs/scouting-pivot.md. The scouting that actually happens now is
- * applyShortlistAttention, on the regular-season week tick below.
+ * Public entrypoint. Wraps the phase machine and nothing else — there is no
+ * per-period scouting allowance to top up any more. The scouting that happens
+ * when time moves is applyShortlistAttention, on the regular-season week tick
+ * below: free, automatic, and impossible to forget to spend.
  */
 export async function advanceWeek(leagueId: string): Promise<AdvanceResult> {
   const before = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const blocked = await capComplianceBlock(leagueId, parseSettings(before.settings), before.phase);
   if (blocked) return blocked; // time does not move while the user is over the cap
 
-  const result = await advanceWeekStep(leagueId);
-  const after = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  await replenishLeagueScoutingBudgets(leagueId, after, parseSettings(after.settings));
-  return result;
+  return advanceWeekStep(leagueId);
 }
 
 /**

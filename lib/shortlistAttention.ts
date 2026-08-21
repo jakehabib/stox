@@ -3,7 +3,7 @@ import { Rng, clamp } from './rng';
 import { readJson, writeJson } from './json';
 import { observe, scoutNote } from './scouting';
 import { DYNASTY, loadScoutMods } from './dynasty';
-import { POSITION_GROUP, SCOUTING } from './tuning';
+import { POSITION_GROUP, SCOUTING, SHORTLIST_ATTENTION } from './tuning';
 import type { Position } from './tuning';
 import type { AttrMap } from './ratings';
 
@@ -37,84 +37,11 @@ import type { AttrMap } from './ratings';
  * lib/scouting.ts's observe(), so a shortlisted prospect's numbers drift
  * toward truth through the exact machinery that has always moved them.
  *
- * WHY CONSTANTS LIVE HERE. Every other tunable in the game is in lib/tuning.ts
- * and these belong there too, but that file is owned by another workstream
- * right now. See docs/scouting-pivot.md — moving this block is a handoff item,
- * not a design choice.
+ * TUNING lives in lib/tuning.ts's SHORTLIST_ATTENTION block, with every other
+ * balance number in the game — including the measured star-count/confidence
+ * table that IS this system's design.
  * ===========================================================================
  */
-
-// ---------------------------------------------------------------------------
-// TUNING [TUNE] — belongs in lib/tuning.ts, see above
-// ---------------------------------------------------------------------------
-
-export const SHORTLIST_ATTENTION = {
-  /**
-   * Attention units a department produces in a week, before staff scaling.
-   * Abstract by design: the number the user is ever shown is the per-player
-   * SHARE this divides into, never the pool itself.
-   *
-   * Set so a MEDIAN department lands on an effective pool of ~100, which is
-   * what the table below is measured at. Across every team in the dev
-   * database the staff multiplier runs 0.57 to 2.28 (median 1.26), so a
-   * well-staffed front office covers roughly four times the ground a poor one
-   * does — which is most of what Scout.accuracy and Scout.speed are for now
-   * that the focus economy they used to feed is gone.
-   */
-  WEEKLY_POOL: 80,
-
-  /**
-   * Fraction of the remaining confidence gap one attention unit closes.
-   *
-   * Sized against a 17-week season, which is all the time there is: the class
-   * lands at PRESEASON of the year before its draft and this only runs on
-   * regular-season weeks. Confidence after 17 weeks, starting from a cold 8,
-   * for a median department (see WEEKLY_POOL — a top department is a few
-   * points better, a poor one materially worse):
-   *
-   *     5 starred  -> 81   a near-complete file on all five
-   *    10 starred  -> 72   solid on everyone, ceilings still open
-   *    20 starred  -> 54   partial evaluations across the board
-   *    40 starred  -> 36   names and shapes
-   *    60 starred  -> 28   an early look, nothing more
-   *
-   * That spread IS the decision the system asks for. Raising this collapses
-   * it — at double, sixty players is as good as five and there is no longer a
-   * reason to choose.
-   */
-  CLOSE_PER_UNIT: 0.011,
-  /** No single week may close more than this share of what is left, whatever the shortlist size. A one-week jump from unscouted to a real file reads as a bug. */
-  MAX_WEEKLY_CLOSE: 0.25,
-
-  /**
-   * Where sustained attention converges. Below 100 on purpose: a season of
-   * watching gets you a good file, never a finished one.
-   */
-  CONFIDENCE_CEILING: 82,
-  /**
-   * Potential's own ceiling, lower still. Watching a player play does not tell
-   * you what he becomes — that read is what a workout buys.
-   */
-  POT_CONFIDENCE_CEILING: 62,
-  /** Potential moves at this fraction of the general read's rate. */
-  POT_CLOSE_SHARE: 0.55,
-
-  /** Scout-quality multiplier on throughput: a 0-accuracy staff, a 100-accuracy staff. */
-  STAFF_QUALITY_RANGE: [0.72, 1.32] as [number, number],
-  /** Each additional scout beyond the first adds this much, geometrically discounted. */
-  STAFF_HEADCOUNT_DECAY: 0.72,
-  /** Throughput floor for a team with no scouts at all — the GM still watches tape himself. */
-  STAFF_MIN: 0.55,
-  /** A scout whose specialty matches the prospect's position group works him this much harder. */
-  SPECIALTY_BONUS: 1.12,
-
-  /**
-   * How much a fully-invested Dynasty scouting branch adds to throughput, on
-   * top of the range tightening it already buys. Kept small — the branch's
-   * real reward is clarity, not speed.
-   */
-  DYNASTY_MAX_GAIN: 0.14,
-};
 
 // ---------------------------------------------------------------------------
 // Staff
@@ -184,6 +111,89 @@ export function dynastyThroughput(mods: { attrBandMult: number; potBandMult: num
   if (ceiling <= 0) return 1;
   const invested = clamp((((1 - mods.attrBandMult) + (1 - mods.potBandMult)) / 2) / ceiling, 0, 1);
   return 1 + invested * SHORTLIST_ATTENTION.DYNASTY_MAX_GAIN;
+}
+
+// ---------------------------------------------------------------------------
+// The split — one implementation, shared by the weekly pass and the screen
+// ---------------------------------------------------------------------------
+
+/**
+ * How a week of attention divides, for one team, right now.
+ *
+ * THIS EXISTS SO THE NUMBER ON SCREEN IS THE NUMBER THAT GETS APPLIED. The
+ * scouting page has to quote the per-player share BEFORE a week is advanced,
+ * and the weekly pass has to apply it during one. Two implementations of the
+ * same division is exactly the lying-metric shape this codebase keeps having
+ * to fix, so there is one: `applyShortlistAttention` builds a plan and works
+ * off it, and any screen quoting a share builds the same plan from the same
+ * inputs and reads the same fields.
+ */
+export interface AttentionPlan {
+  /** Draft prospects currently starred. The divisor, and the whole decision. */
+  shortlisted: number;
+  /** Staff headcount x staff quality x Dynasty branch, as a multiplier on the pool. */
+  throughput: number;
+  /** WEEKLY_POOL / shortlisted x throughput. The even split, before any specialty bonus. */
+  unitsEach: number;
+  scouts: AttentionScout[];
+}
+
+export function attentionPlan(
+  scouts: AttentionScout[],
+  mods: { attrBandMult: number; potBandMult: number },
+  shortlisted: number,
+): AttentionPlan {
+  const throughput = staffThroughput(scouts) * staffQuality(scouts) * dynastyThroughput(mods);
+  return {
+    shortlisted,
+    throughput,
+    unitsEach: shortlisted > 0 ? (SHORTLIST_ATTENTION.WEEKLY_POOL / shortlisted) * throughput : 0,
+    scouts,
+  };
+}
+
+/**
+ * What ONE prospect gets out of that split: the even share times his own
+ * specialty bonus. Two starred players can differ here and the difference is
+ * real — it is the number that produces his confidence move.
+ */
+export function unitsFor(plan: AttentionPlan, position: string): { units: number; specialtyCovered: boolean } {
+  const covered = specialtyMatch(plan.scouts, position);
+  return {
+    units: plan.unitsEach * (covered ? SHORTLIST_ATTENTION.SPECIALTY_BONUS : 1),
+    specialtyCovered: covered,
+  };
+}
+
+/** Share of the REMAINING gap one week of `units` closes. */
+export function weeklyClose(units: number): number {
+  return clamp(units * SHORTLIST_ATTENTION.CLOSE_PER_UNIT, 0, SHORTLIST_ATTENTION.MAX_WEEKLY_CLOSE);
+}
+
+/** Where a file sits after one week of `units`, on the general read. */
+export function confidenceAfterWeek(before: number, units: number): number {
+  const ceiling = SHORTLIST_ATTENTION.CONFIDENCE_CEILING;
+  if (before >= ceiling) return before;
+  return before + (ceiling - before) * weeklyClose(units);
+}
+
+/**
+ * Read the plan a screen should quote: the team's real staff, the real
+ * Dynasty mods, and the real count of STARRED DRAFT PROSPECTS — the same
+ * filter the weekly pass applies, so a stale star on a player drafted last
+ * spring is excluded from the divisor here exactly as it is there.
+ */
+export async function loadAttentionPlan(leagueId: string, teamId: string): Promise<AttentionPlan> {
+  const [scouts, mods, entries] = await Promise.all([
+    prisma.scout.findMany({ where: { teamId }, select: { accuracy: true, speed: true, specialty: true } }),
+    loadScoutMods(leagueId),
+    prisma.shortlistEntry.findMany({
+      where: { teamId },
+      select: { player: { select: { isDraftee: true, leagueId: true } } },
+    }),
+  ]);
+  const shortlisted = entries.filter((e) => e.player && e.player.leagueId === leagueId && e.player.isDraftee).length;
+  return attentionPlan(scouts, mods, shortlisted);
 }
 
 // ---------------------------------------------------------------------------
@@ -278,11 +288,12 @@ export async function applyShortlistAttention(
   ]);
   const reportByPlayer = new Map(reports.map((r) => [r.playerId, r]));
 
-  const throughput = staffThroughput(scouts) * staffQuality(scouts) * dynastyThroughput(mods);
-  // The split is the mechanic, so it is computed once, exposed, and applied
-  // verbatim — the figure a screen shows next to a starred player is this
+  // The split is the mechanic, so it is computed ONCE — by the same
+  // attentionPlan() the scouting screen calls to quote it — and applied
+  // verbatim. The figure a screen shows next to a starred player is this
   // number and not a prettied-up version of it.
-  const unitsEach = (SHORTLIST_ATTENTION.WEEKLY_POOL / targets.length) * throughput;
+  const plan = attentionPlan(scouts, mods, targets.length);
+  const { unitsEach } = plan;
 
   const shares: AttentionShare[] = [];
   const writes: Promise<unknown>[] = [];
@@ -295,12 +306,11 @@ export async function applyShortlistAttention(
     if (report?.fullyRevealed) continue;
 
     const before = report?.confidence ?? SCOUTING.ROOKIE_BASE_CONFIDENCE;
-    const matched = specialtyMatch(scouts, p.position);
-    const units = unitsEach * (matched ? SHORTLIST_ATTENTION.SPECIALTY_BONUS : 1);
-    const close = clamp(units * SHORTLIST_ATTENTION.CLOSE_PER_UNIT, 0, SHORTLIST_ATTENTION.MAX_WEEKLY_CLOSE);
+    const { units, specialtyCovered: matched } = unitsFor(plan, p.position);
+    const close = weeklyClose(units);
 
     const ceiling = SHORTLIST_ATTENTION.CONFIDENCE_CEILING;
-    const after = before >= ceiling ? before : before + (ceiling - before) * close;
+    const after = confidenceAfterWeek(before, units);
 
     const potCeiling = SHORTLIST_ATTENTION.POT_CONFIDENCE_CEILING;
     const potBefore = Math.max(report?.potConfidence ?? 0, 0);

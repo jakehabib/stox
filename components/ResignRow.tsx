@@ -1,21 +1,45 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { ExtendContractForm } from './ExtendContractForm';
+import { NegotiationPanel } from './NegotiationPanel';
 import { PlayerAvatar } from './PlayerAvatar';
 import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
 import { positionBadgeClass } from './ds/positionColor';
 import { CapMode } from '@/lib/types';
+import type { NegotiationSession } from '@/lib/negotiation';
 import { cutPlayerAction, applyFranchiseTagAction } from '@/app/actions/roster';
+import { openResignNegotiationAction, submitResignOfferAction } from '@/app/actions/resign';
 
-export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, availableSpace, capMode, yearsRemaining, canTag, weightLb, heightIn }: {
+/**
+ * One expiring contract, and the decision it forces.
+ *
+ * "Negotiate" used to open an extension form that the server rubber-stamped:
+ * any number, any term, instantly signed. Your own players were the easiest
+ * thing in the game to keep, which drained the meaning out of the whole
+ * re-sign window. It now opens the same negotiation minigame free agency uses
+ * — the identical model, the identical `decideOffer` — with two differences
+ * that the server resolves, not this component:
+ *
+ *   - He is an INCUMBENT, so a player who wants to stay will take a real
+ *     discount to do it, and the longer he has been here the bigger it is.
+ *   - Nobody else is bidding yet. That is the entire argument for getting
+ *     this done before he reaches the open market, and it is why the same
+ *     player costs more in free agency than he does here.
+ *
+ * Talks are opened lazily, when the row is expanded, so a re-sign page with
+ * twelve expiring contracts does not resolve twelve negotiations on load.
+ */
+export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, canTag, weightLb, heightIn }: {
   leagueId: string; playerId: string; name: string; position: string; age: number; ovr: number;
-  currentApy: number; availableSpace: number; capMode: CapMode; yearsRemaining: number; canTag?: boolean;
+  currentApy: number; capMode: CapMode; yearsRemaining: number; canTag?: boolean;
+  /** Still accepted from the page; the negotiation resolves its own cap room server-side. */
+  availableSpace?: number;
   weightLb?: number; heightIn?: number;
 }) {
   const [open, setOpen] = useState(false);
+  const [session, setSession] = useState<NegotiationSession | null | undefined>(undefined);
   const [confirmingWalk, setConfirmingWalk] = useState(false);
   const [tagPending, setTagPending] = useState(false);
   const [tagMessage, setTagMessage] = useState<string | null>(null);
@@ -23,8 +47,17 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   const router = useRouter();
 
   // Still mid-deal (this is his walk year, but the season isn't over) —
-  // there's nothing to "decide" yet, just extend early if you want to.
+  // there's nothing to "decide" yet, just re-sign early if you want to.
   const isTrulyExpiring = yearsRemaining === 0;
+
+  useEffect(() => {
+    if (!open || session !== undefined) return;
+    let cancelled = false;
+    openResignNegotiationAction(leagueId, playerId)
+      .then((s) => { if (!cancelled) setSession(s); })
+      .catch(() => { if (!cancelled) setSession(null); });
+    return () => { cancelled = true; };
+  }, [open, session, leagueId, playerId]);
 
   const notResign = () => {
     startTransition(async () => {
@@ -65,10 +98,22 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
       </button>
       {open && (
         <div className="px-4 pb-4 pt-1 border-t border-line/60 space-y-3">
-          <ExtendContractForm
-            leagueId={leagueId} playerId={playerId} ovr={ovr} position={position} age={age}
-            availableSpace={availableSpace} capMode={capMode} onDone={() => setOpen(false)}
-          />
+          {session === undefined && <div className="text-sm text-muted py-2">Getting his agent on the phone…</div>}
+          {session === null && <div className="text-sm text-bad py-2">Could not open talks with {name}.</div>}
+          {session && (
+            <NegotiationPanel
+              title="Re-sign Talks"
+              initialSession={session}
+              onSigned={() => { setOpen(false); router.refresh(); }}
+              onOffer={(offer, structure, patienceSpent, fingerprint) =>
+                submitResignOfferAction(leagueId, playerId, offer, structure, patienceSpent, fingerprint)}
+              banner={
+                <div className="text-xs px-3 py-2 rounded-lg border border-accent/30 bg-accent/10 text-accent">
+                  Nobody else can bid on him until he reaches free agency. That discount is only on the table while he is still yours.
+                </div>
+              }
+            />
+          )}
           {isTrulyExpiring && (
             <div className="flex items-center justify-between gap-3 flex-wrap">
               {confirmingWalk ? (

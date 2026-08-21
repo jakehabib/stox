@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { assertLeagueOwner, assertTeamOwner } from '@/lib/owner';
-import { cutPlayer as cutPlayerLib, signFreeAgentWithCompetition, evaluateOffer, extendContract, restructureContract, applyFranchiseTag, leadingCompetingBid, fillRosterForTeam } from '@/lib/freeagency';
+import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFranchiseTag, leadingCompetingBid, fillRosterForTeam, resolveNegotiationSession, negotiateOffer } from '@/lib/freeagency';
+import { decideOffer, type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer } from '@/lib/negotiation';
 import { parseSettings } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { capHit, deadMoneyOnCut, capSavingsOnCut } from '@/lib/cap';
@@ -88,34 +89,50 @@ export async function fillRosterAction(leagueId: string, teamId: string) {
   return result;
 }
 
-export async function offerContractAction(
-  leagueId: string, playerId: string, teamId: string, apy: number, years: number,
-  escalation?: number, voidYears?: number,
-) {
+/**
+ * Open contract talks. Resolves the hidden half of the negotiation —
+ * personality, reservation price, patience, who else is bidding, how much cap
+ * room the deal has to fit inside — ONCE, so the client can re-run
+ * `decideOffer` on every drag of a slider without a request per pixel.
+ *
+ * Nothing secret leaks: the reservation price is in the payload because the
+ * meter is computed from it, but the panel never renders it. Hiding it from
+ * the client entirely would mean a server round trip per frame, which is the
+ * one thing that would kill the feel this feature exists for.
+ */
+export async function openNegotiationAction(
+  leagueId: string, playerId: string, teamId: string,
+): Promise<NegotiationSession> {
   await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
-  // The player judges the deal on money and length only — structure and void
-  // years are cap accounting on your side of the table, not something he
-  // weighs, so they're deliberately not part of the acceptance check.
-  const evaluation = await evaluateOffer(playerId, teamId, apy, years);
-  if (!evaluation.accepted) {
-    return { ok: false, message: `He's looking for closer to $${(evaluation.market / 1_000_000).toFixed(1)}M/yr. Try again around $${(evaluation.counterApy! / 1_000_000).toFixed(1)}M.` };
-  }
-  // signFreeAgent throws when the deal would bust the cap — a foreseeable,
-  // user-recoverable outcome (not a bug), so it must never escape a Server
-  // Action uncaught: an unhandled throw here blanks the whole page instead
-  // of showing a message.
-  try {
-    await signFreeAgentWithCompetition({
-      leagueId, playerId, teamId, apy, years, seasonYear: league.seasonYear,
-      capMode: settings.capMode, week: league.week, escalation, voidYears,
-    });
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : 'Signing failed.' };
-  }
-  revalidatePath(`/league/${leagueId}`, 'layout');
-  return { ok: true, message: 'Deal signed.' };
+  return resolveNegotiationSession({
+    leagueId, playerId, teamId, seasonYear: league.seasonYear, settings, incumbent: false,
+  });
+}
+
+/**
+ * Put an offer on the table for real.
+ *
+ * The client already knows what this will say — it ran the same
+ * `decideOffer` to draw the meter. It is re-run here anyway, against a
+ * session re-resolved from the database, because a client-computed acceptance
+ * is not evidence of anything.
+ */
+export async function submitOfferAction(
+  leagueId: string, playerId: string, teamId: string,
+  offer: Offer, structure: DealStructure, patienceSpent: number, fingerprint: string,
+): Promise<NegotiationOutcome> {
+  await assertLeagueOwner(leagueId);
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  const outcome = await negotiateOffer({
+    leagueId, playerId, teamId, seasonYear: league.seasonYear, week: league.week,
+    settings, incumbent: false, offer, structure, patienceSpent, fingerprint,
+  });
+  // A signing, an outbidding and a rival closing him all change the league.
+  if (outcome.ok || outcome.lostTo) revalidatePath(`/league/${leagueId}`, 'layout');
+  return outcome;
 }
 
 /** Live "who else is bidding" check for the frenzy UI — what the leading AI offer actually is right now, if any. */
@@ -126,12 +143,31 @@ export async function checkCompetingBidAction(leagueId: string, playerId: string
   return leadingCompetingBid(leagueId, playerId, teamId, league.seasonYear, settings.capMode);
 }
 
+/**
+ * Mid-deal extension — a player with years left on his contract, reached from
+ * his own page. Left as it was, deliberately: this is not the re-sign
+ * negotiation, and ContractActions/ExtendContractForm have no meter on them.
+ *
+ * The ONE thing added is the hole this would otherwise leave open. A player
+ * whose contract is actually expiring is exactly the player the re-sign
+ * minigame governs, and reaching him through this form instead of that panel
+ * used to hand you the old rubber stamp — sign anything, at any number, no
+ * argument. So an expiring deal is refused here and pointed at the window
+ * that negotiates it. Every other extension behaves exactly as before.
+ */
 export async function extendContractAction(
   leagueId: string, playerId: string, apy: number, years: number, escalation: number, voidYears: number,
 ) {
   await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
+  const existing = await prisma.contract.findUnique({ where: { playerId }, select: { yearsRemaining: true } });
+  if (existing && existing.yearsRemaining <= 1) {
+    return {
+      ok: false,
+      message: "His deal is up — that's a re-sign, and he negotiates it. Open the Re-sign window and make him an offer there.",
+    };
+  }
   try {
     await extendContract({
       leagueId, playerId, apy, years, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week,

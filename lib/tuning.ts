@@ -14,6 +14,10 @@
  * ===========================================================================
  */
 
+// Type-only: erased at compile time, so this cannot create a runtime cycle
+// with lib/gen/prospectProfile.ts (which imports Position from here).
+import type { CompetitionGrade } from './gen/prospectProfile';
+
 // ---------------------------------------------------------------------------
 // League shape
 // ---------------------------------------------------------------------------
@@ -291,7 +295,7 @@ export const PROGRESSION = {
   /** OVR + potential bump for winning a season award (MVP/OPOY/DPOY/ROTY/Super Bowl MVP). */
   AWARD_OVR_BUMP: 3,
   AWARD_POTENTIAL_BUMP: 2,
-  /** Growth multiplier at a checkpoint for a player carrying a Development Focus charge (see SCOUT_TIERS.DEVELOP). One charge is consumed per checkpoint. */
+  /** Growth multiplier at a checkpoint for a player carrying a Development Focus charge (see Player.devFocus). One charge is consumed per checkpoint. */
   DEV_FOCUS_GROWTH_MULT: 1.5,
 };
 
@@ -563,121 +567,228 @@ export const SCOUTING = {
 };
 
 // ---------------------------------------------------------------------------
-// SCOUTING ECONOMY [FRAGILE — this is the whole scarcity model]
+// THE CONSENSUS BOARD [TUNE] — see lib/consensus.ts
 // ---------------------------------------------------------------------------
 /**
- * Focus points are the GM's only scarce non-money resource. The numbers below
- * are sized against a 400-prospect draft class and a ~110 focus/week team:
- *
- *   full season of regular-season grants  ~ 1,870
- *   pre-draft allotment (one lump)        ~   700
- *   whole league year, everything counted ~ 3,600
- *
- *   one Area Look on all 400 prospects    =  2,000   (a whole year of breadth)
- *   one Deep Dive on all 400 prospects    = 18,000   (5x a year's budget — impossible on purpose)
- *
- * So breadth is affordable-ish and depth is not: you triage, or you learn
- * nothing about anybody.
+ * The public draft board every team sees for free. Its whole job is to be
+ * WRONG in named, learnable ways: the biases below have to stay large next to
+ * NOISE_SD, because that ratio is the difference between finding a steal
+ * being a read and finding a steal being a dice roll.
  */
-export const SCOUT_ECONOMY = {
+export const CONSENSUS = {
   /**
-   * Per-period grant as a multiple of the team's weekly staff output. The
-   * league year is a sequence of periods (one per week in-season, one per
-   * offseason step, ONE for the entire pre-draft window).
+   * How the room blends "what he is" against "what he might become". Draft
+   * boards are forward-looking, but not entirely — a polished 78 goes ahead
+   * of a raw 64 with the same ceiling, every year.
    */
-  PHASE_GRANT_MULT: {
-    PRESEASON: 1.0,
-    REGULAR: 1.0,
-    PLAYOFFS: 0.8,      // scouts are at bowl games, not everywhere
-    OFFSEASON: 0.75,
-    RESIGN: 0.75,
-    FREE_AGENCY: 1.0,   // the FA board needs real work
-    DRAFT: 6.0,         // combine + pro days + private visits, all in one lump
-    FANTASY_DRAFT: 6.0,
-  } as Record<string, number>,
+  CURRENT_WEIGHT: 0.62,
+  POTENTIAL_WEIGHT: 0.38,
 
   /**
-   * Carry-over cap, as a fraction of the INCOMING period's grant. Unspent
-   * focus above this evaporates at replenishment. Banking one partial week to
-   * afford a Deep Dive is a real decision; hoarding a season into the draft is
-   * not possible.
+   * Random disagreement between evaluators, on the grade scale. Kept SMALL
+   * relative to the bias pulls below — the whole design rests on the board's
+   * error being learnable rather than random. If this ever grows past the
+   * bias magnitudes, finding a steal becomes a coin flip.
    */
-  CARRY_CAP_FRACTION: 0.5,
+  NOISE_SD: 2.4,
 
-  /** Cost of pass N+1 on the same player = base * (1 + REPEAT_COST_STEP * N). */
-  REPEAT_COST_STEP: 0.6,
-  /** Reveal strength of pass N+1 on the same player = base * REPEAT_REVEAL_DECAY^N. */
-  REPEAT_REVEAL_DECAY: 0.82,
+  /** Max swing from the room over-indexing on the stopwatch. */
+  TESTING_PULL: 9,
   /**
-   * Hard ceiling on passes against one player inside one period. Replaces the
-   * old "one scout per player per week" lock: two looks a week is a plausible
-   * amount of tape, and it stops a whole week's budget vanishing into one guy
-   * in a single sitting.
+   * Grade adjustment by strength of competition faced. Only the two extremes
+   * move the grade enough to be worth naming: a genuine blue blood and a
+   * genuine small school. B and D are where most of a class plays and the room
+   * has no strong feeling about either.
    */
-  MAX_PASSES_PER_PERIOD: 2,
+  PROGRAM_PULL: { A: 4, B: 1.2, C: 0, D: -1.2, F: -4 } as Record<CompetitionGrade, number>,
+  /** Max markdown applied to a raw, high-ceiling developmental player. */
+  DEVELOPMENTAL_PULL: 6,
   /**
-   * Ceiling on the share of a player's attributes that can ever be locked to
-   * their true value. Without it, enough Deep Dives collapse the displayed
-   * OVR range to a single number — and "you are never fully certain" is the
-   * fog-of-war contract this whole system is built on. Potential is protected
-   * separately (errorBand's floor keeps it a range at any confidence).
+   * Ceiling-minus-current gap at which the room starts calling a player "a
+   * project". Set above the class median gap on purpose — nearly every
+   * prospect has SOME room to grow, and a tag that lands on half the board
+   * tells the user nothing.
    */
-  MAX_LOCKED_FRACTION: 0.6,
+  DEVELOPMENTAL_GAP_MIN: 16,
+  /** Flat markdown the room applies to anyone carrying a medical flag. */
+  MEDICAL_PULL: 6.5,
+  /**
+   * Odds a prospect picks up a public medical flag at all. Correlated with
+   * true durability but floored well above zero: the exploitable case is the
+   * flagged player whose shoulder is genuinely fine, and that case has to
+   * exist often enough to be worth scouting for.
+   */
+  MEDICAL_BASE_ODDS: 0.06,
+  MEDICAL_MIN_ODDS: 0.03,
+  MEDICAL_MAX_ODDS: 0.3,
+
+  /** A bias is only NAMED to the user once its pull clears this. Below it, it is rounding. */
+  BIAS_REPORT_THRESHOLD: 2,
 
   /**
-   * Scout-staff contribution to the weekly grant. Each scout is worth
-   * STAFF_FLOOR..1.0 by speed, and additional scouts are discounted
-   * geometrically so a 5-scout department isn't 2.5x a 2-scout one.
+   * How far positional value moves a prospect's BOARD SLOT, in board-score
+   * points, at AI.DRAFT_POSITION_VALUE's extremes. This does not touch the
+   * grade — a guard and a quarterback who grade out the same are the same
+   * football player, they just do not come off the board at the same pick.
+   * It is the room's fifth bias and the most exploitable one: nothing stops a
+   * GM taking the guard.
    */
-  STAFF_FLOOR: 0.35,
-  STAFF_HEADCOUNT_DECAY: 0.72,
-  /** grant = budgetPerWeek * (BASE_SHARE + STAFF_SHARE * staffContribution). */
-  BASE_SHARE: 0.35,
-  STAFF_SHARE: 0.5,
+  POSITION_PULL: 8,
+
+  /**
+   * Band cutoffs as PICK NUMBERS, so they mean what they say — a
+   * "first-round grade" is a player the room expects inside the first round.
+   * Scaled to the actual draft (teams x rounds) rather than hard-coded, so a
+   * league running 4 rounds does not label a hundred players Day 3.
+   */
+  BANDS: [
+    { id: 'BLUE_CHIP', label: 'Blue chip', blurb: 'Top of the board. The room does not expect him to get past the first handful of picks.' },
+    { id: 'FIRST_ROUND', label: 'First-round grade', blurb: 'A consensus first rounder.' },
+    { id: 'DAY_TWO', label: 'Day 2 grade', blurb: 'Second or third round on most boards.' },
+    { id: 'DAY_THREE', label: 'Day 3 grade', blurb: 'A rotational bet in the middle rounds.' },
+    { id: 'LATE_FLIER', label: 'Late flier', blurb: 'Last-day name. Special teams and a roster spot to win.' },
+    { id: 'PRIORITY_FA', label: 'Priority free agent', blurb: 'Expected to go undrafted. Somebody signs him after the phones stop.' },
+  ] as const,
 };
 
+// ---------------------------------------------------------------------------
+// SHORTLIST ATTENTION [TUNE] — see lib/shortlistAttention.ts
+// ---------------------------------------------------------------------------
 /**
- * The four things a GM can buy with focus. `close` is the fraction of the
- * REMAINING uncertainty a pass removes — which is why the fifth look at a
- * player is worth so much less than the first even before repeat decay.
+ * The only ongoing scouting input there is: a fixed weekly pool of staff
+ * attention split evenly across whoever the GM has starred. Nothing is spent
+ * and nothing runs out — the decision the system asks for is how MANY players
+ * to star, and the spread in the table below is that decision's whole payoff.
  */
-export type ScoutTierKey = 'LOOK' | 'EVAL' | 'DEEP' | 'DEVELOP';
+export const SHORTLIST_ATTENTION = {
+  /**
+   * Attention units a department produces in a week, before staff scaling.
+   * Abstract by design: the number the user is ever shown is the per-player
+   * SHARE this divides into, never the pool itself.
+   *
+   * Set so a MEDIAN department lands on an effective pool of ~100, which is
+   * what the table below is measured at. Across every team in the dev
+   * database the staff multiplier runs 0.57 to 2.28 (median 1.26), so a
+   * well-staffed front office covers roughly four times the ground a poor one
+   * does — which is most of what Scout.accuracy and Scout.speed are for now
+   * that the focus economy they used to feed is gone.
+   */
+  WEEKLY_POOL: 80,
 
-export const SCOUT_TIERS: Record<ScoutTierKey, {
-  label: string;
-  cost: number;
-  /** Fraction of remaining confidence gap closed. */
-  close: number;
-  /** How many attributes this pass locks to their true value. */
-  revealAttrs: number;
-  /** Extra fraction of the POTENTIAL gap closed on top of the general read. */
-  potentialClose: number;
-  /** Can this pass surface the hidden development trait? */
-  revealsDev: boolean;
-  /** Own-roster only (coaching focus, not scouting). */
-  ownRosterOnly: boolean;
-  blurb: string;
-}> = {
-  LOOK: {
-    label: 'Area Look', cost: 5, close: 0.22, revealAttrs: 0, potentialClose: 0,
-    revealsDev: false, ownRosterOnly: false,
-    blurb: 'One regional scout, one game of tape. Narrows the overall range a little.',
-  },
-  EVAL: {
-    label: 'Full Evaluation', cost: 18, close: 0.42, revealAttrs: 2, potentialClose: 0,
-    revealsDev: false, ownRosterOnly: false,
-    blurb: 'A full cross-check. Narrows the range and locks two attributes to their true value.',
-  },
-  DEEP: {
-    label: 'Deep Dive', cost: 45, close: 0.65, revealAttrs: 3, potentialClose: 0.5,
-    revealsDev: true, ownRosterOnly: false,
-    blurb: 'Private visit + medical + interviews. Tightens the potential range and can surface his development trait.',
-  },
-  DEVELOP: {
-    label: 'Development Focus', cost: 30, close: 0.35, revealAttrs: 1, potentialClose: 0.25,
-    revealsDev: true, ownRosterOnly: true,
-    blurb: 'Coaching hours on one of your own. Boosts his next development checkpoint and reads his growth curve.',
-  },
+  /**
+   * Fraction of the remaining confidence gap one attention unit closes.
+   *
+   * Sized against a 17-week season, which is all the time there is: the class
+   * lands at PRESEASON of the year before its draft and this only runs on
+   * regular-season weeks. Confidence after 17 weeks, starting from a cold 8,
+   * for a median department (see WEEKLY_POOL — a top department is a few
+   * points better, a poor one materially worse):
+   *
+   *     5 starred  -> 81   a near-complete file on all five
+   *    10 starred  -> 72   solid on everyone, ceilings still open
+   *    20 starred  -> 54   partial evaluations across the board
+   *    40 starred  -> 36   names and shapes
+   *    60 starred  -> 28   an early look, nothing more
+   *
+   * That spread IS the decision the system asks for. Raising this collapses
+   * it — at double, sixty players is as good as five and there is no longer a
+   * reason to choose.
+   */
+  CLOSE_PER_UNIT: 0.011,
+  /** No single week may close more than this share of what is left, whatever the shortlist size. A one-week jump from unscouted to a real file reads as a bug. */
+  MAX_WEEKLY_CLOSE: 0.25,
+
+  /**
+   * Where sustained attention converges. Below 100 on purpose: a season of
+   * watching gets you a good file, never a finished one.
+   */
+  CONFIDENCE_CEILING: 82,
+  /**
+   * Potential's own ceiling, lower still. Watching a player play does not tell
+   * you what he becomes — that read is what a workout buys.
+   */
+  POT_CONFIDENCE_CEILING: 62,
+  /** Potential moves at this fraction of the general read's rate. */
+  POT_CLOSE_SHARE: 0.55,
+
+  /** Scout-quality multiplier on throughput: a 0-accuracy staff, a 100-accuracy staff. */
+  STAFF_QUALITY_RANGE: [0.72, 1.32] as [number, number],
+  /** Each additional scout beyond the first adds this much, geometrically discounted. */
+  STAFF_HEADCOUNT_DECAY: 0.72,
+  /** Throughput floor for a team with no scouts at all — the GM still watches tape himself. */
+  STAFF_MIN: 0.55,
+  /** A scout whose specialty matches the prospect's position group works him this much harder. */
+  SPECIALTY_BONUS: 1.12,
+
+  /**
+   * How much a fully-invested Dynasty scouting branch adds to throughput, on
+   * top of the range tightening it already buys. Kept small — the branch's
+   * real reward is clarity, not speed.
+   */
+  DYNASTY_MAX_GAIN: 0.14,
+};
+
+// ---------------------------------------------------------------------------
+// PRIVATE WORKOUTS [FRAGILE — the only scarce scouting decision left]
+// ---------------------------------------------------------------------------
+/**
+ * A handful of slots a year against a class of hundreds. BASE_SLOTS is the
+ * single most dangerous number in the scouting rework: at a dozen, the draft
+ * stops being a bet.
+ */
+export const WORKOUTS = {
+  /**
+   * Slots per league year. Five against a class of hundreds: enough to cover
+   * the top of your board, nowhere near enough to cover a position group.
+   */
+  BASE_SLOTS: 5,
+  /**
+   * Extra slots per rank of the Dynasty Scouting Network skill. Reuses that
+   * skill rather than adding an eleventh node: Scouting Network is already
+   * "more contacts, more access", which is exactly what buys a workout.
+   */
+  SLOTS_PER_NETWORK_RANK: 1,
+
+  /**
+   * Phases a workout may be scheduled in. RESIGN and FREE_AGENCY are the
+   * whole stretch between the season ending and the draft going on the clock
+   * — combine season, pro days and visits — and they are the phases where the
+   * board is the GM's live concern.
+   *
+   * DRAFT is deliberately NOT here: by the time League.phase is DRAFT the
+   * draft is actually running and teams are on the clock. Nobody flies a
+   * prospect in between picks.
+   */
+  PHASES: ['RESIGN', 'FREE_AGENCY'] as string[],
+
+  /** A workout brings a cold file at least this far on its own. */
+  CONFIDENCE_FLOOR: 74,
+  /** ...and then closes this share of whatever gap is still left above the floor. */
+  CONFIDENCE_CLOSE: 0.6,
+  /** Hard cap. Short of certainty, because a workout is one day and Full Scout is the thing that finishes a file. */
+  CONFIDENCE_CAP: 90,
+
+  /**
+   * Where the ceiling projection lands. High enough that the potential range
+   * visibly collapses — at SCOUTING.POTENTIAL_DIFFICULTY the displayed
+   * half-width goes from ±24 on a cold prospect, and ±8.5 on one starred all
+   * season, to ±4.6 here. Never 100: errorBand's floor keeps potential a range
+   * at any confidence and that is the contract lib/scouting.ts enforces.
+   */
+  POT_CONFIDENCE: 88,
+
+  /**
+   * Attributes at or below this scoutDifficulty are what a workout actually
+   * measures — the stopwatch, the tape measure, the bar. Everything above it
+   * is a judgement call that one day in a facility cannot settle.
+   */
+  MEASURABLE_DIFFICULTY: 0.25,
+  /**
+   * Ceiling on the share of a position's attributes that may ever be locked
+   * to truth, counting anything already locked: if every attribute locks, the
+   * displayed OVR stops being a range.
+   */
+  MAX_LOCKED_FRACTION: 0.6,
 };
 
 // ---------------------------------------------------------------------------

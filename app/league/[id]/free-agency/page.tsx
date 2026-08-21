@@ -101,7 +101,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         teamAbbr={team.abbr}
         eyebrow="Free Agency"
         title={`${totalAvailable} Available`}
-        subtitle="Offer a contract to open negotiations. Rival teams bid on the same players, so a fair offer isn't always the winning one."
+        subtitle="Open talks and his agent takes the call. Salary, term and guarantee are yours to set — the interest meter tells you how it is landing, and every offer he turns down costs you patience. Rival teams are bidding on the same players, so a fair offer isn't always the winning one."
         facts={[
           ...(capSummary ? [{
             label: 'Cap Space',

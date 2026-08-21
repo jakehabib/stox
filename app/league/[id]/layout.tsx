@@ -7,7 +7,7 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { LeagueNav } from '@/components/LeagueNav';
 import { LeagueWireTicker } from '@/components/ds/LeagueWireTicker';
 import { isBreakingNews } from '@/lib/wireRank';
-import { syncScoutingBudget } from '@/lib/scoutingEconomy';
+import { loadWorkoutSlots } from '@/lib/workouts';
 import { CapAlertBanner } from '@/components/ds/CapAlertBanner';
 import { capComplianceDueNow } from '@/lib/season';
 import { capComplianceReport } from '@/lib/capEnforcement';
@@ -33,14 +33,17 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // capComplianceReport wraps teamCapSummary and short-circuits the extra
   // roster scan when the team is compliant, so this is no more work than
   // the plain summary this used to call, and never two of them.
-  const [compliance, scouting, tickerTx] = await Promise.all([
+  const [compliance, workouts, tickerTx] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : capComplianceReport(userTeam.id, league.seasonYear, ctx.settings.capMode),
-    // Scouting focus is a scarce, spendable resource now, and a resource whose
-    // balance the player cannot see is one they will not budget. It earns a
-    // permanent slot next to cap space for the same reason cap space has one.
+    // Private workouts are the ONLY scarce thing left in scouting — the
+    // consensus board is free and the shortlist costs nothing to work — which
+    // is exactly why the slot count is the one scouting number worth a
+    // permanent slot next to cap space. (The focus-point balance that used to
+    // sit here was a currency the GM was charged to learn what the whole
+    // league already knew; it is gone, along with its tile.)
     ctx.settings.scoutingEnabled === false
       ? Promise.resolve(null)
-      : syncScoutingBudget(userTeam.id, league, ctx.settings).catch(() => null),
+      : loadWorkoutSlots(league.id).catch(() => null),
     prisma.transaction.findMany({
       // 'INJURY' is deliberately absent. The sim writes one injury row per game
       // per week — sixteen a week — so including the type here spent the whole
@@ -131,17 +134,17 @@ export default async function LeagueLayout({ children, params }: { children: Rea
                 <div className={`text-sm font-mono font-semibold ${compliance.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(compliance.capSpace)}</div>
               </div>
             )}
-            {scouting && (
+            {workouts && (
               <Link
                 href={`/league/${league.id}/scouting`}
                 className="stat-tile hidden lg:block text-right hover:border-accent2/50 transition-colors"
-                title={`${scouting.points} of ${scouting.grant} focus left this period. ${scouting.replenishLabel}`}
+                title={workouts.windowLabel}
               >
-                <div className="label-sm">Scouting</div>
+                <div className="label-sm">Workouts</div>
                 <div className={`text-sm font-mono font-semibold ${
-                  scouting.points === 0 ? 'text-bad' : scouting.points < scouting.grant * 0.25 ? 'text-warn' : 'text-accent2'
+                  !workouts.open ? 'text-muted' : workouts.remaining === 0 ? 'text-bad' : 'text-accent2'
                 }`}>
-                  {scouting.points}<span className="text-muted">/{scouting.grant}</span>
+                  {workouts.remaining}<span className="text-muted">/{workouts.max}</span>
                 </div>
               </Link>
             )}

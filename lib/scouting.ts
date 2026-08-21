@@ -264,9 +264,8 @@ export function scoutNote(confidence: number): string {
 }
 
 /*
- * The point -> confidence conversion, the weekly budget and the specialty
- * check all moved to lib/scoutingEconomy.ts when focus points became a real
- * currency: reveal strength is now a fraction of REMAINING uncertainty per
- * tiered action, not a linear rate per point, so those helpers no longer had
- * a caller here. Import them from lib/scoutingEconomy.ts.
+ * There is no longer a point -> confidence conversion or a weekly budget to
+ * convert. Confidence moves through observe() from exactly two places now:
+ * lib/shortlistAttention.ts, once a week, for whoever the GM has starred, and
+ * lib/workouts.ts, when one of the year's handful of slots is spent.
  */

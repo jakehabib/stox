@@ -14,8 +14,9 @@ import { teamCapSummary } from '@/lib/cap-summary';
 import { sortStatEntries, statLabel } from '@/lib/statLabels';
 import { CutButton } from '@/components/CutButton';
 import { ContractActions } from '@/components/ContractActions';
-import { ScoutButton } from '@/components/ScoutButton';
 import { FullScoutButton } from '@/components/FullScoutButton';
+import { ShortlistStar } from '@/components/ShortlistStar';
+import { WorkoutButton } from '@/components/ds/WorkoutButton';
 import { SignOfferForm } from '@/components/SignOfferForm';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
@@ -24,6 +25,7 @@ import { SectionHeading } from '@/components/ds/SectionHeading';
 import { StatNumber } from '@/components/ds/StatNumber';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { loadWorkoutSlots } from '@/lib/workouts';
 import {
   CollegeProfile, CombineTesting, aggregateCollegeGames, collegeWeeksElapsed,
   prospectBuzzNote, COLLEGE_WEEKS,
@@ -74,6 +76,20 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
     position: player.position as any, trueAttrs: readJson(player.trueAttrs, {}), trueOvr: player.trueOvr, potential: player.potential,
     report, settings, isOwnRoster, isUserView: true, dynasty: scoutMods,
   });
+
+  // Scouting a prospect is no longer something you buy per click. The two
+  // affordances left are a star — which puts him in front of your staff every
+  // week for nothing — and, in the pre-draft window, one of the year's handful
+  // of private workouts.
+  const prospectScouting = userTeam && player.isDraftee
+    ? await Promise.all([
+        loadWorkoutSlots(league.id),
+        prisma.shortlistEntry.findUnique({ where: { playerId_teamId: { playerId: player.id, teamId: userTeam.id } } }),
+      ])
+    : null;
+  const workoutSlots = prospectScouting?.[0] ?? null;
+  const onShortlist = !!prospectScouting?.[1];
+  const workedOutThisYear = !!workoutSlots && report?.workoutYear === workoutSlots.seasonYear;
 
   const seasonStats = readJson<Record<string, number>>(player.seasonStats, {});
   const careerStats = readJson<Record<string, number>>(player.careerStats, {});
@@ -385,13 +401,33 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
             <p className="text-xs text-muted mt-1 max-w-lg">{view.notes}</p>
           </div>
           {userTeam && (
-            <div className="flex items-center gap-2 shrink-0">
-              <ScoutButton
-                leagueId={league.id} teamId={userTeam.id} playerId={player.id}
-                alreadyScoutedThisWeek={report?.lastWeek === league.seasonYear * 100 + league.week}
-              />
-              {/* The full-reveal charge belongs beside the incremental look, so
-                  the two prices are compared at the moment the choice is made. */}
+            <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+              {workoutSlots && (
+                <>
+                  <span className="flex items-center gap-1.5 text-xs text-muted">
+                    <ShortlistStar leagueId={league.id} teamId={userTeam.id} playerId={player.id} initial={onShortlist} />
+                    {onShortlist ? 'Worked every week' : 'Star to have him watched'}
+                  </span>
+                  <WorkoutButton
+                    leagueId={league.id}
+                    teamId={userTeam.id}
+                    playerId={player.id}
+                    name={`${player.firstName} ${player.lastName}`}
+                    meta={`${player.position} · ${player.college}`}
+                    avatar={<PlayerAvatar seed={player.id} age={player.age} size={40} weightLb={player.weightLb} heightIn={player.heightIn} position={player.position} />}
+                    remaining={workoutSlots.remaining}
+                    max={workoutSlots.max}
+                    open={workoutSlots.open}
+                    windowLabel={workoutSlots.windowLabel}
+                    done={workedOutThisYear}
+                    potLow={view.potLow}
+                    potHigh={view.potHigh}
+                    confidence={view.confidence}
+                  />
+                </>
+              )}
+              {/* The full-reveal charge belongs beside the free affordances, so
+                  what it costs is compared against what nothing costs. */}
               <FullScoutButton leagueId={league.id} teamId={userTeam.id} playerId={player.id} compact />
             </div>
           )}

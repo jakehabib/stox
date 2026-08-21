@@ -291,12 +291,22 @@ export interface ContractEstimate {
 /**
  * MARKET KNOWLEDGE. Returns null — render nothing — unless the skill is owned.
  *
- * The number a free agent actually signs for is derived from his TRUE rating
- * (lib/freeagency.ts evaluateOffer prices off trueOvr), while the suggestion
- * the offer form already shows is priced off the SCOUTED rating. The gap
- * between those two is the fog. This does not remove the fog: it quotes a
- * band around the real threshold, deliberately off-centre by a seeded amount,
- * so a GM with rank 2 is well-informed and still capable of lowballing.
+ * The number a free agent actually signs for is derived from his TRUE rating,
+ * while the suggestion the offer form shows is priced off the SCOUTED rating.
+ * The gap between those two is the fog. This does not remove the fog: it
+ * quotes a band around the real threshold, deliberately off-centre by a
+ * seeded amount, so a GM with rank 2 is well-informed and still capable of
+ * lowballing.
+ *
+ * THE THRESHOLD IS NOW THE REAL ONE. This used to band `market * 0.9`,
+ * mirroring a constant in a four-line acceptance test in lib/freeagency.ts —
+ * with a comment warning that if that constant ever moved, this estimate
+ * would silently drift. It moved: that test is gone, and acceptance is
+ * decided by lib/negotiation.ts, where the price depends on his personality,
+ * the term, the guarantee and who else is bidding. So the estimate asks that
+ * model directly, via `minimumAcceptableApy` — the cheapest deal he would
+ * actually sign at this length. A staff quoting a number the player has never
+ * heard of is exactly the lying metric README principle 6 forbids.
  *
  * Read-only. It does not change what the player will accept.
  */
@@ -307,18 +317,28 @@ export async function contractEstimateAction(leagueId: string, playerId: string,
   const pct = DYNASTY.MARKET_BAND_PCT[rank];
   if (pct == null) return null;
 
-  const { marketValue } = await import('@/lib/cap');
   const player = await prisma.player.findUnique({
     where: { id: playerId },
-    select: { leagueId: true, trueOvr: true, position: true, age: true, potential: true },
+    select: { leagueId: true, teamId: true },
   });
   if (!player || player.leagueId !== leagueId) return null;
 
-  const market = marketValue({ ovr: player.trueOvr, position: player.position as never, age: player.age, potential: player.potential });
-  // Mirrors lib/freeagency.ts evaluateOffer's 0.9-of-market acceptance bar. If
-  // that constant moves, this estimate silently drifts — it is the one number
-  // here that lives in a file this system does not own.
-  const threshold = market * 0.9;
+  const { resolveNegotiationSession } = await import('@/lib/freeagency');
+  const { minimumAcceptableApy } = await import('@/lib/negotiation');
+  const { parseSettings } = await import('@/lib/settings');
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const team = await prisma.team.findFirst({ where: { leagueId, isUser: true } });
+  if (!team) return null;
+
+  const { ctx } = await resolveNegotiationSession({
+    leagueId, playerId, teamId: team.id, seasonYear: league.seasonYear,
+    settings: parseSettings(league.settings),
+    incumbent: player.teamId === team.id,
+  });
+  // The cheapest deal he would actually put his name to over this term, at
+  // the guarantee he is asking for — i.e. the number the interest meter is
+  // drawn against, not a proxy for it.
+  const threshold = minimumAcceptableApy(ctx, Math.max(1, years), ctx.desiredGuarantee);
   // Seeded off the player, not the clock, so re-opening the form does not
   // re-roll the estimate into a different answer.
   const rng = new Rng(`${leagueId}:${playerId}:market`);

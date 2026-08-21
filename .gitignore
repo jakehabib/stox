@@ -24,3 +24,12 @@ scripts/_pt_tmp_*/
 .pwcheck.js
 .crest-sheet.tsx
 .crest-tsconfig.json
+
+# Env files. `.env` is the local dev connection string and must never be
+# committed; `.env.example` is the documented template and IS committed.
+.env
+.env.*
+!.env.example
+
+# Vercel CLI
+.vercel

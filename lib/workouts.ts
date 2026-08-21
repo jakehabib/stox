@@ -4,7 +4,7 @@ import { readJson, writeJson } from './json';
 import { observe } from './scouting';
 import { ATTRIBUTE_BY_KEY, attrsForPosition } from './ratings';
 import type { AttrMap } from './ratings';
-import { SCOUTING } from './tuning';
+import { SCOUTING, WORKOUTS } from './tuning';
 import type { Position } from './tuning';
 import {
   loadDynastyProfile, parseSkills, rankOf,
@@ -47,75 +47,10 @@ import {
  * locks the mental traits, and never collapses the potential range to a
  * point. The fog-of-war contract in lib/scouting.ts holds.
  *
- * WHY CONSTANTS LIVE HERE rather than lib/tuning.ts: that file is owned by
- * another workstream right now. Moving this block is a handoff item — see
- * docs/scouting-pivot.md.
+ * TUNING lives in lib/tuning.ts's WORKOUTS block, with every other balance
+ * number in the game.
  * ===========================================================================
  */
-
-// ---------------------------------------------------------------------------
-// TUNING [TUNE] — belongs in lib/tuning.ts, see above
-// ---------------------------------------------------------------------------
-
-export const WORKOUTS = {
-  /**
-   * Slots per league year. Five against a class of hundreds: enough to cover
-   * the top of your board, nowhere near enough to cover a position group.
-   * This is the single most dangerous number in the file — at a dozen, the
-   * draft stops being a bet.
-   */
-  BASE_SLOTS: 5,
-  /**
-   * Extra slots per rank of the Dynasty Scouting Network skill. Reuses that
-   * skill rather than adding an eleventh node: Scouting Network is already
-   * "more contacts, more access", which is exactly what buys a workout, and
-   * the skill tree is not this workstream's to extend.
-   */
-  SLOTS_PER_NETWORK_RANK: 1,
-
-  /**
-   * Phases a workout may be scheduled in. RESIGN and FREE_AGENCY are the
-   * whole stretch between the season ending and the draft going on the clock
-   * — combine season, pro days and visits — and they are the phases where the
-   * board is the GM's live concern.
-   *
-   * DRAFT is deliberately NOT here despite lib/scoutingEconomy.ts having
-   * called it "the pre-draft window": by the time League.phase is DRAFT the
-   * draft is actually running and teams are on the clock. Nobody flies a
-   * prospect in between picks.
-   */
-  PHASES: ['RESIGN', 'FREE_AGENCY'] as string[],
-
-  /** A workout brings a cold file at least this far on its own. */
-  CONFIDENCE_FLOOR: 74,
-  /** ...and then closes this share of whatever gap is still left above the floor. */
-  CONFIDENCE_CLOSE: 0.6,
-  /** Hard cap. Short of certainty, because a workout is one day and Full Scout is the thing that finishes a file. */
-  CONFIDENCE_CAP: 90,
-
-  /**
-   * Where the ceiling projection lands. High enough that the potential range
-   * visibly collapses — at lib/tuning.ts's POTENTIAL_DIFFICULTY the displayed
-   * half-width goes from ±24 on a cold prospect, and ±8.5 on one starred all
-   * season, to ±4.6 here. Never 100: errorBand's floor keeps potential a range
-   * at any confidence and that is the contract lib/scouting.ts enforces.
-   */
-  POT_CONFIDENCE: 88,
-
-  /**
-   * Attributes at or below this scoutDifficulty are what a workout actually
-   * measures — the stopwatch, the tape measure, the bar. Everything above it
-   * is a judgement call that one day in a facility cannot settle.
-   */
-  MEASURABLE_DIFFICULTY: 0.25,
-  /**
-   * Ceiling on the share of a position's attributes that may ever be locked
-   * to truth, counting anything already locked. Mirrors the old economy's
-   * MAX_LOCKED_FRACTION for the same reason: if every attribute locks, the
-   * displayed OVR stops being a range.
-   */
-  MAX_LOCKED_FRACTION: 0.6,
-};
 
 // ---------------------------------------------------------------------------
 // Availability

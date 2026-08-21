@@ -5,9 +5,8 @@ import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
 import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
-import { LEAGUE, AI, Position } from '@/lib/tuning';
-import { bigBoardScore, CombineTesting } from '@/lib/gen/prospectProfile';
-import { rankProspectCombine, overallTestingPercentile } from '@/lib/combineRank';
+import { LEAGUE } from '@/lib/tuning';
+import { consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
 import { imminentDraftYear } from '@/lib/draft';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { DraftPickButton } from '@/components/DraftPickButton';
@@ -112,60 +111,44 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     return { p, view };
   });
 
-  // Consensus big-board rank — position-weighted, computed over the WHOLE
-  // class regardless of any position/shortlist filter currently applied, so
-  // "#1 overall" means the same thing no matter which slice of the board
-  // you're looking at. Reuses the filtered fetch above when nothing's
-  // filtering it down (the common case) instead of a second full query.
-  const classForRank = !searchParams.pos && !shortlistOnly
-    ? rows
-    : await (async () => {
-        const fullPool = await prisma.player.findMany({ where: { leagueId: league.id, teamId: null, status: 'FREE_AGENT', isDraftee: true }, take: 500 });
-        const fullReports = await prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: fullPool.map((p) => p.id) } } });
-        const fullReportMap = new Map(fullReports.map((r) => [r.playerId, r]));
-        return fullPool.map((p) => ({
-          p,
-          view: buildScoutedView({
-            position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
-            report: fullReportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
-          }),
-        }));
-      })();
-  // Testing is PUBLIC — the consensus board reacts to it even though nobody's
-  // scouted anyone yet, which is what makes a workout warrior actually rise
-  // here and a good-tape/bad-forty guy actually fall (see bigBoardScore).
-  // Grouped by position within this same ranking pool, not the whole league's
-  // history of prospects, so a prospect is judged against the exact peers
-  // he's being ranked against on this board.
-  const combinesByPosition = new Map<string, CombineTesting[]>();
-  for (const { p } of classForRank) {
-    const ct = readJson<Partial<CombineTesting>>(p.combineTesting, {});
-    if (!ct.venue) continue;
-    const arr = combinesByPosition.get(p.position) ?? [];
-    arr.push(ct as CombineTesting);
-    combinesByPosition.set(p.position, arr);
-  }
-  const testingPercentileById = new Map<string, number | null>();
-  for (const { p } of classForRank) {
-    const ct = readJson<Partial<CombineTesting>>(p.combineTesting, {});
-    testingPercentileById.set(
-      p.id,
-      ct.venue ? overallTestingPercentile(rankProspectCombine(ct as CombineTesting, combinesByPosition.get(p.position) ?? [])) : null,
-    );
-  }
-
-  const ranked = [...classForRank].sort((a, b) =>
-    bigBoardScore(b.view.scoutedOvr, b.p.position as any, b.p.id, league.week, AI.DRAFT_POSITION_VALUE[b.p.position as Position] ?? 1, testingPercentileById.get(b.p.id)) -
-    bigBoardScore(a.view.scoutedOvr, a.p.position as any, a.p.id, league.week, AI.DRAFT_POSITION_VALUE[a.p.position as Position] ?? 1, testingPercentileById.get(a.p.id)),
+  // THE CONSENSUS BOARD. This rank is the public one — lib/consensus.ts grades
+  // every prospect off nothing but public signals (testing, program, the gap
+  // between what he is and what he could be, a medical flag) and ranks the
+  // class by the boardScore it publishes on every row. It is identical for
+  // every team in the league, which is what "consensus" has to mean.
+  //
+  // What it replaces was a rank computed from THIS team's own scoutedOvr — a
+  // private board wearing the word consensus, where two teams saw different
+  // "#1 overall" for the same player.
+  //
+  // Queried by draftYear over the WHOLE class, drafted prospects INCLUDED, so
+  // a prospect's rank never moves because somebody else came off the board.
+  // Filters on this page (position, shortlist) narrow the rows, never the
+  // ranking pool.
+  const classYearRow = await prisma.player.findFirst({
+    where: { leagueId: league.id, isDraftee: true },
+    orderBy: { draftYear: 'desc' },
+    select: { draftYear: true },
+  });
+  const classYear = classYearRow?.draftYear ?? league.seasonYear;
+  const consensus = consensusBoardMap(
+    await prisma.player.findMany({
+      where: { leagueId: league.id, draftYear: classYear },
+      select: {
+        id: true, position: true, trueOvr: true, potential: true,
+        trueAttrs: true, collegeStats: true, combineTesting: true, injuryWeeks: true,
+      },
+    }),
+    { teams: LEAGUE.TEAM_COUNT, rounds: settings.draftRounds },
   );
-  const rankById = new Map(ranked.map(({ p }, i) => [p.id, i + 1]));
+
   const rankBadge = (playerId: string): { label: string; className: string } | null => {
-    const rank = rankById.get(playerId);
-    if (!rank) return null;
-    if (rank === 1) return { label: '#1 Consensus', className: 'text-gold' };
-    if (rank <= 5) return { label: 'Top 5', className: 'text-gold' };
-    if (rank <= 10) return { label: 'Top 10', className: 'text-accent' };
-    if (rank <= 32) return { label: 'Top 32', className: 'text-accent2' };
+    const read = consensus.get(playerId);
+    if (!read) return null;
+    if (read.rank === 1) return { label: '#1 Board', className: 'text-gold' };
+    if (read.band === 'BLUE_CHIP') return { label: 'Blue chip', className: 'text-gold' };
+    if (read.band === 'FIRST_ROUND') return { label: 'R1 grade', className: 'text-accent' };
+    if (read.band === 'DAY_TWO') return { label: 'Day 2', className: 'text-accent2' };
     return null;
   };
 
@@ -178,7 +161,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       // Rank 1 is the BEST prospect, so "best first" (the default, dir=-1)
       // means ascending rank number — the opposite direction of every other
       // column here, where higher is better. Flip the sign to match.
-      case 'consensus': return ((rankById.get(a.p.id) ?? Infinity) - (rankById.get(b.p.id) ?? Infinity)) * -dir;
+      case 'consensus': return ((consensus.get(a.p.id)?.rank ?? Infinity) - (consensus.get(b.p.id)?.rank ?? Infinity)) * -dir;
       case 'ovr': return (a.view.scoutedOvr - b.view.scoutedOvr) * dir;
       case 'age': return (a.p.age - b.p.age) * dir;
       case 'potential': {
@@ -354,6 +337,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
                 <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
                 <th><a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th>Board Grade</th>
                 <th>Projection</th>
                 <th></th>
               </tr>
@@ -362,10 +346,17 @@ export default async function DraftPage({ params, searchParams }: { params: { id
               {sorted.map(({ p, view }) => {
                 const potentialForLabel = view.revealed ? p.potential : (view.potLow + view.potHigh) / 2;
                 const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0, confidence: view.confidence });
+                const read = consensus.get(p.id);
+                // "Our file vs the board" goes through ownGradeFor, never a raw
+                // scoutedOvr. The board grade blends current AND ceiling; a
+                // scouted OVR is current only, so subtracting one from the
+                // other would report us below the room on every prospect alive.
+                const gap = read && view.confidence >= 25 ? ownGradeFor(view) - read.grade : 0;
+                const note = read ? disagreementNote(read, view) : null;
                 return (
                   <tr key={p.id}>
                     <td><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>
-                    <td className="stat-value text-stat-sm text-muted text-right">{rankById.get(p.id) ?? '—'}</td>
+                    <td className="stat-value text-stat-sm text-muted text-right">{read?.rank ?? '—'}</td>
                     <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                     <td className="font-medium">
                       <div className="flex items-center gap-2">
@@ -380,6 +371,19 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     <td className="text-muted">{p.age}</td>
                     <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
                     <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+                    <td>
+                      {read && (
+                        <div className="flex items-baseline gap-1.5 whitespace-nowrap" title={note ?? read.headline}>
+                          <span className="stat-value text-stat-sm text-chalk">{read.grade}</span>
+                          {Math.abs(gap) >= 4 && (
+                            <span className={`text-[11px] font-mono ${gap > 0 ? 'text-accent' : 'text-warn'}`}>
+                              {gap > 0 ? '+' : '−'}{Math.abs(gap)} us
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {read && <div className="text-[10px] text-muted leading-none mt-0.5">{read.bandLabel}</div>}
+                    </td>
                     <td><span className={`text-xs font-medium ${label.className}`}>{label.label}</span></td>
                     <td>{isUserOnClock && <DraftPickButton leagueId={league.id} teamId={team.id} playerId={p.id} />}</td>
                   </tr>
