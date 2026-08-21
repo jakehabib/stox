@@ -578,3 +578,17 @@ ever force-pushed over, so every state below still exists in git history).
     lists linking straight to the player, above the existing charts.
     League spend rank verified against a direct positional computation
     on real data (28th of 32, $172.8M–$227.8M spread — exact match).
+- **2026-08-21 — Redesign Stage 10: the landing / league-creation page.**
+  Checkpoint before this change: `7944fe8`. The last page still on the
+  old look. It now opens with a real masthead — the game's own name at
+  full display scale over a yard-line texture, a tagline, and a Create
+  League call to action — instead of a plain "Your leagues" heading.
+  Saved franchises moved from cramped three-across cards to full-width
+  rows carrying a team-colored left edge, the franchise name at display
+  weight, and season/week/phase/record on one line. The league name
+  leads each row as an eyebrow above the franchise: with several saves
+  it's the only thing that tells them apart (the same franchise can be
+  picked more than once), and it was previously buried at the end of
+  the meta line in the smallest text on the row. The create-league form
+  itself is unchanged in fields, order, defaults, or its server action
+  — only its container styling and an anchor target from the hero CTA.
