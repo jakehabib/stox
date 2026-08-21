@@ -868,3 +868,29 @@ ever force-pushed over, so every state below still exists in git history).
     games-back formula checked against a hand calculation. Screenshotted
     and read back — which is how the ticker overlap and a team-name
     column truncating to "Jackso..." were caught.
+- **2026-08-21 — Player names are now unique league-wide (`ee68fd9`).**
+  A 53-man roster in the test save fielded two men both called Reggie
+  Hollis, four different Northcutts, three Ibarras and four players named
+  Priest. Sixty first names and sixty surnames were serving ~1,700
+  rostered players plus a 400-deep draft class every year. Simulated
+  against the shipped pools: **280 of 1,523 players — 18% of the league —
+  shared a full name with somebody else**, and each surname was worn by
+  25 players on average.
+  - Pools widened to 200 first names / 240 surnames / 76 colleges (from
+    60 / 60 / 21). That's the *variety* fix — average surname drops from
+    25 players league-wide to 6.
+  - Pool size alone does not fix duplicates, though: 48,000 combinations
+    still collides ~18 times across 1,523 independent draws. So
+    generation now carries a `NameRegistry`. League creation threads one
+    ledger through every roster and the free agent pool; each annual
+    draft class seeds its ledger from everyone already in the league, so
+    a rookie can never be handed a sitting starter's name. Collisions
+    re-roll, and if the space were ever exhausted it falls back to a
+    generational suffix ("Marcus Whitfield Jr.") rather than a number.
+  - Verified end to end by generating a real league: 1,524 players, 1,524
+    distinct names, zero duplicates, all 76 colleges used, no suffix
+    fallback needed. Simulated on to 3,509 players across five draft
+    classes — still zero. Same seed still yields the same names.
+  - Note: this only affects newly generated players. Existing saves keep
+    the duplicate names they already have.
+
