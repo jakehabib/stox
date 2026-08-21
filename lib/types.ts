@@ -74,5 +74,5 @@ export interface GmProfile {
 }
 
 export type CapMode = 'REALISTIC' | 'SIMPLIFIED' | 'OFF';
-export type Difficulty = 'ROOKIE' | 'PRO' | 'ALL_PRO' | 'LEGEND';
+export type Difficulty = 'EASY' | 'NORMAL' | 'HARD';
 export type LeagueStart = 'RANDOM_ROSTERS' | 'FANTASY_DRAFT';

@@ -187,7 +187,7 @@ export function CreateLeagueForm({
             <Field
               label="Difficulty"
               name="difficulty"
-              options={[['ROOKIE', 'Rookie'], ['PRO', 'Pro'], ['ALL_PRO', 'All-Pro'], ['LEGEND', 'Legend']]}
+              options={[['EASY', 'Easy'], ['NORMAL', 'Normal'], ['HARD', 'Hard']]}
               defaultValue="PRO"
             />
 

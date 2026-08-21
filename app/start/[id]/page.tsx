@@ -161,8 +161,8 @@ export default async function StartPage({ params }: { params: { id: string } }) 
           )}
         </section>
 
-        {mine && (
-          <div className="grid md:grid-cols-2 gap-4">
+        <div className={`grid gap-4 ${mine ? 'md:grid-cols-2' : ''}`}>
+          {mine && (
             <section className="panel p-5">
               <div className="label-sm">The roster you inherit</div>
               <h2 className="font-display font-bold uppercase tracking-wide text-lg mt-1">Strengths and holes</h2>
@@ -185,8 +185,13 @@ export default async function StartPage({ params }: { params: { id: string } }) 
                 and the same one the sim uses to set a win chance. Ranks are among the 32 clubs in this league.
               </p>
             </section>
+          )}
 
-            <section className="panel p-5">
+          {/* Shown whether or not a rating exists. In a fantasy-draft league
+              the division is the ONLY real thing about the club yet, and it is
+              still the thing worth knowing: these are the three teams drafting
+              against you and then playing you twice a year. */}
+          <section className="panel p-5">
               <div className="label-sm">Twice a year, every year</div>
               <h2 className="font-display font-bold uppercase tracking-wide text-lg mt-1">
                 {me.conference} {me.division}
@@ -214,10 +219,9 @@ export default async function StartPage({ params }: { params: { id: string } }) 
                     </li>
                   );
                 })}
-              </ul>
-            </section>
-          </div>
-        )}
+            </ul>
+          </section>
+        </div>
 
         <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
           <Link href={`/league/${league.id}`} className="btn-primary text-base px-6 py-3">

@@ -18,7 +18,7 @@ import { advanceWeek } from '@/lib/season';
  */
 const LEAGUE_STARTS = ['RANDOM_ROSTERS', 'FANTASY_DRAFT'] as const;
 const CAP_MODES = ['REALISTIC', 'SIMPLIFIED', 'OFF'] as const;
-const DIFFICULTIES = ['ROOKIE', 'PRO', 'ALL_PRO', 'LEGEND'] as const;
+const DIFFICULTIES = ['EASY', 'NORMAL', 'HARD'] as const;
 
 function pick<T extends string>(raw: FormDataEntryValue | null, allowed: readonly T[], fallback: T): T {
   const v = String(raw ?? '');
@@ -48,7 +48,7 @@ export async function createLeagueAction(formData: FormData) {
   const userTeamAbbr = String(formData.get('userTeamAbbr') || 'STL');
   const leagueStart = pick(formData.get('leagueStart'), LEAGUE_STARTS, 'RANDOM_ROSTERS');
   const capMode = pick(formData.get('capMode'), CAP_MODES, 'REALISTIC');
-  const difficulty = pick(formData.get('difficulty'), DIFFICULTIES, 'PRO');
+  const difficulty = pick(formData.get('difficulty'), DIFFICULTIES, 'NORMAL');
 
   const leagueId = await createLeague({
     name,

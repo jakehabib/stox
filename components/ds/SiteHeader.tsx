@@ -15,7 +15,12 @@ export function SiteHeader({ right }: { right?: React.ReactNode }) {
           <span className="w-8 h-8 rounded-md bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-display font-bold">
             D
           </span>
-          <span className="font-display font-bold tracking-wide uppercase text-lg">Dynasty GM</span>
+          {/* Wordmark text drops below sm. At 390px the right-hand group (an
+              account badge plus whatever nav other pages hang there) and a
+              full wordmark do not both fit, and what actually happened was
+              "Sign in" breaking across two lines. The D mark holds the brand
+              in the bar; the hero underneath says the full name at 48px. */}
+          <span className="font-display font-bold tracking-wide uppercase text-lg hidden sm:inline">Dynasty GM</span>
         </Link>
         {right ?? <AccountBadge />}
       </div>

@@ -24,7 +24,7 @@ export default async function SettingsPage({ params }: { params: { id: string } 
           />
           <SelectField
             label="Difficulty" name="difficulty" defaultValue={settings.difficulty}
-            options={[['ROOKIE', 'Rookie'], ['PRO', 'Pro'], ['ALL_PRO', 'All-Pro'], ['LEGEND', 'Legend']]}
+            options={[['EASY', 'Easy'], ['NORMAL', 'Normal'], ['HARD', 'Hard']]}
             tip="Higher difficulty makes AI teams play better (a rating bonus in simulated games) and value players more sharply in trades and free agency, while your own scouting gets noisier — the AI doesn't get smarter about hiding information, it just gets harder to exploit."
           />
         </Section>

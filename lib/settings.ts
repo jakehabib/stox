@@ -51,7 +51,7 @@ export interface LeagueSettings {
 
 export const DEFAULT_SETTINGS: LeagueSettings = {
   capMode: 'REALISTIC',
-  difficulty: 'PRO',
+  difficulty: 'NORMAL',
   leagueStart: 'RANDOM_ROSTERS',
   seasonLength: 17,
   playoffTeamsPerConf: 6,
@@ -85,8 +85,33 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
   confirmRiskyMoves: true,
 };
 
+/**
+ * Difficulty used to be a four-rung ladder borrowed from the console games
+ * (Rookie / Pro / All-Pro / Legend). It is three rungs now, because four
+ * asked a new player to place themselves on a scale before they had any idea
+ * what the middle felt like, and the two hardest rungs were separated by
+ * less than the noise in a season.
+ *
+ * Saves created under the old names carry them in their settings JSON, and
+ * nothing rewrites that blob on read, so the old value would survive forever
+ * and index DIFFICULTY_MODS as undefined — every difficulty knob silently
+ * NaN. Map them on the way in instead.
+ */
+const LEGACY_DIFFICULTY: Record<string, Difficulty> = {
+  ROOKIE: 'EASY',
+  PRO: 'NORMAL',
+  ALL_PRO: 'HARD',
+  LEGEND: 'HARD',
+};
+
 export function parseSettings(raw: string | null | undefined): LeagueSettings {
-  return { ...DEFAULT_SETTINGS, ...readJson<Partial<LeagueSettings>>(raw, {}) };
+  const merged = { ...DEFAULT_SETTINGS, ...readJson<Partial<LeagueSettings>>(raw, {}) };
+  const mapped = LEGACY_DIFFICULTY[merged.difficulty as string];
+  if (mapped) merged.difficulty = mapped;
+  // A settings blob hand-edited to something unrecognised should play, not
+  // crash with NaN modifiers three screens later.
+  if (!(merged.difficulty in DIFFICULTY_MODS)) merged.difficulty = DEFAULT_SETTINGS.difficulty;
+  return merged;
 }
 
 export function serializeSettings(s: LeagueSettings): string {
@@ -102,8 +127,12 @@ export const DIFFICULTY_MODS: Record<Difficulty, {
   /** Extra scouting error the user suffers. */
   userScoutPenalty: number;
 }> = {
-  ROOKIE:  { aiUnitBonus: -1.5, aiSharpness: 0.75, userScoutPenalty: -3 },
-  PRO:     { aiUnitBonus: 0,    aiSharpness: 0.9,  userScoutPenalty: 0 },
-  ALL_PRO: { aiUnitBonus: 1.5,  aiSharpness: 1.0,  userScoutPenalty: 2 },
-  LEGEND:  { aiUnitBonus: 3.0,  aiSharpness: 1.1,  userScoutPenalty: 4 },
+  // EASY keeps the old Rookie numbers and NORMAL the old Pro numbers, so an
+  // existing save plays exactly as it did. HARD sits between the old All-Pro
+  // and Legend rather than at either: Legend's 3.0 unit bonus was a bigger
+  // edge than the gap between a playoff team and a bad one, which read as
+  // unfair rather than hard.
+  EASY:   { aiUnitBonus: -1.5, aiSharpness: 0.75, userScoutPenalty: -3 },
+  NORMAL: { aiUnitBonus: 0,    aiSharpness: 0.9,  userScoutPenalty: 0 },
+  HARD:   { aiUnitBonus: 2.25, aiSharpness: 1.05, userScoutPenalty: 3 },
 };
