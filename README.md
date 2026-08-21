@@ -1048,4 +1048,61 @@ ever force-pushed over, so every state below still exists in git history).
   *before* any value check, then iterates in roster order, so a team can
   spend its cap room on depth and fail the affordability test for its own
   stars.
+- **2026-08-21 — Salary cap enforcement (`8a9ed2f`).** Before this, the
+  cap was close to a suggestion: only free-agent signings, extensions and
+  franchise tags checked whether a team had room. Restructures, trades,
+  rookie deals and week advancement did not.
+  - **One shared gate.** `assertCapRoom()` in the new
+    `lib/capEnforcement.ts` now guards signings, extensions, tags,
+    restructures, both sides of a trade, and rookie deals. It lives in
+    its own module rather than `lib/cap.ts` for a concrete reason:
+    `lib/cap.ts` is imported by four client components, and the check
+    needs Prisma — putting it there would drag the Prisma client into the
+    browser bundle. `lib/cap.ts` keeps the pure maths.
+  - **Trades check both sides.** A trade can be legal for one team and
+    illegal for the other. The existing rule still holds: the signing
+    bonus stays with the team giving the player up, and the receiving
+    team inherits base salary only.
+  - **The week will not advance while you are over**, in Realistic mode,
+    for your own team only — and only while a way out actually exists.
+    If dead money alone exceeds the ceiling, the week advances with the
+    warning standing rather than soft-locking the save. The block names
+    the shortfall and the fastest route out; a sticky panel and a
+    standing banner carry one-click relief links.
+  - **The block is scoped off `OFFSEASON`/`RESIGN` deliberately**, and
+    that was only found by tracing four seasons. Contracts age onto their
+    next escalating year at the season roll, but expiring deals don't
+    come off the books until re-signing ends — so teams go negative in a
+    predictable window and recover on their own (6 teams over in 2028, 18
+    in 2029). Blocking there would have fired on most users every single
+    offseason for a condition that clears one step later. Compliance is
+    due from `FREE_AGENCY` onward.
+  - **Cuts are deliberately NOT blocked.** A release whose dead money
+    exceeds its cap hit *increases* spend, but blocking cuts is exactly
+    how you strand someone whose remaining moves all cost money. Instead
+    the confirm dialog now says it plainly: "This release costs you $X of
+    cap space rather than freeing any."
+  - **AI teams obey the same rules**, with one deliberate exception: a
+    draft pick is the one transaction a team cannot decline, so an AI
+    team clears its own room by releasing the fewest players that fit the
+    deal rather than stalling the draft. It pays a real roster cost; it
+    doesn't get an exemption.
+  - Two things I got wrong and am recording rather than quietly
+    dropping. I reported that only one code path checked the cap — it was
+    three. And I reported a live bug where the header showed a cap figure
+    in a league with the cap turned off; I had the raw
+    `{"capMode":"OFF"}` and a roster page rendering "—" in every Cap Hit
+    cell (which the code only does in OFF mode), but by the time it was
+    investigated every league in the database read `REALISTIC`, and a
+    purpose-built OFF league renders "Cap Space / Off" correctly on every
+    page. Something changed the setting mid-session. There is no live bug.
+  - **Found, verified, and NOT yet fixed: the salary cap never grows.**
+    `capForYear(seasonYear, leagueStartYear)` is correct, but its only
+    substantive caller passes the current season year for *both*
+    arguments, so elapsed is always 0 and the ceiling is pinned at
+    $255.0M forever while base salaries escalate every year. That
+    compounding is what produces the offseason drift above. It needs a
+    `League.startYear` column. Being repaired now, together with the
+    contract-length and AI re-sign problems, since all three are the same
+    economy.
 
