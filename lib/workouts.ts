@@ -95,9 +95,10 @@ export const WORKOUTS = {
 
   /**
    * Where the ceiling projection lands. High enough that the potential range
-   * visibly collapses (roughly ±4 at lib/tuning.ts's POTENTIAL_DIFFICULTY,
-   * against ±17 on a cold prospect), never 100 — errorBand's floor keeps it a
-   * range at any confidence and that is the contract.
+   * visibly collapses — at lib/tuning.ts's POTENTIAL_DIFFICULTY the displayed
+   * half-width goes from ±24 on a cold prospect, and ±8.5 on one starred all
+   * season, to ±4.6 here. Never 100: errorBand's floor keeps potential a range
+   * at any confidence and that is the contract lib/scouting.ts enforces.
    */
   POT_CONFIDENCE: 88,
 

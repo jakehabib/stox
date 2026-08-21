@@ -57,15 +57,27 @@ export const SHORTLIST_ATTENTION = {
   WEEKLY_POOL: 100,
 
   /**
-   * Fraction of the remaining confidence gap one attention unit closes. Sized
-   * so a five-deep shortlist (20 units each) closes about a quarter of the gap
-   * per week — a real file inside a month — while a sixty-deep one (1.7 units
-   * each) moves a couple of points a week, which is "I know who he is" and
-   * nothing more.
+   * Fraction of the remaining confidence gap one attention unit closes.
+   *
+   * Sized against a 17-week season, which is all the time there is: the class
+   * lands at PRESEASON of the year before its draft and this only runs on
+   * regular-season weeks. Confidence after 17 weeks, starting from a cold 8,
+   * before staff scaling (a real department lands within a few points either
+   * side of these):
+   *
+   *     5 starred  -> 81   a near-complete file on all five
+   *    10 starred  -> 72   solid on everyone, ceilings still open
+   *    20 starred  -> 54   partial evaluations across the board
+   *    40 starred  -> 36   names and shapes
+   *    60 starred  -> 28   an early look, nothing more
+   *
+   * That spread IS the decision the system asks for. Raising this collapses
+   * it — at double, sixty players is as good as five and there is no longer a
+   * reason to choose.
    */
-  CLOSE_PER_UNIT: 0.0135,
-  /** No single week may close more than this share of what is left, whatever the shortlist size. */
-  MAX_WEEKLY_CLOSE: 0.35,
+  CLOSE_PER_UNIT: 0.011,
+  /** No single week may close more than this share of what is left, whatever the shortlist size. A one-week jump from unscouted to a real file reads as a bug. */
+  MAX_WEEKLY_CLOSE: 0.25,
 
   /**
    * Where sustained attention converges. Below 100 on purpose: a season of

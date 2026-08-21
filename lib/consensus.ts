@@ -1,6 +1,7 @@
 import { Rng, clamp } from './rng';
 import { readJson } from './json';
 import type { AttrMap } from './ratings';
+import { AI } from './tuning';
 import type { Position } from './tuning';
 import type { CollegeProfile, CombineTesting, CompetitionGrade } from './gen/prospectProfile';
 
@@ -69,12 +70,22 @@ export const CONSENSUS = {
 
   /** Max swing from the room over-indexing on the stopwatch. */
   TESTING_PULL: 9,
-  /** Grade adjustment by strength of competition faced. */
-  PROGRAM_PULL: { A: 4, B: 1.5, C: 0, D: -2, F: -4 } as Record<CompetitionGrade, number>,
+  /**
+   * Grade adjustment by strength of competition faced. Only the two extremes
+   * move the grade enough to be worth naming: a genuine blue blood and a
+   * genuine small school. B and D are where most of a class plays and the room
+   * has no strong feeling about either.
+   */
+  PROGRAM_PULL: { A: 4, B: 1.2, C: 0, D: -1.2, F: -4 } as Record<CompetitionGrade, number>,
   /** Max markdown applied to a raw, high-ceiling developmental player. */
   DEVELOPMENTAL_PULL: 6,
-  /** Ceiling-minus-current gap at which the room starts calling a player "a project". */
-  DEVELOPMENTAL_GAP_MIN: 10,
+  /**
+   * Ceiling-minus-current gap at which the room starts calling a player "a
+   * project". Set above the class median gap on purpose — nearly every
+   * prospect has SOME room to grow, and a tag that lands on half the board
+   * tells the user nothing.
+   */
+  DEVELOPMENTAL_GAP_MIN: 16,
   /** Flat markdown the room applies to anyone carrying a medical flag. */
   MEDICAL_PULL: 6.5,
   /**
@@ -88,20 +99,66 @@ export const CONSENSUS = {
   MEDICAL_MAX_ODDS: 0.3,
 
   /** A bias is only NAMED to the user once its pull clears this. Below it, it is rounding. */
-  BIAS_REPORT_THRESHOLD: 1.5,
+  BIAS_REPORT_THRESHOLD: 2,
 
-  /** Grade band floors, richest first. */
+  /**
+   * How far positional value moves a prospect's BOARD SLOT, in board-score
+   * points, at AI.DRAFT_POSITION_VALUE's extremes. This does not touch the
+   * grade — a guard and a quarterback who grade out the same are the same
+   * football player, they just do not come off the board at the same pick.
+   * It is the room's fifth bias and the most exploitable one: nothing stops a
+   * GM taking the guard.
+   */
+  POSITION_PULL: 8,
+
+  /**
+   * Band cutoffs as PICK NUMBERS, so they mean what they say — a
+   * "first-round grade" is a player the room expects inside the first round.
+   * Scaled to the actual draft (teams x rounds) rather than hard-coded, so a
+   * league running 4 rounds does not label a hundred players Day 3.
+   */
   BANDS: [
-    { id: 'BLUE_CHIP', min: 88, label: 'Blue chip', blurb: 'Top of the board. The room does not expect him to get past the first handful of picks.' },
-    { id: 'FIRST_ROUND', min: 82, label: 'First-round grade', blurb: 'A consensus first rounder.' },
-    { id: 'DAY_TWO', min: 76, label: 'Day 2 grade', blurb: 'Second or third round on most boards.' },
-    { id: 'DAY_THREE', min: 69, label: 'Day 3 grade', blurb: 'A rotational bet in the middle rounds.' },
-    { id: 'LATE_FLIER', min: 62, label: 'Late flier', blurb: 'Last-day name. Special teams and a roster spot to win.' },
-    { id: 'PRIORITY_FA', min: 0, label: 'Priority free agent', blurb: 'Expected to go undrafted. Somebody signs him after the phones stop.' },
+    { id: 'BLUE_CHIP', label: 'Blue chip', blurb: 'Top of the board. The room does not expect him to get past the first handful of picks.' },
+    { id: 'FIRST_ROUND', label: 'First-round grade', blurb: 'A consensus first rounder.' },
+    { id: 'DAY_TWO', label: 'Day 2 grade', blurb: 'Second or third round on most boards.' },
+    { id: 'DAY_THREE', label: 'Day 3 grade', blurb: 'A rotational bet in the middle rounds.' },
+    { id: 'LATE_FLIER', label: 'Late flier', blurb: 'Last-day name. Special teams and a roster spot to win.' },
+    { id: 'PRIORITY_FA', label: 'Priority free agent', blurb: 'Expected to go undrafted. Somebody signs him after the phones stop.' },
   ] as const,
 };
 
 export type ConsensusBandId = (typeof CONSENSUS.BANDS)[number]['id'];
+
+/**
+ * The draft the bands are measured against. Defaults to this project's
+ * standard 32-team, 7-round rookie draft (lib/tuning.ts LEAGUE / settings
+ * draftRounds); pass the league's real numbers when a page has them.
+ */
+export interface BoardShape {
+  teams: number;
+  rounds: number;
+}
+
+const DEFAULT_SHAPE: BoardShape = { teams: 32, rounds: 7 };
+
+/**
+ * Pick number each band runs through. Derived, not hard-coded, so the labels
+ * stay true in a league with a different draft length: blue chips are the top
+ * handful, first round is round one, Day 2 is rounds two and three, Day 3 runs
+ * to the end of the draft, and the late-flier band covers the undrafted names
+ * teams still call about.
+ */
+export function bandCutoffs(shape: BoardShape = DEFAULT_SHAPE) {
+  const round = Math.max(1, shape.teams);
+  const draftSize = round * Math.max(1, shape.rounds);
+  return {
+    BLUE_CHIP: Math.max(3, Math.round(round * 0.16)),
+    FIRST_ROUND: round,
+    DAY_TWO: Math.min(draftSize, round * 3),
+    DAY_THREE: draftSize,
+    LATE_FLIER: Math.round(draftSize * 1.35),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Public athleticism read
@@ -200,23 +257,26 @@ export interface ConsensusInput {
 
 export interface ConsensusGrade {
   playerId: string;
+  position: string;
   /** 0..99 public grade. An opinion, not a rating — it is NOT trueOvr and must never be rendered as one. */
   grade: number;
-  band: ConsensusBandId;
-  bandLabel: string;
-  bandBlurb: string;
-  /** Every named bias that moved this grade, strongest first. */
+  /**
+   * What the board actually SORTS by, and therefore what `rank` ranks: the
+   * unrounded grade plus positional value. Published rather than hidden — a
+   * rank whose ordering number is not on the page is exactly the sort of lying
+   * metric this codebase keeps having to fix.
+   */
+  boardScore: number;
+  /** Board-score points positional value moved him. Moves his SLOT, never his grade. */
+  positionPull: number;
+  /** Plain-language note when positional value moved him enough to notice, else null. */
+  positionNote: string | null;
+  /** Every named bias that moved the GRADE, strongest first. */
   biases: ConsensusBias[];
-  /** One line of plain language: why the board sits where it sits. */
-  headline: string;
   /** Public medical flag. Surfaced separately because the flag itself is news even before the grade moves. */
   medicalFlag: boolean;
   /** 0..1 position-adjusted public testing read, or null if he never tested. */
   athleticism: number | null;
-}
-
-function bandFor(grade: number) {
-  return CONSENSUS.BANDS.find((b) => grade >= b.min) ?? CONSENSUS.BANDS[CONSENSUS.BANDS.length - 1];
 }
 
 /**
@@ -335,33 +395,41 @@ export function consensusGradeFor(p: ConsensusInput): ConsensusGrade {
   }
 
   // Honest disagreement between evaluators, on top of the systematic error.
-  // Its own stream so a future fifth bias cannot reshuffle existing saves.
+  // Its own stream so a future bias cannot reshuffle existing saves.
   const noise = new Rng(`consensus-noise-${p.id}`).normal(0, CONSENSUS.NOISE_SD);
 
-  const value = clamp(Math.round(base + delta + noise), 20, 99);
-  const b = bandFor(value);
+  const raw = clamp(base + delta + noise, 20, 99);
+
+  // --- 5. What the position is worth --------------------------------------
+  // Deliberately NOT folded into the grade. The room's grade is a football
+  // opinion; where a player comes off the board is that opinion plus what the
+  // position is worth in April, and those are two different numbers that a
+  // front office keeps two different columns for. Splitting them is what lets
+  // a page say "same grade as the quarterback, twenty picks later" — which is
+  // the most exploitable thing on the whole board.
+  const posValue = AI.DRAFT_POSITION_VALUE[p.position as Position] ?? 1;
+  const positionPull = CONSENSUS.POSITION_PULL * (posValue - 1);
 
   biases.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
 
   return {
     playerId: p.id,
-    grade: value,
-    band: b.id,
-    bandLabel: b.label,
-    bandBlurb: b.blurb,
+    position: p.position,
+    grade: Math.round(raw),
+    boardScore: raw + positionPull,
+    positionPull,
+    positionNote: positionNoteFor(p.position, positionPull),
     biases,
-    headline: headlineFor(biases, b.label),
     medicalFlag,
     athleticism,
   };
 }
 
-function headlineFor(biases: ConsensusBias[], bandLabel: string): string {
-  const top = biases[0];
-  if (!top) return `${bandLabel}. Nothing about him splits the room.`;
-  return top.direction === 'UP'
-    ? `${bandLabel}. The board is high on him: ${lower(top.because)}`
-    : `${bandLabel}. The board is down on him: ${lower(top.because)}`;
+function positionNoteFor(position: string, pull: number): string | null {
+  if (Math.abs(pull) < 1) return null;
+  return pull > 0
+    ? `The board pushes him up regardless of grade — ${position} is a position teams reach for.`
+    : `The board pushes him down regardless of grade — nobody spends early capital on a ${position}.`;
 }
 
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -371,60 +439,129 @@ const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 // ---------------------------------------------------------------------------
 
 export interface ConsensusRead extends ConsensusGrade {
-  /** 1 = top of the board. Competition ranking: two prospects on the same grade share a rank. */
+  /** 1 = top of the board. Unique: this is the position in the boardScore ordering. */
   rank: number;
   /** Size of the board this rank was taken against. */
   outOf: number;
+  band: ConsensusBandId;
+  bandLabel: string;
+  bandBlurb: string;
+  /** One line of plain language: why the board sits where it sits. */
+  headline: string;
 }
 
 /**
  * Grade a whole class and rank it.
  *
- * The rank IS the rank of the grade returned alongside it — sorted by that
- * exact number, ties broken by player id purely so the order is stable rather
- * than to break the tie in the ranking itself (tied grades share a rank, the
- * way lib/combineRank.ts already does it). There is no second, hidden score
- * doing the sorting.
+ * WHAT RANKS WHAT. The rank is the position in the `boardScore` ordering, and
+ * boardScore is returned on every row — nothing sorts by a number the caller
+ * cannot see. boardScore is the unrounded grade plus positional value, so two
+ * prospects showing the same rounded grade can sit a dozen slots apart, and
+ * `positionNote` says why on the row itself.
  *
- * Grades are set-independent, so passing a filtered list (one position, the
- * shortlist) still returns each prospect's real grade — but the RANK is then
- * a rank within that list. Pass the whole class when the number needs to read
- * as "the consensus #4 prospect".
+ * Grades are set-independent: passing a filtered list (one position, the
+ * shortlist) still returns each prospect's real grade. The RANK is then a rank
+ * within that list, so pass the WHOLE class — drafted prospects included —
+ * when the number has to read as "the consensus #4 prospect". A rank that
+ * changes because somebody else came off the board is a lie.
  */
-export function buildConsensusBoard(prospects: ConsensusInput[]): ConsensusRead[] {
+export function buildConsensusBoard(prospects: ConsensusInput[], shape?: BoardShape): ConsensusRead[] {
+  const cuts = bandCutoffs(shape);
   const graded = prospects.map(consensusGradeFor);
-  const sorted = [...graded].sort((a, b) => b.grade - a.grade || (a.playerId < b.playerId ? -1 : 1));
+  // Player id breaks an exact boardScore tie purely so the order is stable
+  // across processes. Float ties are vanishingly rare; this is determinism
+  // insurance, not a ranking rule.
+  const sorted = [...graded].sort((a, b) => b.boardScore - a.boardScore || (a.playerId < b.playerId ? -1 : 1));
   const outOf = sorted.length;
-  return sorted.map((g) => ({
-    ...g,
-    rank: sorted.filter((o) => o.grade > g.grade).length + 1,
-    outOf,
-  }));
+  return sorted.map((g, i) => {
+    const rank = i + 1;
+    const band = bandForRank(rank, cuts);
+    return {
+      ...g,
+      rank,
+      outOf,
+      band: band.id,
+      bandLabel: band.label,
+      bandBlurb: band.blurb,
+      headline: headlineFor(g, band.label),
+    };
+  });
+}
+
+function bandForRank(rank: number, cuts: ReturnType<typeof bandCutoffs>) {
+  const byId = (id: ConsensusBandId) => CONSENSUS.BANDS.find((b) => b.id === id)!;
+  if (rank <= cuts.BLUE_CHIP) return byId('BLUE_CHIP');
+  if (rank <= cuts.FIRST_ROUND) return byId('FIRST_ROUND');
+  if (rank <= cuts.DAY_TWO) return byId('DAY_TWO');
+  if (rank <= cuts.DAY_THREE) return byId('DAY_THREE');
+  if (rank <= cuts.LATE_FLIER) return byId('LATE_FLIER');
+  return byId('PRIORITY_FA');
+}
+
+function headlineFor(g: ConsensusGrade, bandLabel: string): string {
+  const top = g.biases[0];
+  if (!top) {
+    return g.positionNote
+      ? `${bandLabel}. Nothing about the grade splits the room. ${g.positionNote}`
+      : `${bandLabel}. Nothing about him splits the room.`;
+  }
+  return top.direction === 'UP'
+    ? `${bandLabel}. The board is high on him: ${lower(top.because)}`
+    : `${bandLabel}. The board is down on him: ${lower(top.because)}`;
 }
 
 /** Board keyed by player id, for pages that already have their own row order. */
-export function consensusBoardMap(prospects: ConsensusInput[]): Map<string, ConsensusRead> {
-  return new Map(buildConsensusBoard(prospects).map((r) => [r.playerId, r]));
+export function consensusBoardMap(prospects: ConsensusInput[], shape?: BoardShape): Map<string, ConsensusRead> {
+  return new Map(buildConsensusBoard(prospects, shape).map((r) => [r.playerId, r]));
+}
+
+// ---------------------------------------------------------------------------
+// Disagreeing with the room
+// ---------------------------------------------------------------------------
+
+/** What lib/scouting.ts's buildScoutedView hands back, narrowed to what a comparison needs. */
+export interface OwnRead {
+  scoutedOvr: number;
+  potLow: number;
+  potHigh: number;
+  confidence: number;
+}
+
+/**
+ * The user's own file expressed on the consensus's scale, so the two numbers
+ * are actually comparable.
+ *
+ * This matters more than it looks. A consensus grade blends current and
+ * ceiling; a scouted OVR is current only, and every prospect's ceiling is
+ * above his current rating. Comparing the two raw would report the user as
+ * "below the consensus" on literally every player in the class — a difference
+ * that is an artefact of the two numbers measuring different things, which is
+ * precisely the bug class this project keeps having to fix. So the user's read
+ * gets blended by the SAME weights before anything is subtracted, using the
+ * midpoint of his own scouted potential range (never a true potential).
+ */
+export function ownGradeFor(view: OwnRead): number {
+  return Math.round(
+    CONSENSUS.CURRENT_WEIGHT * view.scoutedOvr +
+    CONSENSUS.POTENTIAL_WEIGHT * ((view.potLow + view.potHigh) / 2),
+  );
 }
 
 /**
  * Where the user's own read sits against the room, in plain language. This is
  * the payoff of the whole file: not "he is a 78", but "we are four points
  * higher than the board is, and here is why they are low."
- *
- * `scoutedOvr` is the center of the user's own scouted range for this player
- * (buildScoutedView().scoutedOvr) — never a true rating.
  */
-export function disagreementNote(read: ConsensusRead, scoutedOvr: number, confidence: number): string | null {
+export function disagreementNote(read: ConsensusRead, view: OwnRead): string | null {
   // Under a real file of your own there is nothing to disagree WITH — quoting
   // a gap off a near-empty report would be inventing an opinion the staff
   // does not have.
-  if (confidence < 25) return null;
-  const gap = scoutedOvr - read.grade;
+  if (view.confidence < 25) return null;
+  const gap = ownGradeFor(view) - read.grade;
   if (Math.abs(gap) < 4) return null;
   const against = read.biases.find((b) => (gap > 0 ? b.direction === 'DOWN' : b.direction === 'UP'));
   const lead = gap > 0
-    ? `Our file has him ${Math.round(gap)} points above the consensus.`
-    : `Our file has him ${Math.round(-gap)} points below the consensus.`;
+    ? `Our file has him ${gap} points above the consensus.`
+    : `Our file has him ${-gap} points below the consensus.`;
   return against ? `${lead} ${against.counter}` : lead;
 }
