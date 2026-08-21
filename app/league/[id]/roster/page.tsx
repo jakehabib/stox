@@ -12,6 +12,7 @@ import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { FillRosterButton } from '@/components/FillRosterButton';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { RosterGroupHeader } from '@/components/ds/RosterGroupHeader';
 import { RatingValue } from '@/components/ds/RatingValue';
 import { teamCapSummary } from '@/lib/cap-summary';
@@ -209,9 +210,10 @@ export default async function RosterPage({ params, searchParams }: { params: { i
             <span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span>
           </td>
           <td className="whitespace-nowrap">
-            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2">
+            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
+              <PlayerAvatar seed={p.id} age={p.age} size={24} teamColor={teamColor} />
               <span className={isStarter ? 'font-semibold' : 'font-medium'}>{p.firstName} {p.lastName}</span>
-              {isStarter && <span className="text-[9px] uppercase tracking-wider font-semibold ml-1.5" style={{ color: teamColor }}>Starter</span>}
+              {isStarter && <span className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: teamColor }}>Starter</span>}
             </Link>
           </td>
           <td className="text-muted text-right">{p.age}</td>

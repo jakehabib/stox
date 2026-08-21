@@ -17,6 +17,7 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { positionBadgeClass } from '@/components/ds/positionColor';
+import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { RatingValue } from '@/components/ds/RatingValue';
 
 type SortKey = 'consensus' | 'pos' | 'ovr' | 'age' | 'potential';
@@ -372,9 +373,9 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     <td className="stat-value text-stat-sm text-muted text-right">{rankById.get(p.id) ?? '—'}</td>
                     <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                     <td className="font-medium">
-                      <div className="flex items-baseline gap-2 whitespace-nowrap">
-                        <a href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2">
-                          {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        <a href={`/league/${league.id}/player/${p.id}`} className="flex items-center gap-2 hover:text-accent2">
+                          <PlayerAvatar seed={p.id} age={p.age} size={24} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
                         </a>
                         {rankBadge(p.id) && (
                           <span className={`text-[10px] font-semibold uppercase tracking-wider ${rankBadge(p.id)!.className}`}>{rankBadge(p.id)!.label}</span>

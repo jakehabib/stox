@@ -9,6 +9,7 @@ import { Tooltip } from '@/components/Tooltip';
 import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
 import { LineChart } from '@/components/charts/LineChart';
 import { ScatterChart } from '@/components/charts/ScatterChart';
+import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { MetricTiles } from '@/components/ds/MetricTiles';
 import { buildPythagoreanTable, strengthOfSchedule, type PythagoreanRow } from '@/lib/analytics';
@@ -330,6 +331,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                         <tr key={p.id}>
                           <td>
                             <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
+                              <PlayerAvatar seed={p.id} age={p.age} size={22} />
                               <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
                             </Link>
                           </td>
@@ -374,6 +376,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                           <td>
                             <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
                               <span className="text-xs text-muted w-4 shrink-0">{i + 1}</span>
+                              <PlayerAvatar seed={p.id} age={p.age} size={22} />
                               <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
                               <span className={`text-xs font-semibold shrink-0 ${positionBadgeClass(p.position)}`}>{p.position}</span>
                             </Link>
