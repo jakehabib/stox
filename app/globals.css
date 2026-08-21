@@ -202,7 +202,10 @@
     animation-play-state: paused;
   }
   @media (prefers-reduced-motion: reduce) {
-    .ticker-track { animation: none; overflow-x: auto; }
+    /* overflow-y is pinned explicitly: setting only overflow-x makes the
+       other axis compute to `auto`, which puts a vertical scrollbar on a
+       single-line ticker. Same quirk that hid the Cap page tooltip. */
+    .ticker-track { animation: none; overflow-x: auto; overflow-y: hidden; }
   }
 }
 

@@ -26,7 +26,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'cap', label: 'Cap Hit' },
   { key: 'base', label: 'Base' },
   { key: 'years', label: 'Yrs Left' },
-  { key: 'savings', label: 'Cut: Savings / Dead' },
+  { key: 'savings', label: 'Cut: Net Saving / Dead' },
 ];
 
 // Fixed group -> color assignment, in POSITION_GROUPS order — identity, not
@@ -430,7 +430,12 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
                       <Link href={sortHref(c.key)} className="hover:text-chalk whitespace-nowrap">
                         {c.label}{sortKey === c.key && (dir === -1 ? ' ▾' : ' ▴')}
                       </Link>
-                      {c.key === 'savings' && <Tooltip text="What cutting this player right now would do to your cap: how much space you'd free up, and how much dead money it would leave behind instead." />}
+                      {c.key === 'savings' && (
+                        <Tooltip
+                          placement="bottom"
+                          text="What cutting this player right now does to your cap. The first number is the NET saving — his cap hit with the dead money already subtracted — so it is the space you actually gain. The second is the dead money you keep paying for a player who is gone."
+                        />
+                      )}
                     </span>
                   </th>
                 ))}

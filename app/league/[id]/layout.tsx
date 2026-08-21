@@ -7,6 +7,7 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { LeagueNav } from '@/components/LeagueNav';
 import { LeagueWireTicker } from '@/components/ds/LeagueWireTicker';
 import { isBreakingNews } from '@/lib/wireRank';
+import { syncScoutingBudget } from '@/lib/scoutingEconomy';
 import { CapAlertBanner } from '@/components/ds/CapAlertBanner';
 import { capComplianceDueNow } from '@/lib/season';
 import { capComplianceReport } from '@/lib/capEnforcement';
@@ -32,8 +33,14 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // capComplianceReport wraps teamCapSummary and short-circuits the extra
   // roster scan when the team is compliant, so this is no more work than
   // the plain summary this used to call, and never two of them.
-  const [compliance, tickerTx] = await Promise.all([
+  const [compliance, scouting, tickerTx] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : capComplianceReport(userTeam.id, league.seasonYear, ctx.settings.capMode),
+    // Scouting focus is a scarce, spendable resource now, and a resource whose
+    // balance the player cannot see is one they will not budget. It earns a
+    // permanent slot next to cap space for the same reason cap space has one.
+    ctx.settings.scoutingEnabled === false
+      ? Promise.resolve(null)
+      : syncScoutingBudget(userTeam.id, league, ctx.settings).catch(() => null),
     prisma.transaction.findMany({
       // 'INJURY' is deliberately absent. The sim writes one injury row per game
       // per week — sixteen a week — so including the type here spent the whole
@@ -91,6 +98,20 @@ export default async function LeagueLayout({ children, params }: { children: Rea
                 <div className="label-sm">Cap Space</div>
                 <div className={`text-sm font-mono font-semibold ${compliance.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(compliance.capSpace)}</div>
               </div>
+            )}
+            {scouting && (
+              <Link
+                href={`/league/${league.id}/scouting`}
+                className="stat-tile hidden lg:block text-right hover:border-accent2/50 transition-colors"
+                title={`${scouting.points} of ${scouting.grant} focus left this period. ${scouting.replenishLabel}`}
+              >
+                <div className="label-sm">Scouting</div>
+                <div className={`text-sm font-mono font-semibold ${
+                  scouting.points === 0 ? 'text-bad' : scouting.points < scouting.grant * 0.25 ? 'text-warn' : 'text-accent2'
+                }`}>
+                  {scouting.points}<span className="text-muted">/{scouting.grant}</span>
+                </div>
+              </Link>
             )}
             <div className="stat-tile text-right">
               <div className="label-sm">{phaseLabel}</div>

@@ -56,7 +56,7 @@ export function LeagueNav({ leagueId }: { leagueId: string }) {
 
   return (
     <div>
-      <nav className="max-w-7xl mx-auto px-6 flex gap-1 overflow-x-auto">
+      <nav className="max-w-7xl mx-auto px-6 flex gap-1 overflow-x-auto overflow-y-hidden">
         {CATEGORIES.map((cat) => {
           const active = cat.key === activeCategory?.key;
           return (
@@ -71,7 +71,7 @@ export function LeagueNav({ leagueId }: { leagueId: string }) {
         })}
       </nav>
       {activeCategory && activeCategory.items.length > 1 && (
-        <nav className="max-w-7xl mx-auto px-6 pb-2 flex gap-1 overflow-x-auto border-t border-line/60 pt-1.5 mt-0.5">
+        <nav className="max-w-7xl mx-auto px-6 pb-2 flex gap-1 overflow-x-auto overflow-y-hidden border-t border-line/60 pt-1.5 mt-0.5">
           {activeCategory.items.map((item) => {
             const href = `${base}${item.href}`;
             const active = isActive(item.href);
