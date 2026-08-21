@@ -171,6 +171,34 @@ npm run build         # production build (generates the client, syncs the
   systems, each with a user-facing path and an AI-vs-AI/AI-vs-user path
 - `lib/season.ts` — the season/offseason phase machine and `advanceWeek`,
   the single entry point that moves league time forward
+- `lib/lineup.ts` — **the single definition of the starting eleven** (11
+  personnel on offence, nickel on defence). Anything that needs to know who
+  starts reads this; three parts of the app used to disagree, and one of them
+  fielded twelve defenders
+- `lib/negotiation.ts` — the ONE contract evaluator. `decideOffer` is called
+  by the client interest meter and by the server on submit, so the meter can
+  never promise something the server refuses. `scripts/checkNegotiationAgreement.ts`
+  proves it across ~974,000 swept offers
+- `lib/consensus.ts` — the free public draft board, wrong in five learnable
+  ways; `lib/shortlistAttention.ts` (weekly scouting attention split across
+  whoever you star) and `lib/workouts.ts` (pre-draft private workouts)
+- `lib/dynasty.ts` — GM levels, XP and the three-branch skill tree
+- `lib/teamRating.ts` — team/unit ratings and league ranks, and
+  `lib/powerRankings.ts` — the weekly 1-32 ordering that is allowed to
+  disagree with the standings
+- `lib/playerSeasons.ts` — year-by-year stat lines, reconstructed by
+  replaying box scores (which are never deleted) and indexed into
+  `PlayerSeason`
+- `lib/weekReport.ts`, `lib/gameShape.ts` — the post-advance Week Report, and
+  the shape of a game derived from the drives already stored on every result
+- `lib/auth.ts`, `lib/owner.ts`, `lib/password.ts` — accounts, sessions, and
+  the ownership boundary enforced in three places: the home list, every
+  server action, and every league page render
+- `lib/leaderboard.ts` — the public, opt-in GM board
+- `lib/leagueFile.ts` — versioned league export/import, with the validation
+  as the actual feature
+- `docs/deployment.md` — how this is deployed, the environment variables, and
+  a plainly-stated known-risks section
 - `app/league/[id]/` — every screen (dashboard, roster, player, depth chart,
   free agency, trade, draft, cap sheet, stats, standings, schedule, game
   recap, settings)
@@ -1418,3 +1446,56 @@ ever force-pushed over, so every state below still exists in git history).
   the call site because `TeamRating` carries a rank for the overall and for
   each unit but not for them, and a rank under a figure must be the rank of
   that figure.
+- **2026-08-21 — The fullback is retired, and the starting eleven has one
+  definition (`97de874`).** Three parts of the app disagreed about what a
+  starter is and **one was arithmetically impossible**: the group table summed
+  to 11 on offence and **twelve** on defence, while the depth chart used a
+  third rule — one per position, so seventeen. That is why the screen could
+  not tell you how many starters you had. `lib/lineup.ts` is now the single
+  answer: 11 personnel on offence (QB, RB, 3 WR, TE, five linemen) and nickel
+  on defence, which is also what the existing unit weights had been assuming.
+  The fullback is gone from code and from the database — **2,070 existing
+  fullbacks converted to running backs**, not deleted, so nobody lost a
+  player, a contract or a career. That migration mattered more than the code:
+  between the type change landing and the data being converted,
+  `attrsForPosition('FB')` threw inside the weekly sim and **every
+  pre-existing save was un-advanceable**.
+- **2026-08-21 — Weekly power rankings (`6aa87a0`).** A 1-32 ordering that is
+  allowed to disagree with the standings — résumé against opponent strength,
+  adjusted margin, roster rating, recent form, each z-scored before weighting.
+  Its first draft measured schedule strength as opponents' win percentage;
+  measured at week 7, **every 5-1 team had an opponents' win rate of exactly
+  .389 and every 4-2 exactly .444** — over short samples that figure is a pure
+  function of your own record, so a third of the weight was re-asserting the
+  record column. Rebuilt on an SRS solve. Movement comes from a **weekly
+  snapshot**, never a recomputation, because ratings depend on the current
+  roster and a club that signed somebody on Tuesday would otherwise rewrite
+  its own history; before any snapshot exists there are no arrows at all.
+  Team strength also lands on the standings — OVR and league rank per row.
+- **2026-08-21 — Year-by-year player stats (`97de874`, model in
+  `lib/playerSeasons.ts`).** The per-season decomposition turned out not to be
+  lost, only un-indexed: every played `Game` keeps its box score, and nothing
+  deletes games, so year/team/games/stats is **reconstructable by replay** —
+  verified to reproduce `careerStats` exactly for all 1,114 players with a
+  career on file. What genuinely cannot be recovered is a seeded veteran's
+  pre-league career: it was built season by season at generation and only the
+  merged total was kept. That is one honest `Before <year>` row with a
+  footnote, never an invented split. Mid-season trades render as a `2TM` line
+  with each club beneath it, in real chronological order.
+- **2026-08-21 — Contracts: 12-year terms, one evaluator, a real ledger
+  (`dfa3fe4`).** The age ladder is gone; the **player** refuses a deal that
+  outlasts him, on a willingness horizon walked forward from the same
+  `retirementChance` that actually retires him. Extensions **append** years
+  and now run through `decideOffer` like the other two paths — that was the
+  last rubber stamp, and `extendContractAction` was a live POST endpoint that
+  signed contracts with no meter at all. The interest meter gained a genuine
+  **"he might sign here"** band, seeded on the exact offer so resubmitting
+  cannot re-roll it, and narrower the better you have scouted him.
+  **A live money bug came out of it:** `deadMoneyOnCut` charged prorated bonus
+  against every year while proration divides by at most five, so a 4-year deal
+  with the void slider at +3 — shipped and reachable — charged **$31.4M of
+  dead money against a $22.4M bonus**. `capHit` was correct, so nobody was
+  falsely shown over the cap, but cutting a player *writes* dead money as a
+  real charge: existing saves contain overcharges of roughly $9M.
+  Agreement between the client meter and the server: **973,878 comparisons,
+  zero disagreements**.
