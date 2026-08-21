@@ -26,7 +26,11 @@ export function StandingsTable({ label, rows }: { label: string; rows: Row[] }) 
                   </span>
                 </td>
                 <td className="font-mono text-right">{r.wins}-{r.losses}{r.ties ? `-${r.ties}` : ''}</td>
-                <td className="font-mono text-muted text-right w-14">{pct.toFixed(3).slice(1)}</td>
+                {/* replace(/^0/) not slice(1): an undefeated team is "1.000",
+                    and slice(1) turns that into ".000" — the one team whose
+                    record most deserves to read correctly was displayed as
+                    winless. */}
+                <td className="font-mono text-muted text-right w-14">{pct.toFixed(3).replace(/^0/, '')}</td>
                 <td className="w-10 text-right">
                   {r.delta ? (
                     <span className={`text-xs font-mono ${r.delta > 0 ? 'text-accent' : 'text-bad'}`}>
