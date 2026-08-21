@@ -1002,4 +1002,50 @@ ever force-pushed over, so every state below still exists in git history).
   baseline is the mean of each team's *starter* average, not a flat mean
   over every rostered player — a flat mean sits below everyone's
   starters and would have shown every unit on every team as a strength.
+- **2026-08-21 — News, GM Career, and the last two mastheads (`bf6e348`,
+  `7f9a1f5`, `63fe094`).**
+  - **News** dumped 80 transactions into one flat column — no sense of
+    when anything happened, no way to reach anything older, and (because
+    the wire is dominated by per-game injury and performance rows) about
+    seven thousand pixels of near-identical entries. Stories now group
+    under a week heading, headlines are weighted by type (a
+    championship, a firing or a trade gets a heavier row; an injury
+    report stays a line item — previously they rendered identically),
+    and it pages 60 at a time. Ordering moved from row-creation time to
+    season/week, which the grouping needs to be contiguous.
+  - **GM Career** in a first season was five sparse tiles and six
+    hundred pixels of nothing. It now carries a season log — including
+    the season *in progress*, which has no `TeamSeasonRecord` row until
+    it ends, so a 7-2 first-year GM was staring at an empty table — and
+    a ledger of every move made, counted by type.
+  - **A self-contradicting count, caught before shipping.** The new
+    ledger first filtered trades by `teamId` and reported "Trades 0" on
+    the same screen whose summary tile read "Trades Made 7". Trade rows
+    carry no `teamId` at all — both sides live in one headline as
+    "Trade: BOS <-> LAX" — and the career summary already knew that. The
+    matching rule is now one exported function used by both. This is the
+    fifth instance this project has produced of a metric that looks
+    right and silently isn't; they now get a shared helper rather than a
+    second implementation.
+  - Also dropped a "Re-signs" column *before* shipping it: nothing
+    anywhere in the sim writes a `RESIGN` transaction, so it could only
+    ever have read zero.
+  - **Stats and History** were the last two screens still opening with a
+    bare `h1` while every other page introduces itself through
+    `PageMasthead`. Both now carry the same band and metric strip.
+- **2026-08-21 — AI re-sign wave measured and found broken (`f5dd6d7`).**
+  No fix yet — the measurement is recorded in `docs/resign-audit.md` so
+  the correction can be aimed rather than guessed at. Against a real save
+  that had already run the wave: **1,046 of 1,318 AI-rostered players are
+  on expiring deals**, 564 of them clear the AI's own "worth keeping"
+  floor, and **44 contracts were actually signed — 7.8% of the eligible
+  pool**. That leaves every AI team shedding roughly ten starters and
+  thirty-four players in one offseason, which would flood free agency
+  with other teams' starters and hand the user a trivially exploitable
+  league. Two independent causes: `suggestedYears()` gives two-year deals
+  to anyone under 66 overall (most of a roster), so half the league
+  expires on the same cycle; and the wave rolls a willingness coin flip
+  *before* any value check, then iterates in roster order, so a team can
+  spend its cap room on depth and fail the affordability test for its own
+  stars.
 
