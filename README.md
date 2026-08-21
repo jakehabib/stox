@@ -1105,4 +1105,47 @@ ever force-pushed over, so every state below still exists in git history).
     `League.startYear` column. Being repaired now, together with the
     contract-length and AI re-sign problems, since all three are the same
     economy.
+- **2026-08-21 — The game now plays football after season one (`8f7b779`).**
+  This was the worst defect in the project and it had been there the
+  whole time.
+  - `buildSchedule()` was called from exactly one place —
+    `createLeague()` — and the offseason pipeline had **no schedule step
+    at all**. A league was born with 272 games in the table and never
+    got another one. Verified across every save in the dev database
+    before the fix: one sat in **2028 regular season week 4 with zero
+    2028 games**; another in 2029 had games only for 2026 plus four
+    playoff fixtures a year.
+  - Nothing told the user. Weeks still advanced, the toast read *"Week 1
+    complete: 0 games played,"* the Advance button stayed green, and the
+    only tell was the dashboard's next-opponent strip quietly failing to
+    render.
+  - This deleted the premise of the game. Every long-arc feature already
+    built — GM Career, Ring of Honor, league records, transaction
+    retrospectives, dynasty score — was pointed at an empty room. Worth
+    noting for the backlog: the playtest reported this as four separate
+    findings ("franchise history is a graveyard", "awards become jokes",
+    "nothing accumulates", "career stats stop growing"). They are one bug.
+  - New `lib/scheduleSeason.ts` owns the single path both callers use,
+    and the preseason step invokes it. Preseason is the right gate: it is
+    the last phase before `REGULAR` on every route into a new league
+    year, and the function is idempotent, so running it on a
+    freshly-created league that already has a schedule is a no-op rather
+    than a duplicate season.
+  - Verified by advancing a real stuck save: 2027 preseason reported
+    *"The 2027 schedule is out — 272 games across 17 weeks,"* then played
+    16 games a week for three straight weeks. Games by year went from
+    `2026:283` alone to `2026:283, 2027:272`. Screenshotted a 2027 week-4
+    schedule page showing three played results and fourteen to come.
+- **2026-08-21 — Playoff wins no longer contaminate regular-season
+  records (`8f7b779`).** `updateStandings` ran for every game with no
+  phase guard, so a champion's four postseason wins were incremented
+  straight into `team.wins` — and `TeamSeasonRecord` is built from
+  `team.wins`. That is where **"2026 Champions (19-1)" on a 17-game
+  season** came from, along with 20-game division tables and a title
+  winner displayed third in its own division. Standings now update only
+  for `kind === 'REGULAR'`; the postseason is already carried by the
+  Game rows and by `TeamSeasonRecord.playoffResult`. Verified by running
+  a league from week 17 through the final: the champion finished
+  **17-0 rather than 21-0**, the largest record in the league was 17
+  games, and every season record row written totals exactly 17.
 
