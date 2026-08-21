@@ -175,6 +175,24 @@
     background-attachment: local, local, scroll, scroll;
   }
 
+  /* Range input used by the contract negotiator. Native range styling is
+     inconsistent across engines and none of it matches this app, so the
+     track and thumb are drawn explicitly for both WebKit and Gecko. The
+     thumb is deliberately large — this is a control the user drags
+     repeatedly while watching a meter, not a set-and-forget form field. */
+  .slider {
+    @apply w-full h-1.5 rounded-full bg-raised appearance-none cursor-pointer;
+  }
+  .slider::-webkit-slider-thumb {
+    @apply appearance-none w-4 h-4 rounded-full bg-accent border-2 border-ink cursor-pointer;
+    box-shadow: 0 0 0 1px theme('colors.accent');
+  }
+  .slider::-moz-range-thumb {
+    @apply w-4 h-4 rounded-full bg-accent border-2 border-ink cursor-pointer;
+    box-shadow: 0 0 0 1px theme('colors.accent');
+  }
+  .slider:disabled { @apply opacity-40 cursor-not-allowed; }
+
   /* League Wire ticker — continuous scroll, pauses on hover so a headline
      can actually be read, and holds still entirely for reduced-motion. */
   .ticker-track {
