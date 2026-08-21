@@ -3,10 +3,17 @@
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { offerContractAction, checkCompetingBidAction } from '@/app/actions/roster';
-import { marketValue, suggestedYears, formatMoney, buildContract, capHit } from '@/lib/cap';
+import { marketValue, suggestedYears, formatMoney, buildContract, capHitSchedule } from '@/lib/cap';
 import { CapMode } from '@/lib/types';
 import { MoneyInput } from './MoneyInput';
 
+/**
+ * Free-agency negotiation. Carries the same real structuring the extension
+ * form has (front/back-loading, void years, a full per-year cap schedule) —
+ * signing an outside free agent is the same cap decision as extending your
+ * own guy, so it gets the same tools — plus the one thing unique to the open
+ * market: a live read on who else is bidding.
+ */
 export function SignOfferForm({ leagueId, teamId, playerId, ovr, position, age, capSpace, capMode }: {
   leagueId: string; teamId: string; playerId: string; ovr: number; position: string; age: number;
   capSpace: number; capMode: CapMode;
@@ -14,6 +21,8 @@ export function SignOfferForm({ leagueId, teamId, playerId, ovr, position, age, 
   const suggested = marketValue({ ovr, position: position as any, age });
   const [apy, setApy] = useState(Math.round(suggested / 100_000) * 100_000);
   const [years, setYears] = useState(suggestedYears(ovr, age));
+  const [structure, setStructure] = useState(1.0); // <1 front-loaded, 1 flat, >1 back-loaded
+  const [voidYears, setVoidYears] = useState(0);
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [competing, setCompeting] = useState<{ teamName: string; apy: number } | null | undefined>(undefined);
@@ -28,22 +37,26 @@ export function SignOfferForm({ leagueId, teamId, playerId, ovr, position, age, 
     return () => { cancelled = true; };
   }, [leagueId, playerId, teamId]);
 
-  // Mirrors exactly what signFreeAgent will build server-side for a fresh
-  // signing, so this preview is never wrong about what's about to happen —
-  // including the crash this used to cause when it silently didn't match.
-  const projected = useMemo(() => {
-    const c = buildContract({ apy, years, signedYear: 0 });
-    const hit = capHit({ years: c.years, yearsRemaining: c.years, signedYear: 0, baseSalaries: JSON.stringify(c.baseSalaries), signingBonus: c.signingBonus, guaranteed: c.guaranteed }, capMode);
+  // Mirrors exactly what signFreeAgent builds server-side, so this preview is
+  // never wrong about what's about to happen.
+  const preview = useMemo(() => {
+    const c = buildContract({ apy, years, signedYear: 0, escalation: structure });
+    const schedule = capHitSchedule({ ...c, baseSalaries: JSON.stringify(c.baseSalaries), voidYears }, capMode);
     const total = c.baseSalaries.reduce((a, b) => a + b, 0) + c.signingBonus;
-    return { hit, total, guaranteed: c.guaranteed };
-  }, [apy, years, capMode]);
+    // What void years push past the end of the deal — charged as dead money
+    // the season it expires (see releaseUnresignedExpiringContracts).
+    const prorated = Math.min(years + voidYears, 5);
+    const stranded = voidYears > 0 ? Math.max(0, c.signingBonus - Math.round(c.signingBonus / prorated) * years) : 0;
+    return { schedule, total, guaranteed: c.guaranteed, stranded };
+  }, [apy, years, structure, voidYears, capMode]);
 
-  const overCap = capMode !== 'OFF' && projected.hit > capSpace;
-  const remainingAfter = capSpace - projected.hit;
+  const year1 = preview.schedule[0] ?? 0;
+  const overCap = capMode !== 'OFF' && year1 > capSpace;
+  const remainingAfter = capSpace - year1;
 
   const submit = () => {
     startTransition(async () => {
-      const result = await offerContractAction(leagueId, playerId, teamId, apy, years);
+      const result = await offerContractAction(leagueId, playerId, teamId, apy, years, structure, voidYears);
       setMsg({ ok: result.ok, text: result.message });
       if (result.ok) router.refresh();
     });
@@ -51,6 +64,7 @@ export function SignOfferForm({ leagueId, teamId, playerId, ovr, position, age, 
 
   const setApyPct = (pct: number) => setApy(Math.round((suggested * pct) / 100 / 100_000) * 100_000);
   const beingOutbid = !!competing && apy < competing.apy;
+  const structureLabel = structure < 0.95 ? 'Front-loaded' : structure > 1.05 ? 'Back-loaded' : 'Balanced';
 
   return (
     <div className="space-y-4">
@@ -90,29 +104,61 @@ export function SignOfferForm({ leagueId, teamId, playerId, ovr, position, age, 
           <label className="label-sm">Contract length</label>
           <span className="text-xs font-mono">{years} yr{years === 1 ? '' : 's'}</span>
         </div>
-        <input
-          type="range" min={1} max={6} step={1} value={years}
-          onChange={(e) => setYears(Number(e.target.value))}
-          className="w-full accent-accent"
-        />
+        <input type="range" min={1} max={7} step={1} value={years} onChange={(e) => setYears(Number(e.target.value))} className="w-full accent-accent" />
       </div>
 
-      <div className="card-pad !p-3 rounded-lg bg-raised space-y-1.5 text-sm">
-        <div className="flex justify-between"><span className="text-muted">Total value</span><span className="font-mono">{formatMoney(projected.total)}</span></div>
-        <div className="flex justify-between"><span className="text-muted">Guaranteed (est.)</span><span className="font-mono">{formatMoney(projected.guaranteed)}</span></div>
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="label-sm">Structure</label>
+          <span className="text-xs font-mono">{structureLabel}</span>
+        </div>
+        <input type="range" min={0.85} max={1.25} step={0.01} value={structure} onChange={(e) => setStructure(Number(e.target.value))} className="w-full accent-accent2" />
+        <div className="flex justify-between text-[10px] text-muted mt-0.5"><span>Front-load (pay now)</span><span>Back-load (defer cap)</span></div>
+      </div>
+
+      {capMode === 'REALISTIC' && (
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="label-sm">Void years</label>
+            <span className="text-xs font-mono">{voidYears === 0 ? 'None' : `+${voidYears}`}</span>
+          </div>
+          <input type="range" min={0} max={3} step={1} value={voidYears} onChange={(e) => setVoidYears(Number(e.target.value))} className="w-full accent-warn" />
+          <p className="text-[11px] text-muted mt-1">
+            Spreads bonus proration further to lower every real year's cap hit — but the remainder lands as dead money the season this deal ends.
+          </p>
+        </div>
+      )}
+
+      <div className="panel p-3 space-y-1.5 text-sm">
+        <div className="flex justify-between"><span className="text-muted">Total value</span><span className="font-mono">{formatMoney(preview.total)}</span></div>
+        <div className="flex justify-between"><span className="text-muted">Guaranteed (est.)</span><span className="font-mono">{formatMoney(preview.guaranteed)}</span></div>
         {capMode !== 'OFF' && (
           <>
-            <div className="flex justify-between"><span className="text-muted">Year 1 cap hit</span><span className={`font-mono ${overCap ? 'text-bad' : 'text-chalk'}`}>{formatMoney(projected.hit)}</span></div>
-            <div className="flex justify-between pt-1 border-t border-line/60">
+            <div className="flex justify-between pt-2 border-t border-line/60">
               <span className="text-muted">Cap space after signing</span>
-              <span className={`font-mono font-semibold ${remainingAfter < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(remainingAfter)}</span>
+              <span className={`stat-value text-stat-sm ${remainingAfter < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(remainingAfter)}</span>
+            </div>
+            <div>
+              <div className="text-xs text-muted mb-1">Cap hit by year</div>
+              <div className="flex flex-wrap gap-2">
+                {preview.schedule.map((hit, i) => (
+                  <div key={i} className={`pill ${i === 0 && overCap ? 'border-bad/40 text-bad' : 'border-line text-chalk'}`}>
+                    Yr{i + 1}: {formatMoney(hit)}
+                  </div>
+                ))}
+                {preview.stranded > 0 && (
+                  <div className="pill border-warn/40 text-warn" title="Bonus proration pushed past the end of the deal by void years — charged as dead money the season it expires.">
+                    Void: {formatMoney(preview.stranded)}
+                  </div>
+                )}
+              </div>
             </div>
           </>
         )}
       </div>
 
       {overCap && (
-        <p className="text-xs text-bad">This offer's year-1 cap hit exceeds your available space — lower the salary, shorten the deal, or clear room elsewhere first.</p>
+        <p className="text-xs text-bad">This offer's year-1 cap hit exceeds your available space — lower the salary, front-load less, or clear room elsewhere first.</p>
       )}
 
       <button disabled={pending || overCap} onClick={submit} className={`w-full disabled:opacity-40 ${beingOutbid ? 'btn-danger' : 'btn-primary'}`}>

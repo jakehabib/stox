@@ -23,9 +23,15 @@ export async function fillRosterAction(leagueId: string, teamId: string) {
   return result;
 }
 
-export async function offerContractAction(leagueId: string, playerId: string, teamId: string, apy: number, years: number) {
+export async function offerContractAction(
+  leagueId: string, playerId: string, teamId: string, apy: number, years: number,
+  escalation?: number, voidYears?: number,
+) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
+  // The player judges the deal on money and length only — structure and void
+  // years are cap accounting on your side of the table, not something he
+  // weighs, so they're deliberately not part of the acceptance check.
   const evaluation = await evaluateOffer(playerId, teamId, apy, years);
   if (!evaluation.accepted) {
     return { ok: false, message: `He's looking for closer to $${(evaluation.market / 1_000_000).toFixed(1)}M/yr. Try again around $${(evaluation.counterApy! / 1_000_000).toFixed(1)}M.` };
@@ -35,7 +41,10 @@ export async function offerContractAction(leagueId: string, playerId: string, te
   // Action uncaught: an unhandled throw here blanks the whole page instead
   // of showing a message.
   try {
-    await signFreeAgentWithCompetition({ leagueId, playerId, teamId, apy, years, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week });
+    await signFreeAgentWithCompetition({
+      leagueId, playerId, teamId, apy, years, seasonYear: league.seasonYear,
+      capMode: settings.capMode, week: league.week, escalation, voidYears,
+    });
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : 'Signing failed.' };
   }

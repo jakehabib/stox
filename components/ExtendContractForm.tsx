@@ -30,7 +30,11 @@ export function ExtendContractForm({ leagueId, playerId, ovr, position, age, ava
     const c = buildContract({ apy, years, signedYear: 0, escalation: structure });
     const schedule = capHitSchedule({ ...c, baseSalaries: JSON.stringify(c.baseSalaries), voidYears }, capMode);
     const total = c.baseSalaries.reduce((a, b) => a + b, 0) + c.signingBonus;
-    return { schedule, total, guaranteed: c.guaranteed };
+    // What void years push past the end of the deal — charged as dead money
+    // the season it expires (see releaseUnresignedExpiringContracts).
+    const prorated = Math.min(years + voidYears, 5);
+    const stranded = voidYears > 0 ? Math.max(0, c.signingBonus - Math.round(c.signingBonus / prorated) * years) : 0;
+    return { schedule, total, guaranteed: c.guaranteed, stranded };
   }, [apy, years, structure, voidYears, capMode]);
 
   const year1 = preview.schedule[0] ?? 0;
@@ -108,6 +112,11 @@ export function ExtendContractForm({ leagueId, playerId, ovr, position, age, ava
                     Yr{i + 1}: {formatMoney(hit)}
                   </div>
                 ))}
+                {preview.stranded > 0 && (
+                  <div className="pill border-warn/40 text-warn" title="Bonus proration pushed past the end of the deal by void years — charged as dead money the season it expires.">
+                    Void: {formatMoney(preview.stranded)}
+                  </div>
+                )}
               </div>
             </div>
           </>

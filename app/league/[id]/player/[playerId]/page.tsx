@@ -5,7 +5,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { ratingColor, playerLabel } from '@/lib/ratings';
-import { formatMoney, capHit, remainingValue } from '@/lib/cap';
+import { formatMoney, capHit, remainingValue, marketValue, deadMoneyOnCut } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { sortStatEntries, statLabel } from '@/lib/statLabels';
 import { CutButton } from '@/components/CutButton';
@@ -14,7 +14,6 @@ import { ScoutButton } from '@/components/ScoutButton';
 import { SignOfferForm } from '@/components/SignOfferForm';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
-import { RatingBadge } from '@/components/ds/RatingBadge';
 import { ScoutingRange } from '@/components/ds/ScoutingRange';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { StatNumber } from '@/components/ds/StatNumber';
@@ -45,9 +44,10 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
   const careerStats = readJson<Record<string, number>>(player.careerStats, {});
   const hit = capHit(player.contract, settings.capMode);
   const remaining = player.contract ? remainingValue(player.contract, settings.capMode) : 0;
-  const capSpace = userTeam && settings.capMode !== 'OFF'
-    ? (await teamCapSummary(userTeam.id, league.seasonYear, settings.capMode)).capSpace
-    : Number.MAX_SAFE_INTEGER;
+  const capSummary = userTeam && settings.capMode !== 'OFF'
+    ? await teamCapSummary(userTeam.id, league.seasonYear, settings.capMode)
+    : null;
+  const capSpace = capSummary ? capSummary.capSpace : Number.MAX_SAFE_INTEGER;
 
   const jerseyColor = player.team ? generateTeamLogoParams(player.team.id).primary : undefined;
   const label = playerLabel({
@@ -86,8 +86,83 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
       })
     : [];
 
+  // Contract facts get their own strip under the hero — the money questions
+  // ("what does he cost, what's he worth, what would walking away cost")
+  // answered together instead of scattered down the page. A draftee has no
+  // contract yet, so his strip is his college production instead.
+  // A draftee has no NFL season yet, so his headline numbers are college
+  // production instead — the same "three numbers that matter" treatment,
+  // sourced from the profile that's already revealed week by week.
+  const COLLEGE_HEADLINE: Record<string, [keyof NonNullable<typeof collegeToDate>, string][]> = {
+    QB: [['passYds', 'Pass Yds'], ['passTd', 'Pass TD'], ['passInt', 'INT']],
+    RB: [['rushYds', 'Rush Yds'], ['rushTd', 'Rush TD'], ['rushAtt', 'Carries']],
+    FB: [['rushYds', 'Rush Yds'], ['rushTd', 'Rush TD'], ['rec', 'Rec']],
+    WR: [['recYds', 'Rec Yds'], ['rec', 'Rec'], ['recTd', 'Rec TD']],
+    TE: [['recYds', 'Rec Yds'], ['rec', 'Rec'], ['recTd', 'Rec TD']],
+    EDGE: [['sacks', 'Sacks'], ['tkl', 'Tackles'], ['tfl', 'TFL']],
+    DT: [['sacks', 'Sacks'], ['tkl', 'Tackles'], ['tfl', 'TFL']],
+    LB: [['tkl', 'Tackles'], ['sacks', 'Sacks'], ['tfl', 'TFL']],
+    CB: [['ints', 'INT'], ['pd', 'Pass Def'], ['tkl', 'Tackles']],
+    S: [['tkl', 'Tackles'], ['ints', 'INT'], ['pd', 'Pass Def']],
+    LT: [['pancakes', 'Pancakes'], ['sacksAllowed', 'Sacks All.']],
+    RT: [['pancakes', 'Pancakes'], ['sacksAllowed', 'Sacks All.']],
+    LG: [['pancakes', 'Pancakes'], ['sacksAllowed', 'Sacks All.']],
+    RG: [['pancakes', 'Pancakes'], ['sacksAllowed', 'Sacks All.']],
+    C: [['pancakes', 'Pancakes'], ['sacksAllowed', 'Sacks All.']],
+    K: [['fgMade', 'FG Made'], ['fgAtt', 'FG Att'], ['xpMade', 'XP Made']],
+    P: [['punts', 'Punts'], ['puntYds', 'Punt Yds']],
+  };
+  const collegeHeadline = collegeToDate
+    ? (COLLEGE_HEADLINE[player.position] ?? [])
+        .map(([key, lbl]) => [lbl, collegeToDate[key] ?? 0] as const)
+        .filter(([, v]) => v > 0)
+    : [];
+
+  const market = marketValue({ ovr: view.scoutedOvr, position: player.position as any, age: player.age, potential: player.potential });
+  const releaseCost = deadMoneyOnCut(player.contract, settings.capMode);
+  const capTotal = capSummary?.capTotal ?? 0;
+
+  const heroFacts: { label: string; value: string; detail?: string; color?: string }[] = player.isDraftee
+    ? [
+        { label: 'Draft Class', value: String(league.seasonYear), detail: player.college },
+        { label: 'Projection', value: label.label, detail: 'role this profile suggests', color: label.className },
+        ...(combineTesting ? [{ label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s`, detail: combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day' }] : []),
+        ...(collegeProfile ? [{ label: 'Competition', value: `${collegeProfile.competitionGrade}-tier`, detail: 'strength of schedule faced', color: GRADE_CLASS[collegeProfile.competitionGrade] }] : []),
+        { label: 'Measurables', value: `${Math.floor(player.heightIn / 12)}'${player.heightIn % 12}"`, detail: `${player.weightLb} lb` },
+      ]
+    : settings.capMode === 'OFF'
+      ? [
+          { label: 'Market Value', value: `${formatMoney(market)}/yr`, detail: 'what the rating is worth' },
+          { label: 'Years Left', value: player.contract ? String(player.contract.yearsRemaining) : '—', detail: player.contract ? `expires after ${league.seasonYear + Math.max(0, player.contract.yearsRemaining - 1)}` : 'no contract' },
+        ]
+      : [
+          {
+            label: `Cap Hit ${league.seasonYear}`,
+            value: formatMoney(hit),
+            detail: capTotal > 0 ? `${((hit / capTotal) * 100).toFixed(1)}% of cap` : undefined,
+          },
+          {
+            label: 'Market Value',
+            value: `${formatMoney(market)}/yr`,
+            detail: player.contract ? `${market - hit >= 0 ? 'surplus +' : 'over by '}${formatMoney(Math.abs(market - hit))}` : 'what the rating is worth',
+            color: player.contract ? (market - hit >= 0 ? 'text-accent' : 'text-bad') : undefined,
+          },
+          {
+            label: 'Years Left',
+            value: player.contract ? String(player.contract.yearsRemaining) : '—',
+            detail: player.contract ? `expires after ${league.seasonYear + Math.max(0, player.contract.yearsRemaining - 1)}` : 'no contract',
+          },
+          { label: 'Guaranteed', value: player.contract ? formatMoney(player.contract.guaranteed) : '—' },
+          {
+            label: 'Release Cost',
+            value: formatMoney(releaseCost),
+            detail: releaseCost > 0 ? 'dead money if cut' : 'clean cut',
+            color: releaseCost > 0 ? 'text-bad' : 'text-accent',
+          },
+        ];
+
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 max-w-5xl">
       {/* Hero — team-tinted card, revealed OVR or a scouted range, never both. */}
       <div
         className="relative overflow-hidden rounded-lg border border-line/70"
@@ -96,44 +171,95 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           background: jerseyColor ? `radial-gradient(ellipse 90% 130% at 0% 50%, color-mix(in srgb, ${jerseyColor} 20%, transparent), transparent 70%)` : undefined,
         }}
       >
-        <div className="flex flex-wrap items-center gap-6 p-6">
+        <div className="flex flex-wrap items-start gap-6 p-6">
           <div className="relative shrink-0 rounded-lg p-3" style={{ background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 14%, transparent)` : undefined }}>
-            <PlayerAvatar seed={player.id} age={player.age} size={112} teamColor={jerseyColor} />
+            <PlayerAvatar seed={player.id} age={player.age} size={128} teamColor={jerseyColor} />
           </div>
 
-          <div className="flex-1 min-w-[240px]">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`pill border ${positionBadgeClass(player.position)}`}>{player.position}</span>
-              <span className="text-sm text-muted">Age {player.age}</span>
-              <span className={`pill ${label.className} border-current`}>{label.label}</span>
-            </div>
-            <div className="font-display font-extrabold text-4xl uppercase tracking-wide leading-none mt-2">{player.firstName} {player.lastName}</div>
-            <div className="text-sm text-muted mt-2 flex items-center gap-1.5 flex-wrap">
+          <div className="flex-1 min-w-[280px]">
+            {/* Everything identifying him on one quiet meta line, so the name
+                below it has the page to itself. */}
+            <div className="label-sm flex items-center gap-2 flex-wrap">
+              <span className={`font-semibold ${positionBadgeClass(player.position)}`}>{player.position}</span>
+              <span>·</span><span>Age {player.age}</span>
+              <span>·</span><span>{player.experience > 0 ? `Year ${player.experience}` : 'Rookie'}</span>
+              <span>·</span>
               {player.team ? (
-                <span className="flex items-center gap-1.5"><TeamLogo seed={player.team.id} abbr={player.team.abbr} size={16} /> {player.team.city} {player.team.nickname}</span>
-              ) : player.status === 'FREE_AGENT' ? 'Free Agent' : player.status}
-              <span>· {Math.floor(player.heightIn / 12)}'{player.heightIn % 12}" · {player.weightLb} lb · {player.college}</span>
-              <span>· {player.experience > 0 ? `Yr ${player.experience}` : 'Rookie'}</span>
+                <span className="flex items-center gap-1.5"><TeamLogo seed={player.team.id} abbr={player.team.abbr} size={14} />{player.team.city} {player.team.nickname}</span>
+              ) : (
+                <span>{player.status === 'FREE_AGENT' ? (player.isDraftee ? 'Draft Prospect' : 'Free Agent') : player.status}</span>
+              )}
+              <span className={`pill text-[10px] border-current ${label.className}`}>{label.label}</span>
             </div>
 
-            {keyStats.length > 0 && (
-              <div className="flex items-baseline gap-6 mt-4">
+            {/* Split name — given name reads as a kicker over the surname, which
+                is the part that carries on a jersey. */}
+            <div className="mt-2">
+              <div className="font-display font-bold text-xl uppercase tracking-[0.18em] text-muted leading-none">{player.firstName}</div>
+              <div className="font-display font-extrabold text-5xl uppercase tracking-wide leading-[0.95] mt-1">{player.lastName}</div>
+            </div>
+
+            <div className="text-xs text-muted mt-2">
+              {Math.floor(player.heightIn / 12)}'{player.heightIn % 12}" · {player.weightLb} lb · {player.college}
+            </div>
+
+            {collegeHeadline.length > 0 ? (
+              <div className="mt-5 border-t border-line/50 pt-4">
+                <div className="label-sm text-accent2 mb-2">College — through week {weeksElapsed} of {COLLEGE_WEEKS}</div>
+                <div className="flex items-stretch gap-6 flex-wrap">
+                  {collegeHeadline.map(([lbl, v]) => (
+                    <div key={lbl} className="pr-6 border-r border-line/40 last:border-r-0 last:pr-0">
+                      <div className="label-sm">{lbl}</div>
+                      <div className="stat-value text-stat-md leading-none mt-1">{v.toLocaleString()}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : keyStats.length > 0 ? (
+              <div className="flex items-stretch gap-6 mt-5 border-t border-line/50 pt-4 flex-wrap">
                 {keyStats.map(([k, v]) => (
-                  <StatNumber key={k} value={v} label={statLabel(k)} size="sm" />
+                  <div key={k} className="pr-6 border-r border-line/40 last:border-r-0 last:pr-0">
+                    <div className="label-sm">{statLabel(k)}</div>
+                    <div className="stat-value text-stat-md leading-none mt-1">{v}</div>
+                  </div>
                 ))}
               </div>
-            )}
+            ) : null}
           </div>
 
-          <div className="flex items-start gap-6 shrink-0">
+          <div className="flex flex-col items-stretch gap-3 shrink-0 w-[200px]">
             {view.revealed ? (
-              <RatingBadge value={view.scoutedOvr} label="OVERALL" size="lg" filled />
+              <div
+                className="rounded-lg border-2 px-4 py-3 text-center"
+                style={{ borderColor: 'var(--team-accent, #38bdf8)', background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 16%, transparent)` : undefined }}
+              >
+                <div className="label-sm">Overall</div>
+                <div className={`stat-value text-stat-xl leading-none mt-1 ${ratingColor(view.scoutedOvr)}`}>{view.scoutedOvr}</div>
+              </div>
             ) : (
-              <ScoutingRange low={view.ovrLow} high={view.ovrHigh} confidence={view.confidence} label="SCOUTED OVR" />
+              <div className="panel p-3">
+                <ScoutingRange low={view.ovrLow} high={view.ovrHigh} confidence={view.confidence} label="Scouted OVR" className="w-full" />
+              </div>
             )}
-            <ScoutingRange low={view.potLow} high={view.potHigh} confidence={view.confidence} label="POTENTIAL" />
+            <div className="panel p-3">
+              <ScoutingRange low={view.potLow} high={view.potHigh} confidence={view.confidence} label="Potential" className="w-full" />
+            </div>
           </div>
         </div>
+
+        {/* Fact strip — contract money for a rostered player, scouting-relevant
+            profile for a draftee who doesn't have a contract yet. */}
+        {heroFacts.length > 0 && (
+          <div className="relative border-t border-line/60 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 divide-x divide-line/40 bg-ink/30">
+            {heroFacts.map((f) => (
+              <div key={f.label} className="px-4 py-3">
+                <div className="label-sm">{f.label}</div>
+                <div className={`stat-value text-stat-sm leading-none mt-1 ${f.color ?? ''}`}>{f.value}</div>
+                {f.detail && <div className="text-[11px] text-muted mt-1">{f.detail}</div>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {!view.revealed && (
@@ -178,34 +304,53 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
             title={`College Profile — ${player.college}`}
             action={<span className={`text-xs font-medium ${GRADE_CLASS[collegeProfile.competitionGrade]}`}>Competition: {collegeProfile.competitionGrade}-tier</span>}
           />
-          <div className="panel p-5">
-            <div className="grid sm:grid-cols-2 gap-6">
-              <div>
-                <div className="label-sm mb-2">{combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day'} Testing</div>
-                <div className="grid grid-cols-3 gap-2 text-sm">
-                  <div><div className="text-muted text-xs">40-yd</div><div className="font-mono">{combineTesting.fortyYard.toFixed(2)}s</div></div>
-                  <div><div className="text-muted text-xs">Vertical</div><div className="font-mono">{combineTesting.vertical}"</div></div>
-                  <div><div className="text-muted text-xs">Broad</div><div className="font-mono">{combineTesting.broadJump}"</div></div>
-                  <div><div className="text-muted text-xs">3-Cone</div><div className="font-mono">{combineTesting.threeCone.toFixed(2)}s</div></div>
-                  <div><div className="text-muted text-xs">Shuttle</div><div className="font-mono">{combineTesting.shuttle.toFixed(2)}s</div></div>
-                  <div><div className="text-muted text-xs">Bench</div><div className="font-mono">{combineTesting.benchReps ?? '—'}</div></div>
+          <div className="panel overflow-hidden">
+            {/* Testing gets its own full-width band of equal tiles — six
+                measurements read as one workout, not a cramped 3x2 grid
+                sharing a column with the season line. */}
+            <div className="px-5 pt-4 pb-3 border-b border-line/60">
+              <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <div className="label-sm">{combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day'} Testing</div>
+                <div className="text-xs text-muted">
+                  {combineTesting.venue === 'COMBINE'
+                    ? 'Measured under standard conditions at the league combine.'
+                    : 'Self-hosted pro day — conditions favor the prospect, so times tend to run a touch fast.'}
                 </div>
               </div>
+            </div>
+            <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-line/40 border-b border-line/60">
+              {[
+                { label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s` },
+                { label: 'Vertical', value: `${combineTesting.vertical}"` },
+                { label: 'Broad', value: `${combineTesting.broadJump}"` },
+                { label: '3-Cone', value: `${combineTesting.threeCone.toFixed(2)}s` },
+                { label: 'Shuttle', value: `${combineTesting.shuttle.toFixed(2)}s` },
+                { label: 'Bench', value: combineTesting.benchReps !== null ? `${combineTesting.benchReps}` : '—' },
+              ].map((m) => (
+                <div key={m.label} className="px-3 py-3 text-center">
+                  <div className="label-sm">{m.label}</div>
+                  <div className="stat-value text-stat-sm leading-none mt-1.5">{m.value}</div>
+                </div>
+              ))}
+            </div>
 
-              <div>
-                <div className="label-sm mb-2">College Season — through week {weeksElapsed} of {COLLEGE_WEEKS}</div>
-                <CollegeStatLine position={player.position} stats={collegeToDate} />
-              </div>
+            <div className="p-5">
+              <div className="label-sm mb-2">College Season — through week {weeksElapsed} of {COLLEGE_WEEKS}</div>
+              <CollegeStatLine position={player.position} stats={collegeToDate} />
             </div>
 
             {buzzNote && (
-              <p className="text-xs text-accent2 italic mt-4 pt-3 border-t border-line/60">{buzzNote}</p>
+              <p className="text-xs text-accent2 italic px-5 pb-4 -mt-1">{buzzNote}</p>
             )}
           </div>
         </div>
       )}
 
       <div className="grid sm:grid-cols-2 gap-6">
+        {/* A draft prospect has no NFL production by definition — his College
+            Profile above is the whole record, so two empty panels saying so
+            are just noise on the card. */}
+        {!player.isDraftee && (<>
         <div className="section">
           <SectionHeading title="Season Stats" />
           <div className="panel p-5">
@@ -239,6 +384,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
             )}
           </div>
         </div>
+        </>)}
 
         {userTeam && (
           <div className="section">

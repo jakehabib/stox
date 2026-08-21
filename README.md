@@ -615,3 +615,46 @@ ever force-pushed over, so every state below still exists in git history).
   for now: a **trade** still doesn't accelerate bonus onto the team
   giving the player up (`lib/trade.ts` just reassigns `contract.teamId`),
   so dumping a bonus-heavy contract is still a way to escape it.
+- **2026-08-21 — Player card rebuild, richer free-agent negotiation, and
+  better portraits.** Checkpoint before this change: `7b3727a`.
+  - **Player card** reworked toward a broadcast-style layout: one quiet
+    meta line carries position/age/year/team/role, the name splits into
+    a given-name kicker over a large surname, and the headline stats sit
+    in a divided row beneath. A new **fact strip** across the bottom of
+    the hero answers the money questions together — cap hit (with % of
+    cap), market value (with surplus or overpay), years left, guaranteed,
+    and release cost — instead of leaving them scattered down the page.
+  - **Draftees get their own variant of both.** The strip becomes draft
+    class / projection / 40-yard / competition tier / measurables, since
+    a prospect has no contract, and the headline stats become
+    position-appropriate **college production** (passing yards for a QB,
+    pancakes and sacks allowed for a lineman, and so on) drawn from the
+    profile that already reveals week by week. The empty NFL Season and
+    Career Stats panels are now hidden for draftees — the College
+    Profile is their whole record, so two panels saying "nothing yet"
+    were pure noise.
+  - **Combine/pro-day testing** moved out of a cramped 3×2 grid sharing
+    a column into a full-width band of six equal tiles reading as one
+    workout, with a note on whether the numbers came from the combine or
+    a self-hosted pro day (where times tend to run fast).
+  - **Free-agency negotiation now matches the extension form's depth.**
+    Signing an outside free agent is the same cap decision as extending
+    your own player, so it now has the same tools: front/back-load
+    structuring, void years, and a full per-year cap schedule with the
+    void-year dead money called out — on top of the live competing-bid
+    read that's unique to the open market. `signFreeAgent` gained
+    `escalation`/`voidYears` (it already stored neither), and the cap
+    check now builds off the same contract shape that gets saved.
+    Deliberately unchanged: the player still judges an offer on money
+    and length only — structure and void years are cap accounting on
+    your side of the table, not something he weighs.
+  - **Player portraits** rebuilt from flat cartoon faces into actual
+    portraits: a team-tinted backdrop and vignette, shoulder pads
+    instead of a thin jersey V, life-proportioned heads rather than
+    bobbleheads, jaw and cheek shading, and almond eyes with a real
+    upper lid in place of white circles with dots. Hair styles gained
+    highlight passes. Detail is kept deliberately bold — these render at
+    20px in roster tables as often as 128px on a card — and verified at
+    both. Still a pure function of (seed, age) with nothing stored, so
+    every existing player's face changed appearance but kept its
+    identity; no schema or data migration.

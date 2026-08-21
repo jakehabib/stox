@@ -71,12 +71,19 @@ export async function signFreeAgent(opts: {
   seasonYear: number;
   capMode: LeagueSettings['capMode'];
   week: number;
+  /** <1 front-loaded, >1 back-loaded. Same structuring the extension path allows. */
+  escalation?: number;
+  /** Cap-only trailing years. Settled as a cap charge when the deal expires (see lib/season.ts). */
+  voidYears?: number;
 }) {
   const { playerId, teamId, apy, years, seasonYear, capMode, week } = opts;
+  const voidYears = Math.max(0, opts.voidYears ?? 0);
 
   const summary = await teamCapSummary(teamId, seasonYear, capMode);
-  const contract = buildContract({ apy, years, signedYear: seasonYear });
-  const hit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries) }, capMode);
+  const contract = buildContract({ apy, years, signedYear: seasonYear, escalation: opts.escalation });
+  // Void years widen the proration divisor, so they change the year-1 hit the
+  // cap check has to clear — build the check off the same shape that gets stored.
+  const hit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries), voidYears }, capMode);
   if (capMode !== 'OFF' && hit > summary.capSpace + 1) {
     throw new Error(`Signing would exceed the cap by ${Math.round((hit - summary.capSpace) / 1000)}K.`);
   }
@@ -95,6 +102,7 @@ export async function signFreeAgent(opts: {
         signingBonus: contract.signingBonus,
         guaranteed: contract.guaranteed,
         isRookieDeal: false,
+        voidYears,
       },
     });
     const player = await tx.player.findUniqueOrThrow({ where: { id: playerId } });
@@ -302,6 +310,7 @@ export async function restructureContract(opts: {
 export async function signFreeAgentWithCompetition(opts: {
   leagueId: string; playerId: string; teamId: string; apy: number; years: number;
   seasonYear: number; capMode: LeagueSettings['capMode']; week: number;
+  escalation?: number; voidYears?: number;
 }) {
   const competing = await leadingCompetingBid(opts.leagueId, opts.playerId, opts.teamId, opts.seasonYear, opts.capMode);
   if (competing && competing.apy > opts.apy) {
