@@ -75,7 +75,14 @@ export function gameHeadlines(box: BoxScore, homeTeamId: string, awayTeamId: str
   }));
 }
 
-function statScore(l: BoxLine): number {
+/**
+ * How far a line clears "notable", roughly. Exported (additively — no
+ * behaviour change) so the Week Report's single game ball is picked by the
+ * same ranking that decides which performances become headlines here. Two
+ * different definitions of "best line in the game" would be two different
+ * answers to the same question on the same screen.
+ */
+export function statScore(l: BoxLine): number {
   const s = l.stats;
   return (s.passYds ?? 0) * 1 + (s.passTd ?? 0) * 50 + (s.rushYds ?? 0) * 1.5 + (s.rushTd ?? 0) * 50 +
     (s.recYds ?? 0) * 1.5 + (s.recTd ?? 0) * 50 + (s.sacks ?? 0) * 60 + (s.defInt ?? 0) * 70 + (s.fgm ?? 0) * 30;

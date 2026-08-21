@@ -1,12 +1,13 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useMemo, useState } from 'react';
 import {
   evaluateOffer, PERSONALITY_BLURB, PERSONALITY_LABEL,
   type NegotiationContext, type Offer,
 } from '@/lib/negotiation';
 import { formatMoney } from '@/lib/cap';
 import { InterestMeter } from './ds/InterestMeter';
+import { ActionButton } from './ds/ActionButton';
 
 /**
  * The negotiation minigame.
@@ -22,6 +23,14 @@ import { InterestMeter } from './ds/InterestMeter';
  * Patience is what stops them binary-searching the hidden number: each
  * formally submitted offer that he rejects costs one, and a genuine lowball
  * costs an extra one. Dragging sliders is free; *submitting* is not.
+ *
+ * Which is why the patience pips now DRAIN rather than flipping from accent to
+ * line between renders. The cost of pressing the button is the mechanic this
+ * whole panel is built around, and a dot quietly changing colour on the next
+ * paint was the weakest possible statement of it. The fill empties over
+ * --dur-reveal; under reduced motion it empties instantly, and the pip is just
+ * as empty either way. Nothing is added to the submit path: the drain starts
+ * once the server has already answered.
  */
 export function NegotiationPanel({
   ctx, capSpace, minSalary, maxYears, onSign, disabled, disabledReason,
@@ -47,7 +56,6 @@ export function NegotiationPanel({
   const [patienceLeft, setPatienceLeft] = useState(ctx.patience);
   const [history, setHistory] = useState<{ apy: number; years: number; verdict: string }[]>([]);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
-  const [pending, startTransition] = useTransition();
 
   const offer: Offer = { apy, years, guaranteePct };
   // useMemo purely to avoid recomputing on unrelated re-renders; the call is
@@ -56,23 +64,24 @@ export function NegotiationPanel({
 
   const walkedAway = patienceLeft <= 0;
   const overCap = apy > capSpace;
-  const canSubmit = !disabled && !walkedAway && !pending && !overCap && !result?.ok;
+  const canSubmit = !disabled && !walkedAway && !overCap && !result?.ok;
 
   // A ceiling of 2.5x market gives room to overpay a holdout without the
   // slider's useful range collapsing into a few pixels at the bottom.
   const apyCeiling = Math.max(minSalary * 2, Math.round(ctx.marketApy * 2.5));
   const apyStep = 100_000;
 
-  const submit = () => {
-    startTransition(async () => {
-      const res = await onSign(offer);
-      setResult(res);
-      setHistory((h) => [...h, { apy, years, verdict: evaluation.verdict }]);
-      if (!res.ok) {
-        // Rejection costs patience; an outright insult costs an extra one.
-        setPatienceLeft((p) => Math.max(0, p - (evaluation.insulting ? 2 : 1)));
-      }
-    });
+  const submit = async () => {
+    const res = await onSign(offer);
+    setResult(res);
+    setHistory((h) => [...h, { apy, years, verdict: evaluation.verdict }]);
+    if (res.ok) return 'Signed';
+    // Rejection costs patience; an outright insult costs an extra one. A
+    // refusal is still a result, so it gets a stated outcome rather than the
+    // button silently going back to how it looked before you pressed it.
+    const cost = evaluation.insulting ? 2 : 1;
+    setPatienceLeft((p) => Math.max(0, p - cost));
+    return evaluation.insulting ? 'Turned down — 2 patience' : 'Turned down';
   };
 
   return (
@@ -89,7 +98,9 @@ export function NegotiationPanel({
           <div className="label-sm">Patience</div>
           <div className="flex items-center gap-1 mt-1 justify-end">
             {Array.from({ length: ctx.patience }).map((_, i) => (
-              <span key={i} className={`w-2 h-2 rounded-full ${i < patienceLeft ? 'bg-accent' : 'bg-line'}`} />
+              <span key={i} className={`pip-well w-2 h-2 ${i < patienceLeft ? '' : 'pip-spent'}`}>
+                <span className="pip-fill" />
+              </span>
             ))}
           </div>
         </div>
@@ -172,9 +183,14 @@ export function NegotiationPanel({
         )}
         {disabled && disabledReason && <p className="text-sm text-muted">{disabledReason}</p>}
 
-        <button className="btn-primary w-full" onClick={submit} disabled={!canSubmit}>
-          {pending ? 'Sending…' : overCap ? 'Not enough cap room' : 'Make this offer'}
-        </button>
+        <ActionButton
+          className="btn-primary w-full"
+          disabled={!canSubmit}
+          idleLabel={overCap ? 'Not enough cap room' : 'Make this offer'}
+          workingLabel="Sending…"
+          doneLabel="Sent"
+          onAction={submit}
+        />
       </div>
     </div>
   );

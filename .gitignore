@@ -22,3 +22,5 @@ scripts/_pt_tmp_*/
 # Agent scratch verification scripts run from the repo root (Playwright needs
 # the repo node_modules, so they cannot live in the scratchpad).
 .pwcheck.js
+.crest-sheet.tsx
+.crest-tsconfig.json

@@ -28,6 +28,11 @@ import { observe } from './scouting';
 import { replenishLeagueScoutingBudgets } from './scoutingEconomy';
 import { applyShortlistAttention } from './shortlistAttention';
 import { resetWorkoutSlots } from './workouts';
+import { standingsCompare } from './standingsOrder';
+import {
+  snapshotBeforeAdvance, buildWeekReport, buildTrophyMoment,
+  PreAdvanceSnapshot, WeekReport, TrophyMoment,
+} from './weekReport';
 
 /**
  * ===========================================================================
@@ -109,6 +114,23 @@ export function capComplianceDueNow(phase: string): boolean {
 export interface AdvanceResult {
   summary: string;
   blocked?: boolean;
+  /**
+   * The structured week report — what the week actually did to the user's
+   * team. `summary` stays exactly what it was and is still the fallback the
+   * UI shows when there is no report (an offseason step, a preseason roll, a
+   * league with no user team), so nothing that reads `summary` today breaks.
+   *
+   * Same precedent as `capBlock` and `block` below: a structured payload
+   * travelling alongside the sentence, so the UI can render a screen instead
+   * of a string. See lib/weekReport.ts.
+   */
+  report?: WeekReport | null;
+  /**
+   * Tier 0. Set only when the user's own season just ended in the
+   * postseason — they won the title, or they lost the game that knocked them
+   * out. At most twice in a season, usually once, usually never.
+   */
+  trophy?: TrophyMoment | null;
   capBlock?: {
     teamAbbr: string;
     shortfall: number;
@@ -350,6 +372,13 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
     where: { leagueId, week, seasonYear: league.seasonYear, played: false, kind: 'REGULAR' },
   });
 
+  // What the standings looked like BEFORE kickoff, and the win chance the
+  // user was actually shown for their own game. Both have to be read here:
+  // once the week is simulated the pre-game record is gone, and recomputing
+  // a "pre-game" estimate afterwards against a record that already contains
+  // the result is the lying-metric failure this codebase keeps writing down.
+  const before = await snapshotBeforeAdvance(leagueId, week, 'REGULAR');
+
   // Every game in a week touches disjoint teams/players, so they're safe to
   // run concurrently — this was previously a sequential `for` loop awaiting
   // one game at a time, which serialized 16 games' worth of DB round trips
@@ -369,12 +398,26 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   await maybeMakeAiTradeOffer(leagueId, league.seasonYear, week, settings, rng);
 
   const nextWeek = week + 1;
-  if (nextWeek > settings.seasonLength) {
+  const seasonOver = nextWeek > settings.seasonLength;
+  if (seasonOver) {
     await seedPlayoffs(leagueId);
-    return { summary: `Week ${week} complete (${played} games). Regular season is over — playoffs are set.` };
+  } else {
+    await prisma.league.update({ where: { id: leagueId }, data: { week: nextWeek } });
   }
-  await prisma.league.update({ where: { id: leagueId }, data: { week: nextWeek } });
-  return { summary: `Week ${week} complete: ${played} games played.` };
+
+  const summary = seasonOver
+    ? `Week ${week} complete (${played} games). Regular season is over — playoffs are set.`
+    : `Week ${week} complete: ${played} games played.`;
+
+  const report = await buildWeekReport(leagueId, {
+    before,
+    weekLabel: `Week ${week}`,
+    phaseLabel: 'Regular Season',
+    gamesPlayed: played,
+    summary,
+    trackStandings: true,
+  });
+  return { summary, report };
 }
 
 const MAX_PENDING_OFFERS = 3;
@@ -600,11 +643,14 @@ async function seedPlayoffs(leagueId: string) {
   await prisma.league.update({ where: { id: leagueId }, data: { phase: 'PLAYOFFS', week: 1 } });
 }
 
-function byStanding(a: { wins: number; losses: number; ties: number; pointsFor: number; pointsAgnst: number }, b: typeof a) {
-  const pctA = (a.wins + a.ties * 0.5) / Math.max(1, a.wins + a.losses + a.ties);
-  const pctB = (b.wins + b.ties * 0.5) / Math.max(1, b.wins + b.losses + b.ties);
-  if (pctB !== pctA) return pctB - pctA;
-  return (b.pointsFor - b.pointsAgnst) - (a.pointsFor - a.pointsAgnst);
+/**
+ * The order teams stand in. Formula unchanged — it now delegates to
+ * lib/standingsOrder.ts so that anything DISPLAYING a rank ("3rd -> 1st in
+ * the division" in the week report) is sorted by the same function that
+ * seeds the actual bracket, rather than by a lookalike that could drift.
+ */
+function byStanding(a: { id?: string; wins: number; losses: number; ties: number; pointsFor: number; pointsAgnst: number }, b: typeof a) {
+  return standingsCompare({ id: a.id ?? '', ...a }, { id: b.id ?? '', ...b });
 }
 
 async function createWildcardRound(leagueId: string, seasonYear: number) {
@@ -628,23 +674,43 @@ async function simulatePlayoffRound(leagueId: string, settings: ReturnType<typeo
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const pending = await prisma.game.findMany({ where: { leagueId, played: false, kind: { not: 'REGULAR' } } });
 
+  // Same snapshot rule as the regular season: the pre-game win chance for the
+  // user's own postseason game only exists before it is played.
+  const before = await snapshotBeforeAdvance(leagueId, league.week, 'PLAYOFF');
+  const roundKind = pending[0]?.kind ?? 'FINAL';
+
   for (const game of pending) {
     await simulateAndSaveGame(leagueId, game.id, settings, new Rng(`${rng.next()}-${game.id}`));
   }
 
   const kindsPlayed = new Set((await prisma.game.findMany({ where: { leagueId, kind: { not: 'REGULAR' } } })).map((g) => g.kind));
 
+  // Playoff standings are deliberately NOT tracked here — postseason results
+  // never touch Team.wins (see simulateAndSaveGame), so a "record went from
+  // X to Y" band would be printing an unchanged number as if it moved.
+  const roundReport = async (summary: string) => buildWeekReport(leagueId, {
+    before,
+    weekLabel: PLAYOFF_ROUND_LABEL[roundKind] ?? 'Playoffs',
+    phaseLabel: 'Playoffs',
+    gamesPlayed: pending.length,
+    summary,
+    trackStandings: false,
+  });
+
   if (kindsPlayed.has('WILDCARD') && !kindsPlayed.has('DIVISIONAL')) {
     await createNextPlayoffRound(leagueId, league.seasonYear, 'WILDCARD', 'DIVISIONAL');
-    return { summary: 'Wild card round complete. Divisional round is set.' };
+    const summary = 'Wild card round complete. Divisional round is set.';
+    return { summary, report: await roundReport(summary), trophy: await buildTrophyMoment(leagueId, league.seasonYear, roundKind) };
   }
   if (kindsPlayed.has('DIVISIONAL') && !kindsPlayed.has('CONFERENCE')) {
     await createNextPlayoffRound(leagueId, league.seasonYear, 'DIVISIONAL', 'CONFERENCE');
-    return { summary: 'Divisional round complete. Conference championships are set.' };
+    const summary = 'Divisional round complete. Conference championships are set.';
+    return { summary, report: await roundReport(summary), trophy: await buildTrophyMoment(leagueId, league.seasonYear, roundKind) };
   }
   if (kindsPlayed.has('CONFERENCE') && !kindsPlayed.has('FINAL')) {
     await createFinal(leagueId, league.seasonYear);
-    return { summary: 'Conference championships complete. The final is set.' };
+    const summary = 'Conference championships complete. The final is set.';
+    return { summary, report: await roundReport(summary), trophy: await buildTrophyMoment(leagueId, league.seasonYear, roundKind) };
   }
   if (kindsPlayed.has('FINAL')) {
     await snapshotSeasonHistory(leagueId, league.seasonYear);
@@ -655,11 +721,24 @@ async function simulatePlayoffRound(leagueId: string, settings: ReturnType<typeo
     // ageContractsForYear() for why the old timing made an early cut cost
     // more than an identical late one.
     await ageContractsForYear(leagueId, league.seasonYear + 1);
+    // Built BEFORE the phase flips to OFFSEASON so the season being described
+    // is still the season the league is standing in.
+    const summary = 'The championship game is complete! Welcome to the offseason.';
+    const trophy = await buildTrophyMoment(leagueId, league.seasonYear, roundKind);
+    const report = await roundReport(summary);
     await prisma.league.update({ where: { id: leagueId }, data: { phase: 'OFFSEASON', week: 1 } });
-    return { summary: 'The championship game is complete! Welcome to the offseason.' };
+    return { summary, report, trophy };
   }
   return { summary: 'Playoffs advanced.' };
 }
+
+/** Round names, for the report's header. */
+const PLAYOFF_ROUND_LABEL: Record<string, string> = {
+  WILDCARD: 'Wild Card Round',
+  DIVISIONAL: 'Divisional Round',
+  CONFERENCE: 'Conference Championships',
+  FINAL: 'The Final',
+};
 
 /**
  * Freeze this year's final standings + playoff result into TeamSeasonRecord.

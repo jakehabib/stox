@@ -3,6 +3,8 @@
 import { useEffect, useState, useTransition, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { fullScoutAction, fullScoutPanelAction, type FullScoutPanelData } from '@/app/actions/dynasty';
+import { ActionButton } from './ds/ActionButton';
+import { DeltaChip, deltaTint, useDeltaWatch } from './ds/DeltaChip';
 
 /**
  * FULL SCOUT, on one player.
@@ -14,6 +16,16 @@ import { fullScoutAction, fullScoutPanelAction, type FullScoutPanelData } from '
  *
  * Drop-in for any player-detail surface: it fetches its own charge count and
  * refreshes the route on success, so the host page needs no state.
+ *
+ * The confirm step is new, and it is the one place in this pass that adds a
+ * click. It is added on purpose: this is the most irreversible action in the
+ * game, the panel version of it has always asked (with `window.confirm`, which
+ * is now a proper card), and this version — sitting inches from the player's
+ * own name and portrait — fired on a single click with nothing in between.
+ * Two paths to the same permanent spend, one of which asked and one of which
+ * did not, was incoherent. Full Scouts run to a handful a season, so this is
+ * not a path anyone repeats; the veto rule is about the fiftieth click, and
+ * there is no fiftieth click here.
  */
 export function FullScoutButton({ leagueId, teamId, playerId, compact }: {
   leagueId: string;
@@ -23,8 +35,9 @@ export function FullScoutButton({ leagueId, teamId, playerId, compact }: {
   compact?: boolean;
 }) {
   const [panel, setPanel] = useState<FullScoutPanelData | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const router = useRouter();
 
   const load = useCallback(() => {
@@ -35,13 +48,17 @@ export function FullScoutButton({ leagueId, teamId, playerId, compact }: {
 
   useEffect(() => { load(); }, [load]);
 
-  const spend = () => {
-    startTransition(async () => {
-      const r = await fullScoutAction(leagueId, teamId, playerId);
-      setMsg(r.message);
-      load();
-      if (r.ok) router.refresh();
-    });
+  const charges = useDeltaWatch(panel?.remaining ?? 0);
+
+  const spend = async () => {
+    charges.arm();
+    const r = await fullScoutAction(leagueId, teamId, playerId);
+    setMsg(r.message);
+    load();
+    if (!r.ok) return false as const;
+    setConfirming(false);
+    startTransition(() => router.refresh());
+    return 'File complete';
   };
 
   if (!panel) return <span className="text-xs text-muted">Checking Full Scouts…</span>;
@@ -51,18 +68,36 @@ export function FullScoutButton({ leagueId, teamId, playerId, compact }: {
   return (
     <div className={compact ? 'flex items-center gap-2 flex-wrap' : 'panel p-3 space-y-2'}>
       <div className="flex items-center gap-2 flex-wrap">
-        <button className="btn-secondary text-xs" disabled={pending || out} onClick={spend}>
-          {pending ? 'Evaluating…' : 'Full Scout'}
-        </button>
-        <span className="text-xs whitespace-nowrap">
-          <span className={`stat-value ${out ? 'text-bad' : 'text-chalk'}`}>{panel.remaining}</span>
-          <span className="text-muted">/{panel.max} remaining</span>
+        {confirming ? (
+          <>
+            <ActionButton
+              className="btn-primary text-xs"
+              idleLabel={`Spend one — ${panel.remaining - 1} left after`}
+              workingLabel="Evaluating…"
+              doneLabel="File complete"
+              onAction={spend}
+            />
+            <button className="btn-ghost text-xs" onClick={() => setConfirming(false)}>Cancel</button>
+          </>
+        ) : (
+          <button className="btn-secondary text-xs" disabled={out} onClick={() => { setMsg(null); setConfirming(true); }}>
+            Full Scout
+          </button>
+        )}
+        <span className="text-xs whitespace-nowrap flex items-center gap-1.5">
+          <span>
+            <span className={`stat-value ${out ? 'text-bad' : 'text-chalk'} ${deltaTint(charges.delta, 'info')}`}>{panel.remaining}</span>
+            <span className="text-muted">/{panel.max} remaining</span>
+          </span>
+          <DeltaChip delta={charges.delta} tone="info" />
         </span>
       </div>
       <p className="text-[11px] text-muted">
         {out
           ? `All ${panel.max} used for ${panel.seasonYear}. They reset when the new league year starts.`
-          : 'Reveals this player’s true ratings and exact ceiling. Permanent, and it costs one of your evaluations for the year.'}
+          : confirming
+            ? 'Permanent. The charge is spent whether or not you like what the file says, and unused ones do not carry over.'
+            : 'Reveals this player’s true ratings and exact ceiling. Permanent, and it costs one of your evaluations for the year.'}
       </p>
       {msg && <div className="text-xs text-muted">{msg}</div>}
     </div>

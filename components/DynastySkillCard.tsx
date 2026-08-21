@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { purchaseSkillAction } from '@/app/actions/dynasty';
 import type { DynastySkillDef, DynastySkillId } from '@/lib/dynasty';
+import { ActionButton } from './ds/ActionButton';
+import { DeltaChip, useDeltaWatch } from './ds/DeltaChip';
 
 /**
  * One upgrade, as a row: name, rank pips, what it does at the rank you own
@@ -11,6 +13,14 @@ import type { DynastySkillDef, DynastySkillId } from '@/lib/dynasty';
  * tree — there are no prerequisites in this system, so drawing connectors
  * between things that do not gate each other would be decoration pretending
  * to be structure.
+ *
+ * Spending a skill point is a permanent choice and used to read as a
+ * re-render: the pip was simply filled the next time the page painted, and the
+ * points counter in the masthead was simply one lower. Now the card
+ * acknowledges the purchase — the rank pip fills, the surface carries a single
+ * colour-only flash, and the point cost is stated as a delta beside the price
+ * it was paid against. All three are additive; nothing on the card was
+ * removed, resized or recoloured to make room.
  */
 export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limitedUse }: {
   leagueId: string;
@@ -25,9 +35,19 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
    */
   limitedUse?: { max: number; remaining: number; label: string; alwaysShow?: boolean };
 }) {
-  const [pending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
+  const [justBought, setJustBought] = useState(false);
   const router = useRouter();
+  const points = useDeltaWatch(pointsAvailable);
+
+  // Cleared on a timer rather than on animationend, because under reduced
+  // motion the animation is switched off and animationend never fires.
+  useEffect(() => {
+    if (!justBought) return;
+    const t = setTimeout(() => setJustBought(false), 700);
+    return () => clearTimeout(t);
+  }, [justBought]);
 
   const maxed = rank >= def.ranks.length;
   const nextCost = maxed ? 0 : def.ranks[rank].cost;
@@ -35,16 +55,21 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
   const currentEffect = rank > 0 ? def.ranks[rank - 1].effect : null;
   const nextEffect = maxed ? null : def.ranks[rank].effect;
 
-  const buy = () => {
-    startTransition(async () => {
-      const r = await purchaseSkillAction(leagueId, def.id as DynastySkillId);
-      setMsg(r.message);
-      if (r.ok) router.refresh();
-    });
+  const buy = async () => {
+    points.arm();
+    const r = await purchaseSkillAction(leagueId, def.id as DynastySkillId);
+    setMsg(r.message);
+    if (!r.ok) return false as const;
+    setJustBought(true);
+    startTransition(() => router.refresh());
+    return rank + 1 >= def.ranks.length ? 'Fully upgraded' : `Rank ${rank + 1}`;
   };
 
   return (
-    <div className={`panel p-3.5 ${rank > 0 ? 'border-accent/40' : ''}`}>
+    <div
+      className={`panel p-3.5 transition-colors ${rank > 0 ? 'border-accent/40' : ''} ${justBought ? 'commit-flash' : ''}`}
+      style={{ transitionDuration: 'var(--dur-state)' }}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="font-semibold text-sm leading-tight">{def.name}</div>
@@ -52,7 +77,7 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
         </div>
         <div className="shrink-0 flex items-center gap-1 pt-0.5" title={`Rank ${rank} of ${def.ranks.length}`}>
           {def.ranks.map((_, i) => (
-            <span key={i} className={`w-2.5 h-2.5 rounded-sm ${i < rank ? 'bg-accent' : 'bg-line'}`} />
+            <span key={i} className={`rank-pip w-2.5 h-2.5 rounded-sm ${i < rank ? 'bg-accent' : 'bg-line'}`} />
           ))}
         </div>
       </div>
@@ -87,19 +112,23 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
         {maxed ? (
           <span className="pill border-accent/40 text-accent">Fully upgraded</span>
         ) : (
-          <span className="text-xs text-muted">
-            Costs <span className="stat-value text-chalk">{nextCost}</span> skill point{nextCost === 1 ? '' : 's'}
+          <span className="text-xs text-muted flex items-center gap-1.5">
+            <span>
+              Costs <span className="stat-value text-chalk">{nextCost}</span> skill point{nextCost === 1 ? '' : 's'}
+            </span>
+            <DeltaChip delta={points.delta} tone="info" />
           </span>
         )}
         {!maxed && (
-          <button
+          <ActionButton
             className="btn-primary text-xs"
-            disabled={pending || !affordable}
-            onClick={buy}
+            disabled={!affordable}
+            idleLabel={rank > 0 ? `Upgrade to rank ${rank + 1}` : 'Unlock'}
+            workingLabel="Working…"
+            doneLabel={`Rank ${rank + 1}`}
+            onAction={buy}
             title={affordable ? undefined : `You have ${pointsAvailable} skill point${pointsAvailable === 1 ? '' : 's'}.`}
-          >
-            {pending ? 'Working…' : rank > 0 ? `Upgrade to rank ${rank + 1}` : 'Unlock'}
-          </button>
+          />
         )}
       </div>
 

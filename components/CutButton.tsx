@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { cutPlayerAction, cutImpactAction, CutImpact } from '@/app/actions/roster';
 import { formatMoney } from '@/lib/cap';
+import { ActionButton } from './ds/ActionButton';
 
 /**
  * Release a player — with the cap consequence shown BEFORE the confirm,
@@ -18,12 +19,24 @@ import { formatMoney } from '@/lib/cap';
  *
  * The impact is fetched on entering the confirm step rather than passed in,
  * so this stays a drop-in for every existing call site.
+ *
+ * The confirm step is now staged as a decision rather than a form: an accent
+ * edge marks it irreversible, the ledger states cap space BEFORE as well as
+ * after (the change, not just the destination — the app has always told you
+ * what a number is and never what it changed by), and the button's own label
+ * carries the cost. "Confirm Release" is a form. "Release — $1.62M dead" is a
+ * decision. Nothing was taken away to make room for any of it.
+ *
+ * Deliberately no portrait here. This component knows the player's id and
+ * name but not his age, build or position, and PlayerAvatar derives the face
+ * from all of those — so a portrait drawn from defaults would be a DIFFERENT
+ * man's face beside the same man's name, six inches below his real one. A
+ * wrong picture is worse than no picture.
  */
 export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: string }) {
   const [confirming, setConfirming] = useState(false);
   const [impact, setImpact] = useState<CutImpact | null>(null);
   const [loading, setLoading] = useState(false);
-  const [pending, startTransition] = useTransition();
   const router = useRouter();
 
   const beginConfirm = async () => {
@@ -40,8 +53,18 @@ export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: 
     return <button onClick={beginConfirm} className="btn-danger w-full">Release Player</button>;
   }
 
+  // The label carries the price. Dead money is the number a GM regrets, so
+  // that is the one the button says out loud when there is one.
+  const confirmLabel = !impact || !impact.capEnabled
+    ? 'Confirm Release'
+    : impact.deadMoney > 0
+      ? `Release — ${formatMoney(impact.deadMoney)} dead`
+      : `Release — frees ${formatMoney(impact.savings)}`;
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 pl-3.5 border-l-2 border-bad">
+      <div className="label-sm text-bad">Release · cannot be undone</div>
+      {impact?.playerName && <div className="font-semibold text-[15px] -mt-1.5">{impact.playerName}</div>}
       {loading && <p className="text-xs text-muted">Checking what this costs…</p>}
 
       {impact?.capEnabled && (
@@ -60,6 +83,10 @@ export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: 
             <span className={`font-mono font-semibold ${impact.savings >= 0 ? 'text-accent' : 'text-bad'}`}>
               {formatMoney(impact.savings)}
             </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted">Your cap space now</span>
+            <span className="font-mono text-muted">{formatMoney(impact.capSpaceBefore)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted">Your cap space after</span>
@@ -90,13 +117,20 @@ export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: 
       )}
 
       <div className="flex gap-2">
-        <button
-          disabled={pending || loading}
-          onClick={() => startTransition(async () => { await cutPlayerAction(leagueId, playerId); router.push(`/league/${leagueId}/roster`); })}
+        <ActionButton
           className="btn-danger flex-1"
-        >
-          {pending ? 'Releasing…' : 'Confirm Release'}
-        </button>
+          disabled={loading}
+          idleLabel={confirmLabel}
+          workingLabel="Releasing…"
+          // Stated as the consequence, not the verb. The route change is
+          // already in flight while this shows, so it costs nothing: the beat
+          // fills the navigation that was happening anyway.
+          doneLabel={impact && impact.capEnabled && impact.savings > 0 ? `Released — ${formatMoney(impact.savings)} freed` : 'Released'}
+          onAction={async () => {
+            await cutPlayerAction(leagueId, playerId);
+            router.push(`/league/${leagueId}/roster`);
+          }}
+        />
         <button onClick={() => { setConfirming(false); setImpact(null); }} className="btn-ghost">Cancel</button>
       </div>
     </div>

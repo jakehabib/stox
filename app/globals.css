@@ -19,6 +19,26 @@
        .text-team utility below instead: it does the color-mix in a real
        property, which resolves against the nearest --team-accent at use time.
        --team-accent itself is still the right token for fills/borders/watermarks. */
+
+    /* --- Motion tokens -------------------------------------------------
+       Four numbers, and every timed effect in the app reads them. Honouring
+       prefers-reduced-motion is therefore one override rather than a rule
+       per animation. Durations sit inside the 200-500ms interface band;
+       --dur-tick is under the 100ms direct-manipulation threshold.
+
+       These describe DECORATION only. No number in this app is ever gated
+       behind one: final values are in the DOM at frame one and every button
+       accepts the next click the instant the server responds. */
+    --dur-tick: 140ms;    /* press, hover, pip */
+    --dur-state: 220ms;   /* a value or bar changing */
+    --dur-reveal: 450ms;  /* the two or three earned moments */
+    --ease-out: cubic-bezier(.2,.7,.3,1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --dur-tick: 1ms; --dur-state: 1ms; --dur-reveal: 1ms;
+      --ease-out: linear;
+    }
   }
   body {
     @apply bg-ink text-chalk antialiased;
@@ -53,6 +73,17 @@
   .btn-secondary { @apply btn bg-raised text-chalk border border-line hover:bg-line; }
   .btn-danger { @apply btn bg-bad/15 text-bad border border-bad/30 hover:bg-bad/25; }
   .btn-ghost { @apply btn text-muted hover:text-chalk hover:bg-raised; }
+  /* Physicality on press. Nothing in this application depressed when it was
+     clicked — .btn was transition-colors and nothing else, so every control
+     felt like a link rather than a button. One pixel, 140ms, sub-perceptual,
+     and it is the whole difference. Additive: no colour, size, padding or
+     radius of any existing button changes. */
+  .btn {
+    transition-property: color, background-color, border-color, opacity, box-shadow, transform;
+    transition-duration: var(--dur-tick);
+    transition-timing-function: var(--ease-out);
+  }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
   .pill {
     @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border;
   }
@@ -212,9 +243,107 @@
        single-line ticker. Same quirk that hid the Cap page tooltip. */
     .ticker-track { animation: none; overflow-x: auto; overflow-y: hidden; }
   }
+
+  /* --- Feedback layer -----------------------------------------------------
+     Everything below answers one gap: this app told you what a number IS and
+     never what it CHANGED BY. A cut takes cap space from $21.1M to $22.1M and
+     the screen has never once said "+$1.04M". These are the classes that say
+     it. All new names — nothing existing is restyled.
+
+     Three rules hold throughout, and they are why none of this costs time:
+       1. Animation never gates input. Buttons re-enable when the server
+          answers, not when an animation ends.
+       2. Animation never delays information. Final values render at frame
+          one; only decoration moves. There are no count-ups anywhere.
+       3. Reduced motion loses the movement, never the information. Every
+          effect has a colour/opacity channel that fires regardless.
+     -------------------------------------------------------------------- */
+
+  /* The delta chip. Sits BESIDE a value, never replaces it, and states the
+     change that just happened in the user's own units. */
+  .delta-chip {
+    @apply inline-flex items-center gap-1 rounded-full border px-1.5 py-px
+           text-[11px] font-bold whitespace-nowrap align-middle;
+    font-variant-numeric: tabular-nums;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity var(--dur-state) var(--ease-out),
+                transform var(--dur-state) var(--ease-out);
+    pointer-events: none;
+  }
+  .delta-chip-in { opacity: 1; transform: translateY(0); }
+  .delta-up   { @apply text-accent border-accent/35 bg-accent/10; }
+  .delta-down { @apply text-bad border-bad/35 bg-bad/10; }
+  .delta-info { @apply text-accent2 border-accent2/35 bg-accent2/10; }
+
+  /* The tint channel. This is the half that still fires under reduced
+     motion, which is why polarity is never carried by the rise alone. */
+  .delta-tint { transition: color var(--dur-state) var(--ease-out); }
+  .delta-tint-up   { color: theme('colors.accent') !important; }
+  .delta-tint-down { color: theme('colors.bad') !important; }
+
+  /* In-flight ring for the three-state action button. currentColor so it
+     works on primary, secondary and danger without a variant each. It runs
+     only while a request is actually open — it is not ambient motion, and
+     it stops dead for reduced motion, where the verb label carries it. */
+  .spinner-ring {
+    @apply inline-block w-3.5 h-3.5 rounded-full shrink-0;
+    border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+    border-top-color: currentColor;
+    animation: spinner-ring-spin 0.7s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner-ring { animation: none; border-top-color: color-mix(in srgb, currentColor 55%, transparent); }
+  }
+
+  /* Scouting reveal: the band's edges sweep to the new low/high instead of
+     simply BEING narrower on the next render. The numeric label is already
+     the new range at frame one — this animates the transition TO the answer,
+     never the arrival OF it. Opt-in, because the same component draws rows
+     on list surfaces that must stay dead still. */
+  .range-sweep {
+    transition: left var(--dur-reveal) var(--ease-out),
+                width var(--dur-reveal) var(--ease-out);
+  }
+
+  /* Patience pip that drains rather than just greying. Dragging a slider is
+     free; submitting an offer is not, and the cost should be felt. */
+  .pip-well { @apply relative rounded-full overflow-hidden bg-line; }
+  .pip-fill {
+    @apply absolute inset-0 rounded-full bg-accent;
+    transform-origin: bottom;
+    transition: transform var(--dur-reveal) var(--ease-out);
+  }
+  .pip-spent .pip-fill { transform: scaleY(0); }
+
+  /* A purchased upgrade locking in: the rank pip fills rather than simply
+     being filled on the next render. */
+  .rank-pip { transition: background-color var(--dur-state) var(--ease-out); }
+
+  /* One-shot confirmation flash on a surface that just changed. Colour only —
+     nothing moves, so this is identical under reduced motion. */
+  .commit-flash { animation: commit-flash var(--dur-reveal) var(--ease-out) 1; }
+  @media (prefers-reduced-motion: reduce) {
+    .commit-flash { animation: none; }
+  }
 }
 
 @keyframes ticker-scroll {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
+}
+
+@keyframes spinner-ring-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Colour-only acknowledgement: a surface that just committed briefly carries
+   the accent, then settles. Painted as an inset shadow rather than a
+   background-color so it can overlay any surface without briefly erasing that
+   surface's own background. No transform, so it reads the same to a user who
+   has asked for reduced motion (where it is switched off entirely anyway,
+   because the delta chip beside it already carries the fact). */
+@keyframes commit-flash {
+  from { box-shadow: inset 0 0 0 9999px rgba(74, 222, 128, 0.14); }
+  to   { box-shadow: inset 0 0 0 9999px rgba(74, 222, 128, 0); }
 }
