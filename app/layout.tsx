@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Barlow_Condensed } from 'next/font/google';
 import './globals.css';
 
@@ -14,8 +14,24 @@ const display = Barlow_Condensed({
 });
 
 export const metadata: Metadata = {
-  title: 'Dynasty GM Football',
-  description: 'A single-player American football front-office simulator.',
+  // Template rather than a bare title so a league page can name the club and
+  // still be identifiable in a wall of browser tabs.
+  title: { default: 'Dynasty GM Football', template: '%s · Dynasty GM' },
+  description: 'A single-player American football front-office simulator. Run the franchise, build the dynasty.',
+  // app/icon.svg supplies the tab icon; without it every page requested
+  // /favicon.ico and took a 404 on each load.
+  applicationName: 'Dynasty GM Football',
+  openGraph: {
+    title: 'Dynasty GM Football',
+    description: 'Run the franchise. Build the dynasty.',
+    type: 'website',
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#0d1117',
+  width: 'device-width',
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

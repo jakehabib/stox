@@ -438,5 +438,33 @@ export async function generateStorylines(leagueId: string, teamId: string, opts:
 
   const all = [stakes, streak, rivalry, ...records, ...milestones, ...arcs].filter((s): s is Storyline => s !== null);
   all.sort((a, b) => CATEGORY_PRIORITY.indexOf(a.category) - CATEGORY_PRIORITY.indexOf(b.category));
-  return all.slice(0, opts.limit ?? 8);
+
+  // Priority order alone let one category take every slot. In a quiet week —
+  // no divisional stakes, no streak, no rivalry — MILESTONE supplied all five,
+  // and the Dashboard showed four consecutive "X is N tackles from 50 this
+  // season" lines, two of them with the same stat and the same gap. That is
+  // the League Wire's failure mode wearing a different hat, and lib/wireRank
+  // already solved it: cap per bucket, and let the next category through.
+  //
+  // Bucketed by category AND by the metric the line is about, so "500 rushing
+  // yards" and "50 tackles" can both appear but two tackle counts cannot.
+  const PER_CATEGORY_CAP = 2;
+  const perCategory = new Map<string, number>();
+  const perMetric = new Set<string>();
+  const diverse: Storyline[] = [];
+  const overflow: Storyline[] = [];
+  for (const s of all) {
+    const n = perCategory.get(s.category) ?? 0;
+    // The trailing noun of a milestone headline ("...from 50 this season") is
+    // the metric; anything without one buckets on its own id and is unique.
+    const metric = `${s.category}:${s.headline.replace(/^.*? is \d+ /, '').slice(0, 24)}`;
+    if (n >= PER_CATEGORY_CAP || perMetric.has(metric)) { overflow.push(s); continue; }
+    perCategory.set(s.category, n + 1);
+    perMetric.add(metric);
+    diverse.push(s);
+  }
+  // Backfill from the overflow rather than returning a short list: a quiet
+  // week should still fill the widget, just not with five of one thing until
+  // there is nothing else left to say.
+  return [...diverse, ...overflow].slice(0, opts.limit ?? 8);
 }
