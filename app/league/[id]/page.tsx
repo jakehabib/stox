@@ -104,6 +104,14 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   const overall = Math.round(roster.reduce((s, p) => s + p.trueOvr, 0) / Math.max(1, roster.length));
   const needs = teamNeeds(roster.map((p) => ({ id: p.id, position: p.position, trueOvr: p.trueOvr, age: p.age, potential: p.potential })));
   const topNeeds = Object.entries(needs).sort((a, b) => b[1] - a[1]).slice(0, 5).filter(([, v]) => v > 0.1);
+  // Presentation only: the reason a position is a hole, stated in the roster's
+  // own terms. The severity word alone was identical on every row (see
+  // ds/RosterNeeds) — this is the part that actually differs between them.
+  const needDetail = (pos: string): string => {
+    const group = roster.filter((p) => p.position === pos).sort((a, b) => b.trueOvr - a.trueOvr);
+    if (group.length === 0) return 'none rostered';
+    return `${group.length} deep \u00b7 best ${group[0].trueOvr} ovr`;
+  };
   const injured = roster.filter((p) => p.injuryWeeks > 0);
   const next = upcomingGames[0];
   const tenure = await buildGmCareerSummary(league.id, team, league.seasonYear);
@@ -386,7 +394,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
               {topNeeds.length === 0 ? (
                 <p className="text-sm text-muted">No glaring holes right now — nice work.</p>
               ) : (
-                <RosterNeeds needs={topNeeds.map(([pos, val]) => ({ position: pos, value: val, ...needSeverity(val) }))} />
+                <RosterNeeds needs={topNeeds.map(([pos, val]) => ({ position: pos, value: val, detail: needDetail(pos), ...needSeverity(val) }))} />
               )}
             </div>
           </div>

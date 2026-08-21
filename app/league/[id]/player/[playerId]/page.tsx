@@ -23,6 +23,7 @@ import { ScoutingRange } from '@/components/ds/ScoutingRange';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { StatNumber } from '@/components/ds/StatNumber';
 import { positionBadgeClass } from '@/components/ds/positionColor';
+import { RatingValue } from '@/components/ds/RatingValue';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import {
   CollegeProfile, CombineTesting, aggregateCollegeGames, collegeWeeksElapsed,
@@ -277,9 +278,9 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           background: jerseyColor ? `radial-gradient(ellipse 90% 130% at 0% 50%, color-mix(in srgb, ${jerseyColor} 20%, transparent), transparent 70%)` : undefined,
         }}
       >
-        <div className="flex flex-wrap items-start gap-6 p-6">
-          <div className="relative shrink-0 rounded-lg p-3" style={{ background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 14%, transparent)` : undefined }}>
-            <PlayerAvatar seed={player.id} age={player.age} size={128} teamColor={jerseyColor} />
+        <div className="flex flex-wrap items-start gap-5 px-5 py-4">
+          <div className="relative shrink-0 rounded-lg p-2" style={{ background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 14%, transparent)` : undefined }}>
+            <PlayerAvatar seed={player.id} age={player.age} size={64} teamColor={jerseyColor} />
           </div>
 
           <div className="flex-1 min-w-[280px]">
@@ -340,7 +341,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
                 style={{ borderColor: 'var(--team-accent, #38bdf8)', background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 16%, transparent)` : undefined }}
               >
                 <div className="label-sm">Overall</div>
-                <div className={`stat-value text-stat-xl leading-none mt-1 ${ratingColor(view.scoutedOvr)}`}>{view.scoutedOvr}</div>
+                <RatingValue value={view.scoutedOvr} size="xl" className="mt-1" />
               </div>
             ) : (
               <div className="panel p-3">
@@ -421,7 +422,7 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
                 />
                 <div className="absolute h-full w-0.5 bg-accent2" style={{ left: `${a.observed}%` }} />
               </div>
-              <span className={`text-sm font-mono w-14 text-right ${ratingColor(a.observed)}`}>
+              <span className={`text-sm tnum w-14 text-right ${ratingColor(a.observed)}`}>
                 {view.revealed ? a.actual : `${a.low}-${a.high}`}
               </span>
             </div>
@@ -539,12 +540,11 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
                       <Link
                         key={slot.id}
                         href={`/league/${league.id}/player/${slot.playerId}`}
-                        className={`flex items-center gap-3 px-2 py-1.5 -mx-2 rounded-lg text-sm ${isThisPlayer ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised'}`}
+                        className={`flex items-center gap-3 px-2 py-1 -mx-2 rounded text-sm ${isThisPlayer ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised'}`}
                       >
                         <span className="label-sm w-5 shrink-0">{slot.rank === 0 ? '1' : slot.rank + 1}</span>
-                        <PlayerAvatar seed={slot.playerId} age={slot.player.age} size={22} />
                         <span className={`flex-1 truncate ${isThisPlayer ? 'font-semibold' : ''}`}>{slot.player.firstName} {slot.player.lastName}{isThisPlayer ? ' (this player)' : ''}</span>
-                        <span className={`font-mono text-xs ${ratingColor(slot.player.trueOvr)}`}>{slot.player.trueOvr}</span>
+                        <span className={`text-xs tnum ${ratingColor(slot.player.trueOvr)}`}>{slot.player.trueOvr}</span>
                       </Link>
                     );
                   })}

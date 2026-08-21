@@ -311,6 +311,15 @@ model ScoutingReport {
   // evaluated, 2027"), never gates the reveal itself: a perfect evaluation
   // you paid for does not expire.
   revealedYear Int @default(0)
+  // League year a PRIVATE WORKOUT was held on this player by this team (see
+  // lib/workouts.ts). Nullable: it is genuinely absent for every report that
+  // predates workouts, and `prisma db push` cannot add a required column to a
+  // database that already has rows. Two jobs, both of them real: it stops a
+  // scarce workout slot being spent twice on the same prospect, and it is
+  // what a page reads to say "worked him out in 2027". It does NOT gate the
+  // reveal — the reveal lives in the confidence/attrsRevealed columns like
+  // every other one.
+  workoutYear Int?
 
   @@unique([playerId, teamId])
   @@index([teamId])
@@ -614,6 +623,15 @@ model DynastyProfile {
   /// ability, kept separate so the two scarcities are tuned independently.
   insiderYear Int @default(0)
   insiderUsed Int @default(0)
+
+  /// PRIVATE WORKOUT slot ledger (see lib/workouts.ts), same year-stamped
+  /// shape as the two above and for the same reason: a counter tagged with
+  /// the league year it belongs to reads as zero the moment the year moves,
+  /// so "resets every season" needs no hook to be CORRECT. lib/season.ts
+  /// zeroes it at the season boundary anyway, purely so the count on screen
+  /// turns over with the calendar instead of on the next spend.
+  workoutYear Int @default(0)
+  workoutUsed Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

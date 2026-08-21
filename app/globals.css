@@ -30,6 +30,12 @@
     background-attachment: fixed;
   }
   ::selection { background: rgba(74,222,128,0.25); }
+  /* Every column of figures aligns without help. Proportional digits in a
+     numeric column are the single loudest "this is text, not data" tell, and
+     tables here are almost entirely numeric. Set once at the element level so
+     no call site has to remember it — see also .tnum for figures outside a
+     table (inline stat lines, meters, ledger rows). */
+  table { font-variant-numeric: tabular-nums; }
   h1, h2, h3 {
     font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
     font-weight: 700;
@@ -64,7 +70,7 @@
   /* Broadcast lower-third tab, not a rounded pill — a solid underline bar
      marks the active section instead of a soft hover-only background. */
   .nav-link {
-    @apply relative px-3 py-2 text-sm font-display font-semibold uppercase tracking-wide
+    @apply relative px-3 py-1.5 text-sm font-display font-semibold uppercase tracking-wide
            text-muted hover:text-chalk transition-colors;
   }
   .nav-link::after {
@@ -74,10 +80,24 @@
   .nav-link:hover::after { @apply bg-line; }
   .nav-link-active { @apply nav-link text-chalk; }
   .nav-link-active::after { @apply bg-accent; }
-  .table-clean { @apply w-full text-sm border-separate border-spacing-0; }
-  .table-clean th { @apply label-sm text-left px-3 py-2 border-b border-line sticky top-0 bg-card; }
-  .table-clean td { @apply px-3 py-2 border-b border-line/60; }
+  /* One density for every table in the app. The Cap page's contract table was
+     already the target state (37px rows, no avatars, one hue on OVR); this is
+     that treatment pulled up into the primitive so Roster, Draft, Free Agency
+     and the rest inherit it instead of each inventing their own row height.
+     30px rows — the density Direction A specifies — with the figures tabular. */
+  /* text-align lives on the table, not on `th` — `.table-clean th` is
+     specificity (0,1,1) and would beat a plain `text-right` utility on the
+     cell, so a right-aligned numeric header silently stayed left. Inherited
+     alignment loses to any direct rule, which is what call sites expect. */
+  .table-clean { @apply w-full text-sm border-separate border-spacing-0 text-left; }
+  .table-clean th { @apply label-sm px-2.5 py-1.5 border-b border-line sticky top-0 bg-card whitespace-nowrap; }
+  .table-clean td { @apply px-2.5 py-[5px] border-b border-line/60 align-middle; }
   .table-clean tr:hover td { @apply bg-raised/50; }
+  /* A column whose value never varies carries no information. It still has to
+     be *there* (a screen reader and a sort still need it), but it should read
+     as ambient rather than compete with the numbers next to it. Pair with the
+     notable value rendered at full weight, so the exception is what you see. */
+  .cell-constant { @apply text-muted/55 text-xs font-normal; }
 
   /* --- Redesign primitives ------------------------------------------------
      Section-based layout (heading + divider) is the default; reach for
@@ -110,6 +130,28 @@
     letter-spacing: -0.01em;
     line-height: 0.95;
   }
+
+  /* Tabular figures outside a <table> — stat lines, ledgers, meters, any
+     place numbers stack vertically and should align. `table` gets this for
+     free (see @layer base); this is for everything else. */
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  /* --- Rating ramp ---------------------------------------------------------
+     ONE sequential ramp for continuous ratings, expressed as weight and
+     intensity rather than four categorical hues. A rating is a continuous
+     quantity; mapping it onto gold/green/blue/white asks the reader to learn
+     an arbitrary hue order (does blue outrank green?) and spends the whole
+     colour budget on a scale, leaving nothing for things that need attention.
+     Only the top tier takes the accent, and it takes it as a signal ("this
+     one is elite"), not as a step on a rainbow.
+
+     Colour never works alone: the number itself is always rendered, and
+     ratingStep() (lib/ratings.ts) pairs each step with a glyph + an
+     aria-label. See docs/design-directions/README.md §5. */
+  .rating-elite   { @apply text-accent; font-weight: 800; }
+  .rating-good    { @apply text-chalk;  font-weight: 800; }
+  .rating-average { @apply text-chalk/70; font-weight: 700; }
+  .rating-low     { @apply text-muted; font-weight: 600; }
 
   .btn-tertiary { @apply btn text-accent2 hover:underline px-1.5; }
   .btn-icon { @apply btn w-8 h-8 p-0 text-muted hover:text-chalk hover:bg-raised; }

@@ -175,12 +175,51 @@ export function playerLabel(opts: { ovr: number; potential: number; isDraftee?: 
   return tag;
 }
 
+/**
+ * ONE sequential ramp for a continuous rating.
+ *
+ * This used to map a rating onto four *categorical* hues (gold / green /
+ * blue / white / grey), which meant a single roster column rendered in four
+ * colours and asked the reader to know whether blue outranks green. Nothing
+ * on the page ever told them, because there is no answer — hue has no
+ * intrinsic order. It also spent the entire colour budget on a scale, so
+ * there was nothing left to spend on the handful of things that genuinely
+ * need attention (a cap shortfall, an injury, an expiring deal).
+ *
+ * The ramp is now one hue family — neutral chalk, stepped by weight and
+ * intensity — with the accent reserved for the top tier alone, where it
+ * reads as a flag rather than as a rung on a ladder. See
+ * docs/design-directions/README.md §1.3 and the `.rating-*` classes in
+ * app/globals.css.
+ *
+ * Colour never carries the meaning by itself: the rating value is always
+ * rendered next to it, and `mark`/`markLabel` give the top and bottom steps
+ * a redundant non-colour cue (rendered by components/ds/RatingValue).
+ */
+export interface RatingStep {
+  key: 'elite' | 'good' | 'average' | 'low';
+  /** Tailwind/component class — colour + weight together, never colour alone. */
+  className: string;
+  /** Redundant non-colour cue. Empty for the two middle steps, which are the norm. */
+  mark: string;
+  /** Spoken form of the step, for title/aria on the mark. */
+  markLabel: string;
+}
+
+/** Step boundaries deliberately match ratingTier()'s Pro Bowl / Starter / Depth bands. */
+export function ratingStep(v: number): RatingStep {
+  if (v >= 88) return { key: 'elite', className: 'rating-elite', mark: '\u25B2', markLabel: 'elite' };
+  if (v >= 78) return { key: 'good', className: 'rating-good', mark: '', markLabel: 'above average' };
+  if (v >= 68) return { key: 'average', className: 'rating-average', mark: '', markLabel: 'average' };
+  return { key: 'low', className: 'rating-low', mark: '\u25BC', markLabel: 'below average' };
+}
+
+/**
+ * The class name for a rating figure. Every consumer in the app goes through
+ * here, so the ramp is fixed in exactly one place.
+ */
 export function ratingColor(v: number): string {
-  if (v >= 88) return 'text-gold';
-  if (v >= 78) return 'text-accent';
-  if (v >= 68) return 'text-accent2';
-  if (v >= 58) return 'text-chalk';
-  return 'text-muted';
+  return ratingStep(v).className;
 }
 
 export const ALL_POSITIONS = POSITIONS;

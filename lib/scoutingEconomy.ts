@@ -7,8 +7,54 @@ import { LeagueSettings } from './settings';
 
 /**
  * ===========================================================================
- * SCOUTING ECONOMY — focus points as a real, scarce resource
+ * DEPRECATED — THE FOCUS-POINT ECONOMY. DO NOT ADD A CALLER.
  * ===========================================================================
+ * Focus points are being removed from the game. Everything below still works,
+ * unchanged, for exactly one reason: two surfaces still read it
+ * (app/league/[id]/layout.tsx's header tile and app/league/[id]/scouting/page.tsx)
+ * and they belong to a UI workstream landing separately. Gutting the
+ * functions would 500 those pages; deleting the file would fail to compile.
+ * So it stays intact and inert-by-abandonment until the call sites listed in
+ * docs/scouting-pivot.md are removed, and then it goes.
+ *
+ * WHAT REPLACED IT, AND WHY.
+ *
+ * The model below is coherent — a scarce pool, tiers, real diminishing
+ * returns — and it was still the wrong game. Two problems, neither fixable by
+ * tuning:
+ *
+ *   1. IT CHARGED FOR PUBLIC KNOWLEDGE. Every team in the real world knows
+ *      who the consensus number one pick is, for free, from television. Making
+ *      the GM pay to find that out taxed him for the least interesting
+ *      information in the sport. lib/consensus.ts now gives every prospect a
+ *      public grade, a public rank and a public reason, from day one, at no
+ *      cost — and makes that opinion WRONG in named, learnable ways, so the
+ *      GM's edge is spotting the error rather than buying the fact.
+ *
+ *   2. IT PRICED EVERY CLICK. A per-player button with a cost on it turns a
+ *      draft class into a spreadsheet of micro-purchases, and the pool
+ *      quietly punished anyone who advanced a week without visiting the
+ *      screen. lib/shortlistAttention.ts replaces it with one standing
+ *      decision and no clicks: your staff works whoever you have starred,
+ *      every week, forever, splitting a fixed pool of attention across them.
+ *      Star five and you learn a lot about five; star sixty and you learn a
+ *      little about sixty. Nothing is spent and nothing runs out.
+ *
+ * The one genuinely scarce choice that survived is lib/workouts.ts — a handful
+ * of private workouts in the run-up to the draft, each a big discrete reveal
+ * on one prospect. Scarcity belongs at that single moment of commitment, not
+ * spread across every row of a 400-man board.
+ *
+ * STILL LIVE FROM THIS FILE: nothing by design. `periodKey`/`periodLabel` are
+ * the last plausibly-reusable pieces and both are only load-bearing for the
+ * budget itself.
+ *
+ * ---------------------------------------------------------------------------
+ * Original doc comment follows.
+ * ---------------------------------------------------------------------------
+ *
+ * SCOUTING ECONOMY — focus points as a real, scarce resource
+ *
  * Before this, "focus points" were a number the UI printed on a button and
  * nothing ever checked: the only limiter was a one-scout-per-player-per-week
  * lock, so a GM could reach 100% confidence on the entire draft class for

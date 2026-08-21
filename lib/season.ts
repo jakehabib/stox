@@ -26,6 +26,8 @@ import { ensureSeasonSchedule } from './scheduleSeason';
 import { autoDepthChartAll } from './gen/league';
 import { observe } from './scouting';
 import { replenishLeagueScoutingBudgets } from './scoutingEconomy';
+import { applyShortlistAttention } from './shortlistAttention';
+import { resetWorkoutSlots } from './workouts';
 
 /**
  * ===========================================================================
@@ -47,6 +49,13 @@ import { replenishLeagueScoutingBudgets } from './scoutingEconomy';
  * before the UI reads it: this is the replenishment tick for the focus
  * economy (lib/scoutingEconomy.ts). It is idempotent — a team already on the
  * current period is skipped — so a no-op advance never hands out free focus.
+ *
+ * DEPRECATED CALL. Focus points are being removed (see the header of
+ * lib/scoutingEconomy.ts). The replenish stays only so the header tile still
+ * reading that balance keeps showing a coherent number until the UI landing
+ * separately drops it; it comes out with the call sites in
+ * docs/scouting-pivot.md. The scouting that actually happens now is
+ * applyShortlistAttention, on the regular-season week tick below.
  */
 export async function advanceWeek(leagueId: string): Promise<AdvanceResult> {
   const before = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
@@ -352,6 +361,11 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   // Recover fatigue league-wide between weeks.
   await recoverFatigueAndInjuries(leagueId);
   await applyInSeasonProgression(leagueId, league.seasonYear, week, settings.seasonLength, rng, settings.progressionSpeed);
+  // Your staff spent the week on the players you starred. This is the ONLY
+  // ongoing scouting input in the game and it runs whether or not the user
+  // ever opened a scouting screen — advancing a week is not supposed to be
+  // something you can do wrong (lib/shortlistAttention.ts).
+  await applyShortlistAttention(leagueId, league.seasonYear, week, settings.simSeed || leagueId);
   await maybeMakeAiTradeOffer(leagueId, league.seasonYear, week, settings, rng);
 
   const nextWeek = week + 1;
@@ -807,6 +821,12 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
         data: { wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgnst: 0, divWins: 0, divLosses: 0, confWins: 0, confLosses: 0, playoffSeed: null, eliminated: false },
       });
       await prisma.league.update({ where: { id: leagueId }, data: { week: league.week + 1, seasonYear: league.seasonYear + 1 } });
+      // This is the one line in the phase machine where seasonYear actually
+      // moves, so it is where a per-season allowance turns over. Private
+      // workout slots are stamped with the year they belong to and would read
+      // as zero-used anyway; zeroing them here means the count on screen
+      // changes with the calendar rather than on the next spend.
+      await resetWorkoutSlots(leagueId, league.seasonYear + 1);
       return { summary: 'Standings reset for the new league year.' };
     }
     case 'AGE_CONTRACTS': {

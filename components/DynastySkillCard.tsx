@@ -87,13 +87,15 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
         {maxed ? (
           <span className="pill border-accent/40 text-accent">Fully upgraded</span>
         ) : (
-          <span className="text-xs text-muted">
-            Costs <span className="stat-value text-chalk">{nextCost}</span> skill point{nextCost === 1 ? '' : 's'}
+          /* The price is the same on nearly every node on the page, so it
+             sits back and lets the effect line above it lead. */
+          <span className="cell-constant">
+            Costs <span className="stat-value text-muted">{nextCost}</span> skill point{nextCost === 1 ? '' : 's'}
           </span>
         )}
         {!maxed && (
           <button
-            className="btn-primary text-xs"
+            className="btn-secondary text-xs"
             disabled={pending || !affordable}
             onClick={buy}
             title={affordable ? undefined : `You have ${pointsAvailable} skill point${pointsAvailable === 1 ? '' : 's'}.`}
