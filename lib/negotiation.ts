@@ -642,6 +642,11 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   // insult, so the bar is not allowed to say they can. The cap also gives the
   // salary slider a real edge to find: the bar jumps the moment his agent
   // starts listening again.
+  //
+  // THE GUARANTEE FLOOR IS THE SAME DEVICE, one step milder. Under it the bar
+  // is held below the "he might sign" band at every scouting confidence, so no
+  // salary and no term can carry an offer he has refused on structure — and
+  // the bar jumps the same way the moment the guarantee clears his floor.
   const interest = Math.min(
     insulting ? 44 : underGuaranteed ? UNDER_GUARANTEED_CAP : 100,
     Math.round(Math.max(0, Math.min(100, raw * 100))),

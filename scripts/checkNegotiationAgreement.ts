@@ -85,7 +85,9 @@
 import { prisma } from '../lib/db';
 import { createLeague } from '../lib/gen/league';
 import { parseSettings } from '../lib/settings';
-import { resolveNegotiationSession, negotiateOffer, runAiFreeAgencyWave, MARKET_FLOOR } from '../lib/freeagency';
+import {
+  resolveNegotiationSession, negotiateOffer, runAiFreeAgencyWave, setResignSetAside, MARKET_FLOOR,
+} from '../lib/freeagency';
 import { advanceWeek } from '../lib/season';
 import {
   decideOffer, minimumAcceptableApy, sessionFingerprint, clampOffer,
@@ -96,6 +98,7 @@ import {
 import { capHit, formatMoney, marketValue, willingnessHorizon, maxYearsForAge, TERM } from '../lib/cap';
 import { teamCapSummary } from '../lib/cap-summary';
 import { maxOffer, parseGmProfile, teamNeeds, type RosterPlayer } from '../lib/ai/gm';
+import { FREE_AGENCY } from '../lib/tuning';
 import { Rng } from '../lib/rng';
 
 let failures = 0;
@@ -743,7 +746,16 @@ async function main() {
 
       if (suitor.capSpace !== summary.capSpace) fail(`${p.lastName}: quoted ${formatMoney(suitor.capSpace)} of ${suitor.teamAbbr} room, the books say ${formatMoney(summary.capSpace)}`);
       if (Math.abs(suitor.need - (needs[p.position] ?? 0)) > 1e-9) fail(`${p.lastName}: quoted need ${suitor.need} at ${p.position}, teamNeeds says ${needs[p.position]}`);
-      if (suitor.need < 0.15) fail(`${p.lastName}: ${suitor.teamAbbr} was named as interested but scores below the threshold its own AI bids at`);
+      // A club may be named on either of the two grounds the wave bids on: a
+      // need over the 0.15 bar, or — with no roster spot left — a free agent
+      // who clearly upgrades the WORST man it has there, which is the man an
+      // upgrade actually displaces. Anything else would be a club that never
+      // bids at all.
+      const worstAtPosition = roster.filter((r) => r.position === p.position).sort((a, b) => a.trueOvr - b.trueOvr)[0] ?? null;
+      const upgradeCase = worstAtPosition === null || p.trueOvr - worstAtPosition.trueOvr >= FREE_AGENCY.MIN_UPGRADE_DELTA;
+      if (suitor.need < 0.15 && !upgradeCase) {
+        fail(`${p.lastName}: ${suitor.teamAbbr} was named with need ${suitor.need.toFixed(2)} and no upgrade case (their worst at ${p.position} is ${worstAtPosition?.trueOvr})`);
+      }
       if (suitor.starterOvr !== (best?.trueOvr ?? null)) fail(`${p.lastName}: quoted best-at-position ${suitor.starterOvr}, roster says ${best?.trueOvr ?? null}`);
       if (suitor.apy !== reBid) fail(`${p.lastName}: quoted ${formatMoney(suitor.apy)} from ${suitor.teamAbbr}, their own maxOffer produces ${formatMoney(reBid)}`);
 
@@ -756,12 +768,12 @@ async function main() {
     // AND HE IS ACTUALLY PURSUED. The strongest form of the claim: release the
     // most-wanted of them to free agency and run the real sealed-bid wave. If
     // the rumour were decoration, nobody would come.
-    const wanted: { id: string; lastName: string; position: string; trueOvr: number; apy: number; abbr: string; need: number }[] = [];
+    const wanted: { id: string; lastName: string; position: string; trueOvr: number; apy: number; abbr: string; teamId: string; need: number; starterOvr: number | null }[] = [];
     for (const p of finalCall) {
       const s = await resolveNegotiationSession({
         leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: true,
       });
-      if (s.suitor) wanted.push({ id: p.id, lastName: p.lastName, position: p.position, trueOvr: p.trueOvr, apy: s.suitor.apy, abbr: s.suitor.teamAbbr, need: s.suitor.need });
+      if (s.suitor) wanted.push({ id: p.id, lastName: p.lastName, position: p.position, trueOvr: p.trueOvr, apy: s.suitor.apy, abbr: s.suitor.teamAbbr, teamId: s.suitor.teamId, need: s.suitor.need, starterOvr: s.suitor.starterOvr });
     }
     const target = wanted.sort((a, b) => b.trueOvr - a.trueOvr)[0];
     if (!target) {
@@ -777,7 +789,13 @@ async function main() {
       // as stated: does the named club clear both bars the wave itself uses —
       // enough need to bid at all, and a bid big enough to be resolved rather
       // than thrown out under the market floor?
-      const qualifiesToBid = target.need >= 0.15;
+      const targetWorst = (await prisma.player.findMany({
+        where: { teamId: target.teamId, status: 'ACTIVE', position: target.position },
+        orderBy: { trueOvr: 'asc' }, take: 1, select: { trueOvr: true },
+      }))[0] ?? null;
+      const qualifiesToBid = target.need >= 0.15
+        || targetWorst === null
+        || target.trueOvr - targetWorst.trueOvr >= FREE_AGENCY.MIN_UPGRADE_DELTA;
       const clearsFloor = target.apy >= market * MARKET_FLOOR;
       comparisons++;
       if (!qualifiesToBid) fail(`${target.lastName}: ${target.abbr} was named but its need would keep it out of the bidding entirely`);
@@ -814,16 +832,36 @@ async function main() {
   // re-rollable by resubmitting until it lands.
   console.log('\nThe band (three regions across a real player\'s whole salary range):\n');
   {
-    // The most expensive man still on the market at this point in the script.
-    // A cheap player's band is only two or three slider steps wide, which
-    // demonstrates nothing; the point is to see the three regions.
-    const subject = await prisma.player.findFirstOrThrow({
+    // The most expensive man still on the market whose band the HIDDEN DRAW
+    // actually decides. A cheap player's band is two or three slider steps
+    // wide, which demonstrates nothing — but there is a second filter now that
+    // matters more, and it arrived with the market change: a rival bidding
+    // above the band makes every offer in it a refusal for a reason that has
+    // nothing to do with the draw (`outbid`), and a band that cannot land
+    // because somebody else is higher is not evidence about the band at all.
+    // So the subject is chosen as one where the draw is the thing being tested,
+    // and the counting below ignores offers the ledger or the auction settled.
+    const candidates = await prisma.player.findMany({
       where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
       orderBy: { trueOvr: 'desc' },
+      take: 12,
     });
-    const session = await resolveNegotiationSession({
+    let subject = candidates[0];
+    let session = await resolveNegotiationSession({
       leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
     });
+    for (const c of candidates) {
+      const s = await resolveNegotiationSession({
+        leagueId, playerId: c.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      const yrs = Math.min(s.ctx.desiredYears, s.gate.maxYears, s.ctx.willingYears);
+      let decidable = 0;
+      for (let apy = s.gate.minSalary; apy <= s.gate.maxSalary; apy += 100_000) {
+        const d = decideOffer(s.ctx, { apy, years: yrs, guaranteePct: 0.5 }, s.gate, DEFAULT_STRUCTURE);
+        if (d.signBand === 'MAYBE' && !d.blocked && !d.outbid) decidable++;
+      }
+      if (decidable > 8) { subject = c; session = s; break; }
+    }
     const { ctx, gate } = session;
     const years = Math.min(ctx.desiredYears, gate.maxYears, ctx.willingYears);
     const base: Offer = { apy: gate.minSalary, years, guaranteePct: 0.5 };
@@ -843,7 +881,12 @@ async function main() {
         fail(`${subject.lastName}: a certainty at ${formatMoney(apy)} was not accepted`);
       }
       if (d.signBand === 'NO' && d.accepted) fail(`${subject.lastName}: an offer below the band signed at ${formatMoney(apy)}`);
-      if (d.signBand === 'MAYBE') { if (d.accepted) maybeSigned++; else maybeRefused++; if (firstMaybe === null) firstMaybe = apy; }
+      // Only where the DRAW is what decides. An offer the cap refuses or a
+      // rival outbids says nothing about whether the band is real.
+      if (d.signBand === 'MAYBE') {
+        if (!d.blocked && !d.outbid) { if (d.accepted) maybeSigned++; else maybeRefused++; }
+        if (firstMaybe === null) firstMaybe = apy;
+      }
       if (d.signBand === 'YES' && firstYes === null) firstYes = apy;
     }
     console.log(
@@ -864,7 +907,8 @@ async function main() {
     const inBand: Offer[] = [];
     for (let apy = gate.minSalary; apy <= gate.maxSalary; apy += 100_000) {
       const offer = { ...base, apy };
-      if (decideOffer(ctx, offer, gate, DEFAULT_STRUCTURE).signBand === 'MAYBE') inBand.push(offer);
+      const d = decideOffer(ctx, offer, gate, DEFAULT_STRUCTURE);
+      if (d.signBand === 'MAYBE' && !d.blocked && !d.outbid) inBand.push(offer);
     }
     if (inBand.length === 0) {
       console.log('  (no offer on this slider lands in the band — non-reroll checked on the grid instead)');
@@ -1098,6 +1142,192 @@ async function main() {
       `database says ${rowAfterCancel?.patienceSpent ?? 0} spent, re-opened session says ${reopened.patienceSpent}. ` +
       `Same offer, same answer (${again.signBand}).`,
     );
+  }
+
+  // --- 12. "Nobody is circling" is falsifiable -----------------------------
+  //
+  // `leadingCompetingBid` used to scan 31 clubs and return the best offer from
+  // any of them with a need over 0.15, which across 31 rosters is always
+  // somebody: measured, 38 of the top 40 free agents in a real league carried a
+  // rival, and both exceptions were punters. It now asks the wave's own
+  // question — would this club actually GET to him, walking its own board on
+  // its real roster slots and its real budget — so "nobody is circling" is a
+  // state the panel can be in, and a state it can be WRONG about.
+  //
+  // The claim is tested in the direction that can be falsified. The panel never
+  // promises a signing (an open market has other bidders and the highest one
+  // wins), but it does promise that a man it calls unwanted is unwanted: so a
+  // spread of free agents is resolved, the REAL sealed-bid wave is run, and any
+  // player the panel said nobody was chasing who is then signed by a rival's
+  // bid is a lie the meter told.
+  console.log('\nMarket reality check (who the panel says is wanted vs who the wave actually bids on):\n');
+  {
+    const board = await prisma.player.findMany({
+      where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+      orderBy: [{ trueOvr: 'desc' }, { id: 'asc' }],
+      take: 40,
+    });
+    const claimed = new Map<string, { name: string; ovr: number; position: string; suitor: string | null; apy: number }>();
+    for (const p of board) {
+      const s = await resolveNegotiationSession({
+        leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      comparisons++;
+      // Every club NAMED has to clear both bars the wave resolves on, or the
+      // rumour is about a bid that would have been thrown out.
+      if (s.suitor) {
+        const market = marketValue({ ovr: p.trueOvr, position: p.position as any, age: p.age, potential: p.potential });
+        if (s.suitor.apy < market * MARKET_FLOOR) {
+          fail(`${p.lastName}: ${s.suitor.teamAbbr} named at ${formatMoney(s.suitor.apy)}, under the ${formatMoney(Math.round(market * MARKET_FLOOR))} floor the wave throws bids out below`);
+        }
+        if (s.suitor.need < 0.15) {
+          // Named on the upgrade case rather than on need — so the upgrade has
+          // to be real, against the man it would actually displace.
+          const worst = (await prisma.player.findMany({
+            where: { teamId: s.suitor.teamId, status: 'ACTIVE', position: p.position },
+            orderBy: { trueOvr: 'asc' }, take: 1, select: { trueOvr: true },
+          }))[0] ?? null;
+          if (worst !== null && p.trueOvr - worst.trueOvr < FREE_AGENCY.MIN_UPGRADE_DELTA) {
+            fail(`${p.lastName}: ${s.suitor.teamAbbr} named with neither a need (${s.suitor.need.toFixed(2)}) nor an upgrade case (their worst at ${p.position} is ${worst.trueOvr})`);
+          }
+        }
+        if (s.gate.competingApy !== s.suitor.apy) fail(`${p.lastName}: the free-agency gate and the named suitor disagree about the bid`);
+      } else if (s.gate.competingApy !== 0) {
+        fail(`${p.lastName}: no suitor, but the gate carries a competing bid of ${formatMoney(s.gate.competingApy)}`);
+      }
+      claimed.set(p.id, { name: `${p.firstName} ${p.lastName}`, ovr: p.trueOvr, position: p.position, suitor: s.suitor?.teamAbbr ?? null, apy: s.suitor?.apy ?? 0 });
+    }
+    const wanted = [...claimed.values()].filter((c) => c.suitor).length;
+
+    // THE WAVE, FOR REAL. Nothing here is a forecast of a forecast: this is the
+    // function the Advance button runs.
+    const before = new Map<string, string | null>();
+    for (const p of board) before.set(p.id, null);
+    await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings, new Rng('market-reality'));
+    const after = await prisma.player.findMany({
+      where: { id: { in: board.map((p) => p.id) } },
+      select: { id: true, teamId: true, team: { select: { abbr: true } } },
+    });
+    let signedWithSuitor = 0;
+    let signedWithout = 0;
+    for (const row of after) {
+      if (!row.teamId || !before.has(row.id)) continue;
+      const c = claimed.get(row.id)!;
+      comparisons++;
+      if (c.suitor) signedWithSuitor++;
+      else {
+        signedWithout++;
+        fail(`${c.name} (${c.position}, ${c.ovr}ovr): the panel said nobody was circling, and the wave signed him to ${row.team?.abbr}`);
+      }
+    }
+    console.log(
+      `  ${wanted} of ${board.length} of the top free agents carry a rival bid; ${board.length - wanted} are told, honestly, that nobody is circling.\n` +
+      `  Ran the real AI wave -> ${signedWithSuitor + signedWithout} signed, ${signedWithout} of them from the "nobody is circling" list.`,
+    );
+  }
+
+  // --- 13. Guaranteed money is a lever, not decoration ---------------------
+  //
+  // The measurement that started this: at his exact asking price with the term
+  // matched, sweeping the guarantee 0 -> 100% moved interest by 18-30 points —
+  // but the BASELINE at zero guaranteed was already 70-88, comfortably
+  // signable. So guaranteeing nothing was optimal and the slider was
+  // decoration. The floor is the mirror of the money insult, and what is
+  // printed below is the same sweep, re-run.
+  console.log('\nGuarantee sweep (his asking price, term matched, 0 -> 100% guaranteed):\n');
+  {
+    const subjects = [
+      ...(await prisma.player.findMany({ where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false }, orderBy: { trueOvr: 'desc' }, take: 1 })),
+      ...(await prisma.player.findMany({ where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false, trueOvr: { lte: 70 } }, orderBy: { trueOvr: 'desc' }, take: 1 })),
+    ];
+    for (const p of subjects) {
+      const session = await resolveNegotiationSession({
+        leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      const { ctx, gate } = session;
+      const years = Math.min(ctx.desiredYears, gate.maxYears, ctx.willingYears);
+      const apy = Math.min(gate.maxSalary, Math.max(gate.minSalary, ctx.reservationApy));
+      const cells = [0, 0.25, 0.5, 0.75, 1].map((g) => {
+        const d = decideOffer(ctx, { apy, years, guaranteePct: g }, gate, DEFAULT_STRUCTURE);
+        comparisons++;
+        return `${String(d.evaluation.interest).padStart(4)}${d.signBand === 'YES' ? '*' : d.signBand === 'MAYBE' ? '?' : ' '}`;
+      });
+      console.log(
+        `  ${(p.firstName + ' ' + p.lastName).padEnd(22)} ${p.position.padEnd(4)} ${String(p.trueOvr).padStart(2)}ovr ` +
+        `${ctx.personality.padEnd(10)} floor ${String(Math.round(ctx.guaranteeFloor * 100)).padStart(2)}% | ${cells.join(' ')} ` +
+        `(at ${formatMoney(apy)}/yr x ${years}yr)`,
+      );
+    }
+    console.log('  * he will sign   ? he might sign   blank: no salary signs this');
+  }
+
+  // --- 14. Set aside is not a decision, and not a trap ---------------------
+  //
+  // The re-sign list can park a player — "not now" — and the column that
+  // records it (NegotiationTalks.dismissedAt) shares a row with the patience
+  // count. That is the right place for it (same key, expires with the league
+  // year) and also the one place it could do damage, so both halves are checked
+  // against the database: parking a man moves neither his pips nor his price,
+  // and the Advance that would let him walk names him first.
+  console.log('\nSet aside (parked on the re-sign list — costs nothing, and cannot be walked into):\n');
+  {
+    const subject = await prisma.player.findFirstOrThrow({
+      where: { teamId: team.id, status: 'ACTIVE', contract: { isNot: null } },
+      orderBy: { trueOvr: 'desc' },
+    });
+    const key = { teamId_playerId_seasonYear: { teamId: team.id, playerId: subject.id, seasonYear: league.seasonYear } };
+    await prisma.contract.update({ where: { playerId: subject.id }, data: { yearsRemaining: 0 } });
+
+    // Burn a pip first, so there is a real count for parking him to damage.
+    const opened = await resolveNegotiationSession({
+      leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: true,
+    });
+    await negotiateOffer({
+      leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
+      settings, incumbent: true, structure: DEFAULT_STRUCTURE,
+      offer: { apy: Math.max(opened.gate.minSalary, Math.round(opened.ctx.reservationApy * 0.5)), years: 1, guaranteePct: 0.5 },
+    });
+    const spentBefore = (await prisma.negotiationTalks.findUnique({ where: key }))?.patienceSpent ?? 0;
+    const priceBefore = sessionFingerprint(opened);
+
+    await setResignSetAside({ leagueId, teamId: team.id, playerId: subject.id, seasonYear: league.seasonYear, aside: true });
+    const parkedRow = await prisma.negotiationTalks.findUnique({ where: key });
+    const parkedSession = await resolveNegotiationSession({
+      leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: true,
+    });
+    comparisons++;
+    if (!parkedRow?.dismissedAt) fail('setting a player aside did not record it');
+    if (parkedRow?.patienceSpent !== spentBefore) fail(`setting a player aside moved his patience (${spentBefore} -> ${parkedRow?.patienceSpent})`);
+    if (parkedSession.patienceSpent !== spentBefore) fail(`a parked player's session reports ${parkedSession.patienceSpent} pips spent, the database says ${spentBefore}`);
+    if (sessionFingerprint(parkedSession) !== priceBefore) fail('setting a player aside changed the terms of his negotiation');
+
+    await setResignSetAside({ leagueId, teamId: team.id, playerId: subject.id, seasonYear: league.seasonYear, aside: false });
+    const backRow = await prisma.negotiationTalks.findUnique({ where: key });
+    const backSession = await resolveNegotiationSession({
+      leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: true,
+    });
+    comparisons++;
+    if (backRow?.dismissedAt !== null) fail('bringing a player back left him marked as set aside');
+    if (backRow?.patienceSpent !== spentBefore) fail(`bringing a player back moved his patience (${spentBefore} -> ${backRow?.patienceSpent})`);
+    if (sessionFingerprint(backSession) !== priceBefore) fail('bringing a player back changed the terms of his negotiation');
+    console.log(`  ${subject.lastName}: ${spentBefore} pip(s) spent, set aside -> ${parkedRow?.patienceSpent} spent, brought back -> ${backRow?.patienceSpent} spent. Same terms throughout.`);
+
+    // AND THE TRAP, CLOSED. Park him again, put the league on the last screen
+    // before free agency, and press Advance. It has to refuse, once, and it has
+    // to say his name — a warning that counted him without naming him would
+    // still let a GM lose a starter he thought was safe.
+    await setResignSetAside({ leagueId, teamId: team.id, playerId: subject.id, seasonYear: league.seasonYear, aside: true });
+    await prisma.league.update({
+      where: { id: leagueId },
+      data: { phase: 'RESIGN', week: 1, resignWarnedYear: null },
+    });
+    const advance = await advanceWeek(leagueId);
+    const still = await prisma.player.findUniqueOrThrow({ where: { id: subject.id }, select: { teamId: true } });
+    comparisons++;
+    if (!advance.blocked) fail('advancing past the re-sign window with a player set aside was not stopped');
+    if (!advance.summary.includes(subject.lastName)) fail(`the advance warning did not name ${subject.lastName}, who was set aside and about to walk`);
+    if (still.teamId !== team.id) fail(`${subject.lastName} was released by the very advance that was supposed to warn about him`);
+    console.log(`  Advance out of RESIGN with him parked -> blocked=${advance.blocked}, and it names him:\n    "${advance.summary}"`);
   }
 
   console.log(`\n${comparisons.toLocaleString()} comparisons, ${failures} disagreement${failures === 1 ? '' : 's'}.`);

@@ -62,7 +62,8 @@ export function SuitorRumour({ session }: { session: NegotiationSession }) {
     return (
       <div className="text-xs px-3 py-2 rounded-lg border border-line bg-raised text-muted">
         <span className="font-semibold text-chalk">Nobody is circling.</span>{' '}
-        No club in the league has both the room and a hole at {ctx.position} big enough to chase him.
+        No club in the league would get to him: the ones with a hole at {ctx.position} have either no room for
+        him or better men to spend it on.
         {finalCall ? ' He can still walk when the window shuts — he just would not be walking into much.' : ''}
       </div>
     );

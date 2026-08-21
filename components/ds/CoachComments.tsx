@@ -31,13 +31,24 @@ import { PlayerAvatar } from '../PlayerAvatar';
  *    numbers rather than sentences precisely so that it can be.
  *
  * 2. POSITION-DIVERSE BY CONSTRUCTION, not by luck. Selection takes the best
- *    man from each UNIT and never re-ranks across units, because
- *    lib/coachRoom.ts's grades are only comparable inside one. Measured
- *    over 933 real user-team weeks in this database the mentions come out
- *    18.8% running back, 17.5% receiver, 12.6% defensive tackle, 11.7% edge,
- *    11.5% corner, 6.8% tight end, 6.6% safety, 5.9% quarterback, 5.5%
- *    linebacker, 3.0% kicker. The ranker that picks the single game ball
- *    gives the quarterback four weeks in six.
+ *    man in each UNIT before it takes a second from any, so the mix cannot
+ *    collapse onto whichever position the arithmetic happens to favour —
+ *    that is structural, not a hope. Ranking is lib/performanceScore.ts's,
+ *    the same one All-Star selection uses; lib/coachRoom.ts only supplies the
+ *    week's yardstick and the bars.
+ *
+ *    Measured over 2,255 real user-team weeks in this database, the mentions
+ *    come out 17.3% running back, 17.2% receiver, 14.1% defensive tackle,
+ *    13.0% corner, 10.8% safety, 10.3% edge, 4.8% linebacker, 4.5% tight end,
+ *    4.3% quarterback, 3.6% kicker — ten positions, none of them a fifth of
+ *    the list, and three a week on average. The ranker that picks the single
+ *    game ball above gives the quarterback four weeks in six.
+ *
+ *    The quarterback's 4.3% is not a bug and is not him being punished: there
+ *    is exactly one of him on the sheet, against five receivers and four
+ *    backs, so 4.3% of mentions is the most-mentioned INDIVIDUAL on the
+ *    roster. He is named on 13% of weeks, which is what "he cleared the 78th
+ *    percentile at his own position" comes to.
  *
  * 3. EVERY SENTENCE CARRIES A NUMBER, and no sentence claims anything the
  *    box score did not record. The clause pools below are strictly
@@ -144,7 +155,7 @@ function pickTop(folded: Map<string, Folded>, weeks: number, voice: Voice): Ment
     // actually happened — see hasDistinguishingEvent() in lib/coachRoom.ts.
     // Tackles are a flat roll between four and seven, so "seven tackles, that
     // is the tape we show the room" would be praising dice in a coach's voice.
-    .filter((f) => hasDistinguishingEvent(f.line.position, f.stats))
+    .filter((f) => hasDistinguishingEvent(f.line.position, f.stats, f.games))
     .map((f) => ({ f, unit: UNIT_OF[f.line.position], avg: f.gradeSum / f.gradeGames }))
     .filter((x) => weeks === 1 || x.f.gradeGames >= minGames)
     .sort((a, b) => b.avg - a.avg);
@@ -209,6 +220,8 @@ const VOICE_HUGE = [
   'That is about as good as that job gets.',
   "That's the tape we show the room.",
   'You cannot ask a man for more than that.',
+  'That is a Sunday he keeps.',
+  'Nobody in the room did better than that.',
 ];
 const VOICE_BIG = [
   "That's a day's work.",
@@ -284,16 +297,47 @@ function headlinePhrase(f: Folded, weeks: number): string {
  */
 class Voice {
   private queues = new Map<string[], string[]>();
+  private last = new Map<string[], string>();
   constructor(private rng: Rng) {}
   pick(pool: string[]): string {
     let q = this.queues.get(pool);
-    if (!q || q.length === 0) { q = this.rng.shuffle(pool); this.queues.set(pool, q); }
-    return q.pop()!;
+    if (!q || q.length === 0) {
+      q = this.rng.shuffle(pool);
+      // A refill is where the repeat used to sneak in: three tags, four men
+      // over the bar, and the fourth row ended in the same four words as the
+      // third. Rotating the reshuffled queue when its next draw matches the
+      // one just used costs nothing and closes it.
+      if (q.length > 1 && q[q.length - 1] === this.last.get(pool)) q.unshift(q.pop()!);
+      this.queues.set(pool, q);
+    }
+    const picked = q.pop()!;
+    this.last.set(pool, picked);
+    return picked;
   }
 }
 
+/**
+ * [TUNE] Where the loudest verdicts start.
+ *
+ * Deliberately high, and measured: a mention is already the BEST man in his
+ * unit and already past the 78th percentile, so the grades that reach this
+ * function are an extreme order statistic rather than a sample of the league.
+ * At 95 and 88 the top tier fired on 38.6% of all mentions — "that is about as
+ * good as that job gets", four times a month — which is not a compliment any
+ * more, it is a tic. At 99 and 92 it is 17.6% and 30%, or roughly one loudest
+ * verdict every other report.
+ *
+ * Both run through mentionBar() so a span is judged on the same footing as an
+ * afternoon: an average of seven weekly percentiles cannot reach 99 and should
+ * not have to.
+ */
+const VOICE_HUGE_AT = 99;
+const VOICE_BIG_AT = 92;
+
 function praise(f: Folded, grade: number, weeks: number, voice: Voice): string {
-  const pool = grade >= 95 ? VOICE_HUGE : grade >= 88 ? VOICE_BIG : VOICE_SOLID;
+  const pool = grade >= mentionBar(weeks, VOICE_HUGE_AT)
+    ? VOICE_HUGE
+    : grade >= mentionBar(weeks, VOICE_BIG_AT) ? VOICE_BIG : VOICE_SOLID;
   return `${headlinePhrase(f, weeks)} ${voice.pick(pool)}`;
 }
 
@@ -352,7 +396,7 @@ function capitalise(s: string): string {
 
 /** "once" / "twice" / "five times". A coach does not say "1 times". */
 function times(n: number): string {
-  return n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`;
+  return n === 0 ? 'not once' : n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`;
 }
 
 // ---------------------------------------------------------------------------
@@ -406,11 +450,15 @@ function buildNotes(payloads: CoachPayload[], folded: Map<string, Folded>, weeks
           ? `We took it away ${times(t.oppTurnovers)} and gave it back ${t.turnovers}. Plus ${diff} in that column.`
           : diff < 0
             ? `We gave it away ${times(t.turnovers)} and took ${t.oppTurnovers}. Minus ${-diff} in that column, and that is where games go.`
-            : `${count(t.turnovers, 'giveaway')} each. Even in that column.`,
+            : `${capitalise(t.turnovers === 1 ? 'one giveaway' : `${COUNT_WORD[t.turnovers] ?? t.turnovers} giveaways`)} each. Even in that column.`,
       );
     }
     if (t.sacksFor > 0 || t.sacksAgainst > 0) {
-      notes.push(`The front got home ${times(t.sacksFor)}; they got to our passer ${times(t.sacksAgainst)}.`);
+      notes.push(
+        t.sacksFor === 0
+          ? `The front did not get home once; they got to our passer ${times(t.sacksAgainst)}.`
+          : `The front got home ${times(t.sacksFor)}; they got to our passer ${times(t.sacksAgainst)}.`,
+      );
     }
   }
 
@@ -482,6 +530,27 @@ function spanNotes(payloads: CoachPayload[], folded: Map<string, Folded>, hurtId
     );
   }
 
+  // The rookie who became a real player during the stretch. Only sayable
+  // because we are holding every week side by side: he cleared the workload
+  // gate for the first time somewhere in the middle of it, having not cleared
+  // it in the opening week. A single report cannot know this, and nothing here
+  // claims it was his first game ever — only his first real one of the span,
+  // which is exactly what the payloads can prove.
+  const firstWeekRealWork = new Set(
+    first.lines.filter((l) => playedEnough(l.position, l.stats)).map((l) => l.playerId),
+  );
+  for (let i = 1; i < payloads.length && out.length < 3; i++) {
+    for (const l of payloads[i].lines) {
+      if (l.experience !== 0 || firstWeekRealWork.has(l.playerId)) continue;
+      if (!playedEnough(l.position, l.stats)) continue;
+      const f = folded.get(l.playerId);
+      if (!f || f.games < 2) continue;
+      firstWeekRealWork.add(l.playerId);
+      out.push(`${l.name} (${l.position}), a rookie, got his first real workload of the stretch in ${payloads[i].weekLabel} — ${statLine(l.position, l.stats)}.`);
+      break;
+    }
+  }
+
   const record = payloads.reduce(
     (a, p) => ({ w: a.w + (p.outcome === 'W' ? 1 : 0), l: a.l + (p.outcome === 'L' ? 1 : 0), t: a.t + (p.outcome === 'T' ? 1 : 0) }),
     { w: 0, l: 0, t: 0 },
@@ -544,7 +613,11 @@ export function buildCoachModel(payloadsIn: (CoachPayload | null | undefined)[])
       ? `Nobody beat what is normal for his job${t ? ` — ${t.points} points on ${t.totalYards} yards` : ''}. That happens.`
       : null,
     concerns,
-    concernsEmpty: concerns.length === 0 ? 'Nothing on the sheet worth calling out. Nobody gave it away.' : null,
+    // Deliberately says nothing factual. "Nobody gave it away" was printed on
+    // a sheet whose own notes read "we gave it away twice" three lines below —
+    // the engine books team turnovers that no player line carries, so the
+    // absence of a name here is not the absence of a giveaway.
+    concernsEmpty: concerns.length === 0 ? 'Nobody has to answer for this one.' : null,
     notes: buildNotes(payloads, folded, weeks, voice),
   };
 }

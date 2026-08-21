@@ -6,7 +6,7 @@ import { assertLeagueOwner } from '@/lib/owner';
 import { parseSettings } from '@/lib/settings';
 import { resignDecisionsForTeam } from '@/lib/season';
 import { Rng } from '@/lib/rng';
-import { resolveNegotiationSession, negotiateOffer } from '@/lib/freeagency';
+import { resolveNegotiationSession, negotiateOffer, setResignSetAside } from '@/lib/freeagency';
 import type { DealStructure, NegotiationOutcome, NegotiationSession, Offer } from '@/lib/negotiation';
 
 /** Delegate every pending re-sign decision on the user's own team — expired and walk-year alike — to the same AI logic that runs each AI team's offseason. */
@@ -147,17 +147,12 @@ export async function setAsideResignAction(leagueId: string, playerId: string, a
   await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const team = await prisma.team.findFirstOrThrow({ where: { leagueId, isUser: true } });
-  const key = { teamId_playerId_seasonYear: { teamId: team.id, playerId, seasonYear: league.seasonYear } };
-  const dismissedAt = aside ? new Date() : null;
-  await prisma.negotiationTalks.upsert({
-    where: key,
-    // patienceSpent is DELIBERATELY absent from the update. An upsert that
-    // wrote it would be a second author for the one number the whole minigame
-    // rests on, and "I parked him" would quietly become "I gave him back a
-    // pip" — or taken one away.
-    create: { leagueId, teamId: team.id, playerId, seasonYear: league.seasonYear, patienceSpent: 0, dismissedAt },
-    update: { dismissedAt },
+  // The write itself lives beside the patience bookkeeping it shares a row
+  // with (lib/freeagency.ts, setResignSetAside), so this stays what a Server
+  // Action should be: ownership, then the call.
+  const result = await setResignSetAside({
+    leagueId, teamId: team.id, playerId, seasonYear: league.seasonYear, aside,
   });
   revalidatePath(`/league/${leagueId}/resign`);
-  return { ok: true, aside };
+  return { ok: true, aside: result.aside };
 }

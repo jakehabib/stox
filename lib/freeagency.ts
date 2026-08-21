@@ -99,10 +99,11 @@ export type CompetingBid = Suitor;
  *      about nothing.
  *
  * WHAT DID NOT CHANGE, because it is the property that makes the rumour
- * honest: the club named still genuinely has the room and the need, both read
- * off the same `teamCapSummary` and `teamNeeds` its own AI bids on, and the
- * figure quoted is still `maxOffer` at the stable `fa-bid-<player>-<team>`
- * seed. Nothing here is a fresh roll: every input is a fact in the database,
+ * honest: the club named still genuinely has the room and the reason — its cap
+ * space off the same `teamCapSummary` its own AI budgets against, and either a
+ * need at his position over the same 0.15 bar it bids at or the upgrade case
+ * the wave lets a full roster bid on — and the figure quoted is still
+ * `maxOffer` at the stable `fa-bid-<player>-<team>` seed. Nothing here is a fresh roll: every input is a fact in the database,
  * so the same matchup re-read on every render, every keystroke and every
  * submit returns the same club at the same number.
  *
@@ -153,16 +154,32 @@ export async function leadingCompetingBid(
       orderBy: [{ trueOvr: 'asc' }, { id: 'asc' }],
     });
     const needs = teamNeeds(roster as RosterPlayer[]);
-    if ((needs[player.position] ?? 0) < 0.15) continue; // no real interest — wouldn't actually bid
-
     const summary = await teamCapSummary(team.id, seasonYear, capMode);
+    // NOTE THE ABSENCE OF A NEED PRE-FILTER. There used to be one here — skip
+    // any club scoring under 0.15 at his position — and it was subtly wrong in
+    // BOTH directions. Over 0.15 it let a club through that would never have
+    // reached him; under it, it excluded the club that would have signed him
+    // anyway, because a team with no open roster spot bids on an UPGRADE
+    // regardless of need (see planTeamBids' displacement branch, which is the
+    // wave's own rule). Measured on a fresh league: the wave signed seven of
+    // the top forty free agents whom the need test had ruled out entirely.
+    // The need test still applies — inside planTeamBids, exactly where and
+    // only where the wave applies it.
     const state = bidderState({ roster: roster as RosterPlayer[], needs, capSpace: summary.capSpace, capMode, rosterMax, rookieReserve });
     // WOULD THEY GET TO HIM. Same walk, same order, same slots and budget the
     // wave spends — priced at the floor, so this only ever says no when the
     // club could not have afforded to reach him even paying the minimum that
     // counts. Deterministic: no draw, nothing to re-roll between renders.
     const plan = planTeamBids(board, state, (fa, capSpace) => Math.min(
-      marketValue({ ovr: fa.trueOvr, position: fa.position as Position, age: fa.age, potential: fa.potential }) * MARKET_FLOOR,
+      // The cheapest bid that could count: the market floor, but never under
+      // the league minimum, because nobody signs anybody for less than that and
+      // a price below it would make `planTeamBids` skip a man the wave bids on.
+      // (Measured: pricing depth players under the minimum silently dropped
+      // them out of a club's plan, its roster spots therefore never filled, the
+      // upgrade-and-displace branch never opened, and three of the top forty
+      // free agents in a fresh league were reported as unwanted and then signed
+      // by the very next wave.)
+      Math.max(marketValue({ ovr: fa.trueOvr, position: fa.position as Position, age: fa.age, potential: fa.potential }) * MARKET_FLOOR, CAP.MIN_SALARY),
       Math.max(0, capSpace - AI.CAP_RESERVE),
     ));
     if (!plan.some((b) => b.playerId === playerId)) continue;
@@ -703,7 +720,7 @@ export const MARKET_FLOOR = 0.85;
  * order, the need threshold, the roster-slot rule, the upgrade-and-displace
  * rule, the market floor — is here, once.
  */
-interface BoardPlayer {
+export interface BoardPlayer {
   id: string;
   position: string;
   trueOvr: number;
@@ -711,7 +728,7 @@ interface BoardPlayer {
   potential: number;
 }
 
-interface BidderState {
+export interface BidderState {
   needs: Record<string, number>;
   /** Room to spend this league year, already net of the AI's reserve. */
   budget: number;
@@ -723,10 +740,10 @@ interface BidderState {
   alreadyDisplaced: Set<string>;
 }
 
-interface PlannedBid { playerId: string; offer: number; displacePlayerId?: string }
+export interface PlannedBid { playerId: string; offer: number; displacePlayerId?: string }
 
 /** The club's snapshot, read the same way on both sides. */
-function bidderState(opts: {
+export function bidderState(opts: {
   roster: (RosterPlayer & { contract?: unknown })[];
   needs: Record<string, number>;
   capSpace: number;
@@ -770,7 +787,7 @@ function bidderState(opts: {
  * Pure. Mutates only the state object it is handed, and only in the ways the
  * wave already did (slots, budget, displacements spent).
  */
-function planTeamBids(
+export function planTeamBids(
   board: BoardPlayer[],
   state: BidderState,
   price: (fa: BoardPlayer, capSpace: number) => number,
@@ -1256,6 +1273,39 @@ async function readPatienceSpent(teamId: string, playerId: string, seasonYear: n
     select: { patienceSpent: true },
   });
   return row?.patienceSpent ?? 0;
+}
+
+/**
+ * SET ASIDE — the re-sign list's "not now", written here rather than in the
+ * Server Action for one reason: this row is the patience ledger, and every
+ * write to it belongs in the same file as the rules above so the three of them
+ * can be read together. This is the fourth rule.
+ *
+ *   PARK   sets (or clears) `dismissedAt` and touches NOTHING else. It is not
+ *          a negotiation event: it costs no pips, it does not reach the player,
+ *          and `decideOffer` has never heard of this column. The zero written
+ *          on create is the same zero `readPatienceSpent` already returns when
+ *          there is no row, so parking a man he has not spoken to yet cannot
+ *          give or take a pip either.
+ *
+ * It expires with the league year, because the key does — which is exactly the
+ * scope the app owner asked for: *"(and re visit during the offseason re-sign
+ * phase)"*. Whoever is still parked when the phase ends is named in the advance
+ * warning first; see lib/season.ts.
+ */
+export async function setResignSetAside(opts: {
+  leagueId: string; teamId: string; playerId: string; seasonYear: number; aside: boolean;
+}): Promise<{ aside: boolean }> {
+  const { leagueId, teamId, playerId, seasonYear } = opts;
+  const dismissedAt = opts.aside ? new Date() : null;
+  await prisma.negotiationTalks.upsert({
+    where: { teamId_playerId_seasonYear: { teamId, playerId, seasonYear } },
+    create: { leagueId, teamId, playerId, seasonYear, patienceSpent: 0, dismissedAt },
+    // patienceSpent is DELIBERATELY absent. An upsert that wrote it would be a
+    // second author for the one number the whole minigame rests on.
+    update: { dismissedAt },
+  });
+  return { aside: opts.aside };
 }
 
 async function chargePatience(opts: {

@@ -1,9 +1,15 @@
-# Rating distribution — research, diagnosis, and a proposed recalibration
+# Rating distribution — research, diagnosis, and the recalibration
 
-> **Status: proposal only. Nothing in `lib/` has been changed.**
-> The two files this needs to touch (`lib/tuning.ts`, `lib/gen/players.ts`) were
-> held by other agents when this was written. Every number below was measured
-> by running the real generator and the real market curve out-of-tree.
+> **Status: SHIPPED and independently re-measured.**
+> §1-§8 are the original research and proposal, written before the change
+> landed; their header used to say "proposal only", which stopped being true
+> the moment §9 landed. §9 is what actually shipped. **§10 is a second
+> agent's independent verification** — every headline number in §1-§8
+> re-measured from scratch against a frozen before/after pair, plus the
+> multi-season proof §6 asked for and could not produce. **Where §10
+> disagrees with an earlier section, §10 is the number to trust**; the
+> disagreements are listed in §10.0 rather than edited silently into the
+> text above, so the record of what was believed when stays readable.
 
 The app owner's ask, verbatim:
 
@@ -578,7 +584,7 @@ could produce a 95.
 
 ---
 
-## 7. Sources
+## Sources
 
 - Bleacher Report — *Madden 20: Review of Elite Player Ratings, Achievements and More*
 - pastapadre — *Breaking down the new player ratings spread for Madden NFL 20*
@@ -594,6 +600,17 @@ could produce a 95.
 
 Retrieved via search snippets on 2026-08-21. **Page bodies were not
 retrievable from this sandbox** — see §1.1.
+
+Three of the load-bearing figures were re-checked independently in the
+second pass and all three hold: Madden 20 at **41%** of the database rated
+70+ against Madden 19's **54%** of ~2,900 including free agents, with EA's
+stated intent of "a drastic drop off from starter to backup" (pastapadre,
+Operation Sports, Madden School); Madden 26's 99 Club at **seven** players at
+launch, explicitly described as *unprecedented* (Operation Sports, GameSpot,
+Bleacher Report, FOX Sports); and Travis Hunter at **84** as the top rookie,
+"the highest-rated rookie in more than a decade", ahead of Jeanty 83 and
+Carter 81 — while the number-one overall pick, Cam Ward, is a **72** (ESPN,
+SI, FOX Sports, Athlon).
 
 ---
 
@@ -886,6 +903,10 @@ constants instead of hardcoding 58/8/38/84 twice), `lib/teamRating.ts`
 filter 78 → 83), `lib/development.ts` (slump gate 65 → 72), `lib/scouting.ts`
 (unscouted attribute centre 62 → 68).
 
+`lib/gen/prospectProfile.ts` was added to this list in the second pass — the
+college-production dial and the combine invitation were both anchored to the
+old draft range and had quietly stopped discriminating. See §10.10.
+
 ### 9.5 For the changelog
 
 Leagues created before this change keep their old player curve but get the new
@@ -893,3 +914,422 @@ Leagues created before this change keep their old player curve but get the new
 saves only — the production database is new and the beta has not gone out — and
 it is deliberately not engineered around. Start a fresh league to see the
 recalibration.
+
+---
+
+## 10. Independent verification (second pass)
+
+Everything in this section was re-measured from scratch by a different agent
+after §9 landed. Nothing was taken on trust from §1-§8.
+
+### 10.0 Where this section overrules the ones above
+
+| Claim | Where | Verdict |
+|---|---|---|
+| "the new curve drifts **down** ~4 points over nine years, the old drifts up ~2" | §6.1 | **Wrong in both halves.** Measured on the real loop: new **+3**, old **+11 to +12**. See §10.6. |
+| "before the change the draft class has essentially no round signal — R1 72 against R7 67" | §3.4, §5.1 | **Misleading.** Those tables bucket the class by *generation index*. A real draft is sorted by the board, so both curves produce a monotonic ~17-23 point R1→R7 gradient. What genuinely changed is the *level* and the *ends*. See §10.5. |
+| "`CAP_TARGET_FRACTION` bites harder … more rosters start on visibly below-market deals" | §6.2 | **True but marginal**, not a step change: teams over the haircut go 54.2% → 56.2%. See §10.4. |
+| "payroll p90 128% → 140%" | §5 | **Not reproduced.** On a frozen before/after pair p90 went **down**, 140.7% → 136.2%. Median went 90.5% → 93.6%. See §10.4. |
+| "the league's best player is a 99 punter" | §8.3 | **Confirmed as a defect, milder in magnitude.** Over 11,020 players the best punter was a 93 and the best kicker a 91, with 11 specialists in the top 200. Punter was still the highest-*mean* position in the game. |
+| "~3.6 players at 99 per league" | §5 | **4.7 per league** over 40 leagues, range **0-10**. The mean matches Madden's published 4-7; the spread does not. See §10.8. |
+
+### 10.1 Method — why the comparison is frozen
+
+Two snapshots outside the repo, because the working tree was being edited by
+other agents throughout this pass and a live-tree comparison would have been
+measuring their work as well as this one.
+
+- **BEFORE** = `HEAD` with *exactly* the recalibration reverted and nothing
+  else: `VETERAN_OVR_MEAN` 72, `VETERAN_OVR_SD` 8, `ROOKIE_OVR_MEAN` 65,
+  `ROOKIE_OVR_SD` 10, `FREE_AGENT_OVR_*` 58/8/38/84, `MAX_DEAL_OVR` 80,
+  `STANDARD_OVR` 60, `RESIGN.FLOOR_OVR` 58, `PREMIUM_OVR` 74, `MARKET.PIVOT`
+  70, `POTENTIAL_DEFAULT_CENTER` 75, `teamRating.REPLACEMENT_LEVEL` 40, and
+  `lib/gen/players.ts` restored to its pre-change state (`97de874`).
+- **AFTER** = the shipped §9 state — `lib/tuning.ts`, `lib/gen/players.ts`,
+  `lib/ratings.ts` and `lib/teamRating.ts` exactly as they landed, plus the
+  §10.10 `prospectProfile` fix.
+
+Contracts, the cap, negotiation and the whole season loop are byte-identical
+in both, so nothing below can be an artefact of another agent's in-flight
+work. Starters are taken from `lib/lineup.ts`, team ratings from
+`buildLeagueRatings`, payroll from `capHit`, prices from `marketValue` — no
+re-derived formulas.
+
+The harness is in `scripts/_rd_*.ts` (gitignored, like every other scratch
+script here). `_rd_gen.ts` is the band table, lineup, scarcity, market and
+draft-ramp measurement; `_rd_lineup.ts` is the starting-eleven check at
+scale; `_rd_board.ts` is the perfect-board draft; `_rd_semantic.ts` creates a
+real league and pulls the named players at a given rating; `_rd_drift.ts` is
+the multi-season run, deliberately a copy of `scripts/simHealth.ts`'s driver
+so it is the real loop and not a model of it.
+
+### 10.2 The curve — 8 leagues x 32 rosters per side (11,000 players)
+
+| Band | BEFORE | **AFTER** | Madden-implied target |
+|---|---|---|---|
+| 95-99 | 0.11% | **1.32%** | ~1% |
+| 90-94 | 1.13% | **3.50%** | ~4% |
+| 85-89 | 3.37% | **6.77%** | ~11% |
+| 80-84 | 6.28% | **13.12%** | ~14% |
+| 75-79 | 11.18% | **19.31%** | ~16% |
+| 70-74 | 15.58% | **22.61%** | ~19% |
+| 65-69 | 17.49% | **18.35%** | ~19% |
+| 60-64 | 15.81% | **9.96%** | ~12% |
+| 55-59 | 12.11% | **5.05%** | ~4% |
+| 50-54 | 7.79% | **0%** | 0 |
+| under 50 | 9.17% | **0%** | 0 |
+
+| | BEFORE | **AFTER** | target |
+|---|---|---|---|
+| mean / median | 65.57 / 66 | **73.64 / 73** | ~72 |
+| min / max | 40 / 99 | **56 / 99** | ~57 / 99 |
+| >=70 | 37.6% | **66.6%** | ~65% |
+| >=85 | 4.6% | **11.6%** | ~16.6% |
+| >=90 | 1.2% | **4.8%** | ~5.5% |
+| under 60 | 29.1% | **5.1%** | ~4% |
+| 99s per league (40 leagues) | 0.25 | **4.72** | 4-7 published |
+| 90+ per team | 0.53 | **2.07** | ~2.9 |
+| teams with zero 90+ | **61.7%** | **15.6%** | Madden: none |
+
+**The owner's own baseline reproduces.** His table was a two-season-old
+league at mean 67.8 / median 69 / max 95 / 22.2% under 60. Fresh BEFORE
+generation is mean 65.6 / 29.1% under 60, and the drift run in §10.6 shows a
+BEFORE league passing through mean 66.0 with 28% under 60 in its third
+season. The numbers he was looking at were real and the diagnosis of them
+was right.
+
+### 10.3 Team ratings — real leagues, real `buildLeagueRatings`
+
+| | BEFORE | **AFTER** | Madden 26 |
+|---|---|---|---|
+| best / median / worst | 82 / 71 / 63 | **85 / 79 / 68** | 93 / — / 75 |
+| spread | 19 | **17** | 18 |
+
+The *spread* — the thing that gives a league texture — is right and was
+already right; what moved is the level, by about 8 points. It is still ~7
+below Madden's, which is a `lib/teamRating.ts` weighting question, not a
+player-curve question.
+
+### 10.4 The economy
+
+Prices at a fixed *number* fall by about a third, because `MARKET.PIVOT`
+moved with the curve. Prices for a fixed *role* do not move at all:
+
+| role | BEFORE | AFTER | price |
+|---|---|---|---|
+| average-starter QB | 70 ovr | 77 ovr | **$13.0M both** |
+| elite WR | 90 ovr | 97 ovr | **$25.7M both** |
+
+| | BEFORE | **AFTER** |
+|---|---|---|
+| market payroll vs cap, median | 90.5% | **93.6%** |
+| market payroll vs cap, p90 | 140.7% | **136.2%** |
+| market payroll vs cap, max | 198.6% | **218.7%** |
+| teams over the 88% `CAP_TARGET_FRACTION` haircut (1,280 teams) | 54.2% | **56.2%** |
+| haircut factor, median / min | 0.971 / 0.443 | **0.952 / 0.402** |
+| signed payroll on a real league (capHit), median / p90 | 85.7% / 88.6% | **88.1% / 88.3%** |
+
+So §6.2's worry is real but small: two percentage points more teams get
+scaled, and the scaling is ~2% deeper at the median. §5's claim that p90
+payroll rises 128% → 140% did not reproduce on a matched pair — p90 fell.
+
+### 10.5 The draft, measured honestly
+
+Six freshly generated classes per side, ranked by true overall — a *perfect*
+board, which is the upper bound on what the AI board can reach:
+
+| | R1 | R2 | R3 | R4 | R5 | R6 | R7 | UDFA | picks 1-10 |
+|---|---|---|---|---|---|---|---|---|---|
+| BEFORE | 89.8 | 82.3 | 77.8 | 74.5 | 71.9 | 69.3 | 67.0 | 56.7 *(38-68)* | **93.6** *(90-95)* |
+| **AFTER** | **85.1** | **78.8** | **74.9** | **71.6** | **68.8** | **66.6** | **64.4** | **57.4** *(54-66)* | **87.8** *(86-88)* |
+| *Madden 26* | — | *~75* | — | — | *~67* | *~64* | *~64* | — | *top rookie 84* |
+
+Both have a strong round gradient (22.8 before, 20.7 after) — a sorted board
+produces one whether or not the generation ramp does, which is why §3.4's
+"no round signal" framing is misleading. What actually changed:
+
+- **Every draft used to hand somebody a 93-95 rookie.** No rookie in Madden
+  26 rated above 84. The top ten now average 87.8 and cap at 88.
+- **The bottom of the class is no longer absurd**: undrafted players ranged
+  down to 38 and now bottom out at 54.
+- R5/R6/R7 now land within ~2 points of Madden's published mid-round rookies.
+
+Residual, and it is sharper than §3.4 realised. Madden 26's **highest-rated
+rookie is Travis Hunter at 84** — reported as the best rookie rating in over
+a decade, matching Andrew Luck's debut and trailing only Reggie Bush's 87 in
+the game's history. Our top ten picks average **87.8**. So the *average*
+top-ten pick in this game rates as highly as the best rookie Madden has ever
+printed. Madden's first round is also far wider than ours: the number one
+overall pick in the 2025 class, Cam Ward, is a **72**, where our first round
+runs 79-88. Deliberate per §3.4 ("generational prospects exist"), but it is a
+place a Madden player's intuition will notice a difference, and it argues for
+widening the first round downward rather than capping it.
+
+### 10.6 Multi-season drift — the proof §6.1 asked for and could not produce
+
+Run on the **real season loop** — `createLeague` + `runAiPicksUntilUser` +
+`advanceWeek`, the same driver `scripts/simHealth.ts` uses, so free agency,
+cuts, re-signings, progression, retirement and the AI draft board all run.
+Two leagues per side, ten season years each, sampled once per year.
+
+Mean ACTIVE rostered `trueOvr`:
+
+| run | yr 0 | yr 1 | yr 2 | yr 3 | yr 5 | yr 7 | yr 9 | **drift** |
+|---|---|---|---|---|---|---|---|---|
+| BEFORE-A | 65.0 | 65.0 | 66.0 | 69.3 | 73.3 | 75.1 | 76.2 | **+11.2** |
+| BEFORE-B | 65.3 | 65.3 | 66.4 | 70.2 | 74.1 | 75.9 | 77.6 | **+12.3** |
+| **AFTER-A** | 73.9 | 73.7 | 72.4 | 73.7 | 75.0 | 76.2 | 76.9 | **+3.1** |
+| **AFTER-B** | 75.2 | 75.0 | 73.5 | 74.7 | 75.6 | 76.9 | 78.1 | **+2.8** |
+
+**The season loop has its own equilibrium, near mean 77, and both curves walk
+to it.** The old curve started twelve points below that attractor, so it
+inflated by eleven to twelve points over nine years — a league that began at
+"everyone feels low" ended up in the mid-seventies anyway, which is a large
+part of why the numbers never meant anything stable. The recalibrated curve
+starts roughly *at* the attractor and moves three points. **This change cuts
+nine-year drift by about four times, and it is the first curve this game has
+had that is close to stationary under its own season loop.**
+
+The top end is stabilised too, which the crude model could not see:
+
+| share at 90+ | yr 0 | yr 3 | yr 6 | yr 9 |
+|---|---|---|---|---|
+| BEFORE-A | 0.4% | 2.2% | 4.6% | 7.1% |
+| BEFORE-B | 1.2% | 3.2% | 6.1% | 9.1% |
+| **AFTER-A** | 5.4% | 4.3% | 4.6% | 5.3% |
+| **AFTER-B** | 5.3% | 4.9% | 5.1% | 7.2% |
+
+Team-rating median tells the same story: BEFORE 72 → 78 and 72 → 83; AFTER
+80 → 80 and 80 → 81. The 32-club spread stays alive in both (10-20 points,
+noisy, no convergence on a single number).
+
+**The one thing that does not get better, and is not caused by this change.**
+Both curves empty their bottom band. The share under 60 falls to ~0 by year
+five in every run, and the share at 70+ climbs to 77-92% by year nine. That
+is the loop inflating — teams keep whoever developed and cut whoever did not
+— and it happens under the old constants just as hard. The recalibration
+makes it *less* severe in points, but because the floor now starts at 56 the
+sub-60 band disappears sooner. If league-wide inflation is ever attacked
+directly, that is the number to watch, not the mean.
+
+### 10.7 Invariants and types
+
+`npx tsx scripts/simHealth.ts 3 3` (3 leagues x 3 seasons, the real loop with
+the full `GAME_INVARIANTS.md` check after every step) run on BOTH frozen
+trees:
+
+| | BEFORE | AFTER |
+|---|---|---|
+| total violations | 219 | **219** |
+| **errors** | **0** | **0** |
+| INV-19 (a team over the cap) | 12 hits, 78 rows | **12 hits, 55 rows** |
+| INV-20 (roster below the 46 minimum) | 207 hits, 1797 rows | **207 hits, 1829 rows** |
+| exit code | 0 | 0 |
+
+Identical hit counts on both sides: the recalibration changes nothing about
+invariant health. Both warnings are the pre-existing ones `docs/HANDOFF.md`
+section 3 names. INV-20 is generation carrying ~43 players against a
+46-minimum, which is the same in both trees (mean roster 43.0 after, 43.1
+before). INV-19 actually improves — 23 fewer over-cap team-rows — which is
+`MARKET.PIVOT` doing its job.
+
+`rm -f tsconfig.tsbuildinfo && npx tsc --noEmit` is clean — on the frozen
+AFTER tree and, once the other agents' in-flight edits settled, on the live
+working tree as well.
+
+### 10.8 The four acceptance checks
+
+**(1) Do the numbers mean what a Madden player thinks they mean?** Yes, and
+this is the check the histogram cannot do. Over 12 leagues (K and P excluded
+entirely, since a kicker always "starts"):
+
+| ovr | BEFORE: % starting | **AFTER: % starting** | BEFORE: % best at his position | **AFTER: % best at his position** |
+|---|---|---|---|---|
+| 99 | 100% | 100% | 100% | 100% |
+| 95 | 100% | 98% | 100% | 98% |
+| 90 | 100% | 92% | 98% | 80% |
+| 87 | 98% | 92% | 98% | 77% |
+| 82 | 96% | 83% | 92% | 64% |
+| 78 | 91% | **71%** | 84% | **46%** |
+| 74 | 80% | 60% | 62% | 33% |
+| 71 | **81%** | **47%** | 55% | 20% |
+| 66 | **58%** | **26%** | 27% | 8% |
+| 60 | **35%** | **12%** | 7% | 3% |
+
+Named players from a real league confirm it. At **87**: a 26-year-old
+starting quarterback, a 29-year-old starting edge rusher, a 21-year-old
+starting back — and two who are the *second* tackle on their line, which is
+the honest exception, because 87 is a good player, not automatically a
+starter. At **78**: starting centre, starting tight end, starting free
+safety, a nickel corner — 80% start, 57% are the best at their spot. At
+**71**: a mix of fringe starters and men fourth on the depth chart; 50%
+start. Those are Madden's meanings. Before the change a **66** started 58% of
+the time and a **60** started 35% of the time, because the league was so weak
+that replacement-level players were holding jobs.
+
+**(2) Starting lineups.** Using `lib/lineup.ts` (11 personnel + nickel), 640
+teams per side:
+
+| | BEFORE | **AFTER** |
+|---|---|---|
+| offensive eleven, mean | 72.5 | **78.8** |
+| offensive eleven, 80+ per team | 2.3 | **4.9** |
+| offensive eleven, under 70 per team | 3.9 | **1.2** |
+| defensive eleven, mean | 70.4 | **77.6** |
+| defensive eleven, 80+ per team | 1.8 | **4.1** |
+| defensive eleven, under 70 per team | 5.3 | **1.6** |
+| worst starter, mean / p10 / min | 57.0 / 50 / 40 | **67.2 / 61 / 56** |
+| teams starting anyone under 60 | **68.9%** | **5.3%** |
+| **contenders** (top quartile) starting anyone under 60 | **23.1%** | **0.0%** |
+| contenders, starters under 70 per team | 4.0 | **0.2** |
+
+A typical starting eleven is now five men at 80+, one below 70, nobody in the
+fifties. **No contending team in 160 starts anyone under 60**, where before
+nearly a quarter of them did.
+
+**(3) Position scarcity.** Elite quarterbacks reach the top and specialists
+do not.
+
+| | BEFORE | **AFTER** |
+|---|---|---|
+| best QB / best K / best P | 95 / 91 / 93 | **99 / 88 / 88** |
+| highest-mean position | **P (72.4)** | LT (77.5), QB second (77.1) |
+| lowest-mean position | WR (58.3) | WR (71.6) |
+| spread of positional means | **14.1 pts** | **5.9 pts** |
+| K/P in the top 200 | **11** | **0** |
+| QB share of the top 800 | 65 | **96** |
+
+No kicker or punter anywhere near 95 — the best of either is 88 across 11,000
+players. The residual is that left tackle, not quarterback, has the highest
+*mean*; that is an artefact of roster slot counts (a team carries two tackles
+and seven receivers, so the receiver mean carries five backups and the tackle
+mean carries one) rather than of the top of the board, and it is five times
+smaller than it was.
+
+**(4) Tier labels.** No tier is named after an honour — "Pro Bowl" is gone,
+and the ladder reads Generational / Superstar / Elite / Star / Quality
+Starter / Starter / Rotational / Depth. The labels do not fight the intuition
+the table in check (1) establishes: the players who get called "Quality
+Starter" start 71-83% of the time, the ones called "Starter" 47-60%, the ones
+called "Rotational" 26%, and "Depth" 12%.
+
+One label *is* under strain and it is the top one. "Generational" is defined
+at 99 and §7.2 sized it at 3.8 per league; the wider sample is **4.7 per
+league with a range of 0-10**, and one real generated league had ten. A word
+that means "one every few seasons, league-wide" should not print ten times on
+day one — the more so because Madden 26's seven-man 99 Club was itself
+reported as *unprecedented*, so seven is the historical ceiling of the 4-7
+range, not its middle. Either the word or `STAR_OVR_SD` should move — see §10.11.
+
+### 10.9 The colour ramp — validator output, verbatim
+
+`scripts/validate_palette.js` from the `dataviz` skill, run against the card
+surface `#18181b`. Adjacent pairs first, since those are the pairs a reader
+must actually separate:
+
+```
+Palette (dark, surface #18181b, categorical): 5 slots
+  [FAIL] Lightness band         outside band: [["#eab308",0.795],["#4ade80",0.8],["#38bdf8",0.754],["#f3f2ec",0.96]]
+  [FAIL] Chroma floor           below floor (reads gray): [["#f3f2ec",0.008],["#93939c",0.013]]
+  [PASS] CVD separation         worst adjacent #4ade80<->#eab308 dE 8.7 (deutan) . tritan 4.7
+  [PASS] Normal-vision floor    worst adjacent #4ade80<->#eab308 dE 18.7 (normal)
+  [PASS] Contrast vs surface    all 5 >= 3:1
+```
+
+All-pairs run: CVD worst `#4ade80`<->`#eab308` 8.7 (deutan), normal-vision
+worst `#93939c`<->`#38bdf8` 15.8. Per boundary:
+
+| boundary | ink pair | deutan/protan | tritan | normal |
+|---|---|---|---|---|
+| 90+ Elite vs 85-89 Star | gold vs green | **8.7** | 25.1 | 18.7 |
+| 85-89 Star vs 78-84 Quality | green vs blue | 20.4 | **4.7** | 21.6 |
+| 78-84 Quality vs 70-77 Starter | blue vs chalk | 19.4 | 23.4 | 25.2 |
+| 70-77 Starter vs under 70 | chalk vs muted | 29.4 | 29.5 | 29.5 |
+
+Three things this run says that §7.3 did not:
+
+1. **The tritan number belongs to green-vs-blue, not gold-vs-green.** At
+   OKLab dE **4.7**, a tritanope cannot separate the Star band from the
+   Quality Starter band by hue at all. This is *pre-existing* — the old ramp
+   had the same two inks adjacent at 78 — but it is now load-bearing at a
+   busier part of the scale.
+2. **It does not make the tier colour-only, because `ratingColor` never
+   appears without the number.** All 20 call sites tint the rating numeral
+   itself (or its scouted range) — roster table, player hero, depth chart,
+   free agency, draft board, scouting. The digits are the redundant channel
+   for every band; `ratingMark` / `ratingPlateClass` add a *rarity* channel
+   on top of that for the two steps where the digits alone under-sell how
+   rare the player is. So the ramp is not the one place tier is carried by
+   hue alone — there is no such place.
+3. **The two FAILs are the fill-oriented checks, and they flag the two
+   neutral text inks.** Lightness band and Chroma floor are calibrated for
+   chart fills; `chalk` and `muted` are deliberately neutral text colours
+   (chroma 0.008 and 0.013) and the validator's own footer says to check WCAG
+   text contrast for a lone status/text colour instead, which they pass
+   (Contrast vs surface: all 5 >= 3:1). Left as-is deliberately; making them
+   chromatic would spend hue on the bottom of the ramp, which is the opposite
+   of README section 3.
+
+No sixth ink was attempted — §7.3 already computed that there is none.
+
+### 10.10 Two stale absolute-rating anchors §3.3's audit missed
+
+§3.3 swept `lib/`, but two constants that are anchored to the old curve
+survived, both in files this change owns.
+
+**Fixed — `lib/gen/prospectProfile.ts`.** The college-production dial was
+`q = clamp((trueOvr - 40) / 55, 0, 1)`, endpoints chosen for the old class
+range of 38-95. With the class now generated across `DRAFT_OVR_MIN`..`MAX`
+(54-88) the dial only ever traversed **0.25 to 0.87**: measured over 1,200
+prospects, its 1st-to-99th-percentile span fell from 0.96 to 0.62 and college
+receiving production spread narrowed 15%. Every college stat line, and the
+combine-versus-pro-day invitation, are driven by it — so the recalibration
+was quietly costing the draft board scouting signal. Now a shared
+`prospectQuality()` that reads `GENERATION.DRAFT_OVR_MIN`/`_MAX`, so it
+cannot go stale the next time the curve moves. Measured over the same 1,200
+prospects, the fix restores the signal: college receiving production spread
+(p5-p95 yards per game) goes 47.7 → **64.1**, and quarterback yards-per-
+attempt spread 1.64 → **2.38**. Both are now wider than they were before the
+recalibration (55.9 and 1.62), which is the dial doing what it was written to
+do — traverse its whole range across a class. The combine-odds line
+(`0.35 + (trueOvr - 50) / 90`, which had gone from spanning 0.22-0.85 to
+spanning 0.39-0.77) now reads the same helper and keeps the old endpoints.
+
+**Found, deliberately NOT changed — `lib/progression.ts`.**
+`retirementChance` reads:
+
+```ts
+const skillFactor = clamp((70 - trueOvr) / 40, 0, 0.5);   // "bad old players retire faster"
+```
+
+70 used to sit at the 64th percentile of the league; it now sits at about the
+33rd. So "bad" now means "below a third of the league", the skill term is
+zero for two thirds of everybody, and the comment above it is close to a
+lying comment. The percentile-preserving value is **76**.
+
+It is left alone on purpose, for two measured reasons. First, raising it
+removes *low-rated* veterans faster, which pushes the league mean **up** —
+and §10.6 has just shown the loop already inflates and already empties its
+bottom band, so this would make the one residual problem worse. Second,
+`retirementChance` feeds `lib/cap.ts`'s willingness horizon, so changing it
+moves contract lengths and obliges a re-run of
+`scripts/checkNegotiationAgreement.ts`. It belongs to an anti-inflation pass
+with its own before/after, not to this one. **It is a real defect and it is
+recorded here rather than fixed quietly or forgotten.**
+
+### 10.11 What is still off, stated plainly
+
+- **The 85-89 band is still half of Madden's.** 11.6% against ~16.6%. §3.5
+  chose this deliberately; it remains the largest single gap to the target.
+- **99s are too variable.** Mean 4.7 per league is right; a range of 0-10 is
+  not, and a league with ten "Generational" players devalues the word.
+  `STAR_OVR_SD` at 5.5 is what makes 99 reachable *and* what makes the count
+  swing.
+- **Team ratings sit ~7 below Madden's** (68-85 against 75-93). The spread is
+  right; the level is a `lib/teamRating.ts` weighting question.
+- **First-round picks average 85 and the top ten average 88**, against a
+  Madden 26 top rookie of 84 and a number-one overall pick of 72. Our first
+  round is both hotter and much narrower than Madden's.
+- **The loop still inflates**, +3 over nine years, and empties the sub-60
+  band by season five. Not caused by this change and much smaller than it
+  was, but it is the next thing worth attacking.

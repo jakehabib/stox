@@ -12,6 +12,7 @@ import { positionBadgeClass } from '@/components/ds/positionColor';
 import { RatingBadge } from '@/components/ds/RatingBadge';
 import { ScoutingRange } from '@/components/ds/ScoutingRange';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { DepthCompare, SlotVerdictBadge, slotVerdict, type DepthCompareEntry } from '@/components/ds/DepthCompare';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'market';
 
@@ -33,14 +34,44 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   // not the slice rendered below it — reporting slice.length as a total claimed
   // "100 AVAILABLE" against 140 real free agents, and dropped the filter pill
   // for any position with nobody in the top 100 by rating, making it look empty.
-  const [freeAgents, totalAvailable, positionGroups] = await Promise.all([
+  // YOUR OWN ROSTER, which this page used to say nothing about at all — you
+  // were asked to decide on a receiver with no sight of the receivers you
+  // already had. Read from DepthChartSlot in its own rank order: the same
+  // table, the same order the Depth Chart screen renders and the sim plays.
+  // Joined in one query rather than a lookup per row, and deliberately NOT
+  // re-sorted by rating here — the order IS who plays.
+  const [freeAgents, totalAvailable, positionGroups, depthSlots] = await Promise.all([
     prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: 100 }),
     prisma.player.count({ where: { leagueId: league.id, status: 'FREE_AGENT', teamId: null, isDraftee: false } }),
     prisma.player.groupBy({
       by: ['position'],
       where: { leagueId: league.id, status: 'FREE_AGENT', teamId: null, isDraftee: false },
     }),
+    prisma.depthChartSlot.findMany({
+      where: { teamId: team.id },
+      orderBy: { rank: 'asc' },
+      include: { player: { select: { id: true, firstName: true, lastName: true, trueOvr: true, age: true, weightLb: true, heightIn: true, teamId: true } } },
+    }),
   ]);
+
+  const depthByPosition = new Map<string, DepthCompareEntry[]>();
+  for (const slot of depthSlots) {
+    // A slot naming somebody who has already gone would inflate your depth and
+    // turn a real hole into a phantom starter. reconcileDepthChart clears these
+    // on every roster move, so this is a belt on top of braces.
+    if (slot.player.teamId !== team.id) continue;
+    const list = depthByPosition.get(slot.position) ?? [];
+    list.push({
+      playerId: slot.playerId,
+      name: `${slot.player.firstName} ${slot.player.lastName}`,
+      ovr: slot.player.trueOvr,
+      age: slot.player.age,
+      weightLb: slot.player.weightLb,
+      heightIn: slot.player.heightIn,
+    });
+    depthByPosition.set(slot.position, list);
+  }
+  const depthAt = (position: string): DepthCompareEntry[] => depthByPosition.get(position) ?? [];
   const reportIds = new Set(freeAgents.map((p) => p.id));
   if (topAvailable) reportIds.add(topAvailable.id);
   const reports = await prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: Array.from(reportIds) } } });
@@ -54,6 +85,9 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
     report: reportMap.get(topAvailable.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
   }) : null;
   const topMarket = topAvailable && topView ? marketValue({ ovr: topView.scoutedOvr, position: topAvailable.position as any, age: topAvailable.age }) : 0;
+  const topVerdict = topAvailable && topView
+    ? slotVerdict(topAvailable.position, depthAt(topAvailable.position), { ovrLow: topView.ovrLow, ovrHigh: topView.ovrHigh, revealed: topView.revealed })
+    : null;
 
   const positions = positionGroups.map((g) => g.position).sort((a, b) => positionSortKey(a) - positionSortKey(b));
 
@@ -63,7 +97,10 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
       report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
     });
     const market = marketValue({ ovr: view.scoutedOvr, position: p.position as any, age: p.age });
-    return { p, view, market };
+    // The scouted BAND, never the true rating — the verdict has to be as
+    // uncertain as the file it is drawn from.
+    const verdict = slotVerdict(p.position, depthAt(p.position), { ovrLow: view.ovrLow, ovrHigh: view.ovrHigh, revealed: view.revealed });
+    return { p, view, market, verdict };
   });
 
   const sortKey: SortKey = (['pos', 'age', 'ovr', 'market'] as SortKey[]).includes(searchParams.sort as SortKey)
@@ -83,6 +120,21 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   // their estimated rate — the difference between "100 available" and "100 you
   // can do something about."
   const affordable = capSummary ? rows.filter((r) => r.market <= capSummary.capSpace).length : null;
+
+  // THE FULL COMPARISON GETS A HOME WHERE IT IS UNAMBIGUOUS. With a position
+  // pill active the whole page is about one position, so "your depth at WR"
+  // needs no explaining — it is the answer to the question the pill asked.
+  // Unfiltered, the pool spans sixteen positions and a single depth panel
+  // would have to pick one arbitrarily, so the unfiltered page carries the
+  // per-row badges plus the one on the Top Available strip instead.
+  //
+  // The man it compares against is the best on the market at that position by
+  // the rating YOU can see — not by trueOvr, which would quietly rank the pool
+  // using a number the fog is meant to be hiding. Chosen independently of the
+  // table's sort so changing the sort never changes the comparison.
+  const focusRow = searchParams.pos
+    ? rows.reduce<typeof rows[number] | null>((best, r) => (!best || r.view.scoutedOvr > best.view.scoutedOvr ? r : best), null)
+    : null;
 
   const posQuery = searchParams.pos ? `pos=${searchParams.pos}&` : '';
   const sortHref = (key: SortKey) => {
@@ -136,6 +188,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
             </div>
             <div className="text-xs text-muted mt-0.5">Est. market {formatMoney(topMarket)}/yr</div>
           </div>
+          {topVerdict && <SlotVerdictBadge verdict={topVerdict} />}
           {topView.revealed || topView.confidence >= 90 ? (
             <RatingBadge value={topView.scoutedOvr} label="OVR" size="sm" />
           ) : (
@@ -152,7 +205,22 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         ))}
       </div>
 
-      <div className="panel overflow-hidden">
+      {focusRow && (
+        <DepthCompare
+          position={focusRow.p.position}
+          depth={depthAt(focusRow.p.position)}
+          candidate={{
+            playerId: focusRow.p.id,
+            name: `${focusRow.p.firstName} ${focusRow.p.lastName}`,
+            age: focusRow.p.age,
+            weightLb: focusRow.p.weightLb,
+            heightIn: focusRow.p.heightIn,
+            rating: { ovrLow: focusRow.view.ovrLow, ovrHigh: focusRow.view.ovrHigh, revealed: focusRow.view.revealed },
+          }}
+        />
+      )}
+
+      <div className="panel overflow-x-auto">
         <table className="table-clean">
           <thead>
             <tr>
@@ -160,17 +228,22 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
               <th>Name</th>
               <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
               <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              {/* Not sortable, deliberately: the sort keys are a closed set the
+                  URL round-trips, and a seventh one would need its own tie-break
+                  story across sixteen positions. It is a scan column. */}
+              <th>Vs. Your Starters</th>
               <th><a href={sortHref('market')} className="hover:text-chalk">Est. Market{sortKey === 'market' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {sorted.map(({ p, view, market }) => (
+            {sorted.map(({ p, view, market, verdict }) => (
               <tr key={p.id}>
                 <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                 <td><a href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={26} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} /> {p.firstName} {p.lastName}</a></td>
                 <td className="text-muted">{p.age}</td>
                 <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
+                <td><SlotVerdictBadge verdict={verdict} /></td>
                 <td className="font-mono text-muted">{formatMoney(market)}/yr</td>
                 <td><a href={`/league/${league.id}/player/${p.id}`} className="btn-secondary text-xs px-2.5 py-1">Negotiate</a></td>
               </tr>

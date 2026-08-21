@@ -25,10 +25,10 @@ import { positionRelativeScore, isRankablePosition, PositionDistribution } from 
  *
  * Measured, not guessed: every played game in this Postgres, the 1,515,626
  * box lines among them that cleared `playedEnough` below, mean and standard
- * deviation of every stat `scoredStats` scores. Baked as literals so grading the report
+ * deviation of every stat `scoredStats` scores. Baked as literals so grading
  * costs no round trip and no measurable time — the Week Report must paint no
  * slower than it did before this section existed. Regenerate with
- * `scripts/_coachNorms.ts` if the engine's stat allocation ever changes; a
+ * `scripts/coachNorms.ts` if the engine's stat allocation ever changes; a
  * stale yardstick makes the grades wrong, not merely imprecise.
  *
  * The population is gated to men who actually played. Ungated, the mean back
@@ -53,10 +53,11 @@ import { positionRelativeScore, isRankablePosition, PositionDistribution } from 
  * position is the ranker's, untouched.
  *
  * The flat-run rule in `ladderPercentile` is the trick that makes it honest.
- * The engine deals a defender's whole afternoon in integers between four and
- * seven, so half of a linebacker's ladder is the same number repeated. A plain
- * interpolation would call one ordinary five-tackle game 50th percentile and
- * an identical one 95th, purely from where the ladder was sampled. Landing on
+ * The engine deals a defender's whole afternoon in small whole numbers, most
+ * of them between four and seven, so half of a linebacker's ladder is the same
+ * value repeated. A plain interpolation would call one ordinary five-tackle
+ * game 50th percentile and an identical one 95th, purely from where the ladder
+ * happened to be sampled. Landing on
  * a run returns the MIDDLE of it — the mid-rank percentile, the answer a full
  * sort of all 179,940 linebacker lines gives.
  *
@@ -286,22 +287,32 @@ export function mentionBar(weeks: number, bar = MENTION_BAR): number {
  * A defender may not be singled out on tackle count alone.
  *
  * Not a ranking rule — a truthfulness rule, and it is about this simulation
- * rather than about football. `allocateStats` hands every front-seven player
- * an integer between four and seven tackles off a flat roll, so the difference
- * between a five-tackle afternoon and a seven-tackle one is dice, not play.
- * Any honest ranker will still put the seven on top, and printing "seven
- * tackles — that's the tape we show the room" would be praising a coin flip in
- * a coach's voice. A sack, a takeaway, a forced fumble or a multi-breakup
- * afternoon are events the engine only writes when something actually
- * happened, so those are the only things a defender can be mentioned for.
+ * rather than about football. `allocateStats` draws a flat `normal(62, 6)`
+ * tackles for the whole defence and splits them by DEPTH-CHART SHARE, so a
+ * club carrying eight listed defenders hands each of them half again as many
+ * tackles as a club carrying fourteen, for a reason that has nothing to do
+ * with playing well. Any honest ranker still puts the bigger number on top —
+ * lib/statLabels.ts ranks tackles `lead: 1` at linebacker, so
+ * lib/performanceScore.ts weights them heaviest — and printing "34 tackles,
+ * that's the tape we show the room" would be praising a thin depth chart in a
+ * coach's voice. That is a limitation of the ranker's INPUTS and is written up
+ * in docs/HANDOFF.md rather than quietly worked around here; what this guard
+ * does is narrower and entirely within this section's own remit: tackle volume
+ * may not EARN a man a mention. A sack, a takeaway, a forced fumble or a
+ * multi-breakup afternoon are things the engine only writes when something
+ * actually happened, so those are what a defender is mentioned for.
+ *
+ * Scaled to the stretch for the same reason `playedEnough` is. One sack across
+ * four games is not "who carried the stretch", however high the grade runs —
+ * and that is measured, not hypothetical: it is the exact line that printed
+ * "A sack over 4 games. You cannot ask a man for more than that." beside a
+ * 34-tackle month.
  */
-export function hasDistinguishingEvent(position: string, stats: SeasonStats): boolean {
+export function hasDistinguishingEvent(position: string, stats: SeasonStats, games = 1): boolean {
   const unit = UNIT_OF[canonicalPosition(position)];
   if (unit !== 'PASS_RUSH' && unit !== 'BACK_SEVEN') return true;
-  return (stats.sacks ?? 0) > 0
-    || (stats.defInt ?? 0) > 0
-    || (stats.ff ?? 0) > 0
-    || (stats.pd ?? 0) >= 2;
+  const events = (stats.sacks ?? 0) + (stats.defInt ?? 0) + (stats.ff ?? 0) + Math.floor((stats.pd ?? 0) / 2);
+  return events >= Math.ceil(Math.max(1, games) / 2);
 }
 
 // ---------------------------------------------------------------------------

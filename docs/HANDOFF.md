@@ -181,13 +181,14 @@ that matters:
    may be named after an honour ("Pro Bowl" is now a real earned thing), and
    the colour ramp needs a non-colour redundant signal. Notes in
    `rating-distribution.md`.
-2. **Coach's Comments** — expand the Week Report's single game ball into top
-   and worst performers. **The existing ranker is quarterback-biased**: passing
-   yards score 1/yd and passing TDs 50, so the game ball went to the starting
-   QB in four of six reports. A list ranked that way is four quarterbacks every
-   week. Needs the position-relative score in `lib/performanceScore.ts`.
-   "Worst" must mean *did something bad*, never *had a quiet game* and never a
-   backup who played four snaps.
+2. ~~**Coach's Comments**~~ — **landed**, uncommitted, in the working tree.
+   `lib/coachRoom.ts` (the coach-room policy: the week's yardstick, the units,
+   the gates and the concerns), `components/ds/CoachComments.tsx` (the
+   expandable section), `lib/weekReport.ts` (ships numbers, not prose).
+   Ranking is `lib/performanceScore.ts` — imported, not forked. Measured over
+   2,255 real user-team weeks the mentions are 17.3% RB / 17.2% WR / 14.1% DT
+   / 13.0% CB / 10.8% S / 10.3% EDGE / 4.8% LB / 4.5% TE / 4.3% QB / 3.6% K.
+   The one thing left open is the tackles problem below.
 3. **All-Star selection** — from real season statistics, at the end of the
    regular season (**not** after the final: `seasonStats` keeps accumulating
    through the playoffs, so that is the only moment the stat line behind the
@@ -195,6 +196,24 @@ that matters:
    players**, not selections.
 
 ### Deliberately not done, with reasons
+
+- **`tackles` is a depth-chart artefact, and the shared ranker weights it
+  heaviest.** `allocateStats` (lib/sim/engine.ts:369) draws a flat
+  `normal(62, 6)` tackles for the WHOLE defence and splits them by depth-chart
+  share, so a club listing eight defenders gives each of them half again as
+  many tackles as a club listing fourteen — for a reason that has nothing to do
+  with playing well. `lib/statLabels.ts` quite reasonably ranks tackles
+  `lead: 1` at linebacker and `lead: 2` on the line, so
+  `lib/performanceScore.ts` weights them heaviest, and a 34-tackle month grades
+  as a top-1% stretch. This affects **All-Star selection as much as Coach's
+  Comments**, so it is not one feature's problem to solve alone and neither
+  owner should quietly reweight it. Coach's Comments contains it rather than
+  fixes it: `hasDistinguishingEvent()` stops tackle volume EARNING a mention
+  (a defender needs a sack, a takeaway, a forced fumble or a multi-breakup
+  game, scaled to the length of the stretch), and the grade printed beside a
+  mention is still the shared ranker's, untouched. The real fix is either a
+  per-snap tackle allocation in the engine or a `lead` demotion in
+  `statLabels.ts`, and both change All-Star output.
 
 - **Set-aside/dismiss on the re-sign list** — needs schema plus `lib/season.ts`;
   the trap to close is that setting twelve players aside and advancing loses
