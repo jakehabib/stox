@@ -5,6 +5,7 @@ import { ratingColor } from '@/lib/ratings';
 import { formatMoney, capHit } from '@/lib/cap';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
+import { loadScoutMods } from '@/lib/dynasty';
 import { positionSortKey } from '@/lib/league-data';
 import { POSITION_GROUPS, PositionGroup, positionGroup } from '@/lib/positionGroups';
 import { SeasonStats } from '@/lib/types';
@@ -80,11 +81,14 @@ export default async function RosterPage({ params, searchParams }: { params: { i
   ]);
   const reports = await prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: players.map((p) => p.id) } } });
   const reportMap = new Map(reports.map((r) => [r.playerId, r]));
+  // Dynasty scouting upgrades tighten the ranges below. Omitting this argument
+  // is safe (it means "no skills"), so nothing breaks if a page forgets it.
+  const scoutMods = await loadScoutMods(league.id);
 
   const rows = players.map((p) => {
     const view = buildScoutedView({
       position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
-      report: reportMap.get(p.id), settings, isOwnRoster: true, isUserView: true,
+      report: reportMap.get(p.id), settings, isOwnRoster: true, isUserView: true, dynasty: scoutMods,
     });
     return { p, view, hit: capHit(p.contract, settings.capMode) };
   });

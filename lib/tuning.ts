@@ -85,12 +85,22 @@ export const FREE_AGENCY = {
   /** Each FURTHER year on the street adds this much on top of the base. */
   UNSIGNED_ATTRITION_PER_YEAR: 0.18,
   /**
-   * A player this good always gets a call, so attrition scales linearly to
-   * zero as he approaches it. Below UNSIGNED_ATTRITION_FLOOR_OVR it applies
-   * at full strength.
+   * A player good enough that somebody always calls is shielded: attrition
+   * scales linearly to zero as he approaches the shield, and applies at full
+   * strength at or below the floor.
+   *
+   * Both are stated RELATIVE TO THE LEAGUE'S OWN MEAN ACTIVE RATING, not as
+   * absolute numbers, and that is not a stylistic choice. Fixed at 78/55 (the
+   * first thing tried here) the shield stopped meaning "star" the moment
+   * league-wide ratings drifted: by season 13 of a measured run the mean
+   * rostered player was 80, so every unsigned player worth anything was above
+   * the shield, permanently immune to attrition, and the pool accumulated 459
+   * unsigned players rated 80+ — the exact symptom the attrition roll exists
+   * to prevent. Same lesson as FREE_AGENCY.MIN_UPGRADE_DELTA's structural
+   * displacement test: a threshold on a drifting scale is not a threshold.
    */
-  UNSIGNED_ATTRITION_SHIELD_OVR: 78,
-  UNSIGNED_ATTRITION_FLOOR_OVR: 55,
+  UNSIGNED_ATTRITION_SHIELD_ABOVE_MEAN: 8,
+  UNSIGNED_ATTRITION_FLOOR_BELOW_MEAN: 10,
   /** Nobody is ever rolled out of football at higher odds than this. */
   UNSIGNED_ATTRITION_MAX: 0.85,
 

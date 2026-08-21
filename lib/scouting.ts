@@ -33,7 +33,7 @@ import type { DynastyScoutMods } from './dynasty';
  * site that has not been taught about Dynasty still behaves correctly.
  *
  * The one sanctioned hole in the fog is ScoutingReport.fullyRevealed, set
- * only by the Dynasty "Scout Now" ability. That collapses a player to his
+ * only by the Dynasty "Full Scout" ability. That collapses a player to his
  * true ratings. NOTHING ELSE MAY DO THAT: for every other player, at every
  * confidence level and every skill rank, potential comes back as a genuine
  * range (see DYNASTY.MIN_BAND_HALF_WIDTH, the floor that guarantees it).
@@ -137,7 +137,7 @@ export function buildScoutedView(args: {
     potConfidence?: number | null;
     /** JSON array of attribute keys an evaluation locked to their true value. */
     attrsRevealed?: string | null;
-    /** Set only by Dynasty's Scout Now — the player's file is complete and exact. */
+    /** Set only by Dynasty's Full Scout — the player's file is complete and exact. */
     fullyRevealed?: boolean | null;
   } | null;
   settings: LeagueSettings;
@@ -153,9 +153,9 @@ export function buildScoutedView(args: {
 }): ScoutedPlayerView {
   const { position, trueAttrs, trueOvr, settings } = args;
 
-  const scoutNow = args.report?.fullyRevealed === true;
+  const fullScouted = args.report?.fullyRevealed === true;
   const fullyRevealed =
-    scoutNow ||
+    fullScouted ||
     settings.revealTrueRatings ||
     !settings.scoutingEnabled ||
     (args.isOwnRoster && !settings.fogOnOwnRoster);
@@ -169,8 +169,8 @@ export function buildScoutedView(args: {
       potHigh: args.potential,
       confidence: 100,
       revealed: true,
-      notes: scoutNow
-        ? 'Scout Now: your staff dropped everything and put a complete, exact file together on this player.'
+      notes: fullScouted
+        ? 'Full Scout: your staff dropped everything and put a complete, exact file together on this player.'
         : 'Full ratings visible (scouting fog disabled for this player).',
       attrs: attrsForPosition(position).map((key) => ({
         key,
@@ -197,6 +197,8 @@ export function buildScoutedView(args: {
   // collapse to a point no matter how many ranks are bought.
   const attrMult = args.dynasty?.attrBandMult ?? 1;
   const potMult = args.dynasty?.potBandMult ?? 1;
+  const hardMult = args.dynasty?.hardAttrBandMult ?? 1;
+  const hardDiff = args.dynasty?.hardAttrDifficulty ?? Infinity;
   const minHalf = args.dynasty?.minHalfWidth ?? 0.5;
   const tighten = (band: number, mult: number) => Math.max(minHalf, band * mult);
 
@@ -207,7 +209,11 @@ export function buildScoutedView(args: {
       const truth = clamp(Math.round(trueAttrs[key] ?? 62), 20, 99);
       return { key, label: def?.label ?? key, observed: truth, low: truth, high: truth, certainty: 1, actual: truth, locked: true };
     }
-    const band = tighten(errorBand(confidence, diff, penalty), attrMult);
+    // Film Room stacks on top of Better Evaluations, but only for the traits
+    // the base model calls hard to scout — instincts and awareness, not a
+    // stopwatch time.
+    const mult = attrMult * (diff >= hardDiff ? hardMult : 1);
+    const band = tighten(errorBand(confidence, diff, penalty), mult);
     // If we have no observation yet, fall back to a blurred league-average read
     // rather than leaking the true value.
     const center = observed[key] ?? 62;

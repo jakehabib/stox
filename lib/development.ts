@@ -184,11 +184,12 @@ export async function applyInSeasonProgression(
  * a genuinely good player, and with upgrade-and-displace in the AI wave
  * somebody now actually does.
  */
-export function unsignedAttritionChance(yearsUnsigned: number, trueOvr: number): number {
+export function unsignedAttritionChance(yearsUnsigned: number, trueOvr: number, leagueMeanOvr: number): number {
   const years = Math.max(1, yearsUnsigned);
   const base = FREE_AGENCY.UNSIGNED_ATTRITION_BASE + (years - 1) * FREE_AGENCY.UNSIGNED_ATTRITION_PER_YEAR;
-  const span = FREE_AGENCY.UNSIGNED_ATTRITION_SHIELD_OVR - FREE_AGENCY.UNSIGNED_ATTRITION_FLOOR_OVR;
-  const exposure = clamp((FREE_AGENCY.UNSIGNED_ATTRITION_SHIELD_OVR - trueOvr) / span, 0, 1);
+  const shield = leagueMeanOvr + FREE_AGENCY.UNSIGNED_ATTRITION_SHIELD_ABOVE_MEAN;
+  const floor = leagueMeanOvr - FREE_AGENCY.UNSIGNED_ATTRITION_FLOOR_BELOW_MEAN;
+  const exposure = clamp((shield - trueOvr) / Math.max(1, shield - floor), 0, 1);
   return clamp(base * exposure, 0, FREE_AGENCY.UNSIGNED_ATTRITION_MAX);
 }
 
@@ -218,6 +219,10 @@ export function unsignedAttritionChance(yearsUnsigned: number, trueOvr: number):
  * Draftees are deliberately excluded — `isDraftee` players are the class
  * waiting for a draft that hasn't happened yet, not free agents, and aging
  * them here would hand every rookie an extra year before he was ever picked.
+ *
+ * "Good enough that somebody calls" is measured against the league's own mean
+ * ROSTERED rating, read once per call, rather than a fixed number — see
+ * FREE_AGENCY.UNSIGNED_ATTRITION_SHIELD_ABOVE_MEAN.
  */
 export async function progressFreeAgents(
   leagueId: string,
@@ -230,6 +235,12 @@ export async function progressFreeAgents(
   });
   if (players.length === 0) return { retired: 0, developed: 0 };
 
+  const rostered = await prisma.player.aggregate({
+    where: { leagueId, status: 'ACTIVE' },
+    _avg: { trueOvr: true },
+  });
+  const leagueMeanOvr = rostered._avg.trueOvr ?? 70;
+
   const retiringIds: string[] = [];
   const updates: { id: string; attrs: string; ovr: number }[] = [];
 
@@ -237,7 +248,7 @@ export async function progressFreeAgents(
     const unsignedYears = p.yearsUnsigned + 1;
     const odds = Math.max(
       retirementChance(p.age, p.trueOvr, p.position as Position),
-      unsignedAttritionChance(unsignedYears, p.trueOvr),
+      unsignedAttritionChance(unsignedYears, p.trueOvr, leagueMeanOvr),
     );
     if (opts.retirementEnabled && rng.bool(odds)) {
       retiringIds.push(p.id);

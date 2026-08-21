@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { evaluateTradeAction, executeTradeAction, rankTradePartnersAction } from '@/app/actions/trade';
+import { insiderReadAction, tradeIntelAction, type TradeIntelRead } from '@/app/actions/dynasty';
 import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
 import { sortStatEntries, statLabel } from '@/lib/statLabels';
@@ -50,6 +51,8 @@ export function TradeBuilder({
     sendValue: number; receiveValue: number;
     explanation?: { give: string[]; receive: string[] };
   } | null>(null);
+  const [intel, setIntel] = useState<TradeIntelRead | null>(null);
+  const [insider, setInsider] = useState<string | null>(null);
   const [execError, setExecError] = useState<string | null>(null);
   const [partnerSuggestions, setPartnerSuggestions] = useState<TradePartnerSuggestion[] | null>(null);
 
@@ -104,8 +107,20 @@ export function TradeBuilder({
     return () => { cancelled = true; };
   }, [shoppedPosition, leagueId, myTeam.id]);
 
+  const callInsider = () => {
+    startTransition(async () => {
+      const r = await insiderReadAction(leagueId, partnerId, giveAssets, getAssets);
+      setInsider(r.ok ? `${r.report} (${r.message})` : r.message);
+    });
+  };
+
   const propose = () => {
     startTransition(async () => {
+      // Dynasty NEGOTIATION -> Trade Intel. Read-only: this runs the same
+      // evaluation the accept/reject path runs and reports the numbers behind
+      // the bar. It cannot change what the AI will take.
+      tradeIntelAction(leagueId, partnerId, giveAssets, getAssets).then(setIntel).catch(() => setIntel(null));
+      setInsider(null);
       const evaluation = await evaluateTradeAction(leagueId, partnerId, giveAssets, getAssets);
       setResult({
         accepted: evaluation.accepted,
@@ -235,6 +250,27 @@ export function TradeBuilder({
         <div className={`panel p-4 text-sm space-y-3 ${result.accepted ? 'border-accent/40' : 'border-bad/30'}`}>
           <div className={result.accepted ? 'text-accent' : 'text-bad'}>{result.message}</div>
           <TradeScoreBar ratio={result.ratio} requiredRatio={result.requiredRatio} accepted={result.accepted} />
+
+          {intel?.unlocked && (
+            <div className="text-xs border-t border-line/60 pt-2 space-y-0.5">
+              <div className="label-sm text-accent2">Trade Intel</div>
+              <div className="text-muted">
+                They price what you&apos;re asking for at <span className="font-mono text-chalk">{intel.theirValue.toLocaleString()}</span>{' '}
+                and your offer at <span className="font-mono text-chalk">{intel.yourValue.toLocaleString()}</span>.
+                {intel.shortfall > 0
+                  ? <> You are <span className="font-mono text-bad">{intel.shortfall.toLocaleString()}</span> short of their bar.</>
+                  : <> That clears their bar.</>}
+              </div>
+            </div>
+          )}
+
+          <div className="border-t border-line/60 pt-2 flex items-center gap-2 flex-wrap">
+            <button type="button" className="btn-secondary text-xs" disabled={pending} onClick={callInsider}>
+              Call your Insider
+            </button>
+            <span className="text-[11px] text-muted">Spends one of your season&apos;s Insider calls for a concrete asking price. Requires the Insider upgrade.</span>
+          </div>
+          {insider && <div className="text-xs text-accent2">{insider}</div>}
           {(result.explanation?.give.length || result.explanation?.receive.length) ? (
             <div className="text-xs text-muted space-y-1 pt-1 border-t border-line/60">
               {result.explanation.receive.map((r, i) => <div key={`r${i}`}>• {r}</div>)}

@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
+import { loadScoutMods } from '@/lib/dynasty';
 import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE, AI, Position } from '@/lib/tuning';
@@ -98,10 +99,15 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     orderBy: { createdAt: 'desc' },
   });
 
+  // Dynasty scouting upgrades tighten every range on this board (and a
+  // prospect the GM spent a Full Scout on comes back fully revealed via his
+  // report row). Omitting the argument means "no skills", so this is additive.
+  const scoutMods = await loadScoutMods(league.id);
+
   const rows = pool.map((p) => {
     const view = buildScoutedView({
       position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
-      report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true,
+      report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
     });
     return { p, view };
   });
@@ -121,7 +127,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           p,
           view: buildScoutedView({
             position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
-            report: fullReportMap.get(p.id), settings, isOwnRoster: false, isUserView: true,
+            report: fullReportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
           }),
         }));
       })();

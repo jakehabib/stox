@@ -441,7 +441,7 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
   for (const team of teams) {
     const roster = await prisma.player.findMany({
       where: { teamId: team.id, status: 'ACTIVE' },
-      select: { id: true, position: true, trueOvr: true, age: true, potential: true },
+      select: { id: true, position: true, trueOvr: true, age: true, potential: true, contract: true },
       orderBy: [{ trueOvr: 'asc' }, { id: 'asc' }],
     });
     const needs = teamNeeds(roster as RosterPlayer[]);
@@ -461,10 +461,19 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
     // The worst man at each position — the one a genuine upgrade would push
     // off the roster. `roster` is already sorted worst-first, so the first
     // hit per position is the answer.
-    const worstAtPosition = new Map<string, { id: string; trueOvr: number }>();
+    const worstAtPosition = new Map<string, { id: string; trueOvr: number; frees: number }>();
     const countAtPosition = new Map<string, number>();
     for (const p of roster) {
-      if (!worstAtPosition.has(p.position)) worstAtPosition.set(p.position, { id: p.id, trueOvr: p.trueOvr });
+      if (!worstAtPosition.has(p.position)) {
+        worstAtPosition.set(p.position, {
+          id: p.id, trueOvr: p.trueOvr,
+          // Releasing him frees this year's hit less the dead money he leaves
+          // behind. Sizing the offer WITHOUT it (as this first did) prices
+          // every upgrade as if the roster spot were free but the money were
+          // not, which is exactly backwards.
+          frees: capSavingsOnCut(p.contract, settings.capMode),
+        });
+      }
       countAtPosition.set(p.position, (countAtPosition.get(p.position) ?? 0) + 1);
     }
     const alreadyDisplaced = new Set<string>();
@@ -476,7 +485,7 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
       if (openSlots <= 0 && displacesLeft <= 0) break;
       if (budget <= 0) break;
 
-      let displace: { id: string; trueOvr: number } | null = null;
+      let displace: { id: string; trueOvr: number; frees: number } | null = null;
       if (openSlots <= 0) {
         // No room — this only happens if he beats somebody already here.
         const worst = worstAtPosition.get(fa.position);
@@ -492,11 +501,14 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
         continue; // no real need and no upgrade case — not a bid
       }
 
-      const offer = maxOffer(fa as any, { profile, needs, capSpace: budget, rng });
+      // A displacement pays for part of itself: the man going out stops
+      // counting against the cap the moment he is released.
+      const freed = displace?.frees ?? 0;
+      const offer = maxOffer(fa as any, { profile, needs, capSpace: budget + freed, rng });
       if (offer < CAP.MIN_SALARY) continue;
 
       bids.push({ playerId: fa.id, teamId: team.id, offer, displacePlayerId: displace?.id });
-      budget -= offer;
+      budget -= offer - freed;
       if (displace) {
         alreadyDisplaced.add(displace.id);
         displacesLeft--;

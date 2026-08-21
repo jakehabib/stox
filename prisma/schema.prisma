@@ -292,13 +292,13 @@ model ScoutingReport {
   attrsRevealed String @default("[]")
   // True once a Deep Dive surfaced the player's hidden development trait.
   devRevealed  Boolean @default(false)
-  // Set ONLY by the Dynasty "Scout Now" ability (lib/dynasty.ts). When true,
+  // Set ONLY by the Dynasty "Full Scout" ability (lib/dynasty.ts). When true,
   // buildScoutedView returns the player's TRUE attributes and an exact
   // potential — the one sanctioned hole in the fog of war, paid for with a
   // per-season charge that is persisted on DynastyProfile so a page reload
   // cannot restore it. Nothing else in the codebase writes this column.
   fullyRevealed Boolean @default(false)
-  // League year the Scout Now reveal was bought in — display only ("Fully
+  // League year the Full Scout reveal was bought in — display only ("Fully
   // evaluated, 2027"), never gates the reveal itself: a perfect evaluation
   // you paid for does not expire.
   revealedYear Int @default(0)
@@ -592,12 +592,14 @@ model DynastyProfile {
   /// Absent key == rank 0. See lib/dynasty.ts DYNASTY_SKILLS.
   skills    String @default("{}")
 
-  /// Scout Now charge ledger. `scoutNowYear` is the league year the counter
+  /// FULL SCOUT charge ledger. `fullScoutYear` is the league year the counter
   /// applies to; when League.seasonYear moves past it the counter is treated
   /// as 0 (and rewritten on the next spend), which is how "resets on a new
-  /// season" works without a season hook.
-  scoutNowYear Int @default(0)
-  scoutNowUsed Int @default(0)
+  /// season" works without a season hook. The allowance itself is a baseline
+  /// entitlement (DYNASTY.FULL_SCOUT_BASE_USES) plus the Scouting Network
+  /// upgrade — it is NOT stored, so retuning it applies to every save at once.
+  fullScoutYear Int @default(0)
+  fullScoutUsed Int @default(0)
 
   /// Same ledger for the Negotiation branch's once-or-twice-a-season Insider
   /// ability, kept separate so the two scarcities are tuned independently.

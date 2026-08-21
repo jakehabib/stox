@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
+import { loadScoutMods } from '@/lib/dynasty';
 import { ratingColor } from '@/lib/ratings';
 import { marketValue, formatMoney } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
@@ -46,10 +47,11 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   const reportMap = new Map(reports.map((r) => [r.playerId, r]));
 
   const capSummary = settings.capMode === 'OFF' ? null : await teamCapSummary(team.id, league.seasonYear, settings.capMode);
+  const scoutMods = await loadScoutMods(league.id);
 
   const topView = topAvailable ? buildScoutedView({
     position: topAvailable.position as any, trueAttrs: readJson(topAvailable.trueAttrs, {}), trueOvr: topAvailable.trueOvr, potential: topAvailable.potential,
-    report: reportMap.get(topAvailable.id), settings, isOwnRoster: false, isUserView: true,
+    report: reportMap.get(topAvailable.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
   }) : null;
   const topMarket = topAvailable && topView ? marketValue({ ovr: topView.scoutedOvr, position: topAvailable.position as any, age: topAvailable.age }) : 0;
 
@@ -58,7 +60,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   const rows = freeAgents.map((p) => {
     const view = buildScoutedView({
       position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
-      report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true,
+      report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
     });
     const market = marketValue({ ovr: view.scoutedOvr, position: p.position as any, age: p.age });
     return { p, view, market };

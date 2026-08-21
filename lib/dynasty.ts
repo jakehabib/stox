@@ -110,8 +110,25 @@ export const DYNASTY = {
   SKILL_POINT_LEVELS: [2, 4, 6, 9, 12, 15, 18, 22, 26, 30],
   SKILL_POINT_EVERY_AFTER: 5,
 
-  /** [TUNE] Limited-use abilities. Both reset when League.seasonYear moves. */
-  SCOUT_NOW_USES_PER_SEASON: 2,
+  /**
+   * [TUNE] FULL SCOUT — the per-season allowance of perfect evaluations.
+   *
+   * This is a BASELINE entitlement, not a skill-tree unlock: every GM gets
+   * FULL_SCOUT_BASE_USES of them from day one of every league year, including
+   * on a brand-new save with zero Dynasty levels. The Scouting branch's
+   * SCOUTING_NETWORK upgrade adds FULL_SCOUT_PER_RANK more per rank, so a
+   * fully-invested GM carries 4 rather than 2.
+   *
+   * Scarcity is the entire mechanic. Two is deliberately not enough to cover
+   * a draft class, which is what makes "do I burn one on this quarterback?"
+   * a real question. Raising the base is the single most dangerous knob in
+   * this file — at 5+ the fog of war stops mattering for anyone the GM cares
+   * about.
+   */
+  FULL_SCOUT_BASE_USES: 2,
+  FULL_SCOUT_PER_RANK: 1,
+
+  /** [TUNE] Negotiation's scarce ability. Resets when League.seasonYear moves. */
   INSIDER_USES_PER_SEASON: 2,
 
   /**
@@ -127,11 +144,22 @@ export const DYNASTY = {
   ATTR_BAND_MULT: [1, 0.85, 0.72],
   POT_BAND_MULT: [1, 0.78, 0.60],
   /**
+   * [TUNE] Film Room. An EXTRA multiplier, stacked on ATTR_BAND_MULT, applied
+   * only to attributes whose scoutDifficulty clears HARD_ATTR_DIFFICULTY —
+   * the mental/instinct traits the base model deliberately leaves foggiest
+   * (see lib/ratings.ts scoutDifficulty). Better Evaluations tightens
+   * everything a little; Film Room tightens the genuinely hard reads a lot.
+   * They are different levers on purpose, so the branch has a real choice in
+   * it rather than one dominant line.
+   */
+  HARD_ATTR_BAND_MULT: [1, 0.82, 0.68],
+  HARD_ATTR_DIFFICULTY: 0.7,
+  /**
    * Absolute floor on a displayed half-width, applied AFTER the multiplier.
    * This is what guarantees a range stays a range: at 1.0 a rounded band is
    * still at least center-1 .. center+1. Dropping this to 0 would let a
    * maxed scouting GM read true ratings for free, which is exactly what
-   * Scout Now's scarcity exists to prevent.
+   * Full Scout's scarcity exists to prevent.
    */
   MIN_BAND_HALF_WIDTH: 1.0,
 
@@ -158,9 +186,6 @@ export const DYNASTY = {
    * no skill, no estimate shown, same as today.
    */
   MARKET_BAND_PCT: [null, 0.14, 0.07] as (number | null)[],
-  /** Trade Intel: buckets the interest read into this many bands instead of a vague verdict. */
-  TRADE_INTEL_BUCKETS: 5,
-
   /** Round-scaled bar a drafted player must clear to count as a hit. Matches lib/gmCareer.ts so two screens never disagree about the same pick. */
   DRAFT_HIT_THRESHOLD: (round: number): number => (round === 1 ? 78 : round <= 3 ? 73 : round <= 5 ? 68 : 64),
 };
@@ -174,10 +199,10 @@ export type DynastyBranch = 'SCOUTING' | 'NEGOTIATION' | 'DEVELOPMENT';
 export type DynastySkillId =
   | 'EVALUATIONS'
   | 'POTENTIAL_PROJECTION'
-  | 'SCOUT_NOW'
+  | 'FILM_ROOM'
+  | 'SCOUTING_NETWORK'
   | 'MARKET_KNOWLEDGE'
   | 'TRADE_INTEL'
-  | 'CAP_FORECASTING'
   | 'INSIDER'
   | 'DEV_INSIGHT'
   | 'AGING_INSIGHT'
@@ -228,12 +253,23 @@ export const DYNASTY_SKILLS: DynastySkillDef[] = [
     ],
   },
   {
-    id: 'SCOUT_NOW',
+    id: 'FILM_ROOM',
     branch: 'SCOUTING',
-    name: 'Scout Now',
-    blurb: 'Burn a favour and get one player evaluated perfectly, on the spot.',
+    name: 'Film Room',
+    blurb: 'More hours on tape, on the traits tape is the only way to judge — instincts, awareness, decision making.',
     ranks: [
-      { cost: 2, effect: `${DYNASTY.SCOUT_NOW_USES_PER_SEASON} uses per season. Reveals a player's true ratings and exact ceiling. Resets each new league year.` },
+      { cost: 1, effect: 'Ranges on hard-to-scout mental traits narrow by a further 18%.' },
+      { cost: 2, effect: 'Ranges on hard-to-scout mental traits narrow by a further 32%.' },
+    ],
+  },
+  {
+    id: 'SCOUTING_NETWORK',
+    branch: 'SCOUTING',
+    name: 'Scouting Network',
+    blurb: `More contacts, more Full Scouts. Every GM starts each league year with ${DYNASTY.FULL_SCOUT_BASE_USES} perfect evaluations; this buys more.`,
+    ranks: [
+      { cost: 2, effect: `+${DYNASTY.FULL_SCOUT_PER_RANK} Full Scout per season (${DYNASTY.FULL_SCOUT_BASE_USES + DYNASTY.FULL_SCOUT_PER_RANK} total).` },
+      { cost: 2, effect: `+${DYNASTY.FULL_SCOUT_PER_RANK * 2} Full Scouts per season (${DYNASTY.FULL_SCOUT_BASE_USES + DYNASTY.FULL_SCOUT_PER_RANK * 2} total).` },
     ],
   },
 
@@ -242,9 +278,9 @@ export const DYNASTY_SKILLS: DynastySkillDef[] = [
     id: 'MARKET_KNOWLEDGE',
     branch: 'NEGOTIATION',
     name: 'Market Knowledge',
-    blurb: 'Your cap staff estimates what a player will actually sign for, not just his market rate.',
+    blurb: 'Your cap staff estimates what a free agent will actually sign for — not the public market rate you can already see.',
     ranks: [
-      { cost: 1, effect: 'Shows an estimated signing band, accurate to about ±14%.' },
+      { cost: 1, effect: 'Shows an estimated signing band before you make an offer, accurate to about ±14%.' },
       { cost: 2, effect: 'Estimated signing band tightens to about ±7%.' },
     ],
   },
@@ -252,18 +288,9 @@ export const DYNASTY_SKILLS: DynastySkillDef[] = [
     id: 'TRADE_INTEL',
     branch: 'NEGOTIATION',
     name: 'Trade Intel',
-    blurb: 'A truer read on how interested a rival front office really is.',
+    blurb: 'Your capologist puts real numbers on how a rival values a deal, instead of a bar and a shrug.',
     ranks: [
-      { cost: 1, effect: `Trade interest is reported on a ${DYNASTY.TRADE_INTEL_BUCKETS}-step scale instead of a vague verdict. Does not change what the AI will accept.` },
-    ],
-  },
-  {
-    id: 'CAP_FORECASTING',
-    branch: 'NEGOTIATION',
-    name: 'Cap Forecasting',
-    blurb: 'See the out-years a restructure or extension actually costs you.',
-    ranks: [
-      { cost: 1, effect: 'Future-year cap and dead-money impact is spelled out before you sign.' },
+      { cost: 1, effect: 'Trade evaluations show what the other side values each side of the deal at, and exactly how far short you are. Does NOT change what the AI accepts.' },
     ],
   },
   {
@@ -500,8 +527,8 @@ export function computeDynastyXp(input: XpInputs): DynastyXpBreakdown {
 export interface DynastyProfileRow {
   id: string;
   skills: string;
-  scoutNowYear: number;
-  scoutNowUsed: number;
+  fullScoutYear: number;
+  fullScoutUsed: number;
   insiderYear: number;
   insiderUsed: number;
 }
@@ -562,7 +589,8 @@ export interface DynastyState {
   pointsSpent: number;
   pointsAvailable: number;
   nextPointAtLevel: number | null;
-  scoutNow: LimitedUse;
+  /** Perfect evaluations left this league year. Baseline 2, plus Scouting Network. */
+  fullScout: LimitedUse;
   insider: LimitedUse;
   /** The league year XP is being counted from — the season the GM took the job. */
   tenureStartYear: number;
@@ -642,10 +670,11 @@ export async function buildDynastyState(leagueId: string): Promise<DynastyState>
     // floors at zero.
     pointsAvailable: Math.max(0, earned - spent),
     nextPointAtLevel: nextSkillPointLevel(level.level),
-    scoutNow: limitedUse(
-      rankOf(skills, 'SCOUT_NOW') > 0,
-      DYNASTY.SCOUT_NOW_USES_PER_SEASON,
-      profile.scoutNowYear, profile.scoutNowUsed, league.seasonYear,
+    fullScout: limitedUse(
+      // Always unlocked — this is an entitlement every GM has, not a purchase.
+      true,
+      fullScoutMax(skills),
+      profile.fullScoutYear, profile.fullScoutUsed, league.seasonYear,
     ),
     insider: limitedUse(
       rankOf(skills, 'INSIDER') > 0,
@@ -668,6 +697,9 @@ export async function buildDynastyState(leagueId: string): Promise<DynastyState>
 export interface DynastyScoutMods {
   attrBandMult: number;
   potBandMult: number;
+  /** Extra multiplier for attributes at/above `hardAttrDifficulty`. */
+  hardAttrBandMult: number;
+  hardAttrDifficulty: number;
   minHalfWidth: number;
 }
 
@@ -675,8 +707,20 @@ export function scoutingModsFor(skills: SkillRanks): DynastyScoutMods {
   return {
     attrBandMult: DYNASTY.ATTR_BAND_MULT[rankOf(skills, 'EVALUATIONS')] ?? 1,
     potBandMult: DYNASTY.POT_BAND_MULT[rankOf(skills, 'POTENTIAL_PROJECTION')] ?? 1,
+    hardAttrBandMult: DYNASTY.HARD_ATTR_BAND_MULT[rankOf(skills, 'FILM_ROOM')] ?? 1,
+    hardAttrDifficulty: DYNASTY.HARD_ATTR_DIFFICULTY,
     minHalfWidth: DYNASTY.MIN_BAND_HALF_WIDTH,
   };
+}
+
+/**
+ * Full Scouts available in a league year: the baseline entitlement every GM
+ * has plus whatever Scouting Network adds. Single source of truth — the
+ * server action re-derives the cap from this, so a client cannot ask for a
+ * charge it does not have.
+ */
+export function fullScoutMax(skills: SkillRanks): number {
+  return DYNASTY.FULL_SCOUT_BASE_USES + rankOf(skills, 'SCOUTING_NETWORK') * DYNASTY.FULL_SCOUT_PER_RANK;
 }
 
 /** Convenience for a server component that just wants the mods. */
@@ -700,9 +744,6 @@ export function hasTradeIntel(skills: SkillRanks): boolean {
   return rankOf(skills, 'TRADE_INTEL') > 0;
 }
 
-export function hasCapForecasting(skills: SkillRanks): boolean {
-  return rankOf(skills, 'CAP_FORECASTING') > 0;
-}
 
 // ---------------------------------------------------------------------------
 // Development branch — projections

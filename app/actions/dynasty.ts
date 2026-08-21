@@ -1,12 +1,13 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { Rng } from '@/lib/rng';
 import { prisma } from '@/lib/db';
 import { readJson, writeJson } from '@/lib/json';
 import { attrsForPosition } from '@/lib/ratings';
 import type { AttrMap } from '@/lib/ratings';
 import {
-  DYNASTY, SKILL_BY_ID, buildDynastyState, loadDynastyProfile, parseSkills,
+  DYNASTY, SKILL_BY_ID, buildDynastyState, fullScoutMax, loadDynastyProfile, parseSkills,
   rankOf, serializeSkills, type DynastySkillId,
 } from '@/lib/dynasty';
 
@@ -14,7 +15,7 @@ import {
  * Every Dynasty spend goes through this file. Two scarce things exist —
  * skill points and per-season ability charges — and the rules the UI
  * advertises for both are enforced HERE, never in the component. A client
- * that lies about its remaining Scout Now charges gets the same answer as
+ * that lies about its remaining Full Scout charges gets the same answer as
  * one that does not, because the count is re-derived from the database on
  * every call.
  */
@@ -61,36 +62,44 @@ export async function purchaseSkillAction(leagueId: string, skillId: DynastySkil
 }
 
 // ---------------------------------------------------------------------------
-// Scout Now
+// Full Scout
 // ---------------------------------------------------------------------------
 
-export interface ScoutNowResult extends DynastyActionResult {
+export interface FullScoutResult extends DynastyActionResult {
   remaining?: number;
+  max?: number;
 }
 
 /**
- * SCOUT NOW — the one sanctioned hole in the fog of war.
+ * FULL SCOUT — the one sanctioned hole in the fog of war.
  *
- * Writes ScoutingReport.fullyRevealed, which buildScoutedView reads to return
- * the player's true ratings and exact ceiling. The charge is decremented on
- * DynastyProfile in the SAME transaction, keyed to the current league year,
- * which is what makes the two properties the spec demands both true:
+ * Every GM gets DYNASTY.FULL_SCOUT_BASE_USES of these at the start of each
+ * league year with no skill tree involvement; the Scouting Network upgrade
+ * adds more. Spending one writes ScoutingReport.fullyRevealed, which
+ * buildScoutedView reads to return the player's true ratings and exact
+ * ceiling.
+ *
+ * The charge is decremented on DynastyProfile in the SAME transaction as the
+ * reveal, keyed to the current league year, which is what makes both of the
+ * properties the spec demands true:
  *   - reloading the page cannot restore a use (the counter is in Postgres,
  *     not in a component's state);
- *   - the counter resets on a new season without a hook in lib/season.ts,
- *     because a counter stamped with last year's `scoutNowYear` is treated
- *     as zero the moment League.seasonYear moves.
+ *   - the counter resets on a new season with no hook in lib/season.ts,
+ *     because a counter stamped with last year's `fullScoutYear` is read as
+ *     zero the moment League.seasonYear moves.
  *
  * The reveal itself is permanent. You bought a complete evaluation; it does
  * not expire when the calendar turns.
  */
-export async function scoutNowAction(leagueId: string, teamId: string, playerId: string): Promise<ScoutNowResult> {
+export async function fullScoutAction(leagueId: string, teamId: string, playerId: string): Promise<FullScoutResult> {
   const state = await buildDynastyState(leagueId);
-  if (!state.scoutNow.unlocked) {
-    return { ok: false, message: 'Scout Now is not unlocked. Buy it on the Dynasty screen.' };
-  }
-  if (state.scoutNow.remaining <= 0) {
-    return { ok: false, message: `No Scout Now uses left this season. ${DYNASTY.SCOUT_NOW_USES_PER_SEASON} reset when the new league year starts.` };
+  if (state.fullScout.remaining <= 0) {
+    return {
+      ok: false,
+      max: state.fullScout.max,
+      remaining: 0,
+      message: `No Full Scouts left this season. ${state.fullScout.max} reset when the new league year starts.`,
+    };
   }
 
   const [league, player, team] = await Promise.all([
@@ -103,7 +112,7 @@ export async function scoutNowAction(leagueId: string, teamId: string, playerId:
 
   const existing = await prisma.scoutingReport.findUnique({ where: { playerId_teamId: { playerId, teamId } } });
   if (existing?.fullyRevealed) {
-    return { ok: false, message: 'Your file on him is already complete — that would waste a use.', remaining: state.scoutNow.remaining };
+    return { ok: false, message: 'Your file on him is already complete — that would waste a use.', remaining: state.fullScout.remaining, max: state.fullScout.max };
   }
 
   const trueAttrs = readJson<AttrMap>(player.trueAttrs, {});
@@ -125,14 +134,13 @@ export async function scoutNowAction(leagueId: string, teamId: string, playerId:
     devRevealed: true,
     fullyRevealed: true,
     revealedYear: league.seasonYear,
-    notes: 'Scout Now: a complete, exact evaluation. Nothing left to learn about this player.',
+    notes: 'Full Scout: a complete, exact evaluation. Nothing left to learn about this player.',
   };
 
   const profile = await loadDynastyProfile(leagueId);
-  const usedThisYear = profile.scoutNowYear === league.seasonYear ? profile.scoutNowUsed : 0;
-  if (usedThisYear >= DYNASTY.SCOUT_NOW_USES_PER_SEASON) {
-    return { ok: false, message: 'No Scout Now uses left this season.' };
-  }
+  const max = fullScoutMax(parseSkills(profile.skills));
+  const usedThisYear = profile.fullScoutYear === league.seasonYear ? profile.fullScoutUsed : 0;
+  if (usedThisYear >= max) return { ok: false, message: 'No Full Scouts left this season.', remaining: 0, max };
 
   await prisma.$transaction([
     prisma.scoutingReport.upsert({
@@ -142,22 +150,182 @@ export async function scoutNowAction(leagueId: string, teamId: string, playerId:
     }),
     prisma.dynastyProfile.update({
       where: { id: profile.id },
-      data: { scoutNowYear: league.seasonYear, scoutNowUsed: usedThisYear + 1 },
+      data: { fullScoutYear: league.seasonYear, fullScoutUsed: usedThisYear + 1 },
     }),
   ]);
 
   revalidatePath(`/league/${leagueId}`, 'layout');
-  const remaining = DYNASTY.SCOUT_NOW_USES_PER_SEASON - (usedThisYear + 1);
+  const remaining = max - (usedThisYear + 1);
   return {
     ok: true,
     remaining,
-    message: `${player.firstName} ${player.lastName} fully evaluated. Scout Now — ${remaining}/${DYNASTY.SCOUT_NOW_USES_PER_SEASON} remaining.`,
+    max,
+    message: `${player.firstName} ${player.lastName} fully evaluated. Full Scout — ${remaining}/${max} remaining.`,
   };
+}
+
+export interface FullScoutTarget {
+  id: string;
+  name: string;
+  position: string;
+  age: number;
+  /** "Draft prospect", "Free agent", or the team abbreviation. */
+  where: string;
+  alreadyRevealed: boolean;
+}
+
+export interface FullScoutPanelData {
+  remaining: number;
+  max: number;
+  used: number;
+  seasonYear: number;
+  targets: FullScoutTarget[];
+}
+
+/**
+ * Candidate list + live charge count for the Full Scout widget. Search is
+ * server-side because a draft class runs to several hundred players and
+ * shipping the whole pool to the client just to filter it would be silly.
+ */
+export async function fullScoutPanelAction(leagueId: string, teamId: string, query: string): Promise<FullScoutPanelData> {
+  const state = await buildDynastyState(leagueId);
+  const q = query.trim();
+
+  const where: Record<string, unknown> = { leagueId, status: { not: 'RETIRED' } };
+  if (q.length >= 2) {
+    where.OR = [
+      { lastName: { contains: q, mode: 'insensitive' } },
+      { firstName: { contains: q, mode: 'insensitive' } },
+    ];
+  } else {
+    // No query: default to the incoming draft class, which is where a perfect
+    // evaluation is worth the most.
+    where.isDraftee = true;
+  }
+
+  const players = await prisma.player.findMany({
+    where: where as never,
+    orderBy: [{ trueOvr: 'desc' }],
+    take: 25,
+    select: { id: true, firstName: true, lastName: true, position: true, age: true, isDraftee: true, teamId: true, team: { select: { abbr: true } } },
+  });
+  const reports = await prisma.scoutingReport.findMany({
+    where: { teamId, playerId: { in: players.map((p) => p.id) }, fullyRevealed: true },
+    select: { playerId: true },
+  });
+  const revealed = new Set(reports.map((r) => r.playerId));
+
+  return {
+    remaining: state.fullScout.remaining,
+    max: state.fullScout.max,
+    used: state.fullScout.used,
+    seasonYear: state.seasonYear,
+    targets: players.map((p) => ({
+      id: p.id,
+      name: `${p.firstName} ${p.lastName}`,
+      position: p.position,
+      age: p.age,
+      where: p.isDraftee ? 'Draft prospect' : p.team?.abbr ?? 'Free agent',
+      alreadyRevealed: revealed.has(p.id),
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Market Knowledge
+// ---------------------------------------------------------------------------
+
+export interface ContractEstimate {
+  /** Center of the staff's estimate, in dollars per year. */
+  center: number;
+  low: number;
+  high: number;
+  rank: number;
+}
+
+/**
+ * MARKET KNOWLEDGE. Returns null — render nothing — unless the skill is owned.
+ *
+ * The number a free agent actually signs for is derived from his TRUE rating
+ * (lib/freeagency.ts evaluateOffer prices off trueOvr), while the suggestion
+ * the offer form already shows is priced off the SCOUTED rating. The gap
+ * between those two is the fog. This does not remove the fog: it quotes a
+ * band around the real threshold, deliberately off-centre by a seeded amount,
+ * so a GM with rank 2 is well-informed and still capable of lowballing.
+ *
+ * Read-only. It does not change what the player will accept.
+ */
+export async function contractEstimateAction(leagueId: string, playerId: string, years: number): Promise<ContractEstimate | null> {
+  const state = await buildDynastyState(leagueId);
+  const rank = rankOf(state.skills, 'MARKET_KNOWLEDGE');
+  const pct = DYNASTY.MARKET_BAND_PCT[rank];
+  if (pct == null) return null;
+
+  const { marketValue } = await import('@/lib/cap');
+  const player = await prisma.player.findUnique({
+    where: { id: playerId },
+    select: { leagueId: true, trueOvr: true, position: true, age: true, potential: true },
+  });
+  if (!player || player.leagueId !== leagueId) return null;
+
+  const market = marketValue({ ovr: player.trueOvr, position: player.position as never, age: player.age, potential: player.potential });
+  // Mirrors lib/freeagency.ts evaluateOffer's 0.9-of-market acceptance bar. If
+  // that constant moves, this estimate silently drifts — it is the one number
+  // here that lives in a file this system does not own.
+  const threshold = market * 0.9;
+  // Seeded off the player, not the clock, so re-opening the form does not
+  // re-roll the estimate into a different answer.
+  const rng = new Rng(`${leagueId}:${playerId}:market`);
+  const center = Math.round(threshold * (1 + rng.normal(0, pct * 0.35)));
+  const half = Math.round(center * pct);
+  return { center, low: Math.max(0, center - half), high: center + half, rank };
 }
 
 // ---------------------------------------------------------------------------
 // Insider
 // ---------------------------------------------------------------------------
+
+export interface TradeIntelRead {
+  unlocked: boolean;
+  /** What the AI values the assets it would SEND at. */
+  theirValue: number;
+  /** What the AI values your offer at. */
+  yourValue: number;
+  /** Value still needed to clear their bar. 0 when the deal already clears. */
+  shortfall: number;
+}
+
+/**
+ * TRADE INTEL. Turns the normalized acceptance bar the Trade screen already
+ * draws into the actual numbers behind it. Pure reporting — `evaluateTrade`
+ * is run exactly as the accept/reject path runs it, and the AI's required
+ * ratio is untouched.
+ */
+export async function tradeIntelAction(
+  leagueId: string, aiTeamId: string,
+  give: { type: 'PLAYER' | 'PICK'; id: string }[],
+  get: { type: 'PLAYER' | 'PICK'; id: string }[],
+): Promise<TradeIntelRead> {
+  const state = await buildDynastyState(leagueId);
+  if (rankOf(state.skills, 'TRADE_INTEL') === 0) {
+    return { unlocked: false, theirValue: 0, yourValue: 0, shortfall: 0 };
+  }
+  const { evaluateTrade } = await import('@/lib/trade');
+  const { parseSettings } = await import('@/lib/settings');
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  const e = await evaluateTrade({
+    aiTeamId, give: give as never, get: get as never,
+    currentYear: league.seasonYear,
+    settings: { aiAcceptsLopsided: settings.aiAcceptsLopsided },
+  });
+  return {
+    unlocked: true,
+    theirValue: Math.round(e.sendValue),
+    yourValue: Math.round(e.receiveValue),
+    shortfall: Math.max(0, Math.round(e.sendValue * e.requiredRatio - e.receiveValue)),
+  };
+}
 
 export interface InsiderResult extends DynastyActionResult {
   remaining?: number;

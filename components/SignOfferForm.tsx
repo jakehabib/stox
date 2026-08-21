@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { offerContractAction, checkCompetingBidAction } from '@/app/actions/roster';
+import { contractEstimateAction, type ContractEstimate } from '@/app/actions/dynasty';
 import { marketValue, suggestedYears, formatMoney, buildContract, capHitSchedule } from '@/lib/cap';
 import { CapMode } from '@/lib/types';
 import { MoneyInput } from './MoneyInput';
@@ -26,7 +27,16 @@ export function SignOfferForm({ leagueId, teamId, playerId, ovr, position, age, 
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [competing, setCompeting] = useState<{ teamName: string; apy: number } | null | undefined>(undefined);
+  // Dynasty NEGOTIATION -> Market Knowledge. null means the GM has not bought
+  // the skill, in which case nothing renders and this form behaves as before.
+  const [estimate, setEstimate] = useState<ContractEstimate | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    let cancelled = false;
+    contractEstimateAction(leagueId, playerId, years).then((e) => { if (!cancelled) setEstimate(e); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [leagueId, playerId, years]);
 
   // Free agency frenzy — show what the leading rival offer actually is
   // before the user commits, the way real open bidding works. undefined =
@@ -73,6 +83,18 @@ export function SignOfferForm({ leagueId, teamId, playerId, ovr, position, age, 
           {competing
             ? `${competing.teamName} is in the mix at ~${formatMoney(competing.apy)}/yr${beingOutbid ? ' — you need to beat that.' : ' — your offer currently leads.'}`
             : 'No other teams appear to be bidding on him right now.'}
+        </div>
+      )}
+
+      {/* Dynasty NEGOTIATION -> Market Knowledge. The public market estimate
+          below is priced off what you can SEE of him; this is your staff's
+          read on what he will actually put his name to. It is a band, and it
+          is not centred perfectly — the skill informs, it does not solve. */}
+      {estimate && (
+        <div className="text-xs px-3 py-2 rounded-lg border border-accent2/30 bg-accent2/10 text-accent2">
+          <span className="font-semibold">Market Knowledge:</span> our people think he signs somewhere around{' '}
+          <span className="font-mono">{formatMoney(estimate.low)}–{formatMoney(estimate.high)}</span>/yr.
+          {estimate.rank < 2 && <span className="text-muted"> Rank 2 tightens this.</span>}
         </div>
       )}
 
