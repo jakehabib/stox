@@ -1277,3 +1277,24 @@ ever force-pushed over, so every state below still exists in git history).
   And `PageMasthead` hardcoded a five-column fact strip, stranding the Depth
   Chart's sixth fact alone on a second row. Verified in a browser, not by
   reading the CSS.
+- **2026-08-21 — League Wire was showing seeded backstory instead of news
+  (`b987a5e`).** Reported as *"the league wire is just naming all the past
+  champions."* On a 2029 save the wire's 120-row window held 22 CHAMPION rows
+  and 97 award rows dated 2004-2023, and exactly one event from the save's
+  own history. Two causes, both fixed. **(1)** League creation seeds ~24
+  years of fictional franchise backstory and writes every row at creation
+  time, so `orderBy createdAt desc` ranked all of it above anything that had
+  actually happened — `createdAt` is honest about when a row was *written*
+  and silent about when the event *happened*. Both wire queries now floor on
+  `seasonYear >= current - 1`. **(2)** `wireScore` decayed staleness on
+  `currentWeek - c.week` with no reference to the year, so a title won in
+  week 21 of 2014 against a current week 5 produced a *negative* difference
+  and therefore zero decay — it held its full weight of 100 forever. Age is
+  now measured in league time. Also, per *"it doesnt always need to be
+  filled"*, the ticker no longer pads to fourteen items: it takes at most
+  four per category and renders nothing when nothing is breaking. Reaching
+  for filler is what put 2008 championships on a 2029 strip.
+  In the same pass: **Dynasty promoted to its own top-level nav category.**
+  It was a sub-tab under GM Career, so the level/XP/skill-tree system was
+  invisible to anyone who had not already clicked into that category, and it
+  was reported as missing entirely.
