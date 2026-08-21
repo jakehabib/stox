@@ -1499,3 +1499,13 @@ ever force-pushed over, so every state below still exists in git history).
   real charge: existing saves contain overcharges of roughly $9M.
   Agreement between the client meter and the server: **973,878 comparisons,
   zero disagreements**.
+- **2026-08-21 — The GM season log is the GM's, not the franchise's
+  (`a39bfa0`).** The Season Log header read the tenure count — correctly
+  bounded on the hire year — while the table beneath it queried
+  `TeamSeasonRecord` with no year floor at all. A four-season GM got a
+  header saying "4 seasons" above nine rows reaching back to 2021, i.e.
+  seeded franchise history from before he existed. Same floor as
+  `lib/gmCareer.ts` now applies to the page's own query, and the
+  synthesised "In progress" row stands down once the season has a real
+  record, so header and row count agree in all four cases checked
+  (1 / 2 / 4 / 10 seasons).
