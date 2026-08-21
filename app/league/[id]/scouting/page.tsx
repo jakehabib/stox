@@ -62,16 +62,40 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
   });
   const reportMap = new Map(reports.map((r) => [r.playerId, r as unknown as ReportRow]));
 
+  /**
+   * Depth of the deepest pass already run on this player, as a rank in the
+   * LOOK < EVAL < DEEP ordering. Nothing on ScoutingReport records the tier
+   * directly, but each tier writes fields the shallower ones never do:
+   * only DEEP closes any of the potential gap or surfaces the dev trait,
+   * and only EVAL and above lock attributes. That is enough to infer it
+   * without a schema change (the schema is being edited elsewhere right now).
+   */
+  const depthAlreadyBought = (r: ReportRow | undefined): number => {
+    if (!r) return 0;
+    if (r.devRevealed || r.potConfidence > 0) return 3;      // DEEP
+    if (readJson<string[]>(r.attrsRevealed, []).length >= 2) return 2; // EVAL
+    return r.passes > 0 ? 1 : 0;                             // LOOK
+  };
+  const TIER_DEPTH: Record<ScoutTierKey, number> = { LOOK: 1, EVAL: 2, DEEP: 3, DEVELOP: 3 };
+
   const buildOptions = (playerId: string, tiers: ScoutTierKey[]): SpendOption[] => {
     const r = reportMap.get(playerId);
     const passes = r?.passes ?? 0;
     const periodPasses = r && r.lastWeek === period ? r.periodPasses : 0;
     const atCap = periodPasses >= SCOUT_ECONOMY.MAX_PASSES_PER_PERIOD;
+    const bought = depthAlreadyBought(r);
     return tiers.map((tier) => {
       const cost = scoutCost(tier, passes);
-      const blocked = atCap
-        ? `Staff has already worked him ${periodPasses}x this period.`
-        : budget.points < cost ? `Costs ${cost} — ${budget.points} left this period.` : null;
+      // A shallower pass after a deeper one buys nothing you do not already
+      // have — a Deep Dive subsumes an Area Look — so offering it is inviting
+      // the user to waste focus. Blocked one way only: after a cheap look you
+      // can still upgrade, which is the whole point of starting cheap.
+      const redundant = TIER_DEPTH[tier] <= bought;
+      const blocked = redundant
+        ? `Already covered by a deeper report — this would tell you nothing new.`
+        : atCap
+          ? `Staff has already worked him ${periodPasses}x this period.`
+          : budget.points < cost ? `Costs ${cost} — ${budget.points} left this period.` : null;
       return { tier, label: SCOUT_TIERS[tier].label, short: SHORT[tier], cost, blocked };
     });
   };
