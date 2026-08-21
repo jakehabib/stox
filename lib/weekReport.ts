@@ -11,6 +11,10 @@ import { buildLeagueRatings, estimateGameWinChance, TeamRating } from './teamRat
 import { rankWire } from './wireRank';
 import { statScore } from './news';
 import { generateStorylines } from './storyline';
+import { careerColumns, formatColumn, isDerived } from './statLabels';
+import { buildSeasonLines, SeasonLine } from './playerSeasons';
+import { DEFENSIVE_POSITIONS, offensiveScore, defensiveScore } from './awards';
+import { resolveStartYear } from './leagueYear';
 
 /**
  * ===========================================================================
@@ -254,8 +258,61 @@ export interface TrophyLeg {
   myScore: number;
   theirScore: number;
   oppAbbr: string;
+  oppTeamId: string;
   atHome: boolean;
   won: boolean;
+}
+
+/**
+ * One man's contribution, already formatted. The numbers are the ones
+ * lib/statLabels.ts says define his position (`careerColumns`, lead columns
+ * only) so the trophy screen cannot headline a stat the player page's own
+ * table doesn't carry, or rank it differently.
+ */
+export interface TrophyPlayerLine {
+  playerId: string;
+  name: string;
+  position: string;
+  /** Portrait inputs. Null when the Player row can't be resolved — the face is then skipped, not guessed. */
+  age: number | null;
+  weightLb: number | null;
+  heightIn: number | null;
+  stats: { label: string; value: string }[];
+  /** Postseason games this line covers. Absent on the MVP, whose line is one game. */
+  games?: number;
+}
+
+/** The championship game itself — the linescore and the silhouette, both stored. */
+export interface TrophyFinal {
+  quarters: { home: number[]; away: number[] };
+  home: { teamId: string; abbr: string; score: number };
+  away: { teamId: string; abbr: string; score: number };
+  overtime: boolean;
+  /** Always from the user's point of view, win or lose. */
+  shape: GameShape | null;
+}
+
+/**
+ * What this result is worth to the franchise, counted rather than asserted.
+ *
+ * Two different clocks, never mixed: TeamSeasonRecord holds every season the
+ * club has on the books INCLUDING the two decades of backstory league
+ * creation seeds, while the GM was hired in `gmHiredIn` (lib/gmCareer.ts's
+ * rule, and the reason it exists — a title won in 2011 is the franchise's,
+ * not his). Both are printed, each under its own label.
+ */
+export interface TrophyHistory {
+  /** CHAMPION rows for this club, this season's included — the snapshot is already written when this runs. */
+  franchiseTitles: number;
+  /** The most recent title BEFORE this season, or null if there wasn't one. */
+  previousTitleYear: number | null;
+  /** How many seasons the club has on the books at all, so "first ever" can say how long a wait it was. */
+  seasonsOnRecord: number;
+  /** Titles won since the GM was hired, this one included. */
+  gmTitles: number;
+  gmHiredIn: number;
+  /** Seasons served, this one included. */
+  gmSeasons: number;
 }
 
 export interface TrophyMoment {
@@ -270,10 +327,21 @@ export interface TrophyMoment {
   roundLabel: string;
   finalScore: { mine: number; theirs: number; oppAbbr: string; oppCity: string; oppNickname: string } | null;
   road: TrophyLeg[];
+  /** True only when the bracket actually gave them one — a top-two seed with no wild card game. */
+  bye: boolean;
+  /** Postseason games won on the way here. */
+  roundsWon: number;
   record: string;
   seed: number | null;
   pointDiff: number;
-  mvp: { name: string; position: string; statLine: string } | null;
+  final: TrophyFinal | null;
+  /** The AWARD_SBMVP transaction, resolved back to a man. Champions only. */
+  mvp: TrophyPlayerLine | null;
+  /** The stat line recordSeasonAwards stored for him, verbatim. */
+  mvpAward: string | null;
+  /** Who produced across the WHOLE run, not just the last game. */
+  runLeaders: TrophyPlayerLine[];
+  history: TrophyHistory;
   /** Only for SEASON_OVER, and only when the draft order actually exists yet. */
   nextPick: string | null;
 }
@@ -837,6 +905,7 @@ export async function buildTrophyMoment(leagueId: string, seasonYear: number, ro
       round: ROUND_LABEL[g.kind] ?? g.kind,
       myScore, theirScore, atHome,
       oppAbbr: atHome ? g.awayTeam.abbr : g.homeTeam.abbr,
+      oppTeamId: atHome ? g.awayTeamId : g.homeTeamId,
       won: myScore > theirScore,
     };
   });
@@ -854,17 +923,60 @@ export async function buildTrophyMoment(leagueId: string, seasonYear: number, ro
 
   const opp = last.homeTeamId === userTeam.id ? last.awayTeam : last.homeTeam;
 
-  let mvp: TrophyMoment['mvp'] = null;
+  // A bye is a real thing the bracket handed them, not an absence: the wild
+  // card round happened and they weren't in it (createWildcardRound rests the
+  // top two seeds). Asserted only when both halves are true, so a team that
+  // simply missed the postseason can never read as having been rested.
+  const bye = playoffGames.some((g) => g.kind === 'WILDCARD') && !mine.some((g) => g.kind === 'WILDCARD');
+
+  // The last game itself — linescore and silhouette, both already stored on
+  // every played Game since the engine was built.
+  const lastBox = readJson<BoxScore | null>(last.boxScore, null);
+  const userIsHome = last.homeTeamId === userTeam.id;
+  const final: TrophyFinal | null = lastBox?.quarters
+    ? {
+      quarters: lastBox.quarters,
+      home: { teamId: last.homeTeamId, abbr: last.homeTeam.abbr, score: last.homeScore },
+      away: { teamId: last.awayTeamId, abbr: last.awayTeam.abbr, score: last.awayScore },
+      overtime: wentToOvertime(lastBox),
+      shape: computeGameShape(lastBox, userIsHome ? 'home' : 'away'),
+    }
+    : null;
+
+  let mvp: TrophyPlayerLine | null = null;
+  let mvpAward: string | null = null;
   if (wonTheFinal) {
     const award = await prisma.transaction.findFirst({
       where: { leagueId, seasonYear, type: 'AWARD_SBMVP' },
       orderBy: { createdAt: 'desc' },
     });
     if (award) {
+      // The transaction is the authority on WHO — recomputing the winner here
+      // could name a different man than the one on the wire, the history page
+      // and the GM's honours list. It carries no playerId though, so the box
+      // line it was scored from is matched back by name to recover one; a miss
+      // costs the portrait and the columns, never the name.
       const m = award.headline.match(/^(.*)\s+\(([^)]+)\)$/);
-      mvp = { name: m?.[1] ?? award.headline, position: m?.[2] ?? '', statLine: award.detail };
+      const name = m?.[1] ?? award.headline;
+      const position = m?.[2] ?? '';
+      mvpAward = award.detail || null;
+      const winnerLines = (userIsHome ? lastBox?.lines?.home : lastBox?.lines?.away) ?? [];
+      const line = winnerLines.find((l) => l.name === name);
+      mvp = {
+        ...(await portraitFor(line?.playerId ?? null)),
+        playerId: line?.playerId ?? '',
+        name,
+        position: line ? String(line.position) : position,
+        stats: line ? statCells(String(line.position), line.stats) : [],
+      };
     }
   }
+
+  // Who actually carried the run. Postseason production is its own bucket
+  // (Game.kind has always been stored), so this is the whole postseason, not
+  // the last sixty minutes of it — and it is read through the same replay the
+  // player page's year-by-year table uses rather than off a JSON column.
+  const runLeaders = await buildRunLeaders(leagueId, userTeam.id, mine);
 
   // "You pick Nth" is only printed when the draft order genuinely exists —
   // reseedDraftOrder runs later in the offseason, so on the night the season
@@ -890,10 +1002,120 @@ export async function buildTrophyMoment(leagueId: string, seasonYear: number, ro
       oppAbbr: opp.abbr, oppCity: opp.city, oppNickname: opp.nickname,
     },
     road,
+    bye,
+    roundsWon: road.filter((l) => l.won).length,
     record: recordString(userTeam),
     seed: userTeam.playoffSeed ?? null,
     pointDiff: userTeam.pointsFor - userTeam.pointsAgnst,
+    final,
     mvp,
+    mvpAward,
+    runLeaders,
+    history: await buildTrophyHistory(leagueId, userTeam.id, seasonYear),
     nextPick,
+  };
+}
+
+/**
+ * The two-to-three numbers that define a position, formatted the one way this
+ * codebase formats them. Reading the lead columns out of lib/statLabels.ts
+ * rather than listing stats here is what stops the trophy screen headlining a
+ * running back's carries when every other surface headlines his yards.
+ */
+function statCells(position: string, stats: SeasonStats): { label: string; value: string }[] {
+  return careerColumns(position)
+    .filter((c) => c.lead != null && !isDerived(c))
+    .sort((a, b) => a.lead! - b.lead!)
+    .map((c) => ({ label: c.short, value: formatColumn(c, stats) ?? '—' }))
+    .filter((c) => c.value !== '—');
+}
+
+/** Portrait inputs, or nulls when the row has gone. Never guessed. */
+async function portraitFor(playerId: string | null): Promise<{ age: number | null; weightLb: number | null; heightIn: number | null }> {
+  if (!playerId) return { age: null, weightLb: null, heightIn: null };
+  const p = await prisma.player.findUnique({ where: { id: playerId }, select: { age: true, weightLb: true, heightIn: true } });
+  return { age: p?.age ?? null, weightLb: p?.weightLb ?? null, heightIn: p?.heightIn ?? null };
+}
+
+/**
+ * The three biggest postseason contributors on the user's own roster, ranked
+ * by the SAME scorer that hands out the league's awards (lib/awards.ts) so
+ * "who carried the run" and "who won MVP" cannot be settled by two different
+ * yardsticks.
+ *
+ * The lines come from buildSeasonLines() — the box-score replay behind the
+ * player page's year-by-year table — so this is exactly the postseason bucket
+ * shown there, for the same games, and not a second opinion assembled by hand.
+ */
+async function buildRunLeaders(
+  leagueId: string,
+  teamId: string,
+  games: { seasonYear: number; week: number; kind: string; homeTeamId: string; awayTeamId: string; boxScore: string }[],
+): Promise<TrophyPlayerLine[]> {
+  const byPlayer = buildSeasonLines(games, new Map([[teamId, '']]));
+  const scored: { playerId: string; line: SeasonLine; score: number }[] = [];
+  for (const [playerId, lines] of byPlayer) {
+    for (const line of lines) {
+      if (line.teamId !== teamId || line.playoffGp === 0) continue;
+      scored.push({ playerId, line, score: 0 });
+    }
+  }
+  if (scored.length === 0) return [];
+
+  const players = await prisma.player.findMany({
+    where: { id: { in: scored.map((s) => s.playerId) } },
+    select: { id: true, firstName: true, lastName: true, position: true, age: true, weightLb: true, heightIn: true },
+  });
+  const byId = new Map(players.map((p) => [p.id, p]));
+
+  const ranked = scored
+    .map((s) => {
+      const p = byId.get(s.playerId);
+      const defensive = p ? DEFENSIVE_POSITIONS.has(p.position) : false;
+      return { ...s, p, score: defensive ? defensiveScore(s.line.playoffStats) : offensiveScore(s.line.playoffStats) };
+    })
+    .filter((s) => s.p != null && s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  return ranked.map((s) => ({
+    playerId: s.playerId,
+    name: `${s.p!.firstName} ${s.p!.lastName}`,
+    position: s.p!.position,
+    age: s.p!.age,
+    weightLb: s.p!.weightLb,
+    heightIn: s.p!.heightIn,
+    stats: statCells(s.p!.position, s.line.playoffStats),
+    games: s.line.playoffGp,
+  }));
+}
+
+/**
+ * Counted, never asserted. Every figure the moment prints about franchise
+ * history is a row in TeamSeasonRecord — the same table the Ring of Honor and
+ * the dynasty leaderboard read — and the GM's own share of it is bounded on
+ * the hire year exactly as lib/gmCareer.ts bounds everything else.
+ */
+async function buildTrophyHistory(leagueId: string, teamId: string, seasonYear: number): Promise<TrophyHistory> {
+  const league = await prisma.league.findUniqueOrThrow({
+    where: { id: leagueId },
+    select: { id: true, seasonYear: true, startYear: true },
+  });
+  const gmHiredIn = await resolveStartYear(league);
+  const records = await prisma.teamSeasonRecord.findMany({
+    where: { leagueId, teamId },
+    select: { year: true, playoffResult: true },
+    orderBy: { year: 'asc' },
+  });
+
+  const titleYears = records.filter((r) => r.playoffResult === 'CHAMPION').map((r) => r.year);
+  const before = titleYears.filter((y) => y < seasonYear);
+  return {
+    franchiseTitles: titleYears.length,
+    previousTitleYear: before.length > 0 ? Math.max(...before) : null,
+    seasonsOnRecord: records.length,
+    gmTitles: titleYears.filter((y) => y >= gmHiredIn).length,
+    gmHiredIn,
+    gmSeasons: Math.max(1, seasonYear - gmHiredIn + 1),
   };
 }

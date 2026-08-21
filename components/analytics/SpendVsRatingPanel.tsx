@@ -134,13 +134,29 @@ export function SpendVsRatingPanel({ rows, capEnabled }: { rows: UnitSpendRow[];
 
 interface Seat { x: number; y: number; sx: number; sy: number }
 
+/** Perpendicular distance from a point to a line segment. Used to keep a
+ *  label's leader line out of every other bubble. */
+function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
 function Scatter({ rows }: { rows: UnitSpendRow[] }) {
   const W = 660, H = 430, L = 56, R = 28, TOP = 30, BOT = 48;
   const pw = W - L - R, ph = H - TOP - BOT;
 
   const xlim = Math.max(2, ...rows.map((d) => Math.abs(d.shareDelta * 100))) * 1.3;
-  const ylo = Math.min(-2, ...rows.map((d) => d.ratingDelta)) - 1.2;
-  const yhi = Math.max(2, ...rows.map((d) => d.ratingDelta)) + 1.6;
+  // The y domain is padded by a share of its own range rather than a flat
+  // constant, because the marks are BUBBLES: a unit at the extreme is drawn as
+  // a disc up to ~20px across, and a flat pad let the biggest one sit on top of
+  // the quadrant caption at the foot of the plot.
+  const rawLo = Math.min(-2, ...rows.map((d) => d.ratingDelta));
+  const rawHi = Math.max(2, ...rows.map((d) => d.ratingDelta));
+  const yPad = Math.max(1.6, (rawHi - rawLo) * 0.18);
+  const ylo = rawLo - yPad;
+  const yhi = rawHi + yPad;
   const x = (v: number) => L + pw * ((v + xlim) / (2 * xlim));
   const y = (v: number) => TOP + ph - (ph * (v - ylo)) / (yhi - ylo);
   // Area, not radius, carries the weight — a unit that decides twice as much
@@ -169,6 +185,13 @@ function Scatter({ rows }: { rows: UnitSpendRow[] }) {
       // Label-on-label is the collision a reader actually notices, so it is
       // charged at twice the rate of label-on-bubble and over a wider radius.
       for (const t of taken) cost += 2 * Math.max(0, 46 - Math.hypot(lx - t.x, ly - t.y));
+      // A leader line that passes through somebody else's bubble is worse than
+      // a slightly worse seat: it makes the label read as belonging to the
+      // bubble it crosses. Charged hardest of all.
+      for (const q of pts) {
+        if (q === p) continue;
+        if (distanceToSegment(q.cx, q.cy, p.cx, p.cy, lx, ly) < q.r + 5) cost += 120;
+      }
       if (!best || cost < best.cost) best = { x: lx, y: ly, sx, sy, cost };
     }
     const seat: Seat = best ?? { x: p.cx, y: p.cy - p.r - 8, sx: 0, sy: -1 };
