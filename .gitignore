@@ -18,3 +18,7 @@ scripts/_tmp_*.ts
 scripts/_pt_tmp_*/
 .scratch_agent/
 .pt-legacy-tmp/
+
+# Agent scratch verification scripts run from the repo root (Playwright needs
+# the repo node_modules, so they cannot live in the scratchpad).
+.pwcheck.js

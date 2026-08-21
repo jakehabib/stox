@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Identity &amp; World — mockup</title>
+<style>
+  /* Real app palette — tailwind.config.ts */
+  :root{
+    --ink:#0a0a0b; --surface:#111113; --card:#18181b; --raised:#202024;
+    --line:#2d2d32; --muted:#93939c; --chalk:#f3f2ec;
+    --accent:#4ade80; --accent2:#38bdf8; --warn:#fbbf24; --bad:#f87171; --gold:#eab308;
+    --team-accent:#8b1e2e;
+  }
+  *{box-sizing:border-box}
+  html{color-scheme:dark}
+  body{
+    margin:0; background:var(--ink); color:var(--chalk);
+    font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Inter,sans-serif;
+    font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
+    /* the app's yard-line hashmarks */
+    background-image:
+      repeating-linear-gradient(to bottom, rgba(255,255,255,.028) 0px, rgba(255,255,255,.028) 1px, transparent 1px, transparent 96px),
+      radial-gradient(circle at 50% -12%, rgba(255,255,255,.05), transparent 55%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 90px}
+  h1,h2,h3{font-weight:800;letter-spacing:.01em;margin:0}
+  .display{font-weight:800;letter-spacing:-.01em;font-variant-numeric:tabular-nums;line-height:.95}
+  .label{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;
+        box-shadow:0 1px 0 0 rgba(255,255,255,.03) inset,0 6px 16px -10px rgba(0,0,0,.7)}
+  .panel{background:rgba(24,24,27,.6);border:1px solid rgba(45,45,50,.7);border-radius:6px}
+  .muted{color:var(--muted)}
+  .mono{font-variant-numeric:tabular-nums}
+
+  header.masthead{border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:34px}
+  header.masthead h1{font-size:34px;line-height:1}
+  header.masthead p{max-width:74ch;color:var(--muted);margin:10px 0 0}
+
+  section{margin:0 0 56px}
+  .sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;
+            border-bottom:1px solid rgba(45,45,50,.7);padding-bottom:8px;margin-bottom:18px;flex-wrap:wrap}
+  .sec-head h2{font-size:19px}
+  .sec-head .n{font-size:11px;font-weight:700;letter-spacing:.12em;color:var(--accent2)}
+  .note{color:var(--muted);font-size:13px;max-width:82ch;margin:0 0 18px}
+  .note b{color:var(--chalk);font-weight:600}
+  .cost{display:inline-flex;gap:6px;align-items:center;font-size:11px;font-weight:700;
+        letter-spacing:.06em;text-transform:uppercase;color:var(--accent);
+        background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.28);
+        border-radius:99px;padding:3px 10px}
+  .cost.warnish{color:var(--warn);background:rgba(251,191,36,.1);border-color:rgba(251,191,36,.28)}
+
+  /* portrait grids */
+  .pgrid{display:grid;gap:14px}
+  .pcell{background:var(--raised);border:1px solid var(--line);border-radius:8px;padding:12px;text-align:center}
+  .pcell .nm{font-weight:700;font-size:13px;margin-top:8px}
+  .pcell .meta{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:2px}
+  .pcell .pos{font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--accent2)}
+
+  .ab{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center}
+  .ab .tag{font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:700}
+  .ab .before .tag{color:var(--muted)}
+  .ab .after  .tag{color:var(--accent)}
+
+  /* roster rows */
+  table.roster{width:100%;border-collapse:separate;border-spacing:0;font-size:14px}
+  table.roster th{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
+                  font-weight:600;text-align:left;padding:8px 12px;border-bottom:1px solid var(--line)}
+  table.roster td{padding:10px 12px;border-bottom:1px solid rgba(45,45,50,.6);vertical-align:middle}
+  table.roster tr:hover td{background:rgba(32,32,36,.5)}
+  .jnum{display:inline-block;min-width:30px;text-align:right;font-variant-numeric:tabular-nums;
+        font-weight:800;color:var(--muted);font-size:13px;letter-spacing:-.02em}
+  .pname{display:flex;align-items:center;gap:10px}
+  .pname .txt strong{font-weight:700}
+  .pname .sub{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .ovr{font-weight:800;font-variant-numeric:tabular-nums;font-size:17px}
+  .ovr.t94{color:#fde047}.ovr.t88{color:#a3e635}.ovr.t82{color:#7dd3fc}.ovr.t0{color:var(--chalk)}
+  .yours{display:inline-block;width:6px;height:6px;border-radius:99px;background:var(--gold);
+         box-shadow:0 0 0 2px rgba(234,179,8,.2);vertical-align:middle}
+  .posbadge{font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--accent2)}
+
+  /* player hero */
+  .hero{display:flex;gap:22px;padding:20px;align-items:flex-start;position:relative;overflow:hidden}
+  .hero .ribbon{position:absolute;inset:0 0 auto 0;height:3px;
+    background:linear-gradient(90deg,var(--team-accent),transparent 62%)}
+  .hero .idline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted);
+                text-transform:uppercase;letter-spacing:.07em;font-weight:600}
+  .hero h3.first{font-size:15px;letter-spacing:.16em;color:var(--muted);font-weight:700;margin-top:10px}
+  .hero h3.last{font-size:44px;line-height:.92;letter-spacing:-.01em;margin-top:-2px}
+  .hero .nick{font-size:18px;color:var(--gold);font-weight:700;font-style:italic;letter-spacing:0}
+  .hero .bio{font-size:13px;color:var(--muted);margin-top:8px}
+  .hero .bio b{color:var(--chalk);font-weight:600}
+  .prov{display:inline-flex;align-items:center;gap:8px;margin-top:14px;
+        border:1px solid rgba(234,179,8,.35);background:rgba(234,179,8,.09);
+        border-radius:5px;padding:6px 11px}
+  .prov .k{font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--gold)}
+  .prov .v{font-size:12px;color:var(--chalk);font-variant-numeric:tabular-nums}
+  .prov.plain{border-color:var(--line);background:var(--raised)}
+  .prov.plain .k{color:var(--muted)}
+  .chiprow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .chip{font-size:11px;font-weight:600;border:1px solid var(--line);background:var(--raised);
+        border-radius:99px;padding:4px 10px;color:var(--chalk)}
+  .chip .ck{color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-size:10px;font-weight:700;margin-right:5px}
+
+  .timeline{display:flex;gap:0;margin-top:16px;border-top:1px solid rgba(45,45,50,.7);padding-top:12px}
+  .tl-ev{flex:1;position:relative;padding-left:12px}
+  .tl-ev:before{content:'';position:absolute;left:0;top:4px;width:7px;height:7px;border-radius:99px;
+                background:var(--line);border:1px solid var(--muted)}
+  .tl-ev.gold:before{background:var(--gold);border-color:var(--gold)}
+  .tl-ev .y{font-size:11px;font-weight:800;color:var(--muted);font-variant-numeric:tabular-nums}
+  .tl-ev .t{font-size:12px;margin-top:1px}
+
+  /* crests */
+  .crestgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:14px}
+  .crestcell{background:var(--raised);border:1px solid var(--line);border-radius:8px;padding:14px;text-align:center}
+  .crestcell .cn{font-size:12px;font-weight:700;margin-top:9px}
+  .crestcell .cs{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:2px}
+  .sizerow{display:flex;align-items:center;gap:18px;flex-wrap:wrap;background:var(--raised);
+           border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+  .sizerow .s{display:flex;flex-direction:column;align-items:center;gap:6px}
+  .sizerow .s span{font-size:10px;color:var(--muted);letter-spacing:.06em}
+
+  /* museum */
+  .banners{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;padding:20px 18px;
+           background:linear-gradient(180deg,rgba(255,255,255,.03),transparent);
+           border:1px solid var(--line);border-radius:8px}
+  .pennant{width:76px;text-align:center;filter:drop-shadow(0 6px 10px rgba(0,0,0,.55))}
+  .pennant .yr{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;color:#fff;letter-spacing:-.01em}
+  .pennant .lb{font-size:8px;letter-spacing:.14em;font-weight:700;opacity:.8;color:#fff}
+  .pennant.empty{opacity:.22}
+  .pennant.empty .yr{color:var(--muted)}
+  .era{display:flex;align-items:flex-end;gap:3px;height:82px;margin-top:6px}
+  .era i{flex:1;border-radius:2px 2px 0 0;display:block;min-width:6px}
+  .eralabels{display:flex;gap:3px;margin-top:6px}
+  .eralabels span{flex:1;font-size:9px;color:var(--muted);text-align:center;font-variant-numeric:tabular-nums}
+  .erakey{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:10px}
+  .erakey b{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .eratag{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.1em;color:var(--warn);
+          background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.25);border-radius:4px;padding:2px 8px}
+
+  .plaque{display:flex;gap:14px;align-items:center;padding:14px;background:var(--raised);
+          border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:6px}
+  .plaque .num{font-size:34px;font-weight:800;color:var(--gold);font-variant-numeric:tabular-nums;line-height:1}
+  .plaque .nm{font-weight:700}
+  .plaque .cit{font-size:12px;color:var(--muted);margin-top:2px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  @media (max-width:860px){.grid2,.grid3{grid-template-columns:1fr}.ab{grid-template-columns:1fr}}
+  .foot{border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12px}
+  code{background:var(--raised);border:1px solid var(--line);border-radius:3px;padding:1px 5px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div class="label" style="margin-bottom:8px">Design research · identity &amp; world lens</div>
+  <h1>What else makes a player a person</h1>
+  <p>Four proposals rendered against the real dark palette. Everything on this page is drawn from a
+  seed with inline SVG — no images, no fonts, no network. Reload and every face, crest and number
+  comes back identical, exactly as the app's avatars already do.
+  <b>Nothing here removes anything that is on the screen today.</b></p>
+</header>
+
+<!-- =============================================================== 1 -->
+<section>
+  <div class="sec-head">
+    <div>
+      <div class="n">PROPOSAL 1</div>
+      <h2>Portraits that carry a body and an age</h2>
+    </div>
+    <span class="cost">Small–Medium · no schema</span>
+  </div>
+  <p class="note">The avatar generator already knows the player's age but uses it only to grey his hair.
+  It never sees <code>weightLb</code>, <code>heightIn</code> or <code>position</code> — so a 330&nbsp;lb nose tackle and a
+  178&nbsp;lb kicker get the same neck, the same shoulders and the same jaw, standing next to a line of text
+  that says otherwise. <b>Crusader Kings III's portraits work because they agree with the data.</b> Below,
+  the same seeds, the same faces, with mass and age moved into the silhouette.</p>
+
+  <div class="grid2" style="margin-bottom:22px">
+    <div class="card" style="padding:16px">
+      <div class="label" style="margin-bottom:12px">Same seed, today vs. proposed</div>
+      <div id="ab-1" class="pgrid" style="grid-template-columns:1fr 1fr 1fr 1fr"></div>
+    </div>
+    <div class="card" style="padding:16px">
+      <div class="label" style="margin-bottom:12px">What changed</div>
+      <ul style="margin:0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.75">
+        <li><b style="color:var(--chalk)">Mass</b> — shoulder span, neck width, jaw width and cheek fullness scale off
+          <code>weightLb</code> against the position's own band. Reads at 20px, before a single feature resolves.</li>
+        <li><b style="color:var(--chalk)">Age</b> — hairline recession from ~30, forehead and nasolabial lines, heavier
+          lower lid, on top of the greying that already exists.</li>
+        <li><b style="color:var(--chalk)">Uniform</b> — a shoulder stripe in the club's accent, and the jersey number on
+          the chest at 72px and up.</li>
+        <li>Every existing hair style, beard, eye, brow, nose, mouth and face shape is untouched.
+          This is strictly more parameters, never fewer.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" style="padding:18px">
+    <div class="label" style="margin-bottom:14px">The range — one generator, across the roster</div>
+    <div id="range" class="pgrid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))"></div>
+  </div>
+</section>
+
+<!-- =============================================================== 2 -->
+<section>
+  <div class="sec-head">
+    <div>
+      <div class="n">PROPOSAL 2</div>
+      <h2>Jersey numbers</h2>
+    </div>
+    <span class="cost">Small–Medium · one nullable column</span>
+  </div>
+  <p class="note">A number is the cheapest identity primitive in sport, and it is how people actually
+  refer to players. Assigned by position convention (QB 1–19, OL 50–79, WR 80–89…), unique on a roster,
+  seeded from the player id. <b><code>PlayerHero.tsx</code> already accepts a <code>jersey</code> prop and renders
+  it — nothing passes one.</b> The strategic reason to do it: retired numbers are impossible without it,
+  and a franchise museum without retired numbers is a table.</p>
+
+  <div class="card" style="overflow:hidden">
+    <div style="padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+      <div class="label">Atlanta Blaze · Offense</div>
+      <div style="font-size:11px;color:var(--muted)"><span class="yours"></span> &nbsp;drafted by you</div>
+    </div>
+    <table class="roster">
+      <thead><tr><th style="width:52px">#</th><th>Player</th><th style="width:64px">Pos</th><th style="width:56px">Age</th><th style="width:64px">OVR</th><th style="width:110px">Cap hit</th></tr></thead>
+      <tbody id="rosterbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- =============================================================== 3 -->
+<section>
+  <div class="sec-head">
+    <div>
+      <div class="n">PROPOSAL 3</div>
+      <h2>“Your guy” — provenance, tenure and a hometown on his own page</h2>
+    </div>
+    <span class="cost">Small · no schema</span>
+  </div>
+  <p class="note">The database already knows you drafted him in the sixth round, that he has been here
+  four years, and what he has won. <b>His page says none of it.</b> <code>DraftPick.playerId</code> is a unique
+  column; the GM Career page lists your picks but the picks themselves don't know they're yours.
+  This is the endowment effect with the evidence filed in the wrong drawer — and it is a one-query fix.</p>
+
+  <div class="card hero" style="--team-accent:#8b1e2e">
+    <div class="ribbon"></div>
+    <div id="heroportrait"></div>
+    <div style="flex:1;min-width:0">
+      <div class="idline">
+        <span style="color:var(--accent2);font-weight:800">S</span><span>·</span>
+        <span>Age 30</span><span>·</span><span>Year 8</span><span>·</span>
+        <span id="herocrest" style="display:inline-flex;align-items:center;gap:6px"></span>
+        <span style="border:1px solid rgba(56,189,248,.4);color:var(--accent2);border-radius:99px;padding:2px 9px;font-size:10px">STARTER</span>
+      </div>
+      <h3 class="first">PAXTON <span class="nick">“The Gate”</span></h3>
+      <h3 class="last display">RAMSEY</h3>
+      <div class="bio"><b>#31</b> · 6&#39;1&quot; · 202 lb · <b>Macon, GA</b> · Ozark Central</div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <div class="prov">
+          <span class="k">YOUR PICK</span>
+          <span class="v">Round 6, #188 overall · 2023</span>
+        </div>
+        <div class="prov plain">
+          <span class="k">TENURE</span>
+          <span class="v">8th season with Atlanta · LIFER</span>
+        </div>
+      </div>
+
+      <div class="chiprow">
+        <span class="chip"><span class="ck">Character</span>Film Junkie</span>
+        <span class="chip"><span class="ck">Held</span>League record · INT, season</span>
+        <span class="chip"><span class="ck">Scouted</span>11 passes · workout 2024</span>
+        <span class="chip"><span class="ck">Developed</span>4 focus charges spent</span>
+      </div>
+
+      <div class="timeline">
+        <div class="tl-ev"><div class="y">2023</div><div class="t">Drafted R6 #188</div></div>
+        <div class="tl-ev"><div class="y">2025</div><div class="t">First start</div></div>
+        <div class="tl-ev gold"><div class="y">2027</div><div class="t">All-Pro · 9 INT</div></div>
+        <div class="tl-ev"><div class="y">2028</div><div class="t">Re-signed · 4 yr</div></div>
+        <div class="tl-ev gold"><div class="y">2030</div><div class="t">League record, INT</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid3" style="margin-top:16px">
+    <div class="panel" style="padding:14px">
+      <div class="label">Free today</div>
+      <p style="margin:8px 0 0;font-size:13px;color:var(--muted)">Provenance, round/pick, hometown, character tag,
+      scouting spend, dev charges, records held. All already in the database or derivable from the player seed.</p>
+    </div>
+    <div class="panel" style="padding:14px">
+      <div class="label" style="color:var(--warn)">Needs care</div>
+      <p style="margin:8px 0 0;font-size:13px;color:var(--muted)">Tenure. Nothing records when a player joined
+      his club. Derivable forward from the transaction ledger; unknowable for the veterans a new league
+      starts with. Show it when it's real, omit it when it isn't.</p>
+    </div>
+    <div class="panel" style="padding:14px">
+      <div class="label" style="color:var(--bad)">Costs schema</div>
+      <p style="margin:8px 0 0;font-size:13px;color:var(--muted)">The year-by-year half of the timeline.
+      <code>careerStats</code> is one merged blob with no season and no team on it. A real career table needs a
+      new <code>PlayerSeason</code> model.</p>
+    </div>
+  </div>
+</section>
+
+<!-- =============================================================== 4 -->
+<section>
+  <div class="sec-head">
+    <div>
+      <div class="n">PROPOSAL 5</div>
+      <h2>Crests that are marks, not monograms</h2>
+    </div>
+    <span class="cost warnish">Medium · no schema · mostly drawing</span>
+  </div>
+  <p class="note">Today all 32 crests are the same object — a shape, a pattern, and the abbreviation in a
+  black box. The three letters do 100% of the differentiating. Add a seeded emblem layer and make the crest
+  <b>size-responsive</b>: under 28px it renders exactly as it does today, because at 20px a mark is mud and
+  the letters are the only thing that reads. Above 40px the mark leads.</p>
+
+  <div class="sizerow" style="margin-bottom:16px">
+    <div class="s"><div id="sz20"></div><span>20px · unchanged</span></div>
+    <div class="s"><div id="sz28"></div><span>28px · unchanged</span></div>
+    <div class="s"><div id="sz44"></div><span>44px · mark leads</span></div>
+    <div class="s"><div id="sz72"></div><span>72px · mark leads</span></div>
+    <div style="flex:1;min-width:200px;color:var(--muted);font-size:13px">
+      One crest, four sizes. The small end is deliberately identical to what ships today —
+      this proposal cannot regress the table rows, because at table-row size it changes nothing.
+    </div>
+  </div>
+
+  <div id="crests" class="crestgrid"></div>
+</section>
+
+<!-- =============================================================== 5 -->
+<section>
+  <div class="sec-head">
+    <div>
+      <div class="n">PROPOSAL 4</div>
+      <h2>The Franchise Museum</h2>
+    </div>
+    <span class="cost">Medium · no schema</span>
+  </div>
+  <p class="note"><code>lib/gen/leagueHistory.ts</code> already synthesises 16–24 years of internally-consistent
+  past for all 32 clubs, with franchises that have <b>eras</b> rather than fixed personalities — dynasties
+  decay, doormats get their decade. It is audited for consistency before it is handed back. Almost none of it
+  is visible below the league level. <b>The generation is done; only the room is missing.</b></p>
+
+  <div class="card" style="padding:18px;--team-accent:#1e3a5f">
+    <div class="label" style="margin-bottom:4px">Buffalo Ironsides · founded 2006</div>
+    <h2 style="font-size:26px;margin-bottom:16px">Franchise Museum</h2>
+
+    <div class="label" style="margin-bottom:10px">Championships</div>
+    <div class="banners" style="margin-bottom:26px" id="banners"></div>
+
+    <div class="label" style="margin-bottom:2px">Twenty-four seasons</div>
+    <div class="era" id="eraStrip"></div>
+    <div class="eralabels" id="eraLabels"></div>
+    <div class="erakey">
+      <span><b style="background:#eab308"></b>Champion</span>
+      <span><b style="background:#a3e635"></b>Runner-up</span>
+      <span><b style="background:#38bdf8"></b>Playoffs</span>
+      <span><b style="background:#3f3f46"></b>Missed</span>
+      <span style="margin-left:auto"><span class="eratag">THE LEAN YEARS · 2012–2017</span></span>
+    </div>
+
+    <div class="grid2" style="margin-top:26px">
+      <div>
+        <div class="label" style="margin-bottom:10px">Retired numbers <span style="color:var(--bad)">· requires proposal 2</span></div>
+        <div style="display:flex;flex-direction:column;gap:10px" id="retired"></div>
+      </div>
+      <div>
+        <div class="label" style="margin-bottom:10px">Records on the books</div>
+        <div style="display:flex;flex-direction:column;gap:10px" id="records"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="foot">
+  Drawn with inline SVG from a seeded PRNG (FNV-1a → mulberry32) — the same “derive, never store”
+  approach <code>lib/gen/avatar.ts</code> and <code>lib/gen/teamLogo.ts</code> already use. No image files,
+  no fonts, no network requests. Colours are the app's own tokens from <code>tailwind.config.ts</code>.
+</div>
+
+</div>
+
+<script>
+/* ---------- seeded rng, matching the app's derive-never-store approach ------- */
+function hashStr(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}return h>>>0;}
+function Rng(seed){let a=hashStr(seed);
+  this.next=function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};
+  this.pick=function(arr){return arr[Math.floor(this.next()*arr.length)];};
+  this.bool=function(p){return this.next()<(p===undefined?.5:p);};
+  this.float=function(lo,hi){return lo+this.next()*(hi-lo);};
+  this.weighted=function(w){let keys=Object.keys(w),tot=0;for(const k of keys)tot+=w[k];let r=this.next()*tot;
+    for(const k of keys){r-=w[k];if(r<=0)return k;}return keys[keys.length-1];};
+}
+function shade(hex,amt){const h=hex.replace('#','');const n=parseInt(h.length===3?h.split('').map(c=>c+c).join(''):h,16);
+  const c=v=>Math.min(255,Math.max(0,v));const r=c((n>>16)+Math.round(255*amt)),g=c(((n>>8)&255)+Math.round(255*amt)),b=c((n&255)+Math.round(255*amt));
+  return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);}
+
+/* ---------- palettes lifted verbatim from the app ---------------------------- */
+const SKIN=['#ffe0bd','#ffcd94','#f1b58a','#eeb382','#c68642','#a86b3c','#8d5524','#5c3a2e'];
+const HAIR_Y=['#1c1815','#3a2a1a','#5b3a21','#7a4a25','#a8621f','#c99a3e','#8a2e1f'];
+const HAIR_O=['#6b6b6b','#9a9a9a','#c7c7c7','#e8e8e8','#3a2a1a','#1c1815'];
+const HAIRW={buzz:.20,short:.18,bald:.11,part:.10,flattop:.09,mohawk:.07,medium:.07,dreads:.06,curly:.05,long:.04,ponytail:.03};
+const FHW={stubble:.34,beard:.28,goatee:.24,mustache:.14};
+const SHAPEW={square:.42,oval:.34,round:.24};
+const EYEW={narrow:.34,sleepy:.26,round:.24,wide:.16};
+const BROWW={angled:.42,straight:.40,raised:.18};
+const NOSEW={medium:.40,wide:.38,small:.22};
+const MOUTHS=['neutral','smile','smirk','frown'];
+const PAIRS=[['#8b1e2e','#e8c766'],['#1e3a5f','#c7ced9'],['#1e5f3a','#e8c766'],['#4a1e5f','#c7ced9'],
+ ['#0f6b6b','#f2f2ea'],['#5f2e1e','#e8a94c'],['#2e2e33','#c92f3d'],['#1e2a5f','#e8a94c'],['#5f1e3a','#e8c766'],
+ ['#28331f','#c7ced9'],['#1e3a3a','#e0763a'],['#3a1e5f','#4cc9c7'],['#0d3b24','#f2c14e'],['#5c0f1a','#c7ced9'],
+ ['#0f2e5f','#f28c28'],['#3a3a1e','#e8e2c7'],['#4f0f2e','#e07a9e'],['#123b3b','#a8d8d8'],['#5f3a0f','#c7ced9'],['#1e1e2e','#4cc9c7']];
+
+/* position weight bands — mirrors BODY[] in lib/gen/players.ts closely enough to show the range */
+const BAND={QB:[215,245],RB:[195,225],WR:[175,205],TE:[240,265],LT:[300,330],C:[295,320],
+            EDGE:[250,275],DT:[300,340],LB:[230,250],CB:[180,200],S:[195,215],K:[180,200],P:[195,215]};
+
+/* ---------- avatar params: today's generator + mass/age additions ------------ */
+function avatarParams(seed,age,weightLb,position){
+  const rng=new Rng('avatar-'+seed);
+  const graying=age>=33&&rng.bool(Math.min(.75,(age-30)*.06));
+  const hairColor=graying?rng.pick(HAIR_O):rng.pick(HAIR_Y);
+  const fhChance=age<24?.55:age<29?.72:age<34?.85:.9;
+  const hairStyle=rng.weighted(HAIRW);
+  const flowing=hairStyle==='long'||hairStyle==='ponytail';
+  const facialHair=(flowing||rng.bool(fhChance))?rng.weighted(FHW):'none';
+  const p={skinTone:rng.pick(SKIN),hairStyle:hairStyle,hairColor:hairColor,
+    faceShape:rng.weighted(SHAPEW),eyeStyle:rng.weighted(EYEW),eyebrowStyle:rng.weighted(BROWW),
+    noseStyle:rng.weighted(NOSEW),mouthStyle:rng.pick(MOUTHS),facialHair:facialHair};
+  /* --- NEW --- */
+  const band=BAND[position]||[200,240];
+  const inBand=(weightLb-band[0])/Math.max(1,(band[1]-band[0]));      // where he sits for his position
+  const abs=(weightLb-170)/(345-170);                                  // absolute bulk
+  p.mass=Math.max(0,Math.min(1,.30*Math.max(0,Math.min(1,inBand))+.70*Math.max(0,Math.min(1,abs))));
+  p.age=age;
+  p.recede=Math.max(0,Math.min(1,(age-28)/13))*(rng.bool(.55)?1:.25);
+  return p;
+}
+
+const SHAPES={square:{sw:30,jw:19,cheekY:58,chinY:84,topY:20},
+              oval:{sw:29,jw:15,cheekY:60,chinY:83,topY:19},
+              round:{sw:30,jw:17,cheekY:57,chinY:81,topY:21}};
+
+function avatarSvg(seed,opts){
+  const o=opts||{};
+  const size=o.size||96, age=o.age||26, teamColor=o.teamColor||'#3a4356';
+  const legacy=!!o.legacy;
+  const p=avatarParams(seed,age,o.weightLb||225,o.position||'QB');
+  const m=legacy?0:p.mass;
+  const sk=p.skinTone, sh=shade(sk,-.16), dp=shade(sk,-.3);
+  const uid=(seed+(legacy?'L':'N')).replace(/[^a-zA-Z0-9]/g,'').slice(-12);
+  const S=SHAPES[p.faceShape];
+  const sw=S.sw*(1+.055*m), jw=S.jw*(1+.32*m), cy=S.cheekY, chy=S.chinY, ty=S.topY;
+  const nw=16*(1+.42*m);                       // neck half-width
+  const ox=8-8*m;                              // shoulder outer x
+  const sy=84-11*m;                            // shoulder top y
+  const ex=14;                                 // eye offset from centre
+  const showLines=!legacy&&age>=31, showFeet=!legacy&&age>=30, showFold=!legacy&&age>=33;
+
+  const head=`M${(60-sw).toFixed(1)} ${ty+20} Q${(60-sw).toFixed(1)} ${ty} 60 ${ty} Q${(60+sw).toFixed(1)} ${ty} ${(60+sw).toFixed(1)} ${ty+20} L${(60+sw).toFixed(1)} ${cy} Q${(60+sw).toFixed(1)} ${chy-5} ${(60+jw).toFixed(1)} ${chy} L${(60-jw).toFixed(1)} ${chy} Q${(60-sw).toFixed(1)} ${chy-5} ${(60-sw).toFixed(1)} ${cy} Z`;
+
+  let s='';
+  s+=`<svg viewBox="0 0 120 120" width="${size}" height="${size}" role="img" aria-label="Player portrait">`;
+  s+=`<defs><clipPath id="c${uid}"><rect x="0" y="0" width="120" height="120" rx="14"/></clipPath>`;
+  s+=`<linearGradient id="bg${uid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${shade(teamColor,.12)}"/><stop offset="100%" stop-color="${shade(teamColor,-.42)}"/></linearGradient>`;
+  s+=`<linearGradient id="jr${uid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${shade(teamColor,.06)}"/><stop offset="100%" stop-color="${shade(teamColor,-.24)}"/></linearGradient></defs>`;
+  s+=`<g clip-path="url(#c${uid})">`;
+  s+=`<rect width="120" height="120" fill="url(#bg${uid})"/>`;
+  s+=`<ellipse cx="60" cy="124" rx="62" ry="26" fill="#000" opacity=".22"/>`;
+  /* bust */
+  s+=`<path d="M${ox.toFixed(1)} 120 Q${(ox+2).toFixed(1)} ${(sy+8).toFixed(1)} ${(ox+20).toFixed(1)} ${sy.toFixed(1)} L${(60-nw).toFixed(1)} ${(sy-4).toFixed(1)} Q60 ${(sy+7).toFixed(1)} ${(60+nw).toFixed(1)} ${(sy-4).toFixed(1)} L${(100-ox).toFixed(1)} ${sy.toFixed(1)} Q${(118-ox).toFixed(1)} ${(sy+8).toFixed(1)} ${(120-ox).toFixed(1)} 120 Z" fill="url(#jr${uid})"/>`;
+  s+=`<path d="M${(ox+20).toFixed(1)} ${sy.toFixed(1)} Q60 ${(sy+14).toFixed(1)} ${(100-ox).toFixed(1)} ${sy.toFixed(1)}" stroke="${shade(teamColor,-.4)}" stroke-width="1.5" fill="none" opacity=".7"/>`;
+  if(!legacy&&o.accent){ /* shoulder stripe — uniform identity */
+    s+=`<path d="M${(ox+2).toFixed(1)} ${(sy+15).toFixed(1)} Q60 ${(sy+29).toFixed(1)} ${(118-ox).toFixed(1)} ${(sy+15).toFixed(1)} L${(118-ox).toFixed(1)} ${(sy+21).toFixed(1)} Q60 ${(sy+35).toFixed(1)} ${(ox+2).toFixed(1)} ${(sy+21).toFixed(1)} Z" fill="${o.accent}" opacity=".85"/>`;
+  }
+  s+=`<path d="M${(60-nw).toFixed(1)} ${(sy-4).toFixed(1)} Q60 ${(sy+7).toFixed(1)} ${(60+nw).toFixed(1)} ${(sy-4).toFixed(1)} L${(60+nw-5).toFixed(1)} ${(sy-8).toFixed(1)} Q60 ${(sy-2).toFixed(1)} ${(60-nw+5).toFixed(1)} ${(sy-8).toFixed(1)} Z" fill="${shade(teamColor,-.42)}"/>`;
+  /* jersey number on the chest */
+  if(!legacy&&o.jersey&&size>=72){
+    s+=`<text x="60" y="118" text-anchor="middle" font-size="17" font-weight="800" fill="#fff" opacity=".92" font-family="ui-sans-serif,system-ui,sans-serif" style="font-variant-numeric:tabular-nums">${o.jersey}</text>`;
+  }
+  if(p.hairStyle==='long') s+=`<path d="M27 36 Q19 56 23 72 L37 70 Q31 54 34 36 Q60 24 86 36 Q89 54 83 70 L97 72 Q101 56 93 36 Q60 20 27 36 Z" fill="${p.hairColor}"/>`;
+  /* ears */
+  s+=`<ellipse cx="${(60-sw+2).toFixed(1)}" cy="52" rx="5.5" ry="8.5" fill="${sk}" stroke="${dp}" stroke-width=".8"/>`;
+  s+=`<ellipse cx="${(60+sw-2).toFixed(1)}" cy="52" rx="5.5" ry="8.5" fill="${sk}" stroke="${dp}" stroke-width=".8"/>`;
+  /* neck */
+  s+=`<path d="M${(60-nw).toFixed(1)} 64 L${(60-nw).toFixed(1)} 86 Q60 94 ${(60+nw).toFixed(1)} 86 L${(60+nw).toFixed(1)} 64 Z" fill="${sh}"/>`;
+  s+=`<path d="M${(60-nw).toFixed(1)} 64 L${(60-nw).toFixed(1)} 74 Q60 84 ${(60+nw).toFixed(1)} 74 L${(60+nw).toFixed(1)} 64 Z" fill="${dp}" opacity=".55"/>`;
+  /* head */
+  s+=`<path d="${head}" fill="${sk}" stroke="${dp}" stroke-width=".8"/>`;
+  /* cheek / jaw shading, shaped to mass */
+  s+=`<path d="M${(60-sw+1).toFixed(1)} ${cy-3} Q${(60-sw+3).toFixed(1)} ${chy-6} 60 ${chy-1} Q58 ${chy-9} 54 ${chy-15} Q${(60-sw+8).toFixed(1)} ${cy+5} ${(60-sw+1).toFixed(1)} ${cy-3} Z" fill="${sh}" opacity=".34"/>`;
+  s+=`<path d="M${(60+sw-1).toFixed(1)} ${cy-3} Q${(60+sw-3).toFixed(1)} ${chy-6} 60 ${chy-1} Q62 ${chy-9} 66 ${chy-15} Q${(60+sw-8).toFixed(1)} ${cy+5} ${(60+sw-1).toFixed(1)} ${cy-3} Z" fill="${sh}" opacity=".34"/>`;
+  if(m>.62) s+=`<path d="M${(60-jw+2).toFixed(1)} ${chy-4} Q60 ${chy+3} ${(60+jw-2).toFixed(1)} ${chy-4}" stroke="${dp}" stroke-width="2" fill="none" opacity=".3" stroke-linecap="round"/>`;
+  s+=`<path d="M45 ${chy-8} Q60 ${chy-1} 75 ${chy-8}" stroke="${dp}" stroke-width="1.4" fill="none" opacity=".28" stroke-linecap="round"/>`;
+  /* facial hair */
+  s+=facialHair(p.facialHair,p.hairColor,sw,jw,cy,chy);
+  /* mouth */
+  s+=mouth(p.mouthStyle);
+  /* nose */
+  s+=nose(p.noseStyle,sh,dp);
+  /* ageing: nasolabial folds */
+  if(showFold){s+=`<path d="M55 62 Q52 69 51.5 74" stroke="${dp}" stroke-width="1.2" fill="none" opacity=".3" stroke-linecap="round"/>
+    <path d="M65 62 Q68 69 68.5 74" stroke="${dp}" stroke-width="1.2" fill="none" opacity=".3" stroke-linecap="round"/>`;}
+  /* brow ridge */
+  s+=`<path d="M36 45.5 Q47 40 60 41 Q73 40 84 45.5 L82 49.5 Q60 43.5 38 49.5 Z" fill="${sh}" opacity=".22"/>`;
+  s+=eyes(p.eyeStyle,ex);
+  /* ageing: crow's feet */
+  if(showFeet){
+    const o1=(age>=34)?.34:.2;
+    s+=`<g stroke="${dp}" stroke-width="1" opacity="${o1}" stroke-linecap="round" fill="none">
+      <path d="M${60-ex-7} 49.5 L${60-ex-11} 47.5"/><path d="M${60-ex-7} 51.5 L${60-ex-11.5} 51.5"/><path d="M${60-ex-7} 53.5 L${60-ex-11} 55.5"/>
+      <path d="M${60+ex+7} 49.5 L${60+ex+11} 47.5"/><path d="M${60+ex+7} 51.5 L${60+ex+11.5} 51.5"/><path d="M${60+ex+7} 53.5 L${60+ex+11} 55.5"/></g>`;
+  }
+  s+=brows(p.eyebrowStyle,p.hairColor,ex);
+  /* ageing: forehead lines */
+  if(showLines){
+    const o2=(age>=35)?.3:.18;
+    s+=`<g stroke="${dp}" stroke-width="1.1" opacity="${o2}" fill="none" stroke-linecap="round">
+      <path d="M44 34 Q60 31 76 34"/><path d="M46 39 Q60 36.5 74 39"/></g>`;
+  }
+  s+=hairTop(p.hairStyle,p.hairColor,legacy?0:p.recede,sk);
+  s+=`</g></svg>`;
+  return s;
+}
+
+function hairTop(style,color,recede,skin){
+  const hi=shade(color,.16); let g='';
+  switch(style){
+    case 'bald': g=`<ellipse cx="52" cy="30" rx="13" ry="7" fill="#fff" opacity=".1"/>`;break;
+    case 'buzz': g=`<path d="M30 32 Q60 12 90 32 Q90 20 60 17 Q30 20 30 32 Z" fill="${color}"/><path d="M40 24 Q60 16 80 24 Q60 19 40 24 Z" fill="${hi}" opacity=".5"/>`;break;
+    case 'short':g=`<path d="M29 38 Q60 8 91 38 Q91 20 60 15 Q29 20 29 38 Z" fill="${color}"/><path d="M40 25 Q60 17 80 25 Q60 20 40 25 Z" fill="${hi}" opacity=".45"/>`;break;
+    case 'part': g=`<path d="M29 38 Q47 10 92 34 Q85 18 58 15 Q31 19 29 38 Z" fill="${color}"/><path d="M46 22 Q64 18 80 26 Q62 19 46 22 Z" fill="${hi}" opacity=".45"/>`;break;
+    case 'medium':g=`<path d="M27 52 Q22 12 60 13 Q98 12 93 52 Q89 26 60 24 Q31 26 27 52 Z" fill="${color}"/><path d="M42 24 Q60 18 78 24 Q60 20 42 24 Z" fill="${hi}" opacity=".4"/>`;break;
+    case 'curly':g=`<g fill="${color}"><circle cx="36" cy="32" r="10"/><circle cx="49" cy="20" r="11"/><circle cx="64" cy="16" r="11"/><circle cx="79" cy="21" r="11"/><circle cx="90" cy="33" r="10"/><circle cx="60" cy="29" r="13"/><circle cx="54" cy="20" r="4" fill="${hi}" opacity=".45"/></g>`;break;
+    case 'mohawk':g=`<path d="M51 38 Q47 12 60 8 Q73 12 69 38 Q60 31 51 38 Z" fill="${color}"/><path d="M58 14 Q62 14 62 30 Q60 26 58 30 Z" fill="${hi}" opacity=".5"/>`;break;
+    case 'long':g=`<path d="M27 56 Q20 10 60 11 Q100 10 93 56 Q90 24 60 22 Q30 24 27 56 Z" fill="${color}"/><path d="M42 24 Q60 18 78 24 Q60 20 42 24 Z" fill="${hi}" opacity=".4"/>`;break;
+    case 'ponytail':g=`<path d="M30 34 Q60 10 90 34 Q90 18 60 14 Q30 18 30 34 Z" fill="${color}"/><path d="M83 24 Q98 28 96 48 Q95 60 89 68 L84 62 Q90 53 89 42 Q88 31 81 26 Z" fill="${color}"/>`;break;
+    case 'flattop':g=`<path d="M30 34 L30 17 Q60 8 90 17 L90 34 Q60 26 30 34 Z" fill="${color}"/><path d="M36 18 Q60 12 84 18 Q60 15 36 18 Z" fill="${hi}" opacity=".45"/>`;break;
+    case 'dreads':g=`<g fill="${color}"><path d="M29 36 Q60 8 91 36 Q91 20 60 16 Q29 20 29 36 Z"/>`+
+      [33,42,51,60,69,78,87].map((x,i)=>`<rect x="${x-3}" y="28" width="6" height="${i%2===0?30:24}" rx="3"/>`).join('')+`</g>`;break;
+  }
+  /* NEW: hairline recession — temple wedges in skin tone over the hair front */
+  if(recede>.06&&style!=='bald'&&style!=='mohawk'){
+    const d=6+recede*11, o=Math.min(1,recede*1.25);
+    g+=`<g fill="${skin}" opacity="${o.toFixed(2)}">
+      <path d="M30 ${18+d} Q34 ${14} 47 ${13} Q38 ${18} 34 ${22+d} Z"/>
+      <path d="M90 ${18+d} Q86 ${14} 73 ${13} Q82 ${18} 86 ${22+d} Z"/></g>`;
+  }
+  return g;
+}
+function eyes(style,ex){
+  const eye=cx=>{
+    if(style==='narrow')return `<g><path d="M${cx-6.3} 51 Q${cx} 47 ${cx+6.3} 51 Q${cx} 53.3 ${cx-6.3} 51 Z" fill="#fdfdfd"/><circle cx="${cx}" cy="50.6" r="2.3" fill="#2a2118"/><path d="M${cx-6.3} 51 Q${cx} 47 ${cx+6.3} 51" stroke="#241f1a" stroke-width="1.7" fill="none" stroke-linecap="round"/></g>`;
+    if(style==='wide')return `<g><ellipse cx="${cx}" cy="51" rx="6.2" ry="4.6" fill="#fdfdfd"/><circle cx="${cx}" cy="51" r="3" fill="#2a2118"/><circle cx="${cx+1}" cy="49.7" r=".95" fill="#fff" opacity=".85"/><path d="M${cx-6.2} 50.6 Q${cx} 45.2 ${cx+6.2} 50.6" stroke="#241f1a" stroke-width="1.9" fill="none" stroke-linecap="round"/></g>`;
+    if(style==='sleepy')return `<g><path d="M${cx-5.8} 51.3 Q${cx} 48.3 ${cx+5.8} 51.3 Q${cx} 54 ${cx-5.8} 51.3 Z" fill="#fdfdfd"/><circle cx="${cx}" cy="51.2" r="2.2" fill="#2a2118"/><path d="M${cx-6.3} 50.8 Q${cx} 48.3 ${cx+6.3} 50.8" stroke="#241f1a" stroke-width="2.3" fill="none" stroke-linecap="round"/></g>`;
+    return `<g><ellipse cx="${cx}" cy="51" rx="5.7" ry="4" fill="#fdfdfd"/><circle cx="${cx}" cy="51" r="2.6" fill="#2a2118"/><circle cx="${cx+.9}" cy="49.9" r=".85" fill="#fff" opacity=".8"/><path d="M${cx-5.9} 50.4 Q${cx} 46.2 ${cx+5.9} 50.4" stroke="#241f1a" stroke-width="1.8" fill="none" stroke-linecap="round"/></g>`;
+  };
+  return eye(60-ex)+eye(60+ex);
+}
+function brows(style,color,ex){
+  const b=(cx,mir)=>{const f=mir?-1:1;
+    if(style==='angled')return `<path d="M${cx-9} 44 L${cx+9} 41" stroke="${color}" stroke-width="3.6" stroke-linecap="round" transform="rotate(${7*f} ${cx} 42.5)"/>`;
+    if(style==='raised')return `<path d="M${cx-9} 44 Q${cx} 39 ${cx+9} 44" stroke="${color}" stroke-width="3.6" fill="none" stroke-linecap="round"/>`;
+    return `<path d="M${cx-9} 43 Q${cx} 41.5 ${cx+9} 43" stroke="${color}" stroke-width="3.6" fill="none" stroke-linecap="round"/>`;};
+  return b(60-ex,true)+b(60+ex,false);
+}
+function nose(style,sh,dp){
+  if(style==='small')return `<g><path d="M58 55 Q60 61 63 62" stroke="${sh}" stroke-width="2" fill="none" stroke-linecap="round"/><ellipse cx="60" cy="63" rx="3.6" ry="1.5" fill="${dp}" opacity=".5"/></g>`;
+  if(style==='wide')return `<g><path d="M55 54 Q53 62 60 65 Q67 62 65 54 Z" fill="${sh}" opacity=".8"/><ellipse cx="55.5" cy="63.5" rx="2.4" ry="1.5" fill="${dp}" opacity=".6"/><ellipse cx="64.5" cy="63.5" rx="2.4" ry="1.5" fill="${dp}" opacity=".6"/></g>`;
+  return `<g><path d="M57.5 54 Q56 62 60 64.5 Q64 62 62.5 54 Z" fill="${sh}" opacity=".72"/><ellipse cx="57" cy="63" rx="2" ry="1.3" fill="${dp}" opacity=".55"/><ellipse cx="63" cy="63" rx="2" ry="1.3" fill="${dp}" opacity=".55"/></g>`;
+}
+function mouth(style){
+  if(style==='smile')return `<g><path d="M49 70 Q60 79 71 70 Q60 74 49 70 Z" fill="#5e2b2b"/><path d="M51 70.8 Q60 73.5 69 70.8 Q60 72 51 70.8 Z" fill="#fff" opacity=".75"/></g>`;
+  if(style==='smirk')return `<path d="M49 71.5 Q59 75 70 68.5" stroke="#5e2b2b" stroke-width="2.6" fill="none" stroke-linecap="round"/>`;
+  if(style==='frown')return `<path d="M49 74 Q60 67 71 74" stroke="#5e2b2b" stroke-width="2.6" fill="none" stroke-linecap="round"/>`;
+  return `<path d="M50 71 Q60 72.4 70 71" stroke="#5e2b2b" stroke-width="2.6" fill="none" stroke-linecap="round"/>`;
+}
+function facialHair(style,color,sw,jw,cy,chy){
+  const L=60-sw+1,R=60+sw-1;
+  if(style==='stubble')return `<path d="M${L} ${cy-3} Q${L-1} ${chy-6} 60 ${chy} Q${R+1} ${chy-6} ${R} ${cy-3} Q${R} ${chy-13} ${60+jw-2} ${chy-6} Q60 ${chy-1} ${60-jw+2} ${chy-6} Q${L} ${chy-13} ${L} ${cy-3} Z" fill="${color}" opacity=".3"/>`;
+  if(style==='mustache')return `<path d="M49 66.5 Q54 63.5 60 66 Q66 63.5 71 66.5 Q60 70 49 66.5 Z" fill="${color}" opacity=".92"/>`;
+  if(style==='goatee')return `<g fill="${color}" opacity=".92"><path d="M49 66.5 Q54 63.5 60 66 Q66 63.5 71 66.5 Q60 70 49 66.5 Z"/><path d="M53 75 Q60 88 67 75 Q60 80 53 75 Z"/></g>`;
+  if(style==='beard')return `<g><path d="M${L-1} ${cy-6} Q${L-2} ${chy-4} 60 ${chy+2} Q${R+2} ${chy-4} ${R+1} ${cy-6} Q${R+1} ${chy-11} ${60+jw-1} ${chy-3} Q60 ${chy+2} ${60-jw+1} ${chy-3} Q${L-1} ${chy-11} ${L-1} ${cy-6} Z" fill="${color}" opacity=".93"/><path d="M49 66.5 Q54 63.5 60 66 Q66 63.5 71 66.5 Q60 70 49 66.5 Z" fill="${color}"/></g>`;
+  return '';
+}
+
+/* ---------- crests: today's shapes/patterns + a seeded emblem layer ---------- */
+const SHAPE_PATH={shield:'M50 4 L90 16 L90 48 Q90 82 50 96 Q10 82 10 48 L10 16 Z',
+ circle:'M50 4 A46 46 0 1 1 49.99 4 Z',hexagon:'M50 3 L92 26 L92 74 L50 97 L8 74 L8 26 Z',diamond:'M50 2 L96 50 L50 98 L4 50 Z'};
+const SHAPES_L=['shield','circle','hexagon','diamond'];
+const PATTERNS=['plain','stripe','chevron','split','ring'];
+const EMBLEMS={
+ bolt:'M57 16 L33 50 L47 50 L41 76 L67 40 L52 40 Z',
+ star:'M50 14 L58 38 L83 38 L63 53 L70 77 L50 62 L30 77 L37 53 L17 38 L42 38 Z',
+ arrow:'M50 13 L76 46 L62 46 L62 76 L38 76 L38 46 L24 46 Z',
+ wing:'M18 40 Q42 26 54 20 Q46 34 44 40 Q60 33 78 26 Q64 44 52 50 Q66 48 82 44 Q60 66 34 70 Q22 58 18 40 Z',
+ horns:'M20 30 Q30 58 50 62 Q70 58 80 30 Q74 44 62 50 Q56 34 50 30 Q44 34 38 50 Q26 44 20 30 Z',
+ anchor:'M46 24 h8 v10 h12 v7 h-12 v22 q10 -2 15 -12 l7 4 q-9 18 -26 20 q-17 -2 -26 -20 l7 -4 q5 10 15 12 v-22 h-12 v-7 h12 z',
+ flame:'M50 12 Q60 30 58 40 Q66 36 66 28 Q78 44 72 58 Q66 74 50 76 Q34 74 28 58 Q22 44 34 28 Q34 36 42 40 Q40 30 50 12 Z',
+ keystone:'M32 20 H68 L82 74 H18 Z',
+ pick:'M18 66 L62 22 L70 30 L26 74 Z M56 16 Q74 12 84 26 Q70 22 62 30 Z',
+ wave:'M14 44 Q26 30 38 44 Q50 58 62 44 Q74 30 86 44 L86 58 Q74 44 62 58 Q50 72 38 58 Q26 44 14 58 Z',
+ gear:'M50 20 a30 30 0 1 1 -.01 0 Z',
+ prow:'M50 12 L74 42 Q62 40 58 46 L58 78 L42 78 L42 46 Q38 40 26 42 Z'
+};
+const EMBLEM_KEYS=Object.keys(EMBLEMS);
+function crestParams(seed){const r=new Rng('logo-'+seed);const pr=r.pick(PAIRS);
+  return{primary:pr[0],accent:pr[1],shape:r.pick(SHAPES_L),pattern:r.pick(PATTERNS),emblem:r.pick(EMBLEM_KEYS)};}
+function pattern(p,c){
+  if(p==='stripe')return `<rect x="0" y="38" width="100" height="20" fill="${c}" opacity=".85"/>`;
+  if(p==='chevron')return `<path d="M0 70 L50 50 L100 70 L100 90 L50 70 L0 90 Z" fill="${c}" opacity=".85"/>`;
+  if(p==='split')return `<path d="M50 0 L100 0 L100 100 L50 100 Z" fill="${c}" opacity=".28"/>`;
+  if(p==='ring')return `<circle cx="50" cy="50" r="30" fill="none" stroke="${c}" stroke-width="7" opacity=".8"/>`;
+  return '';
+}
+function crestSvg(seed,abbr,size,forceLegacy){
+  const p=crestParams(seed), path=SHAPE_PATH[p.shape], uid=(seed+size).replace(/[^a-zA-Z0-9]/g,'');
+  const big=!forceLegacy&&size>=40;
+  let s=`<svg viewBox="0 0 100 100" width="${size}" height="${size}" role="img" aria-label="${abbr} crest">`;
+  s+=`<defs><clipPath id="lc${uid}"><path d="${path}"/></clipPath></defs>`;
+  s+=`<path d="${path}" fill="${p.primary}" stroke="rgba(0,0,0,.25)" stroke-width="1.5"/>`;
+  s+=`<g clip-path="url(#lc${uid})">${pattern(p.pattern,p.accent)}`;
+  if(big){
+    /* emblem sits in a safe area the patterns respect, lifted above the banner */
+    s+=`<g transform="translate(50,42) scale(.78) translate(-50,-42)">`;
+    if(p.emblem==='gear'){
+      s+=`<g fill="${p.accent}"><circle cx="50" cy="42" r="26"/>`;
+      for(let i=0;i<8;i++){s+=`<rect x="46" y="6" width="8" height="12" rx="2" transform="rotate(${i*45} 50 42)"/>`;}
+      s+=`</g><circle cx="50" cy="42" r="11" fill="${p.primary}"/>`;
+    } else {
+      s+=`<path d="${EMBLEMS[p.emblem]}" fill="${p.accent}" transform="translate(0,-4)"/>`;
+      s+=`<path d="${EMBLEMS[p.emblem]}" fill="#000" opacity=".18" transform="translate(0,-1)"/>`;
+      s+=`<path d="${EMBLEMS[p.emblem]}" fill="${p.accent}" transform="translate(0,-4)"/>`;
+    }
+    s+=`</g>`;
+  }
+  s+=`</g>`;
+  s+=`<path d="${path}" fill="none" stroke="${p.accent}" stroke-width="2" opacity=".55"/>`;
+  if(big){
+    s+=`<rect x="14" y="72" width="72" height="17" rx="3" fill="rgba(0,0,0,.55)"/>`;
+    s+=`<text x="50" y="85" text-anchor="middle" font-size="13" font-weight="800" fill="#f4f6fa" letter-spacing="1.6" font-family="ui-sans-serif,system-ui,sans-serif">${abbr.slice(0,4).toUpperCase()}</text>`;
+  } else {
+    s+=`<rect x="${50-abbr.length*8.5}" y="42" width="${abbr.length*17}" height="20" rx="4" fill="rgba(0,0,0,.38)"/>`;
+    s+=`<text x="50" y="57" text-anchor="middle" font-size="${abbr.length>3?15:18}" font-weight="800" fill="#f4f6fa" letter-spacing=".5" font-family="ui-sans-serif,system-ui,sans-serif">${abbr.slice(0,4).toUpperCase()}</text>`;
+  }
+  return s+`</svg>`;
+}
+
+/* ---------- jersey numbers: position-legal pools, unique on a roster --------- */
+const POOLS={QB:[[1,19]],RB:[[20,49]],FB:[[40,49]],WR:[[10,19],[80,89]],TE:[[40,49],[80,89]],
+ LT:[[50,79]],LG:[[50,79]],C:[[50,79]],RG:[[50,79]],RT:[[50,79]],
+ EDGE:[[50,59],[90,99]],DT:[[60,79],[90,99]],LB:[[40,59],[90,99]],CB:[[20,39]],S:[[20,39],[1,19]],K:[[1,19]],P:[[1,19]]};
+function expand(pos){const out=[];for(const [a,b] of (POOLS[pos]||[[1,99]]))for(let n=a;n<=b;n++)out.push(n);return out;}
+function assignNumbers(roster){
+  const taken=new Set();
+  return roster.map(p=>{
+    const pool=expand(p.pos), r=new Rng('jersey-'+p.seed);
+    const start=Math.floor(r.next()*pool.length);
+    for(let i=0;i<pool.length;i++){const n=pool[(start+i)%pool.length];
+      if(!taken.has(n)){taken.add(n);return Object.assign({},p,{num:n});}}
+    return Object.assign({},p,{num:0});
+  });
+}
+
+/* ===================== render =============================================== */
+const TEAM='#8b1e2e', TEAM_ACC='#e8c766';
+
+/* --- 1a. before / after pairs --- */
+(function(){
+  const cases=[
+    {seed:'plr-dt-9921',name:'Kwame Uzoma',pos:'DT',age:27,w:334,h:'6\'4"'},
+    {seed:'plr-k-4412', name:'Beau Fenwick', pos:'K', age:24,w:181,h:'5\'11"'},
+    {seed:'plr-c-7781',  name:'Silas Braddock',pos:'C', age:33,w:312,h:'6\'3"'},
+    {seed:'plr-wr-2213',name:'Amari Northcutt',pos:'WR',age:36,w:186,h:'6\'0"'}
+  ];
+  const host=document.getElementById('ab-1');
+  host.innerHTML=cases.map(c=>`
+    <div class="pcell" style="padding:10px">
+      <div class="ab">
+        <div class="before">
+          ${avatarSvg(c.seed,{size:64,age:c.age,weightLb:c.w,position:c.pos,teamColor:TEAM,legacy:true})}
+          <div class="tag">today</div>
+        </div>
+        <div class="after">
+          ${avatarSvg(c.seed,{size:64,age:c.age,weightLb:c.w,position:c.pos,teamColor:TEAM,accent:TEAM_ACC})}
+          <div class="tag">proposed</div>
+        </div>
+      </div>
+      <div class="nm">${c.name}</div>
+      <div class="pos">${c.pos}</div>
+      <div class="meta">${c.age} yrs · ${c.h} · ${c.w} lb</div>
+    </div>`).join('');
+})();
+
+/* --- 1b. the range --- */
+(function(){
+  const cast=[
+    {seed:'rng-a1',name:'Trey Vandermark',pos:'WR',age:22,w:178,h:'5\'11"',num:87},
+    {seed:'rng-b2',name:'Kyler Sackett',   pos:'QB',age:26,w:228,h:'6\'3"', num:9},
+    {seed:'rng-c3',name:'Rashad Hollis',   pos:'CB',age:24,w:191,h:'6\'0"', num:24},
+    {seed:'rng-d4',name:'Micah Trabert',   pos:'LB',age:29,w:246,h:'6\'2"', num:52},
+    {seed:'rng-e5',name:'Judah Peppergrass',pos:'EDGE',age:31,w:268,h:'6\'5"',num:91},
+    {seed:'rng-f6',name:'Lorenzo Massenburg',pos:'LT',age:28,w:318,h:'6\'6"',num:74},
+    {seed:'rng-g7',name:'Priest Okafor',   pos:'DT',age:25,w:339,h:'6\'4"', num:96},
+    {seed:'rng-h8',name:'Wes Hargrove',    pos:'C', age:34,w:305,h:'6\'3"', num:61},
+    {seed:'rng-i9',name:'Dax Loudermilk',  pos:'TE',age:33,w:255,h:'6\'5"', num:85},
+    {seed:'rng-j0',name:'Bo Winterburn',   pos:'P', age:37,w:203,h:'6\'2"', num:6},
+    {seed:'rng-k1',name:'Zion Ravenscroft',pos:'S', age:30,w:207,h:'6\'1"', num:31},
+    {seed:'rng-l2',name:'Emmett Colquitt', pos:'RB',age:23,w:214,h:'5\'10"',num:28}
+  ];
+  document.getElementById('range').innerHTML=cast.map(c=>`
+    <div class="pcell">
+      ${avatarSvg(c.seed,{size:96,age:c.age,weightLb:c.w,position:c.pos,teamColor:TEAM,accent:TEAM_ACC,jersey:c.num})}
+      <div class="nm">${c.name}</div>
+      <div class="pos">#${c.num} · ${c.pos}</div>
+      <div class="meta">${c.age} yrs · ${c.h} · ${c.w} lb</div>
+    </div>`).join('');
+})();
+
+/* --- 2. roster rows --- */
+(function(){
+  let roster=[
+    {seed:'r-01',first:'Ibrahim',last:'Tillman',pos:'QB',age:25,ovr:65,w:224,cap:'$1.30M',mine:true, sub:'2,451 YDS · 16 TD · 9 INT',start:true},
+    {seed:'r-02',first:'Rider',  last:'Malveaux',pos:'RB',age:25,ovr:75,w:216,cap:'$3.44M',mine:false,sub:'331 YDS · 0 TD · 59 ATT'},
+    {seed:'r-03',first:'Soren',  last:'Dalrymple',pos:'RB',age:27,ovr:73,w:228,cap:'$2.66M',mine:true, sub:'188 YDS · 2 TD · 41 ATT'},
+    {seed:'r-04',first:'Amari',  last:'Northcutt',pos:'WR',age:29,ovr:88,w:189,cap:'$18.2M',mine:false,sub:'914 YDS · 7 TD · 61 REC',start:true},
+    {seed:'r-05',first:'Nico',   last:'Delacroix',pos:'WR',age:23,ovr:82,w:197,cap:'$2.11M',mine:true, sub:'602 YDS · 4 TD · 44 REC'},
+    {seed:'r-06',first:'Dax',    last:'Loudermilk',pos:'TE',age:33,ovr:79,w:255,cap:'$7.05M',mine:false,sub:'410 YDS · 3 TD · 38 REC'},
+    {seed:'r-07',first:'Lorenzo',last:'Massenburg',pos:'LT',age:28,ovr:94,w:318,cap:'$21.9M',mine:false,sub:'16 GP · 1 sack allowed',start:true},
+    {seed:'r-08',first:'Wes',    last:'Hargrove', pos:'C', age:34,ovr:81,w:305,cap:'$9.40M',mine:true, sub:'16 GP · 3 sacks allowed'},
+    {seed:'r-09',first:'Cyrus',  last:'Fontenot', pos:'RG',age:26,ovr:76,w:311,cap:'$4.20M',mine:true, sub:'14 GP'}
+  ];
+  roster=assignNumbers(roster.map(p=>Object.assign({},p,{pos:p.pos})));
+  const tier=o=>o>=94?'t94':o>=88?'t88':o>=80?'t82':'t0';
+  document.getElementById('rosterbody').innerHTML=roster.map(p=>`
+    <tr>
+      <td><span class="jnum">#${p.num}</span></td>
+      <td>
+        <div class="pname">
+          ${avatarSvg(p.seed,{size:34,age:p.age,weightLb:p.w,position:p.pos,teamColor:TEAM,accent:TEAM_ACC})}
+          <div class="txt">
+            <div><strong>${p.first} ${p.last}</strong>
+              ${p.mine?'<span class="yours" title="you drafted him"></span>':''}
+              ${p.start?'<span style="font-size:10px;color:var(--muted);letter-spacing:.1em;margin-left:6px">STARTER</span>':''}
+            </div>
+            <div class="sub">${p.sub}</div>
+          </div>
+        </div>
+      </td>
+      <td><span class="posbadge">${p.pos}</span></td>
+      <td class="mono">${p.age}</td>
+      <td><span class="ovr ${tier(p.ovr)}">${p.ovr}</span></td>
+      <td class="mono muted">${p.cap}</td>
+    </tr>`).join('');
+})();
+
+/* --- 3. hero --- */
+document.getElementById('heroportrait').innerHTML=
+  avatarSvg('plr-ramsey-31',{size:128,age:30,weightLb:202,position:'S',teamColor:TEAM,accent:TEAM_ACC,jersey:31});
+document.getElementById('herocrest').innerHTML=
+  crestSvg('team-atl',' ATL',20,true)+'<span>ATLANTA BLAZE</span>';
+
+/* --- 4. crests --- */
+(function(){
+  const teams=[['team-buf','BUF','Buffalo Ironsides'],['team-kcr','KCR','Kansas City Riverboats'],
+   ['team-den','DEN','Denver Summit'],['team-phi','PHI','Philadelphia Bells'],
+   ['team-nsh','NSH','Nashville Ramblers'],['team-sea','SEA','Seattle Mariners Bay'],
+   ['team-chi','CHI','Chicago Ironwolves'],['team-mia','MIA','Miami Watermen'],
+   ['team-las','LAS','Las Vegas Prospectors'],['team-pit','PIT','Pittsburgh Forgers'],
+   ['team-min','MIN','Minneapolis Norsemen'],['team-jax','JAX','Jacksonville Coilers']];
+  document.getElementById('crests').innerHTML=teams.map(t=>{
+    const p=crestParams(t[0]);
+    return `<div class="crestcell">${crestSvg(t[0],t[1],72)}<div class="cn">${t[2]}</div><div class="cs">${p.emblem} · ${p.shape}</div></div>`;
+  }).join('');
+  document.getElementById('sz20').innerHTML=crestSvg('team-buf','BUF',20);
+  document.getElementById('sz28').innerHTML=crestSvg('team-buf','BUF',28);
+  document.getElementById('sz44').innerHTML=crestSvg('team-buf','BUF',44);
+  document.getElementById('sz72').innerHTML=crestSvg('team-buf','BUF',72);
+})();
+
+/* --- 5. museum --- */
+(function(){
+  const P='#1e3a5f',A='#c7ced9';
+  const titles=[2009,2019,2023];
+  const pen=(yr,empty)=>`
+    <div class="pennant${empty?' empty':''}">
+      <svg viewBox="0 0 76 104" width="76" height="104">
+        <defs><linearGradient id="pg${yr}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${empty?'#26262b':shade(P,.14)}"/><stop offset="100%" stop-color="${empty?'#1a1a1e':shade(P,-.25)}"/>
+        </linearGradient></defs>
+        <path d="M4 2 H72 V82 L38 100 L4 82 Z" fill="url(#pg${yr})" stroke="${empty?'#2d2d32':A}" stroke-width="2"/>
+        <path d="M4 2 H72 V13 H4 Z" fill="${empty?'#2d2d32':A}" opacity="${empty?'.5':'.9'}"/>
+        <text x="38" y="47" text-anchor="middle" font-size="19" font-weight="800" fill="${empty?'#4a4a52':'#fff'}" font-family="ui-sans-serif,system-ui,sans-serif">${empty?'—':yr}</text>
+        <text x="38" y="64" text-anchor="middle" font-size="7.5" letter-spacing="1.6" font-weight="700" fill="${empty?'#4a4a52':'#fff'}" opacity=".85" font-family="ui-sans-serif,system-ui,sans-serif">${empty?'':'CHAMPIONS'}</text>
+      </svg>
+    </div>`;
+  document.getElementById('banners').innerHTML=
+    titles.map(y=>pen(y,false)).join('')+[0,1,2,3].map(i=>pen('e'+i,true)).join('')+
+    `<div style="align-self:center;color:var(--muted);font-size:12px;max-width:200px;padding-left:8px">
+       Three banners and a lot of empty wall. The same three facts in a table row ask you for nothing.</div>`;
+
+  /* 24 seeded seasons */
+  const r=new Rng('buffalo-history');
+  const start=2007, years=[];
+  for(let i=0;i<24;i++){
+    const y=start+i, w=Math.round(r.float(3,14));
+    let res='MISSED';
+    if(titles.indexOf(y)>=0)res='CHAMPION'; else if(w>=12&&r.bool(.35))res='RUNNER_UP'; else if(w>=9)res='PLAYOFFS';
+    years.push({y:y,w:titles.indexOf(y)>=0?Math.max(w,12):w,res:res});
+  }
+  const col={CHAMPION:'#eab308',RUNNER_UP:'#a3e635',PLAYOFFS:'#38bdf8',MISSED:'#3f3f46'};
+  document.getElementById('eraStrip').innerHTML=years.map(s=>
+    `<i style="height:${Math.round(18+(s.w/17)*64)}%;background:${col[s.res]}" title="${s.y} · ${s.w}-${17-s.w} · ${s.res}"></i>`).join('');
+  document.getElementById('eraLabels').innerHTML=years.map((s,i)=>
+    `<span>${i%4===0?("'"+String(s.y).slice(2)):''}</span>`).join('');
+
+  document.getElementById('retired').innerHTML=[
+    {n:12,nm:'Corey Rutherford',c:'QB · 2008–2019 · 2 titles, 2011 MVP',seed:'ret-12',age:37,w:227,pos:'QB'},
+    {n:58,nm:'Tobias Whitfield',c:'LB · 2006–2016 · career sacks record',seed:'ret-58',age:35,w:249,pos:'LB'}
+  ].map(x=>`<div class="plaque">
+      ${avatarSvg(x.seed,{size:56,age:x.age,weightLb:x.w,position:x.pos,teamColor:P,accent:A})}
+      <div class="num">${x.n}</div>
+      <div><div class="nm">${x.nm}</div><div class="cit">${x.c}</div></div>
+    </div>`).join('');
+
+  document.getElementById('records').innerHTML=[
+    {nm:'Tobias Whitfield',c:'Career sacks · 104 · league record',seed:'ret-58',age:35,w:249,pos:'LB'},
+    {nm:'Quinton Ashford', c:'Season rec. yds · 1,904 · 2021',seed:'rec-2',age:28,w:194,pos:'WR'}
+  ].map(x=>`<div class="plaque" style="border-left-color:var(--accent2)">
+      ${avatarSvg(x.seed,{size:56,age:x.age,weightLb:x.w,position:x.pos,teamColor:P,accent:A})}
+      <div><div class="nm">${x.nm}</div><div class="cit">${x.c}</div></div>
+    </div>`).join('');
+})();
+</script>
+</body>
+</html>

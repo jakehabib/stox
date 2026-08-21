@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moments &amp; Motion — mockup</title>
+<style>
+  /* ------------------------------------------------------------------
+     Palette lifted verbatim from tailwind.config.ts. Nothing invented.
+     Display face falls back to a condensed system stack because this
+     page makes zero external requests (the app itself uses Barlow
+     Condensed via next/font).
+     ------------------------------------------------------------------ */
+  :root{
+    --ink:#0a0a0b; --card:#18181b; --raised:#202024; --line:#2d2d32;
+    --muted:#93939c; --chalk:#f3f2ec; --accent:#4ade80; --accent2:#38bdf8;
+    --warn:#fbbf24; --bad:#f87171;
+    --team-accent:#e0464a;                       /* Atlanta Blaze */
+    --display:'Barlow Condensed','Oswald','Arial Narrow','Helvetica Neue Condensed',
+              'Helvetica Neue',Arial,sans-serif;
+    --body:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{color-scheme:dark}
+  body{
+    background:var(--ink); color:var(--chalk);
+    font-family:var(--body); font-size:14px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      repeating-linear-gradient(to bottom, rgba(255,255,255,.028) 0, rgba(255,255,255,.028) 1px, transparent 1px, transparent 96px),
+      radial-gradient(circle at 50% -12%, rgba(255,255,255,.05), transparent 55%);
+    background-attachment:fixed;
+    padding:0 0 96px;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+  .text-team{color:color-mix(in srgb,var(--team-accent) 60%, white 40%)}
+
+  .stat{font-family:var(--display);font-weight:800;font-variant-numeric:tabular-nums;
+        letter-spacing:-.01em;line-height:.95}
+  .label{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600}
+  .panel{background:color-mix(in srgb,var(--card) 60%, transparent);border:1px solid color-mix(in srgb,var(--line) 70%, transparent);border-radius:6px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        box-shadow:0 1px 0 0 rgba(255,255,255,.03) inset,0 6px 16px -10px rgba(0,0,0,.7)}
+  .mono{font-family:var(--mono)}
+
+  /* ---- page furniture ---- */
+  header.top{border-bottom:1px solid var(--line);padding:34px 0 26px;margin-bottom:38px;
+    background:linear-gradient(180deg, rgba(224,70,74,.05), transparent)}
+  h1{font-family:var(--display);font-weight:800;text-transform:uppercase;letter-spacing:.02em;
+     font-size:40px;line-height:.95}
+  header.top p{color:var(--muted);max-width:74ch;margin-top:12px}
+  header.top .kicker{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent2);font-weight:700;margin-bottom:8px}
+
+  section{margin:0 0 64px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent);
+    padding-bottom:9px;margin-bottom:20px;flex-wrap:wrap}
+  .sec-num{font-family:var(--display);font-weight:800;font-size:13px;color:var(--ink);
+    background:var(--accent);border-radius:3px;padding:2px 8px;letter-spacing:.04em}
+  .sec-title{font-family:var(--display);font-weight:800;text-transform:uppercase;letter-spacing:.03em;font-size:22px}
+  .sec-note{color:var(--muted);font-size:13px;margin-left:auto}
+  .caption{color:var(--muted);font-size:13px;max-width:88ch;margin:14px 0 22px}
+  .caption b{color:var(--chalk);font-weight:600}
+
+  /* ---- crest ---- */
+  .crest{flex:none;display:block}
+
+  /* =========================================================
+     1. WEEK REPORT
+     ========================================================= */
+  .stage{background:rgba(0,0,0,.55);border:1px solid var(--line);border-radius:12px;padding:26px;
+    background-image:radial-gradient(circle at 50% 0%, rgba(224,70,74,.10), transparent 62%)}
+  .stage-tag{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+  .report{max-width:900px;margin:0 auto}
+
+  .rep-head{display:flex;align-items:center;justify-content:space-between;gap:16px;
+    padding-bottom:14px;border-bottom:1px solid var(--line)}
+  .rep-head .wk{font-family:var(--display);font-weight:800;text-transform:uppercase;
+    letter-spacing:.04em;font-size:20px}
+  .rep-head .yr{color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
+
+  .scoreline{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:20px;padding:26px 4px 20px}
+  .side{display:flex;align-items:center;gap:14px}
+  .side.away{justify-content:flex-start}
+  .side.home{justify-content:flex-end;flex-direction:row-reverse}
+  .side .nm{font-family:var(--display);font-weight:700;text-transform:uppercase;letter-spacing:.02em;font-size:17px;line-height:1.05}
+  .side .rec{color:var(--muted);font-size:12px;font-family:var(--mono)}
+  .side .sc{font-size:62px}
+  .winner .sc{color:color-mix(in srgb,var(--team-accent) 62%, white 38%)}
+  .loser .sc{color:var(--muted)}
+  .verdict{text-align:center;min-width:130px}
+  .verdict .arch{font-family:var(--display);font-weight:800;text-transform:uppercase;
+    letter-spacing:.13em;font-size:13px;color:var(--warn)}
+  .verdict .marg{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:5px}
+  .upset{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.14em;
+    background:var(--warn);color:#1a1200;border-radius:3px;padding:2px 7px;margin-top:8px}
+
+  .shapebox{padding:6px 4px 0}
+  .shapelegend{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);
+    font-family:var(--mono);margin-top:4px;padding:0 18px}
+  .recapline{font-size:15px;color:#dcdbd4;border-left:2px solid var(--team-accent);
+    padding:2px 0 2px 14px;margin:18px 4px 4px}
+
+  .bands{display:grid;grid-template-columns:1.15fr 1fr;gap:14px;margin-top:22px}
+  .band{padding:14px 16px}
+  .band h4{font-family:var(--display);font-weight:800;text-transform:uppercase;
+    letter-spacing:.08em;font-size:12px;color:var(--muted);margin-bottom:11px}
+  .kv{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:5px 0;
+    border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent);font-size:13px}
+  .kv:last-child{border-bottom:0}
+  .kv .k{color:var(--muted)}
+  .kv .v{font-family:var(--mono);font-size:13px}
+  .up{color:var(--accent)} .down{color:var(--bad)}
+  .clinchline{margin-top:11px;background:rgba(74,222,128,.10);border:1px solid rgba(74,222,128,.32);
+    border-radius:5px;padding:9px 12px;font-family:var(--display);font-weight:700;
+    text-transform:uppercase;letter-spacing:.05em;font-size:13px;color:var(--accent)}
+
+  .ball{display:flex;align-items:center;gap:12px}
+  .avatar{width:44px;height:44px;border-radius:50%;flex:none;border:1px solid var(--line)}
+  .ball .nm{font-family:var(--display);font-weight:700;font-size:17px;letter-spacing:.01em}
+  .ball .ln{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:2px}
+  .posbadge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.08em;
+    border-radius:3px;padding:1px 5px;vertical-align:2px;margin-left:6px}
+  .pos-qb{background:rgba(56,189,248,.16);color:#7dd3fc;border:1px solid rgba(56,189,248,.35)}
+  .pos-rb{background:rgba(74,222,128,.14);color:#86efac;border:1px solid rgba(74,222,128,.32)}
+  .pos-wr{background:rgba(251,191,36,.14);color:#fcd34d;border:1px solid rgba(251,191,36,.32)}
+  .ballnote{margin-top:10px;font-size:12px;color:var(--muted)}
+  .ballnote em{color:var(--warn);font-style:normal;font-weight:600}
+
+  .roomrow{display:flex;gap:9px;align-items:flex-start;padding:6px 0;font-size:13px;
+    border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
+  .roomrow:last-child{border-bottom:0}
+  .dot{width:6px;height:6px;border-radius:50%;margin-top:7px;flex:none}
+  .roomrow .sub{color:var(--muted);font-size:12px}
+
+  .nextup{display:flex;align-items:center;gap:13px;margin-top:14px;padding:13px 16px}
+  .nextup .lab{font-family:var(--display);font-weight:800;text-transform:uppercase;
+    letter-spacing:.1em;font-size:11px;color:var(--muted)}
+  .wp{margin-left:auto;font-family:var(--mono);font-size:12px;background:var(--raised);
+    border:1px solid var(--line);border-radius:99px;padding:3px 10px}
+  .stakes{color:var(--warn);font-size:12px;font-weight:600}
+
+  .repfoot{display:flex;align-items:center;gap:14px;margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
+  .btn{font-family:var(--body);font-weight:700;font-size:13px;border-radius:6px;padding:9px 18px;border:0;cursor:default}
+  .btn-primary{background:var(--accent);color:var(--ink)}
+  .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--line);padding:9px 14px}
+  .repfoot .hint{margin-left:auto;color:var(--muted);font-size:12px}
+
+  /* =========================================================
+     2. GAME SHAPE GRID
+     ========================================================= */
+  .shapegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:14px}
+  .shapecard{padding:15px 16px}
+  .shapecard .arch2{font-family:var(--display);font-weight:800;text-transform:uppercase;
+    letter-spacing:.13em;font-size:11px;margin-bottom:9px}
+  .shapecard .sl{display:flex;align-items:baseline;justify-content:space-between;
+    font-family:var(--display);font-weight:700;font-size:15px;text-transform:uppercase;letter-spacing:.02em}
+  .shapecard .sl .n{font-size:21px;font-variant-numeric:tabular-nums}
+  .shapecard .dim{color:var(--muted)}
+  .shapecard .meta{display:flex;justify-content:space-between;font-family:var(--mono);
+    font-size:11px;color:var(--muted);margin-top:9px;padding-top:8px;
+    border-top:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
+
+  /* =========================================================
+     3. RESULT WEIGHT — before / after
+     ========================================================= */
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+  @media(max-width:900px){.ba{grid-template-columns:1fr}.bands{grid-template-columns:1fr}}
+  .ba h3{font-family:var(--display);font-weight:800;text-transform:uppercase;letter-spacing:.1em;
+    font-size:12px;color:var(--muted);margin-bottom:10px}
+  .ba h3 span{color:var(--bad)}
+  .ba h3 span.ok{color:var(--accent)}
+  .schedrow{display:grid;grid-template-columns:44px 22px 1fr auto;align-items:center;gap:10px;
+    padding:9px 12px;border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
+  .schedrow:last-child{border-bottom:0}
+  .schedrow .wk2{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .schedrow .va{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .schedrow .opp{font-family:var(--display);font-weight:700;font-size:15px;letter-spacing:.01em;
+    display:flex;align-items:center;gap:8px}
+  .schedrow .res{display:flex;align-items:center;gap:9px;justify-content:flex-end}
+  .wl{font-family:var(--display);font-weight:800;font-size:12px}
+  .wl.w{color:var(--accent)} .wl.l{color:var(--bad)}
+  .plain{font-family:var(--display);font-weight:800;font-size:17px;font-variant-numeric:tabular-nums}
+
+  /* the "after" treatment */
+  .row2{position:relative;padding-left:14px}
+  .row2::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:transparent}
+  .row2.blowout-w::before{background:var(--accent)}
+  .row2.blowout-l::before{background:var(--bad)}
+  .sc2{font-family:var(--display);font-weight:800;font-variant-numeric:tabular-nums;font-size:19px}
+  .sc2 .lose{color:var(--muted);font-weight:700}
+  .sc2.tight{font-size:21px;border-bottom:2px solid var(--team-accent);padding-bottom:1px}
+  .marg{font-family:var(--mono);font-size:11px;color:var(--muted);min-width:34px;text-align:right}
+  .kick{font-size:9px;font-weight:800;letter-spacing:.13em;border-radius:2px;padding:1px 5px}
+  .kick-upset{background:var(--warn);color:#1a1200}
+  .kick-ot{background:var(--accent2);color:#04202e}
+
+  /* =========================================================
+     4. TROPHY
+     ========================================================= */
+  .trophy{position:relative;overflow:hidden;border-radius:12px;border:1px solid #3a2226;
+    background:#0b0708;padding:52px 40px 40px;text-align:center;
+    background-image:
+      radial-gradient(ellipse 70% 55% at 50% -8%, rgba(224,70,74,.30), transparent 70%),
+      repeating-linear-gradient(to bottom, rgba(255,255,255,.02) 0, rgba(255,255,255,.02) 1px, transparent 1px, transparent 84px)}
+  .lights{position:absolute;inset:0;pointer-events:none;
+    background:
+      radial-gradient(circle 90px at 16% 6%, rgba(255,255,255,.09), transparent 70%),
+      radial-gradient(circle 90px at 84% 6%, rgba(255,255,255,.09), transparent 70%)}
+  .trophy .wm{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);opacity:.07;pointer-events:none}
+  .trophy .inner{position:relative}
+  .trophy .yr2{font-family:var(--mono);font-size:12px;letter-spacing:.34em;color:var(--muted);text-transform:uppercase}
+  .trophy .champ{font-family:var(--display);font-weight:800;text-transform:uppercase;
+    font-size:74px;line-height:.9;letter-spacing:.02em;margin:8px 0 2px;
+    color:color-mix(in srgb,var(--team-accent) 60%, white 40%)}
+  .trophy .team{font-family:var(--display);font-weight:700;text-transform:uppercase;
+    letter-spacing:.3em;font-size:15px;color:var(--chalk);margin-bottom:26px}
+  .trophy .final{font-family:var(--display);font-weight:800;font-size:27px;font-variant-numeric:tabular-nums}
+  .trophy .final .op{color:var(--muted);font-size:15px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+  .road{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:26px 0 22px}
+  .road .leg{background:rgba(255,255,255,.045);border:1px solid #33262a;border-radius:5px;
+    padding:8px 14px;min-width:112px}
+  .road .rd{font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  .road .sc3{font-family:var(--display);font-weight:800;font-size:17px;font-variant-numeric:tabular-nums;margin-top:2px}
+  .road .op2{font-family:var(--mono);font-size:10px;color:var(--muted)}
+  .trophy .strip{display:flex;gap:34px;justify-content:center;flex-wrap:wrap;
+    border-top:1px solid #33262a;padding-top:20px;margin-top:6px}
+  .trophy .strip div{text-align:center}
+  .trophy .strip .k2{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700}
+  .trophy .strip .v2{font-family:var(--display);font-weight:800;font-size:22px;margin-top:3px}
+  .trophy .btnrow{margin-top:28px}
+
+  .foot{border-top:1px solid var(--line);margin-top:20px;padding-top:22px;color:var(--muted);font-size:13px}
+  .foot ul{margin:10px 0 0 18px} .foot li{margin:4px 0}
+  .foot code{font-family:var(--mono);font-size:12px;color:#cfcec7}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="kicker">Design research · lens: moments &amp; motion</div>
+    <h1>The drama is already in the data</h1>
+    <p>Four proposals, rendered against the app's real palette. Nothing here removes an avatar,
+       a logo, a colour or a row. Every number below is derived from something the database
+       already stores — the box score's <span class="mono">drives[]</span> array, the final scores,
+       the clinch math, the recap text. It is all currently computed and then thrown away at
+       the render boundary.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<!-- ============================================================ 1 -->
+<section>
+  <div class="sec-head">
+    <span class="sec-num">01</span>
+    <span class="sec-title">The Week Report</span>
+    <span class="sec-note">Replaces the 7-second toast · Tier 1 · fires on every Advance</span>
+  </div>
+  <p class="caption">
+    Today, pressing <b>Advance ▸</b> returns the string <span class="mono">"Week 8 complete: 16 games played."</span>
+    in a 320&nbsp;px card that disappears after seven seconds. <b>Your own score is not in it.</b>
+    This is what that moment could be instead: your result at broadcast scale, what it changed,
+    one game ball, the room, and what's next. Dismissible with Escape, a click outside, or any
+    navigation — never a mandatory click.
+  </p>
+
+  <div class="stage">
+    <div class="stage-tag">
+      <span class="label">Rendered over whatever page you were on</span>
+      <span class="label" style="color:var(--accent2)">Week 9 · 2030</span>
+    </div>
+
+    <div class="report card" style="padding:24px 26px">
+
+      <div class="rep-head">
+        <span class="wk">Week 9 <span style="color:var(--muted);font-weight:600">is in the books</span></span>
+        <span class="yr">2030 · Regular Season</span>
+      </div>
+
+      <!-- band 1: the result -->
+      <div class="scoreline">
+        <div class="side away winner">
+          <svg class="crest" width="52" height="52" viewBox="0 0 52 52" aria-hidden="true">
+            <path d="M26 2 L50 26 L26 50 L2 26 Z" fill="#2a1214" stroke="#e0464a" stroke-width="2.5"/>
+            <text x="26" y="31" text-anchor="middle" font-family="Arial Narrow,Arial" font-size="13"
+                  font-weight="bold" fill="#f0a6a8" letter-spacing="1">ATL</text>
+          </svg>
+          <div>
+            <div class="nm text-team">Atlanta Blaze</div>
+            <div class="rec">4-5 · was 3-5</div>
+          </div>
+          <div class="sc stat">27</div>
+        </div>
+
+        <div class="verdict">
+          <div class="arch">Comeback</div>
+          <div class="marg">from 14 down · won by 3</div>
+          <div><span class="upset">UPSET · 17% TO WIN</span></div>
+        </div>
+
+        <div class="side home loser">
+          <svg class="crest" width="52" height="52" viewBox="0 0 52 52" aria-hidden="true">
+            <circle cx="26" cy="26" r="23" fill="#151a2b" stroke="#4c5a86" stroke-width="2.5"/>
+            <text x="26" y="31" text-anchor="middle" font-family="Arial Narrow,Arial" font-size="12"
+                  font-weight="bold" fill="#9fb0d8" letter-spacing="1">LAS</text>
+          </svg>
+          <div style="text-align:right">
+            <div class="nm" style="color:var(--muted)">Las Vegas Prospectors</div>
+            <div class="rec">3-6</div>
+          </div>
+          <div class="sc stat">24</div>
+        </div>
+      </div>
+
+      <!-- the shape -->
+      <div class="shapebox">
+        <svg width="100%" viewBox="0 0 560 120" preserveAspectRatio="none" style="display:block;height:120px" aria-label="Score differential across 22 drives: Atlanta trailed by 14 at half and led by 3 at the end.">
+          <defs>
+            <clipPath id="above"><rect x="0" y="0" width="560" height="60"/></clipPath>
+            <clipPath id="below"><rect x="0" y="60" width="560" height="60"/></clipPath>
+          </defs>
+          <!-- quarter rules -->
+          <line x1="156" y1="8" x2="156" y2="112" stroke="#2d2d32" stroke-width="1"/>
+          <line x1="292" y1="8" x2="292" y2="112" stroke="#3a3a41" stroke-width="1.5" stroke-dasharray="3 3"/>
+          <line x1="428" y1="8" x2="428" y2="112" stroke="#2d2d32" stroke-width="1"/>
+          <!-- area -->
+          <polygon clip-path="url(#above)" fill="rgba(224,70,74,.22)"
+            points="20,60 20,60 44.8,60 69.5,74 94.3,74 119,74 143.8,80 168.6,80 193.3,66 218.1,66 242.8,80 267.6,88 292.4,88 317.1,88 341.9,74 366.6,74 391.4,74 416.2,68 440.9,68 465.7,54 490.4,54 515.2,54 540,54 540,60"/>
+          <polygon clip-path="url(#below)" fill="rgba(147,147,156,.15)"
+            points="20,60 20,60 44.8,60 69.5,74 94.3,74 119,74 143.8,80 168.6,80 193.3,66 218.1,66 242.8,80 267.6,88 292.4,88 317.1,88 341.9,74 366.6,74 391.4,74 416.2,68 440.9,68 465.7,54 490.4,54 515.2,54 540,54 540,60"/>
+          <!-- zero line -->
+          <line x1="14" y1="60" x2="546" y2="60" stroke="#4a4a52" stroke-width="1"/>
+          <!-- path -->
+          <polyline fill="none" stroke="#e0464a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"
+            points="20,60 44.8,60 69.5,74 94.3,74 119,74 143.8,80 168.6,80 193.3,66 218.1,66 242.8,80 267.6,88 292.4,88 317.1,88 341.9,74 366.6,74 391.4,74 416.2,68 440.9,68 465.7,54 490.4,54 515.2,54 540,54"/>
+          <!-- deepest point + go-ahead -->
+          <circle cx="292.4" cy="88" r="3.5" fill="#f87171"/>
+          <circle cx="465.7" cy="54" r="4" fill="#4ade80"/>
+          <text x="292.4" y="104" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#93939c">-14</text>
+          <text x="465.7" y="44" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#4ade80">GO-AHEAD</text>
+        </svg>
+        <div class="shapelegend"><span>Q1</span><span>Q2</span><span>HALF</span><span>Q3</span><span>Q4</span></div>
+      </div>
+
+      <p class="recapline">
+        “The Prospectors had their chances. The Blaze had one more, and won it 27-24.”
+        <span style="color:var(--muted);font-size:13px">— already generated by <span class="mono">lib/sim/recap.ts</span>, never shown at the moment it lands</span>
+      </p>
+
+      <!-- bands 2 + 3 -->
+      <div class="bands">
+        <div class="band panel">
+          <h4>What it changed</h4>
+          <div class="kv"><span class="k">Record</span><span class="v">3-5 → <b class="up">4-5</b></span></div>
+          <div class="kv"><span class="k">NFC South</span><span class="v">4th → <b class="up">3rd ▲1</b></span></div>
+          <div class="kv"><span class="k">Playoff position</span><span class="v">11th → <b class="up">9th</b> · 2.0 GB</span></div>
+          <div class="kv"><span class="k">Point differential</span><span class="v"><span class="down">-64</span></span></div>
+          <div class="kv"><span class="k">Streak</span><span class="v">L4 → <b class="up">W1</b></span></div>
+          <div class="clinchline">Still alive — 8 games to play</div>
+        </div>
+
+        <div class="band panel">
+          <h4>Game ball</h4>
+          <div class="ball">
+            <svg class="avatar" viewBox="0 0 44 44" aria-hidden="true">
+              <circle cx="22" cy="22" r="22" fill="#25242a"/>
+              <circle cx="22" cy="16" r="7.5" fill="#6b5c50"/>
+              <path d="M6 44c1.5-9 8-13 16-13s14.5 4 16 13z" fill="#3d4a63"/>
+            </svg>
+            <div>
+              <div class="nm">Paxton Ramsey<span class="posbadge pos-qb">QB</span></div>
+              <div class="ln">24/33 · 288 yd · 3 TD · 0 INT</div>
+            </div>
+          </div>
+          <p class="ballnote">
+            Third of his career. <em>112 yards from 3,000 this season.</em>
+          </p>
+          <h4 style="margin-top:16px">The room</h4>
+          <div class="roomrow"><span class="dot" style="background:var(--bad)"></span>
+            <div><b>Nolan Rutkowski (LT)</b> — high ankle sprain, out 3 weeks<div class="sub">Your only starter-grade tackle</div></div></div>
+          <div class="roomrow"><span class="dot" style="background:var(--accent2)"></span>
+            <div>Philadelphia 7-2, clinch a bye with two more wins<div class="sub">League Wire</div></div></div>
+          <div class="roomrow"><span class="dot" style="background:var(--muted)"></span>
+            <span>9 other injury reports across the league</span></div>
+        </div>
+      </div>
+
+      <div class="nextup panel">
+        <span class="lab">Next up</span>
+        <svg class="crest" width="26" height="26" viewBox="0 0 52 52" aria-hidden="true">
+          <circle cx="26" cy="26" r="23" fill="#1b2418" stroke="#7ba05b" stroke-width="3"/>
+          <text x="26" y="31" text-anchor="middle" font-family="Arial Narrow,Arial" font-size="12"
+                font-weight="bold" fill="#b8d49a">DAL</text>
+        </svg>
+        <div>
+          <div style="font-family:var(--display);font-weight:700;font-size:15px">vs Dallas Wildcatters <span style="color:var(--muted);font-weight:600">5-4</span></div>
+          <div class="stakes">Beat them and you're inside the cut line for the first time this season.</div>
+        </div>
+        <span class="wp">38% win</span>
+      </div>
+
+      <div class="repfoot">
+        <button class="btn btn-primary">Continue</button>
+        <button class="btn btn-ghost">Open box score</button>
+        <span class="hint">Esc, or click anywhere, also closes this</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 2 -->
+<section>
+  <div class="sec-head">
+    <span class="sec-num">02</span>
+    <span class="sec-title">Game Shape</span>
+    <span class="sec-note">From <span class="mono">boxScore.drives[]</span> · already persisted · never read</span>
+  </div>
+  <p class="caption">
+    Every played game stores 22 drives in chronological order with points per drive.
+    The score differential across those drives is a <b>silhouette you read in 200 milliseconds</b> —
+    the same device ESPN's win-probability graph has used since 2016, where the Game Excitement
+    Index is literally the length of that jagged line pulled straight. Four games below, four
+    completely different stories. Today all four render as identical rows.
+  </p>
+
+  <div class="shapegrid">
+
+    <div class="shapecard panel">
+      <div class="arch2" style="color:var(--warn)">Comeback</div>
+      <div class="sl"><span>ATL</span><span class="n">27</span></div>
+      <div class="sl dim"><span>LAS</span><span class="n">24</span></div>
+      <svg width="100%" viewBox="0 0 160 44" style="display:block;height:44px;margin-top:10px" aria-hidden="true">
+        <line x1="4" y1="22" x2="156" y2="22" stroke="#3a3a41" stroke-width="1"/>
+        <polyline fill="none" stroke="#fbbf24" stroke-width="2" stroke-linejoin="round"
+          points="6,22 13,22 20.1,27.3 27.1,27.3 34.2,27.3 41.2,29.5 48.3,29.5 55.3,24.3 62.4,24.3 69.4,29.5 76.5,32.5 83.5,32.5 90.6,32.5 97.6,27.3 104.7,27.3 111.7,27.3 118.8,25 125.8,25 132.9,19.8 139.9,19.8 147,19.8 154,19.8"/>
+      </svg>
+      <div class="meta"><span>trailed by 14</span><span>3 lead changes</span></div>
+    </div>
+
+    <div class="shapecard panel">
+      <div class="arch2" style="color:var(--muted)">Never in doubt</div>
+      <div class="sl"><span>BUF</span><span class="n">45</span></div>
+      <div class="sl dim"><span>CHI</span><span class="n">3</span></div>
+      <svg width="100%" viewBox="0 0 160 44" style="display:block;height:44px;margin-top:10px" aria-hidden="true">
+        <line x1="4" y1="22" x2="156" y2="22" stroke="#3a3a41" stroke-width="1"/>
+        <polyline fill="none" stroke="#93939c" stroke-width="2" stroke-linejoin="round"
+          points="6,22 13,19.8 20.1,19.8 27.1,17.5 34.2,17.5 41.2,16.6 48.3,16.6 55.3,14.3 62.4,14.3 69.4,14.3 76.5,12.1 83.5,12.1 90.6,9.8 97.6,9.8 104.7,9.8 111.7,9.8 118.8,8.6 125.8,8.6 132.9,8.6 139.9,8.6 147,8.6 154,8.6"/>
+      </svg>
+      <div class="meta"><span>led wire to wire</span><span>0 lead changes</span></div>
+    </div>
+
+    <div class="shapecard panel">
+      <div class="arch2" style="color:var(--accent2)">See-saw</div>
+      <div class="sl"><span>TAM</span><span class="n">34</span></div>
+      <div class="sl dim"><span>DAL</span><span class="n">31</span></div>
+      <svg width="100%" viewBox="0 0 160 44" style="display:block;height:44px;margin-top:10px" aria-hidden="true">
+        <line x1="4" y1="22" x2="156" y2="22" stroke="#3a3a41" stroke-width="1"/>
+        <polyline fill="none" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round"
+          points="6,22 13,24.3 20.1,24.3 27.1,19 34.2,19 41.2,19 48.3,24.3 55.3,24.3 62.4,24.3 69.4,19 76.5,19 83.5,24.3 90.6,24.3 97.6,19.8 104.7,19.8 111.7,25 118.8,25 125.8,25 132.9,19.8 139.9,19.8 147,19.8 154,19.8"/>
+      </svg>
+      <div class="meta"><span>6 lead changes</span><span>drama 91</span></div>
+    </div>
+
+    <div class="shapecard panel">
+      <div class="arch2" style="color:var(--bad)">Collapse</div>
+      <div class="sl dim"><span>SEA</span><span class="n">20</span></div>
+      <div class="sl"><span>PHI</span><span class="n">23</span></div>
+      <svg width="100%" viewBox="0 0 160 44" style="display:block;height:44px;margin-top:10px" aria-hidden="true">
+        <line x1="4" y1="22" x2="156" y2="22" stroke="#3a3a41" stroke-width="1"/>
+        <polyline fill="none" stroke="#f87171" stroke-width="2" stroke-linejoin="round"
+          points="6,22 13,19.8 20.1,14.5 27.1,14.5 34.2,12.2 41.2,12.2 48.3,12.2 55.3,12.2 62.4,14.5 69.4,14.5 76.5,14.5 83.5,16.8 90.6,16.8 97.6,19 104.7,19 111.7,19.8 118.8,19.8 125.8,22 132.9,22 139.9,24.3 147,24.3 154,24.3"/>
+      </svg>
+      <div class="meta"><span>led by 13 in Q3</span><span>lost by 3</span></div>
+    </div>
+  </div>
+
+  <p class="caption" style="margin-top:20px">
+    On the game page the same path renders large, alongside a real four-quarter linescore
+    built from <span class="mono">boxScore.quarters</span> — which is also stored and also never rendered.
+    The archetype word (<b>Comeback</b>, <b>Never in doubt</b>, <b>See-saw</b>, <b>Collapse</b>,
+    <b>One score</b>) is plain arithmetic on the same array: lead changes, largest deficit erased,
+    margin at the end of Q3.
+  </p>
+</section>
+
+<!-- ============================================================ 3 -->
+<section>
+  <div class="sec-head">
+    <span class="sec-num">03</span>
+    <span class="sec-title">Result weight</span>
+    <span class="sec-note">Half a day of work · zero new data · zero extra pixels</span>
+  </div>
+  <p class="caption">
+    The current schedule renders a 28-point humiliation and an 8-point road win over the same
+    team in <b>identical type at identical weight</b>. The margin is already sitting in the row.
+    Right-hand column: the loser's number drops to muted on a blowout, a one-score game gets an
+    accent rule under the score, a season's shape reads down the column as good and bad weeks
+    rather than a list of digits. Nothing is removed and no row gets shorter.
+  </p>
+
+  <div class="ba">
+    <div>
+      <h3>Today <span>— eight results, one visual weight</span></h3>
+      <div class="panel">
+        <div class="schedrow"><span class="wk2">WK 1</span><span class="va">vs</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#2a2a18" stroke="#c9b458" stroke-width="2"/></svg>Charlotte Pumas</span>
+          <span class="res"><span class="wl l">L</span><span class="plain">27-55</span></span></div>
+        <div class="schedrow"><span class="wk2">WK 2</span><span class="va">vs</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#14261c" stroke="#4ade80" stroke-width="2"/></svg>New Orleans Krewe</span>
+          <span class="res"><span class="wl w">W</span><span class="plain">45-33</span></span></div>
+        <div class="schedrow"><span class="wk2">WK 3</span><span class="va">vs</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#151d2e" stroke="#5b7fc9" stroke-width="2"/></svg>Tampa Corsairs</span>
+          <span class="res"><span class="wl w">W</span><span class="plain">40-24</span></span></div>
+        <div class="schedrow"><span class="wk2">WK 4</span><span class="va">@</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#2a2a18" stroke="#c9b458" stroke-width="2"/></svg>Charlotte Pumas</span>
+          <span class="res"><span class="wl w">W</span><span class="plain">39-31</span></span></div>
+        <div class="schedrow"><span class="wk2">WK 5</span><span class="va">@</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#14261c" stroke="#4ade80" stroke-width="2"/></svg>New Orleans Krewe</span>
+          <span class="res"><span class="wl l">L</span><span class="plain">29-34</span></span></div>
+        <div class="schedrow"><span class="wk2">WK 6</span><span class="va">@</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#151d2e" stroke="#5b7fc9" stroke-width="2"/></svg>Tampa Corsairs</span>
+          <span class="res"><span class="wl l">L</span><span class="plain">14-38</span></span></div>
+        <div class="schedrow"><span class="wk2">WK 7</span><span class="va">vs</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#221528" stroke="#a06bc9" stroke-width="2"/></svg>Detroit Ignition</span>
+          <span class="res"><span class="wl l">L</span><span class="plain">14-37</span></span></div>
+        <div class="schedrow"><span class="wk2">WK 9</span><span class="va">@</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#151a2b" stroke="#4c5a86" stroke-width="2"/></svg>Las Vegas Prospectors</span>
+          <span class="res"><span class="wl w">W</span><span class="plain">27-24</span></span></div>
+      </div>
+    </div>
+
+    <div>
+      <h3>Proposed <span class="ok">— the same eight rows, same heights</span></h3>
+      <div class="panel">
+        <div class="schedrow row2 blowout-l"><span class="wk2">WK 1</span><span class="va">vs</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#2a2a18" stroke="#c9b458" stroke-width="2"/></svg>Charlotte Pumas</span>
+          <span class="res"><span class="marg">-28</span><span class="sc2"><span class="lose">27</span>-55</span></span></div>
+
+        <div class="schedrow row2"><span class="wk2">WK 2</span><span class="va">vs</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#14261c" stroke="#4ade80" stroke-width="2"/></svg>New Orleans Krewe</span>
+          <span class="res"><span class="marg">+12</span><span class="sc2">45-<span class="lose">33</span></span></span></div>
+
+        <div class="schedrow row2"><span class="wk2">WK 3</span><span class="va">vs</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#151d2e" stroke="#5b7fc9" stroke-width="2"/></svg>Tampa Corsairs</span>
+          <span class="res"><span class="marg">+16</span><span class="sc2">40-<span class="lose">24</span></span></span></div>
+
+        <div class="schedrow row2"><span class="wk2">WK 4</span><span class="va">@</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#2a2a18" stroke="#c9b458" stroke-width="2"/></svg>Charlotte Pumas</span>
+          <span class="res"><span class="kick kick-upset">UPSET</span><span class="marg">+8</span><span class="sc2 tight">39-<span class="lose">31</span></span></span></div>
+
+        <div class="schedrow row2"><span class="wk2">WK 5</span><span class="va">@</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#14261c" stroke="#4ade80" stroke-width="2"/></svg>New Orleans Krewe</span>
+          <span class="res"><span class="marg">-5</span><span class="sc2 tight"><span class="lose">29</span>-34</span></span></div>
+
+        <div class="schedrow row2 blowout-l"><span class="wk2">WK 6</span><span class="va">@</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#151d2e" stroke="#5b7fc9" stroke-width="2"/></svg>Tampa Corsairs</span>
+          <span class="res"><span class="marg">-24</span><span class="sc2"><span class="lose">14</span>-38</span></span></div>
+
+        <div class="schedrow row2 blowout-l"><span class="wk2">WK 7</span><span class="va">vs</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#221528" stroke="#a06bc9" stroke-width="2"/></svg>Detroit Ignition</span>
+          <span class="res"><span class="marg">-23</span><span class="sc2"><span class="lose">14</span>-37</span></span></div>
+
+        <div class="schedrow row2"><span class="wk2">WK 9</span><span class="va">@</span>
+          <span class="opp"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#151a2b" stroke="#4c5a86" stroke-width="2"/></svg>Las Vegas Prospectors</span>
+          <span class="res">
+            <svg width="52" height="18" viewBox="0 0 160 44" style="opacity:.85" aria-hidden="true">
+              <line x1="4" y1="22" x2="156" y2="22" stroke="#3a3a41" stroke-width="2"/>
+              <polyline fill="none" stroke="#fbbf24" stroke-width="4" stroke-linejoin="round"
+                points="6,22 20.1,27.3 34.2,27.3 48.3,29.5 62.4,24.3 76.5,32.5 90.6,32.5 104.7,27.3 118.8,25 132.9,19.8 154,19.8"/>
+            </svg>
+            <span class="kick kick-upset">UPSET</span><span class="marg">+3</span><span class="sc2 tight">27-<span class="lose">24</span></span></span></div>
+      </div>
+      <p class="caption" style="margin-top:12px">
+        Read the left column and you learn who won. Read the right column and you learn
+        <b>what kind of season this was</b>: three beatings, two coin flips, and a road upset
+        that started the turn.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 4 -->
+<section>
+  <div class="sec-head">
+    <span class="sec-num">04</span>
+    <span class="sec-title">The Trophy Moment</span>
+    <span class="sec-note">Tier 0 · the only full-screen interruption in the game · ≤1 per season</span>
+  </div>
+  <p class="caption">
+    Winning the championship currently returns the string
+    <span class="mono">'The championship game is complete! Welcome to the offseason.'</span> —
+    in the same 320&nbsp;px card, in the same corner, for the same seven seconds, in the same
+    typeface as <span class="mono">"Week 3 complete"</span>. That is the whole payoff of a season.
+    This is the one thing in this document I would stop the game for, and the reason the budget
+    everywhere else is so strict: Crusader Kings III is the cautionary tale, where the top
+    community mod is literally called <b>Less Event Spam</b>.
+  </p>
+
+  <div class="trophy">
+    <div class="lights"></div>
+    <svg class="wm" width="320" height="320" viewBox="0 0 52 52" aria-hidden="true">
+      <path d="M26 2 L50 26 L26 50 L2 26 Z" fill="none" stroke="#e0464a" stroke-width="1.6"/>
+      <path d="M26 9 L43 26 L26 43 L9 26 Z" fill="none" stroke="#e0464a" stroke-width="1"/>
+    </svg>
+    <div class="inner">
+      <div class="yr2">2034 · League Champions</div>
+      <div class="champ">Champions</div>
+      <div class="team">Atlanta Blaze</div>
+
+      <div class="final">
+        31 — <span style="color:var(--muted)">27</span>
+        <div class="op" style="margin-top:6px">over the Buffalo Ironsides</div>
+      </div>
+
+      <div class="road">
+        <div class="leg"><div class="rd">Wild card</div><div class="sc3">24-17</div><div class="op2">vs DET</div></div>
+        <div class="leg"><div class="rd">Divisional</div><div class="sc3">20-19</div><div class="op2">@ PHI</div></div>
+        <div class="leg"><div class="rd">Conference</div><div class="sc3">33-13</div><div class="op2">@ MIL</div></div>
+        <div class="leg" style="border-color:#e0464a;background:rgba(224,70,74,.10)">
+          <div class="rd" style="color:#f0a6a8">Final</div><div class="sc3">31-27</div><div class="op2">vs BUF</div></div>
+      </div>
+
+      <div class="strip">
+        <div><div class="k2">Regular season</div><div class="v2">12-5</div></div>
+        <div><div class="k2">Seed</div><div class="v2">5th</div></div>
+        <div><div class="k2">Point diff</div><div class="v2" style="color:var(--accent)">+108</div></div>
+        <div><div class="k2">Final MVP</div><div class="v2" style="font-size:17px">P. Ramsey</div></div>
+        <div><div class="k2">Your tenure</div><div class="v2">Year 9</div></div>
+      </div>
+
+      <div class="btnrow"><button class="btn btn-primary">Raise the banner</button></div>
+    </div>
+  </div>
+
+  <p class="caption" style="margin-top:20px">
+    The mirror exists too and matters just as much: <b>losing a playoff game ends your season</b>,
+    and today that returns <span class="mono">'Wild card round complete. Divisional round is set.'</span>
+    — a sentence that does not mention your team, on the week your season ended. Same layout,
+    <span style="color:var(--bad)">bad</span>-toned, headed <b>SEASON OVER</b>, with the round you fell
+    in, your final record, and one line pointing forward: <i>you pick 24th</i>.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <div class="sec-head">
+    <span class="sec-num">—</span>
+    <span class="sec-title">What I would not interrupt for</span>
+  </div>
+  <div class="foot" style="border-top:0;padding-top:0">
+    <p>A game that celebrates everything celebrates nothing. The rule I would hold every one of
+       these to: <b style="color:var(--chalk)">if it fires on more than one Advance in three, it may
+       not interrupt — it must earn its place inside something the player was already going to
+       read.</b> Explicitly, no full-screen moment for:</p>
+    <ul>
+      <li>Any regular-season win or loss, including a blowout, an upset or a last-second finish. These get <b style="color:var(--chalk)">weight</b>, not a modal.</li>
+      <li>Clinching a playoff spot or the division — you can clinch a spot, then the division, then a bye, which would be three interruptions in four weeks.</li>
+      <li>Any milestone: 1,000 yards, 4,000 yards, a franchise record. <code>lib/storyline.ts</code> already found these cluster and capped itself at four for exactly this reason.</li>
+      <li>Any signing, trade, cut or draft pick — you initiated it, you already know. Celebrating an action the player just took is the slot-machine failure.</li>
+      <li>Injuries. Sixteen a week league-wide; <code>lib/wireRank.ts</code> already collapses them correctly.</li>
+      <li>A rookie's first start or a development jump — these belong <i>on the player's row</i>, where they persist, not in a popup that fires once and is gone.</li>
+      <li><b style="color:var(--chalk)">Advancing multiple weeks at once.</b> One report at the end of the whole span, never one per iteration. A player who asked to skip to the playoffs has explicitly asked not to be stopped.</li>
+    </ul>
+  </div>
+</section>
+
+</div>
+</body>
+</html>
