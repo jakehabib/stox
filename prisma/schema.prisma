@@ -15,7 +15,20 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // Runtime queries go through the POOLED connection. Serverless opens a
+  // connection per invocation, and an unpooled endpoint runs out of them
+  // under very light concurrency.
+  url       = env("DATABASE_URL")
+  // Migrations go DIRECT, and must. `prisma migrate deploy` runs DDL in a
+  // session that a transaction-mode pooler (PgBouncer, which is what Neon's
+  // `-pooler` host is) cannot hold open — it times out with P1002 rather
+  // than failing fast, which is exactly what the first deploys did.
+  //
+  // Set DIRECT_URL to the same database WITHOUT `-pooler` in the host. Neon's
+  // Vercel integration already exposes it as DATABASE_URL_UNPOOLED. Locally
+  // it can simply equal DATABASE_URL, since there is no pooler in front of a
+  // local Postgres.
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------------------------------------------------------------------------

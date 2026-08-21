@@ -254,6 +254,7 @@ Then load the site, create one league, and advance one week.
 | `DATABASE_URL` | **Yes** | — | Postgres connection string. The only required variable. Use Neon's **pooled** URL (`-pooler` in the host); serverless functions open a connection per invocation and an unpooled endpoint exhausts connections under light concurrency. |
 | `MAX_LEAGUES_PER_OWNER` | No | `8` | Saves one browser may hold. A UX limit, not a security control — the owner key is a cookie, so clearing cookies resets the count. |
 | `MAX_LEAGUES_TOTAL` | No | `500` | Hard ceiling on leagues in the whole database. This is the one that actually protects your quota, because it is the only one a caller rotating cookies cannot walk around. ~500 leagues ≈ 2.6M rows. |
+| `DIRECT_URL` | **Yes** | — | The same database over a **direct, non-pooled** connection. Prisma runs migrations through this one and it must not go through the pooler. On Neon the pooled host contains `-pooler` and the direct host does not; Neon's Vercel integration already exposes the direct one as `DATABASE_URL_UNPOOLED`, so copy that value in. Getting this wrong is not a subtle failure — the build dies with Prisma **P1002** and Vercel reports only `command "npm run build" exited with 1`. |
 | `NEXT_PUBLIC_SITE_URL` | No | `https://dynastygm.gg` | The origin used for `metadataBase`, the Open Graph share card, `robots.txt` and the sitemap. Production is the default, so **you only set this on preview deployments** — without it a preview's share card and canonical link point at production. Vercel exposes `VERCEL_URL` for previews; setting `NEXT_PUBLIC_SITE_URL=https://$VERCEL_URL` in the Preview scope is the usual move. |
 | `NODE_ENV` | Set for you | — | Do not set manually. See warning below. |
 
@@ -266,6 +267,23 @@ is gitignored; `.env.example` is the committed template.
 > keys off it: in production, leagues with a `NULL` owner key are hidden from
 > every browser. In development they are visible to everyone. Flipping this on
 > a shared deployment exposes every unowned save to every visitor.
+
+### If a deploy fails with P1002
+
+`prisma migrate deploy` reached the database and timed out. Two causes, in
+order of likelihood:
+
+1. **`DIRECT_URL` is missing, or points at the pooled host.** `migrate deploy`
+   holds a session open to run DDL, and a transaction-mode pooler — which is
+   what Neon's `-pooler` endpoint is — cannot do that. It does not fail fast;
+   it hangs and then times out. Set `DIRECT_URL` to the host **without**
+   `-pooler`.
+2. **The Neon compute is suspended and the cold start outruns the connect
+   timeout.** Open the database once from the Neon dashboard to wake it, then
+   redeploy; or append `?connect_timeout=30` to `DIRECT_URL`.
+
+Vercel surfaces this only as `command "npm run build" exited with 1`. The
+Prisma error code is in the build log a few lines above.
 
 ### Attaching dynastygm.gg
 
