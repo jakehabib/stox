@@ -25,6 +25,17 @@ export const LEAGUE = {
   PLAYOFF_TEAMS_PER_CONF: 6, // [TUNE] 6 => 2 byes per conference
   ROSTER_MAX: 53,
   ROSTER_MIN: 46, // below this the AI/user is nudged to sign bodies
+  /**
+   * [TUNE] Share of a draft class that actually sticks on the roster, used to
+   * decide how many slots the AI free-agency wave holds back for rookies.
+   *
+   * This is not cosmetic. Reserving the FULL class (7 of 53) leaves an
+   * effective free-agency ceiling of exactly 46 — which is ROSTER_MIN — so
+   * every team at or above the legal minimum skipped free agency entirely
+   * and the market shut down league-wide the moment roster sizes recovered.
+   * Half a class is the realistic figure and leaves genuine headroom.
+   */
+  ROOKIE_ROSTER_HIT_RATE: 0.5,
   PRACTICE_SQUAD: 0, // not modeled in v1
   DRAFT_ROUNDS: 7,
 };

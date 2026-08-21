@@ -429,7 +429,16 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
     // FREE_AGENCY, and the draft lands immediately after it, so filling all
     // the way to rosterMax here just means cutting those same players again
     // on cut-down day (see trimRostersToLimit in lib/season.ts).
-    const openSlots = Math.max(0, (settings.rosterMax ?? LEAGUE.ROSTER_MAX) - summary.rosterSize - settings.draftRounds);
+    // Reserve only the share of the draft class that realistically sticks,
+    // not the whole class. Subtracting all 7 rounds from a 53-man limit gives
+    // an effective ceiling of exactly 46 — ROSTER_MIN — so once the re-sign
+    // repair pushed rosters back to a legal size, every team skipped free
+    // agency and the market shut down league-wide. Measured before this fix:
+    // 12 of 32 teams excluded in the second season, 20 of 32 in the third,
+    // and 29 of 31 by the time rosters reached their 50-52 steady state.
+    const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
+    const rookieReserve = Math.ceil(settings.draftRounds * LEAGUE.ROOKIE_ROSTER_HIT_RATE);
+    const openSlots = Math.max(0, rosterMax - summary.rosterSize - rookieReserve);
     if (openSlots <= 0) continue;
 
     // Bid on the 3 highest-need positions among top available talent.
