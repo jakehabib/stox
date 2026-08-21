@@ -1509,3 +1509,20 @@ ever force-pushed over, so every state below still exists in git history).
   synthesised "In progress" row stands down once the season has a real
   record, so header and row count agree in all four cases checked
   (1 / 2 / 4 / 10 seasons).
+- **2026-08-21 — A roster spot is not a place on the field (`ad6c175`).**
+  `lib/sim/units.ts` ranked a player his depth chart did not name behind
+  every player it did, and nothing added an arriving player to a chart.
+  Reproduced with a **97-overall receiver traded to a club whose best was
+  69: zero snaps over four weeks**, while his old club still held rank 0 for
+  him. A league-wide audit one offseason deep found **229 roster players
+  missing from their own chart, 31 of them out-rating everyone listed at
+  their position**, plus 144 slots naming departed players. New
+  `reconcileDepthChart` runs on trade, draft, signing and cut — it never
+  re-sorts players the chart already lists, so a hand-set order survives
+  every roster move. **Free agency was the live one:** `signFreeAgent` is
+  the single funnel for every signing in the game and the free-agency page
+  has no phase gate, so a week-8 signing took no snaps for the rest of the
+  season. `units.ts` now merges an unnamed player in on rating instead of
+  benching him — measured over **27,895 position-group orderings, zero
+  divergence** on well-formed data, so it is a safety net, not a balance
+  change.
