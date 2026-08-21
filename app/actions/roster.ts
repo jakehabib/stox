@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { assertLeagueOwner, assertTeamOwner } from '@/lib/owner';
-import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFranchiseTag, leadingCompetingBid, fillRosterForTeam, resolveNegotiationSession, negotiateOffer } from '@/lib/freeagency';
+import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFranchiseTag, fillRosterForTeam, resolveNegotiationSession, negotiateOffer } from '@/lib/freeagency';
 import { decideOffer, type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer } from '@/lib/negotiation';
 import { parseSettings } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
@@ -138,14 +138,6 @@ export async function submitOfferAction(
   // second later and after they have read the bad news.
   if (outcome.ok) revalidatePath(`/league/${leagueId}`, 'layout');
   return outcome;
-}
-
-/** Live "who else is bidding" check for the frenzy UI — what the leading AI offer actually is right now, if any. */
-export async function checkCompetingBidAction(leagueId: string, playerId: string, teamId: string) {
-  await assertLeagueOwner(leagueId);
-  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  const settings = parseSettings(league.settings);
-  return leadingCompetingBid(leagueId, playerId, teamId, league.seasonYear, settings.capMode);
 }
 
 /**

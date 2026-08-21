@@ -39,7 +39,7 @@ export interface RosterShape {
 
 /** How many bodies at a group actually see the field, roughly. */
 const STARTERS_AT: Record<PositionGroup, number> = {
-  QB: 1, RB: 1, 'WR/TE': 4, OL: 5, DL: 4, LB: 3, DB: 5, ST: 2,
+  QB: 1, RB: 1, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 5, ST: 2,
 };
 
 /**

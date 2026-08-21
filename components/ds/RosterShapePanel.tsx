@@ -8,7 +8,7 @@ function ordinal(n: number): string {
 }
 
 const GROUP_LABEL: Record<string, string> = {
-  QB: 'QB', RB: 'Backfield', 'WR/TE': 'Receivers', OL: 'O-Line',
+  QB: 'QB', RB: 'Backfield', WR: 'Receivers', TE: 'Tight Ends', OL: 'O-Line',
   DL: 'D-Line', LB: 'Linebacker', DB: 'Secondary', ST: 'Specialists',
 };
 

@@ -636,6 +636,33 @@ export const CONSENSUS = {
   POSITION_PULL: 8,
 
   /**
+   * How fast the positional reach decays down a position group. At N, the
+   * player N deep at his position keeps half the reach the best one gets:
+   * QB1 the full +4.0, QB3 half of it, QB7 a quarter. Applied flat instead,
+   * a measured 400-man class put six quarterbacks in the top ten and eight
+   * in the first round — every year, identically. Only the POSITIVE pulls
+   * decay; a punter keeps his whole penalty however good he is. [TUNE]
+   */
+  SCARCITY_HALF_LIFE: 2,
+
+  /**
+   * Extra weight on the NEGATIVE positional pulls — kicker, punter, fullback.
+   * The plain penalty left a 99-grade kicker at board #28. A first-round
+   * kicker is not a thing, however good the kicker is, and the specialist
+   * positions are exactly where a flat points-per-grade board goes wrong.
+   * [TUNE]
+   */
+  CHEAP_POSITION_MULT: 2.6,
+
+  /**
+   * Spread of the per-class, per-position mood that scales each position's
+   * reach. This is what makes one draft quarterback-rich and the next one
+   * barren, instead of every class being the same shape with different
+   * names. Seeded off the class, so it is stable for a given save. [TUNE]
+   */
+  CLASS_MOOD_SD: 0.45,
+
+  /**
    * Band cutoffs as PICK NUMBERS, so they mean what they say — a
    * "first-round grade" is a player the room expects inside the first round.
    * Scaled to the actual draft (teams x rounds) rather than hard-coded, so a

@@ -24,7 +24,7 @@ import { POSITION_GROUPS, PositionGroup, positionGroup } from './positionGroups'
 
 /** How many at each unit are on the field. Used to pick the starter sample. */
 const STARTERS_AT: Record<PositionGroup, number> = {
-  QB: 1, RB: 1, 'WR/TE': 4, OL: 5, DL: 4, LB: 3, DB: 5, ST: 2,
+  QB: 1, RB: 1, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, DB: 5, ST: 2,
 };
 
 /**
@@ -35,12 +35,12 @@ const STARTERS_AT: Record<PositionGroup, number> = {
  * decides a couple of games a year.
  */
 const UNIT_WEIGHT: Record<PositionGroup, number> = {
-  QB: 0.20, RB: 0.05, 'WR/TE': 0.12, OL: 0.13,
+  QB: 0.20, RB: 0.05, WR: 0.09, TE: 0.03, OL: 0.13,
   DL: 0.18, LB: 0.09, DB: 0.17,
   ST: 0.06,
 };
 
-const OFFENSE: PositionGroup[] = ['QB', 'RB', 'WR/TE', 'OL'];
+const OFFENSE: PositionGroup[] = ['QB', 'RB', 'WR', 'TE', 'OL'];
 const DEFENSE: PositionGroup[] = ['DL', 'LB', 'DB'];
 
 const WEIGHT_TOTAL = POSITION_GROUPS.reduce((s, g) => s + UNIT_WEIGHT[g], 0);

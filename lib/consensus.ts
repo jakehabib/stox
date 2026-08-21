@@ -382,7 +382,8 @@ export interface ConsensusRead extends ConsensusGrade {
  */
 export function buildConsensusBoard(prospects: ConsensusInput[], shape?: BoardShape): ConsensusRead[] {
   const cuts = bandCutoffs(shape);
-  const graded = prospects.map(consensusGradeFor);
+  const graded = prospects.map(consensusGradeFor).map((g) => ({ ...g }));
+  applyScarcity(graded);
   // Player id breaks an exact boardScore tie purely so the order is stable
   // across processes. Float ties are vanishingly rare; this is determinism
   // insurance, not a ranking rule.
@@ -401,6 +402,76 @@ export function buildConsensusBoard(prospects: ConsensusInput[], shape?: BoardSh
       headline: headlineFor(g, band.label),
     };
   });
+}
+
+/**
+ * ===========================================================================
+ * POSITIONAL VALUE IS SCARCITY, NOT A PER-POSITION BONUS
+ * ===========================================================================
+ * consensusGradeFor() gives every player at a position the same positional
+ * pull, because it is pure and sees one player at a time. Applied flat, a
+ * +4.0 quarterback bonus put SIX quarterbacks in the top ten of a measured
+ * class and EIGHT in the top thirty-two — a first round with eight
+ * quarterbacks in it, every single year, forever.
+ *
+ * That is not how a board works. Positional value is about scarcity at the
+ * top: teams reach for the best quarterback in a class, not for the fifth
+ * one. The premium therefore decays with rank WITHIN the position — the QB1
+ * keeps the full reach, QB2 most of it, QB5 almost none.
+ *
+ * The penalty on a cheap position does NOT decay. A punter is not a high
+ * pick however good the punter is, which is the whole point of the number
+ * being negative, and the measured class had a punter at board #49.
+ *
+ * CLASS-TO-CLASS VARIANCE. Real drafts differ: some years three
+ * quarterbacks go in the first ten picks and some years none are worth
+ * taking. A modifier seeded off the class itself scales each position's
+ * reach, so a save's 2029 class is quarterback-rich and its 2030 class is
+ * barren, and the GM has to read which one he is in.
+ * ===========================================================================
+ */
+function applyScarcity(graded: ConsensusGrade[]): void {
+  if (graded.length === 0) return;
+
+  // Seeded off the set of prospects, so the same class always produces the
+  // same year — and two different classes reliably produce different ones.
+  const classSeed = [...graded.map((g) => g.playerId)].sort()[0] ?? 'empty';
+
+  const byPosition = new Map<string, ConsensusGrade[]>();
+  for (const g of graded) {
+    if (!byPosition.has(g.position)) byPosition.set(g.position, []);
+    byPosition.get(g.position)!.push(g);
+  }
+
+  for (const [position, group] of byPosition) {
+    // Rank within the position on the football grade alone — the pull is
+    // what we are about to compute, so it cannot be an input to itself.
+    group.sort((a, b) => b.grade - a.grade || (a.playerId < b.playerId ? -1 : 1));
+
+    // How much this class thinks of this position, this year. Centred on 1.
+    const mood = 1 + new Rng(`class-mood-${classSeed}-${position}`).normal(0, CONSENSUS.CLASS_MOOD_SD);
+
+    group.forEach((g, i) => {
+      const flat = g.positionPull;
+      if (flat <= 0) {
+        // Cheap positions keep their whole penalty AND get it amplified. The
+        // plain -5.2 on a kicker was not enough: a 99-grade kicker still
+        // landed at board #28, a first-round kicker, which no room has ever
+        // produced. Amplified, he sits where kickers actually go.
+        const deep = flat * CONSENSUS.CHEAP_POSITION_MULT;
+        g.positionPull = deep;
+        g.boardScore = g.boardScore - flat + deep;
+        g.positionNote = positionNoteFor(position, deep);
+        return;
+      }
+      // 1.0 for the best at the position, decaying toward 0 down the group.
+      const decay = 1 / (1 + i / CONSENSUS.SCARCITY_HALF_LIFE);
+      const pull = flat * decay * Math.max(0, mood);
+      g.positionPull = pull;
+      g.boardScore = g.boardScore - flat + pull;
+      g.positionNote = positionNoteFor(position, pull);
+    });
+  }
 }
 
 function bandForRank(rank: number, cuts: ReturnType<typeof bandCutoffs>) {

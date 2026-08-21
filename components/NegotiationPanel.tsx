@@ -83,6 +83,11 @@ export function NegotiationPanel({
   const [guaranteePct, setGuaranteePct] = useState(0.5);
 
   const [patienceSpent, setPatienceSpent] = useState(0);
+  // The outcome line describes the offer that was submitted, so it is cleared
+  // the moment the offer stops being that one. Leaving it up next to a meter
+  // reading "he'll sign this" was the same offer being described two
+  // different ways at once.
+  const clearStaleResult = () => setResult((r) => (r && !r.ok && !r.lostTo && !r.walkedAway ? null : r));
   const [history, setHistory] = useState<{ apy: number; years: number; outcome: string }[]>([]);
   const [result, setResult] = useState<NegotiationOutcome | null>(null);
 
@@ -159,7 +164,7 @@ export function NegotiationPanel({
             max={gate.maxSalary}
             step={100_000}
             raw={apy}
-            onChange={setApy}
+            onChange={(v) => { clearStaleResult(); setApy(v); }}
             disabled={over}
             warn={decision.blocked === 'CAP' ? `Over your room by ${formatMoney(decision.year1CapHit - gate.capSpace)}` : undefined}
           />
@@ -184,7 +189,7 @@ export function NegotiationPanel({
             max={gate.maxYears}
             step={1}
             raw={years}
-            onChange={setYears}
+            onChange={(v) => { clearStaleResult(); setYears(v); }}
             disabled={over || gate.maxYears <= 1}
             warn={gate.maxYears <= 1 ? `At ${ctx.age} nobody may be given more than one year` : undefined}
           />
@@ -196,7 +201,7 @@ export function NegotiationPanel({
             max={100}
             step={5}
             raw={Math.round(guaranteePct * 100)}
-            onChange={(v) => setGuaranteePct(v / 100)}
+            onChange={(v) => { clearStaleResult(); setGuaranteePct(v / 100); }}
             disabled={over}
             warn={capOn && decision.deadMoneyIfCut > 0 ? `${formatMoney(decision.deadMoneyIfCut)} dead if you cut him` : undefined}
           />

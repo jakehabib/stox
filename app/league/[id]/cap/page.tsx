@@ -32,7 +32,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 // Fixed group -> color assignment, in POSITION_GROUPS order — identity, not
 // value-rank, drives the color per the dataviz skill's categorical rule.
 const GROUP_COLOR: Record<string, string> = {
-  QB: '#3987e5', RB: '#d95926', 'WR/TE': '#199e70', OL: '#c98500',
+  QB: '#3987e5', RB: '#d95926', WR: '#199e70', TE: '#7d5bbe', OL: '#c98500',
   DL: '#d55181', LB: '#008300', DB: '#9085e9', ST: '#e66767',
 };
 

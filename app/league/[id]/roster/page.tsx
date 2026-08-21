@@ -25,7 +25,8 @@ type SortKey = 'pos' | 'ovr' | 'age' | 'potential' | 'cap' | 'years';
 const GROUP_LABEL: Record<PositionGroup, string> = {
   QB: 'Quarterback',
   RB: 'Backfield',
-  'WR/TE': 'Receivers',
+  WR: 'Receivers',
+  TE: 'Tight Ends',
   OL: 'Offensive Line',
   DL: 'Defensive Line',
   LB: 'Linebackers',
@@ -37,7 +38,7 @@ const GROUP_LABEL: Record<PositionGroup, string> = {
 // grouping one level up from PositionGroup, so the page reads offense →
 // defense → special teams instead of eight undifferentiated headers in a row.
 const UNIT_FOR_GROUP: Record<PositionGroup, string> = {
-  QB: 'Offense', RB: 'Offense', 'WR/TE': 'Offense', OL: 'Offense',
+  QB: 'Offense', RB: 'Offense', WR: 'Offense', TE: 'Offense', OL: 'Offense',
   DL: 'Defense', LB: 'Defense', DB: 'Defense',
   ST: 'Special Teams',
 };

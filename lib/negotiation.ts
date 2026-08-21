@@ -236,17 +236,29 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   const guaranteeScore = satisfaction(offer.guaranteePct / ctx.desiredGuarantee, 0.7);
 
   const raw = moneyScore * w.money + yearsScore * w.years + guaranteeScore * w.guarantee;
-  const interest = Math.round(Math.max(0, Math.min(100, raw * 100)));
 
   // A serious lowball is remembered. Below 70% of what he wants, an agent
   // stops negotiating and starts taking offence.
   const insulting = moneyRatio < 0.7;
 
+  // An insulted player reads INSULTED, whatever the other two sliders say.
+  // Without this cap, seven years and a 100% guarantee could drag a
+  // 60%-of-asking offer up to a gold "Close" — with "his agent stopped
+  // listening" printed directly underneath it and a two-pip price on the
+  // button. Term and guarantee cannot buy their way past the money being an
+  // insult, so the bar is not allowed to say they can. The cap also gives the
+  // salary slider a real edge to find: the bar jumps the moment his agent
+  // starts listening again.
+  const interest = Math.min(
+    insulting ? 44 : 100,
+    Math.round(Math.max(0, Math.min(100, raw * 100))),
+  );
+
   let verdict: Verdict;
-  if (interest >= 82) verdict = 'ACCEPT';
+  if (insulting) verdict = 'INSULTED';
+  else if (interest >= 82) verdict = 'ACCEPT';
   else if (interest >= 68) verdict = 'CLOSE';
   else if (interest >= 45) verdict = 'CONSIDERING';
-  else if (insulting) verdict = 'INSULTED';
   else verdict = 'COLD';
 
   const demands: string[] = [];
