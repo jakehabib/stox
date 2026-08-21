@@ -944,4 +944,62 @@ ever force-pushed over, so every state below still exists in git history).
     entries follow. It was committed whole deliberately so the hash is a
     checkpoint that actually builds (tsc clean, all 16 league routes
     200). Reverting past it loses the scouting economy too.
+- **2026-08-21 — Combine ranks, gated potential tags, and testing that
+  correlates with ability (`54a316f`, `f35cc52`).** Three related
+  prospect-evaluation changes.
+  - **Every combine number is now ranked against positional peers in the
+    same class.** A raw 4.62s means nothing on its own — elite for a
+    tackle, slow for a corner. Each measurable shows "6th of 47" under
+    it. Direction is decided in exactly one table: 40-yard, 3-cone and
+    shuttle are lower-is-better; vertical, broad and bench are
+    higher-is-better. Getting that backwards would have been a silent,
+    plausible-looking bug, so it was proved both ways against a real
+    class (fastest 40 → 1st of 52, slowest → 52nd; highest vertical →
+    1st, lowest → 49th with a correct four-way tie).
+  - **Potential-derived tags are now gated behind scouting.** "Franchise
+    Prospect" and friends gave away the thing you're supposed to pay to
+    learn. Below 40% confidence the tag reads "Unevaluated"; between 40
+    and 75 it's hedged with a question mark; only above 75 does it
+    commit. It uses the *same* confidence bands the range readout
+    already uses, so the tag and the number beside it can never
+    disagree. **Consensus rank badges (Top 5, Top 10, #1) stay
+    ungated** — that's public board talk, not private evaluation.
+  - **Combine results now correlate with real ability, imperfectly.**
+    Previously testing was near-independent of how good a player
+    actually is, which made the combine decorative. Rank correlation
+    between true rating and 40 time now sits at about **-0.55 to -0.72**
+    across positions — strong enough that top prospects mostly test
+    well, loose enough that testing is evidence rather than an answer
+    key. Three deliberate archetypes are seeded off the RNG: **workout
+    warriors** (bottom-third ability, elite testing — the trap),
+    **sleepers** (genuinely good players who test great but sit low on
+    the public board), and **bad testers** (good players with poor
+    numbers). Independently re-measured on my own seeds: warriors 7.6%,
+    bad testers 5.4%, mean correlation -0.554, and **zero** physical
+    implausibilities across 2,400 prospects (fastest DT 4.70s vs
+    fastest WR 4.22s — no overlap).
+  - The consensus draft board now reacts to testing as well as scouted
+    rating, which is what makes those archetypes exploitable rather than
+    cosmetic: a workout warrior actually rises on the public board, and
+    a good player who tested badly actually falls into range.
+- **2026-08-21 — Schedule rebuilt (`5194e41`).** The page rendered all
+  272 games of the season in one flat column — **15,869 pixels** tall.
+  Now: your own season as one row per game (week, home/away, opponent
+  and their record, result or the opponent's point differential), with
+  the next game highlighted and only played games linking to a box
+  score; then the league's slate for one selected week, with tabs
+  defaulting to the week actually being played. Masthead adds remaining
+  strength of schedule. **2,119 pixels.**
+- **2026-08-21 — Roster construction panel (`f35cc52`).** The roster
+  page was a 53-row table and nothing else, so it could not answer "what
+  kind of team is this." Eight unit tiles now sit above the list, each
+  showing the starter rating at that unit and its delta against the
+  league's average starter there, plus average age and expiring deals. A
+  headline names the strongest and weakest units and how many players
+  are 30+ (and how many of those start). Two decisions worth recording:
+  the rating averages only the men who actually play, because a group
+  mean punishes a team for carrying a seventh receiver; and the league
+  baseline is the mean of each team's *starter* average, not a flat mean
+  over every rostered player — a flat mean sits below everyone's
+  starters and would have shown every unit on every team as a strength.
 
