@@ -76,8 +76,19 @@ export function ownedLeagueWhere() {
  * protects nothing, because actions are POST endpoints anyone can hit
  * directly with a league id.
  *
- * Adopts an unowned league (development only, per the module doc) so a save
- * that predates ownership keeps working for the browser that opens it.
+ * DELIBERATELY DOES NOT ADOPT. An earlier version stamped an unowned league
+ * with the caller's key on first touch, on the theory that a legacy save
+ * should become someone's. It made every unowned save claimable by whoever
+ * loaded it first — and in development that is not a person, it is whichever
+ * headless browser or test run happened to hit the page. Twenty-six leagues
+ * in the dev database were silently claimed by throwaway Playwright sessions,
+ * each with its own cookie, and every one of them started returning 404 to
+ * every other client including the developer's own browser.
+ *
+ * Adoption bought nothing anyway: ownedLeagueWhere() already lists unowned
+ * saves in development, and in production they are meant to stay invisible.
+ * So an unowned league is simply allowed in development and refused in
+ * production, and nothing writes an owner key except league creation.
  */
 export async function assertLeagueOwner(leagueId: string): Promise<void> {
   const league = await prisma.league.findUnique({ where: { id: leagueId }, select: { ownerKey: true } });
@@ -86,13 +97,11 @@ export async function assertLeagueOwner(leagueId: string): Promise<void> {
   // real, and there is nothing a caller can do differently either way.
   if (!league) throw new Error('League not found.');
 
-  const key = readOwnerKey();
-  if (league.ownerKey != null) {
-    if (league.ownerKey !== key) throw new Error('This save belongs to another browser.');
+  if (league.ownerKey == null) {
+    if (!adoptsUnowned()) throw new Error('This save belongs to another browser.');
     return;
   }
-  if (!adoptsUnowned()) throw new Error('This save belongs to another browser.');
-  await prisma.league.update({ where: { id: leagueId }, data: { ownerKey: ensureOwnerKey() } });
+  if (league.ownerKey !== readOwnerKey()) throw new Error('This save belongs to another browser.');
 }
 
 /**

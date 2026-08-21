@@ -553,14 +553,18 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
     // out (find the round it happened in — `Team.eliminated` only marks teams
     // that missed the bracket entirely, so it cannot answer this) or they
     // never made it.
-    const lost = await prisma.game.findFirst({
+    // Ordered by ROUND, not by week: createNextPlayoffRound stamps both the
+    // divisional and the conference round as week 2, so `orderBy week desc`
+    // picks between them arbitrarily and can report the wrong last game.
+    const played = await prisma.game.findMany({
       where: {
         leagueId, seasonYear: league.seasonYear, played: true, kind: { not: 'REGULAR' },
         OR: [{ homeTeamId: userTeam.id }, { awayTeamId: userTeam.id }],
       },
-      orderBy: { week: 'desc' },
       select: { kind: true, homeTeamId: true, homeScore: true, awayScore: true },
     });
+    const ROUND_ORDER = ['WILDCARD', 'DIVISIONAL', 'CONFERENCE', 'FINAL'];
+    const lost = [...played].sort((a, b) => ROUND_ORDER.indexOf(a.kind) - ROUND_ORDER.indexOf(b.kind)).pop();
     if (lost) {
       const atHome = lost.homeTeamId === userTeam.id;
       const mine = atHome ? lost.homeScore : lost.awayScore;
