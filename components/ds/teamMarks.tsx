@@ -59,16 +59,21 @@ const MARKS: Record<string, TeamMarkFn> = {
     </>
   ),
 
-  // Miami Watermen — crossed oars over water
+  // Miami Watermen — crossed oars
+  //
+  // The blades have to be flat paddles: draw them as tapered ovals and the
+  // pair reads as a sprouting seedling, not a pair of oars.
   watermen: (c) => (
     <>
-      {[-40, 40].map((a) => (
+      {[-42, 42].map((a) => (
         <g key={a} transform={`rotate(${a} 50 44)`}>
-          <path d="M50 2 Q62 14 60 30 Q50 39 40 30 Q38 14 50 2 Z" fill={c} />
-          <path d="M45 30 h10 v46 h-10 z" fill={c} />
+          <path d="M36 4 h28 a5 5 0 0 1 5 5 v24 a5 5 0 0 1 -5 5 h-28 a5 5 0 0 1 -5 -5 v-24 a5 5 0 0 1 5 -5 z" fill={c} />
+          <path d="M44 34 h12 v44 h-12 z" fill={c} />
         </g>
       ))}
-      <path d="M10 68 Q24 60 38 68 Q50 75 62 68 Q76 60 90 68 L90 78 Q76 70 62 78 Q50 85 38 78 Q24 70 10 78 Z" fill={c} />
+      <g fill="none" stroke={c} strokeWidth={6} strokeLinecap="round">
+        <path d="M14 76 Q26 68 38 76 Q50 84 62 76 Q74 68 86 76" />
+      </g>
     </>
   ),
 
@@ -95,13 +100,32 @@ const MARKS: Record<string, TeamMarkFn> = {
     </>
   ),
 
-  // Cleveland Gales — wind
-  gales: (c) => (
-    <g fill="none" stroke={c} strokeWidth={9} strokeLinecap="round">
-      <path d="M16 24 H56 A11 11 0 1 0 45 13" />
-      <path d="M16 44 H66 A12 12 0 1 1 54 56" />
-      <path d="M20 64 H50 A10 10 0 1 0 40 54" />
-    </g>
+  // Cleveland Gales — cyclone
+  //
+  // Three wind lines with hooked ends read as scribble at 40px. A two-armed
+  // spiral around an eye reads as weather.
+  gales: (c, bg) => (
+    <>
+      {[0, 180].map((r) => (
+        <path
+          key={r}
+          d="M50 34 C30 34 14 22 12 4 C34 4 50 16 50 34 Z"
+          fill={c}
+          transform={`rotate(${r} 50 41)`}
+        />
+      ))}
+      {[0, 180].map((r) => (
+        <path
+          key={`b${r}`}
+          d="M50 36 C34 40 20 52 18 68 C36 64 48 52 50 36 Z"
+          fill={c}
+          opacity={0.85}
+          transform={`rotate(${r} 50 41)`}
+        />
+      ))}
+      <circle cx={50} cy={41} r={11} fill={c} />
+      <circle cx={50} cy={41} r={4.5} fill={bg} />
+    </>
   ),
 
   // Cincinnati Aeronauts — hot air balloon
@@ -123,23 +147,34 @@ const MARKS: Record<string, TeamMarkFn> = {
     </>
   ),
 
-  // Houston Stingrays — ray
+  // Houston Stingrays — manta gliding
+  //
+  // Symmetrical wings over a straight vertical tail is a mushroom. Sweep the
+  // tail off to one side and the animal appears.
   stingrays: (c, bg) => (
     <>
-      <path d="M50 12 C64 12 80 30 86 48 C72 44 60 46 50 50 C40 46 28 44 14 48 C20 30 36 12 50 12 Z" fill={c} />
-      <path d="M46 46 q3 24 -8 34 l9 -3 q6 -14 6 -31 z" fill={c} />
-      <circle cx={42} cy={26} r={3.5} fill={bg} />
-      <circle cx={58} cy={26} r={3.5} fill={bg} />
+      <path d="M50 14 C63 14 78 26 94 42 L88 50 C74 44 60 44 50 48 C40 44 26 44 12 50 L6 42 C22 26 37 14 50 14 Z" fill={c} />
+      <path d="M44 44 C48 62 60 74 78 80 L74 88 C52 82 40 66 36 46 Z" fill={c} />
+      <circle cx={41} cy={28} r={3.6} fill={bg} />
+      <circle cx={59} cy={28} r={3.6} fill={bg} />
     </>
   ),
 
   // Nashville Ramblers — the open road
+  //
+  // First pass drew this in perspective (a trapezoid narrowing to a horizon)
+  // and it read as a capital A at every size. A winding road cannot be
+  // mistaken for a letter.
   ramblers: (c, bg) => (
     <>
-      <path d="M24 74 L42 16 L58 16 L76 74 Z" fill={c} />
-      <rect x={47} y={22} width={6} height={10} fill={bg} />
-      <rect x={46} y={40} width={8} height={12} fill={bg} />
-      <rect x={45} y={60} width={10} height={14} fill={bg} />
+      <path
+        d="M34 76 C34 58 68 56 68 42 C68 28 46 26 46 8"
+        fill="none" stroke={c} strokeWidth={26} strokeLinecap="round"
+      />
+      <path
+        d="M34 76 C34 58 68 56 68 42 C68 28 46 26 46 8"
+        fill="none" stroke={bg} strokeWidth={5} strokeDasharray="9 10" strokeLinecap="butt"
+      />
     </>
   ),
 
@@ -153,14 +188,16 @@ const MARKS: Record<string, TeamMarkFn> = {
     </>
   ),
 
-  // Jacksonville Coilers — coiled serpent
-  coilers: (c) => (
+  // Jacksonville Coilers — rearing serpent
+  coilers: (c, bg) => (
     <>
-      <g fill="none" stroke={c} strokeWidth={10} strokeLinecap="round">
-        <path d="M74 50 A24 24 0 1 1 50 26 A14 14 0 1 0 36 40" />
-      </g>
-      <path d="M74 50 L88 42 L86 58 Z" fill={c} />
-      <path d="M74 12 L82 22 L74 24 Z" fill={c} />
+      <path
+        d="M28 74 Q64 72 64 58 Q64 47 44 44 Q26 41 28 30 Q30 18 46 17"
+        fill="none" stroke={c} strokeWidth={12} strokeLinecap="round"
+      />
+      <path d="M44 8 L72 17 L44 26 Z" fill={c} />
+      <path d="M72 17 L88 12 L80 17 L88 22 Z" fill={c} />
+      <circle cx={54} cy={15} r={2.6} fill={bg} />
     </>
   ),
 
@@ -185,9 +222,17 @@ const MARKS: Record<string, TeamMarkFn> = {
   // Phoenix Roadrunners — running bird
   roadrunners: (c, bg) => (
     <>
-      <path d="M30 40 Q30 28 44 26 L48 12 L54 24 L66 18 L60 30 Q74 34 74 46 L88 34 L80 54 L64 58 L56 74 L48 62 L40 74 L36 58 Q30 52 30 40 Z" fill={c} />
-      <circle cx={44} cy={34} r={3.5} fill={bg} />
-      <path d="M8 40 h16 v6 h-16 z M6 54 h14 v6 h-14 z" fill={c} />
+      {/* tail, body, head, beak, crest — the four things that say "roadrunner" */}
+      <path d="M34 44 L6 20 L14 38 L4 44 L32 54 Z" fill={c} />
+      <path d="M28 44 C28 33 40 27 52 29 C62 31 66 37 66 44 C66 52 56 58 44 58 C34 58 28 52 28 44 Z" fill={c} />
+      <circle cx={68} cy={26} r={11} fill={c} />
+      <path d="M76 22 L96 27 L76 32 Z" fill={c} />
+      <path d="M64 16 L58 2 L68 12 L72 0 L76 14 Z" fill={c} />
+      <circle cx={71} cy={24} r={3} fill={bg} />
+      <g stroke={c} strokeWidth={6} strokeLinecap="round" fill="none">
+        <path d="M44 56 L38 72 L26 74" />
+        <path d="M56 55 L58 72 L70 74" />
+      </g>
     </>
   ),
 
@@ -224,43 +269,47 @@ const MARKS: Record<string, TeamMarkFn> = {
     </>
   ),
 
-  // Dallas Wildcatters — gusher off a derrick
+  // Dallas Wildcatters — a well coming in
+  //
+  // A derrick drawn tall is a capital A at any size, crossbars or not. Keep it
+  // squat and braced, and let the gusher — asymmetric, off to one side — be
+  // the silhouette that carries the mark.
   wildcatters: (c) => (
     <>
-      <path d="M50 4 Q64 14 60 26 Q56 34 50 36 Q44 34 40 26 Q36 14 50 4 Z" fill={c} />
-      <path d="M24 74 L40 30 h20 L76 74 h-11 L53 38 h-6 L35 74 Z" fill={c} />
-      <rect x={38} y={46} width={24} height={6} fill={c} />
-      <rect x={32} y={60} width={36} height={6} fill={c} />
+      <path d="M30 78 L38 44 L46 44 L40 78 Z M70 78 L62 44 L54 44 L60 78 Z" fill={c} />
+      <path d="M38 50 L62 68 L58 74 L34 56 Z M62 50 L38 68 L42 74 L66 56 Z" fill={c} opacity={0.9} />
+      <rect x={36} y={40} width={28} height={7} fill={c} />
+      <path d="M44 42 C40 24 50 10 60 14 C66 2 84 4 84 18 C84 28 76 32 70 30 C68 22 58 22 54 42 Z" fill={c} />
+      <circle cx={90} cy={26} r={5} fill={c} />
+      <circle cx={80} cy={38} r={3.5} fill={c} />
     </>
   ),
 
   // New Jersey Highlanders — thistle
   highlanders: (c, bg) => (
     <>
-      <path d="M50 30 L42 8 L47 22 L50 4 L53 22 L58 8 Z" fill={c} />
-      <path d="M34 12 L44 26 L38 28 Z M66 12 L56 26 L62 28 Z" fill={c} />
-      <path d="M50 28 C63 28 70 38 70 48 C70 60 61 68 50 68 C39 68 30 60 30 48 C30 38 37 28 50 28 Z" fill={c} />
-      <path d="M38 40 L62 56 M62 40 L38 56" stroke={bg} strokeWidth={4} />
-      <path d="M28 62 L10 72 L28 74 Z M72 62 L90 72 L72 74 Z" fill={c} />
+      <path d="M34 34 L28 10 L40 28 L44 4 L50 26 L56 4 L60 28 L72 10 L66 34 Z" fill={c} />
+      <path d="M50 30 C63 30 71 40 71 51 C71 63 62 71 50 71 C38 71 29 63 29 51 C29 40 37 30 50 30 Z" fill={c} />
+      <path d="M38 62 L44 56 L50 62 L56 56 L62 62 L56 68 L50 62 L44 68 Z" fill={bg} />
+      <path d="M28 62 L8 70 L26 74 Z M72 62 L92 70 L74 74 Z" fill={c} />
     </>
   ),
 
-  // Chicago Ironwolves — wolf head
+  // Chicago Ironwolves — wolf head, long-snouted and narrow
   ironwolves: (c, bg) => (
     <>
-      <path d="M50 76 L24 48 L18 14 L38 30 Q50 24 62 30 L82 14 L76 48 Z" fill={c} />
-      <path d="M32 40 L44 44 L36 50 Z M68 40 L56 44 L64 50 Z" fill={bg} />
-      <path d="M46 58 h8 l-4 6 z" fill={bg} />
+      <path d="M50 80 L28 50 L22 10 L40 28 Q50 22 60 28 L78 10 L72 50 Z" fill={c} />
+      <path d="M32 38 L45 43 L36 49 Z M68 38 L55 43 L64 49 Z" fill={bg} />
+      <path d="M44 56 L56 56 L50 64 Z" fill={bg} />
+      <path d="M40 66 L44 72 L50 68 L56 72 L60 66 L50 76 Z" fill={bg} />
     </>
   ),
 
-  // Milwaukee Loggers — axe in a log
-  loggers: (c, bg) => (
+  // Milwaukee Loggers — felling axe
+  loggers: (c) => (
     <>
-      <path d="M56 6 L70 10 Q86 22 80 40 Q68 30 56 34 Z" fill={c} />
-      <path d="M52 26 L62 34 L34 70 L24 62 Z" fill={c} />
-      <path d="M14 62 h60 a9 9 0 0 1 0 18 h-60 a9 9 0 0 1 0 -18 z" fill={c} />
-      <circle cx={74} cy={71} r={5} fill={bg} />
+      <path d="M44 10 L62 4 Q88 16 84 46 Q68 32 48 36 Z" fill={c} />
+      <path d="M40 28 L54 36 L30 80 L16 72 Z" fill={c} />
     </>
   ),
 
@@ -287,23 +336,29 @@ const MARKS: Record<string, TeamMarkFn> = {
   // New Orleans Krewe — carnival mask
   krewe: (c, bg) => (
     <>
-      <path d="M26 8 L34 22 L42 10 L48 22 L56 8 L62 22 L70 10 L76 24 L24 24 Z" fill={c} />
-      <path d="M14 30 Q50 20 86 30 Q86 56 66 66 Q55 71 50 60 Q45 71 34 66 Q14 56 14 30 Z" fill={c} />
-      <ellipse cx={34} cy={42} rx={10} ry={7} fill={bg} />
-      <ellipse cx={66} cy={42} rx={10} ry={7} fill={bg} />
+      <path d="M20 30 L24 8 L34 26 Z M44 26 L50 2 L56 26 Z M66 26 L76 8 L80 30 Z" fill={c} />
+      <circle cx={24} cy={7} r={4} fill={c} />
+      <circle cx={50} cy={3} r={4} fill={c} />
+      <circle cx={76} cy={7} r={4} fill={c} />
+      <path d="M8 34 Q50 22 92 34 Q90 56 70 64 Q57 69 50 58 Q43 69 30 64 Q10 56 8 34 Z" fill={c} />
+      <path d="M20 40 Q30 32 42 40 Q30 48 20 40 Z" fill={bg} />
+      <path d="M80 40 Q70 32 58 40 Q70 48 80 40 Z" fill={bg} />
     </>
   ),
 
   // Tampa Corsairs — crossed cutlasses
   corsairs: (c) => (
-    <>
-      {[1, -1].map((s) => (
-        <g key={s} transform={s === 1 ? undefined : 'translate(100,0) scale(-1,1)'}>
-          <path d="M16 72 Q40 46 76 22 L84 32 Q50 52 26 78 Z" fill={c} />
-          <path d="M14 60 L30 76 L22 84 L6 68 Z" fill={c} />
+    <g transform="translate(50,41) scale(0.88) translate(-50,-41)">
+      {[1, -1].map((s2) => (
+        <g key={s2} transform={s2 === 1 ? undefined : 'translate(100,0) scale(-1,1)'}>
+          {/* curved blade, hilt guard, pommel — the guard has to sit low or the
+              two blades read as a V rather than a cross */}
+          <path d="M30 58 C44 44 62 28 80 4 L90 12 C70 32 52 48 40 66 Z" fill={c} />
+          <path d="M18 56 L34 72 L26 80 L10 64 Z" fill={c} />
+          <circle cx={17} cy={76} r={6} fill={c} />
         </g>
       ))}
-    </>
+    </g>
   ),
 
   // Atlanta Blaze — flame
@@ -314,23 +369,32 @@ const MARKS: Record<string, TeamMarkFn> = {
     />
   ),
 
-  // Charlotte Pumas — big cat head
+  // Charlotte Pumas — big cat head, broad and rounded (the Ironwolves' head is
+  // the narrow angular one; these two must not be the same animal at 40px)
   pumas: (c, bg) => (
     <>
-      <path d="M18 26 L36 34 Q50 26 64 34 L82 26 L78 46 Q86 56 74 64 Q62 74 50 74 Q38 74 26 64 Q14 56 22 46 Z" fill={c} />
-      <path d="M34 44 L46 48 L34 54 Z M66 44 L54 48 L66 54 Z" fill={bg} />
-      <path d="M44 60 h12 l-6 8 z" fill={bg} />
+      <path d="M14 24 L34 34 Q50 27 66 34 L86 24 L80 44 Q90 56 76 66 Q64 76 50 76 Q36 76 24 66 Q10 56 20 44 Z" fill={c} />
+      <path d="M30 46 Q38 41 46 46 Q38 52 30 46 Z M70 46 Q62 41 54 46 Q62 52 70 46 Z" fill={bg} />
+      <path d="M43 58 h14 l-7 7 z" fill={bg} />
+      <g stroke={bg} strokeWidth={4} strokeLinecap="round">
+        <path d="M40 64 L18 60 M40 68 L20 70 M60 64 L82 60 M60 68 L80 70" />
+      </g>
     </>
   ),
 
-  // San Francisco Prospect — panning for gold
-  prospect: (c) => (
+  // San Francisco Prospect — a gold strike
+  //
+  // The first pass drew the pan itself, and a shallow bowl with three nuggets
+  // in it reads as a smiling face. The nugget reads as gold on its own.
+  prospect: (c, bg) => (
     <>
-      <path d="M12 34 Q12 72 50 72 Q88 72 88 34" fill="none" stroke={c} strokeWidth={9} strokeLinecap="round" />
-      <circle cx={38} cy={50} r={8} fill={c} />
-      <circle cx={56} cy={56} r={7} fill={c} />
-      <circle cx={64} cy={42} r={6} fill={c} />
-      <path d="M24 8 L28 18 L38 22 L28 26 L24 36 L20 26 L10 22 L20 18 Z" fill={c} />
+      <path d="M22 46 L32 26 L52 18 L72 26 L80 48 L70 66 L46 74 L26 64 Z" fill={c} />
+      <g stroke={bg} strokeWidth={5} fill="none" strokeLinejoin="round">
+        <path d="M32 26 L48 44 L72 26" />
+        <path d="M48 44 L46 74" />
+      </g>
+      <path d="M80 4 L84 16 L96 20 L84 24 L80 36 L76 24 L64 20 L76 16 Z" fill={c} />
+      <path d="M16 12 L19 20 L27 23 L19 26 L16 34 L13 26 L5 23 L13 20 Z" fill={c} />
     </>
   ),
 
@@ -339,27 +403,28 @@ const MARKS: Record<string, TeamMarkFn> = {
     <path d="M50 8 L58.4 29 L80.9 30 L63.2 44 L69.1 66 L50 53.4 L30.9 66 L36.8 44 L19.1 30 L41.6 29 Z" fill={c} />
   ),
 
-  // Seattle Cascades — waterfall
-  cascades: (c, bg) => (
+  // Seattle Cascades — falls over a ledge
+  cascades: (c) => (
     <>
-      <path d="M14 12 h72 v12 h-72 z" fill={c} />
-      <path d="M22 24 h16 q0 22 -8 34 q-8 -12 -8 -34 z" fill={c} />
-      <path d="M42 24 h16 q0 26 -8 40 q-8 -14 -8 -40 z" fill={c} />
-      <path d="M62 24 h16 q0 22 -8 34 q-8 -12 -8 -34 z" fill={c} />
-      <path d="M12 64 Q26 56 40 64 Q54 72 68 64 Q80 57 90 64 L90 74 Q80 67 68 74 Q54 82 40 74 Q26 66 12 74 Z" fill={c} />
-      <path d="M30 30 v18 M50 30 v22 M70 30 v18" stroke={bg} strokeWidth={4} />
+      <path d="M16 8 h68 v13 h-68 z" fill={c} />
+      <path d="M20 21 h20 q-1 22 -10 36 q-9 -14 -10 -36 z" fill={c} />
+      <path d="M41 21 h18 q-1 28 -9 44 q-8 -16 -9 -44 z" fill={c} />
+      <path d="M60 21 h20 q-1 22 -10 36 q-9 -14 -10 -36 z" fill={c} />
+      <path d="M8 66 Q24 57 40 66 Q54 74 68 66 Q81 58 92 66 L92 78 Q81 70 68 78 Q54 86 40 78 Q24 69 8 78 Z" fill={c} />
     </>
   ),
 
   // San Diego Privateers — cannon
   privateers: (c, bg) => (
     <>
-      <path d="M18 30 h48 v18 h-48 z" fill={c} />
-      <path d="M66 26 h12 v26 h-12 z" fill={c} />
-      <path d="M14 48 L34 48 L18 70 L6 66 Z" fill={c} />
-      <circle cx={44} cy={62} r={13} fill={c} />
-      <circle cx={44} cy={62} r={4} fill={bg} />
-      <circle cx={84} cy={64} r={9} fill={c} />
+      <g transform="rotate(-14 50 44)">
+        <path d="M14 32 L64 30 L64 52 L14 50 Z" fill={c} />
+        <path d="M62 26 L76 24 L76 58 L62 56 Z" fill={c} />
+      </g>
+      <path d="M10 52 L36 48 L24 74 L8 70 Z" fill={c} />
+      <circle cx={40} cy={62} r={14} fill={c} />
+      <circle cx={40} cy={62} r={4.5} fill={bg} />
+      <circle cx={88} cy={16} r={8} fill={c} />
     </>
   ),
 };

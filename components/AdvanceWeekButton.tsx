@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { advanceWeekAction, getLeaguePhaseAction, AdvanceMode } from '@/app/actions/league';
 import { formatMoney } from '@/lib/cap';
+import type { WeekReport, TrophyMoment as TrophyData } from '@/lib/weekReport';
+import { WeekReportPanel, WeekReportSpan } from '@/components/ds/WeekReportPanel';
+import { TrophyMoment } from '@/components/ds/TrophyMoment';
 
 /**
  * A refusal to advance, plus the sentence explaining it. The salary-cap gate
@@ -25,6 +28,36 @@ interface CapBlock {
 
 /** Phases that need the user to actually do something before the sim keeps going. */
 const GATE_PHASES = new Set(['RESIGN', 'DRAFT', 'FANTASY_DRAFT']);
+
+/**
+ * Builds the ONE report a multi-week advance is allowed to show.
+ *
+ * This is the hard rule from the interruption budget: "a player who asked to
+ * skip to the playoffs has explicitly asked not to be stopped." Seventeen
+ * reports for one click would be intolerable, so every intermediate report is
+ * collected and folded into a span strip — real per-week results, the record
+ * at both ends of the run — while the panel itself renders the LAST week,
+ * which is where the league actually now stands.
+ */
+function foldSpan(reports: WeekReport[]): WeekReportSpan | null {
+  if (reports.length < 2) return null;
+  const first = reports[0];
+  const last = reports[reports.length - 1];
+  const withChange = reports.filter((r) => r.changed);
+  return {
+    weeks: reports.length,
+    label: first.weekLabel === last.weekLabel ? last.weekLabel : `${first.weekLabel} – ${last.weekLabel}`,
+    results: reports.map((r) => {
+      if (!r.result) return { label: r.weekLabel, outcome: '—' as const, mine: null, theirs: null, oppAbbr: null };
+      const me = r.result.userIsHome ? r.result.home : r.result.away;
+      const them = r.result.userIsHome ? r.result.away : r.result.home;
+      return { label: r.weekLabel, outcome: r.result.outcome, mine: me.score, theirs: them.score, oppAbbr: them.abbr };
+    }),
+    recordFrom: withChange[0]?.changed?.recordBefore ?? null,
+    recordTo: withChange[withChange.length - 1]?.changed?.recordAfter ?? null,
+    gamesPlayed: reports.reduce((n, r) => n + r.gamesPlayed, 0),
+  };
+}
 const MAX_ITERATIONS = 60; // safety backstop, not a real target
 
 /**
@@ -111,6 +144,11 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
   // disappears after 7 seconds and leaves a button that just doesn't work.
   const [capBlock, setCapBlock] = useState<CapBlock | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
+  // The week report and the Tier-0 moment. Both are transient results of an
+  // advance, not standing conditions, and both are dismissible without a
+  // decision — so neither blocks anything the user wants to do next.
+  const [report, setReport] = useState<{ report: WeekReport; span: WeekReportSpan | null } | null>(null);
+  const [trophy, setTrophy] = useState<TrophyData | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
@@ -130,7 +168,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
       const result = await advanceWeekAction(leagueId);
       setProgress(null);
       if (result.blocked) { showBlock(result.summary, blockShape(result)); return; }
-      showToast(result.summary);
+      finish(result.summary, result.report ? [result.report] : [], result.trophy ?? null);
     });
   };
 
@@ -151,6 +189,11 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
       let lastSummary = '';
       let phase = initial.phase;
       let week = initial.week;
+      // Every week's report is collected and NONE of them are shown as they
+      // arrive — the interruption budget's hardest rule. One report at the
+      // end, covering the span.
+      const reports: WeekReport[] = [];
+      let earnedTrophy: TrophyData | null = null;
       // Driving this one week at a time from the client (instead of one
       // opaque server-side loop) is what makes real progress visible —
       // "Simulating Week 3…" — instead of a single static spinner label
@@ -166,31 +209,79 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
           return;
         }
         lastSummary = result.summary;
+        if (result.report) reports.push(result.report);
+        // A season can only end once, so the first Tier-0 in the span is the
+        // one — a run that passes through a title game and keeps going into
+        // the offseason still shows exactly one.
+        if (result.trophy && !earnedTrophy) earnedTrophy = result.trophy;
         phase = result.phase;
         week = result.week;
         iterations++;
         if (stopAfter(phase, week, mode, midseasonWeek, startPhase, iterations)) break;
       }
       setProgress(null);
-      showToast(iterations > 1 ? `Advanced ${iterations} week${iterations === 1 ? '' : 's'}. ${lastSummary}` : lastSummary);
+      finish(
+        iterations > 1 ? `Advanced ${iterations} week${iterations === 1 ? '' : 's'}. ${lastSummary}` : lastSummary,
+        reports,
+        earnedTrophy,
+      );
     });
+  };
+
+  /**
+   * One exit point for every advance that actually moved time.
+   *
+   * A report replaces the toast when there is one; a phase with nothing to
+   * report (an offseason step, the preseason roll) still gets exactly the
+   * toast it got before, unchanged. The Tier-0 moment supersedes both — but
+   * only ever one of them is on screen at a time.
+   */
+  const finish = (text: string, reports: WeekReport[], earned: TrophyData | null) => {
+    setCapBlock(null);
+    router.refresh();
+    if (earned) {
+      setToast(null);
+      setReport(null);
+      setTrophy(earned);
+      return;
+    }
+    if (reports.length > 0) {
+      setToast(null);
+      setTrophy(null);
+      setReport({ report: reports[reports.length - 1], span: foldSpan(reports) });
+      return;
+    }
+    showToast(text);
   };
 
   const showToast = (text: string) => {
     setToast(text);
     setCapBlock(null);
+    setReport(null);
+    setTrophy(null);
     router.refresh();
     setTimeout(() => setToast(null), 7000);
   };
 
   const showBlock = (summary: string, block: Omit<CapBlock, 'summary'> | null) => {
     setToast(null);
+    setReport(null);
+    setTrophy(null);
     setCapBlock(block ? { ...block, summary } : { teamAbbr: '', shortfall: 0, path: [], summary });
     router.refresh();
   };
 
   return (
     <div className="relative" ref={ref}>
+      {trophy && <TrophyMoment data={trophy} leagueId={leagueId} onClose={() => setTrophy(null)} />}
+      {!trophy && report && (
+        <WeekReportPanel
+          report={report.report}
+          span={report.span}
+          leagueId={leagueId}
+          onClose={() => setReport(null)}
+        />
+      )}
       <div className="flex">
         <button onClick={runSingle} disabled={pending} className={`btn-primary ${OPTIONS.length > 0 ? 'rounded-r-none' : ''}`}>
           {pending ? (progress ?? 'Simulating…') : 'Advance ▸'}

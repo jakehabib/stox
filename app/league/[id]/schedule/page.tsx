@@ -4,6 +4,12 @@ import { getLeagueContext } from '@/lib/league-data';
 import { MatchupCard } from '@/components/ds/MatchupCard';
 import { TeamLogo } from '@/components/TeamLogo';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { readJson } from '@/lib/json';
+import { BoxScore } from '@/lib/types';
+import { computeGameShape } from '@/lib/gameShape';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { GameShapePath } from '@/components/ds/GameShapePath';
+import { WeightedScore, MarginTag, ResultRule } from '@/components/ds/ResultWeight';
 
 /**
  * The schedule used to render every week of every game in one flat column —
@@ -46,6 +52,22 @@ export default async function SchedulePage({
     const theirs = g.homeTeamId === userTeam?.id ? g.awayScore : g.homeScore;
     return mine < theirs;
   }).length;
+
+  // Box scores for the user's own played games only — 17 rows, not 272.
+  // They carry `drives[]`, which is what the sparkline in the score column is
+  // drawn from; nothing else on this page needs them, so nothing else loads
+  // them.
+  const myPlayedIds = myPlayed.map((g) => g.id);
+  const myBoxes = myPlayedIds.length > 0
+    ? await prisma.game.findMany({ where: { id: { in: myPlayedIds } }, select: { id: true, boxScore: true } })
+    : [];
+  const shapeByGame = new Map(
+    myBoxes.map((b) => {
+      const g = myPlayed.find((x) => x.id === b.id)!;
+      const box = readJson<BoxScore>(b.boxScore, null as any);
+      return [b.id, computeGameShape(box, g.homeTeamId === userTeam?.id ? 'home' : 'away')] as const;
+    }),
+  );
 
   const nextGame = myGames.find((g) => !g.played);
   const nextOpp = nextGame
@@ -99,7 +121,10 @@ export default async function SchedulePage({
             <h2 className="section-title">{userTeam.city} {userTeam.nickname}</h2>
             <span className="label-sm">{myGames.length} games</span>
           </div>
-          <div className="panel divide-y divide-line/50">
+          <div
+            className="panel divide-y divide-line/50"
+            style={{ ['--team-accent' as never]: generateTeamLogoParams(userTeam.id).primary }}
+          >
             {myGames.map((g) => {
               const home = g.homeTeamId === userTeam.id;
               const opp = home ? g.awayTeam : g.homeTeam;
@@ -113,9 +138,16 @@ export default async function SchedulePage({
               // probability model needs team overall ratings, which this page
               // would have to load 32 rosters to compute.
               const oppDiff = opp.pointsFor - opp.pointsAgnst;
+              const margin = mine - theirs;
+              const shape = shapeByGame.get(g.id) ?? null;
 
               const row = (
-                <div className={`flex items-center gap-3 px-4 py-2 ${isNext ? 'bg-accent/[0.06]' : ''} ${g.played ? '' : 'text-muted'}`}>
+                <div className={`flex items-center gap-3 pr-4 pl-2 py-2 ${isNext ? 'bg-accent/[0.06]' : ''} ${g.played ? '' : 'text-muted'}`}>
+                  {/* Adds a channel, takes no space: an accent edge on a rout
+                      of yours, a bad-toned one on a beating. Non-decisive
+                      results get an invisible spacer of the same width so
+                      every row still lines up exactly as before. */}
+                  {g.played ? <ResultRule margin={margin} /> : <span aria-hidden className="w-[3px] shrink-0" />}
                   <span className="label-sm w-14 shrink-0">Wk {g.week}</span>
                   <span className="text-[11px] w-7 shrink-0 text-muted">{home ? 'vs' : '@'}</span>
                   <TeamLogo seed={opp.id} abbr={opp.abbr} size={20} />
@@ -125,15 +157,25 @@ export default async function SchedulePage({
                   </span>
                   {g.played ? (
                     <>
+                      {shape && (
+                        <span className="hidden sm:block w-[70px] shrink-0" title={`${shape.archetype} — ${shape.note}`}>
+                          <GameShapePath shape={shape} width={70} height={22} variant="spark" />
+                        </span>
+                      )}
                       <span className={`text-[11px] font-bold w-4 shrink-0 ${won ? 'text-accent' : tied ? 'text-muted' : 'text-bad'}`}>
                         {won ? 'W' : tied ? 'T' : 'L'}
                       </span>
-                      <span className="stat-value text-stat-sm w-20 text-right shrink-0">{mine}–{theirs}</span>
+                      <MarginTag margin={margin} className="w-9 text-right shrink-0 hidden sm:inline" />
+                      <span className="w-20 shrink-0 h-6 flex items-center justify-end">
+                        <WeightedScore mine={mine} theirs={theirs} />
+                      </span>
                     </>
                   ) : (
                     <>
+                      <span className="hidden sm:block w-[70px] shrink-0" />
                       <span className="w-4 shrink-0" />
-                      <span className={`w-20 text-right shrink-0 text-[11px] font-mono ${oppDiff > 0 ? 'text-bad' : oppDiff < 0 ? 'text-accent' : ''}`}>
+                      <span className="w-9 shrink-0 hidden sm:inline" />
+                      <span className={`w-20 text-right shrink-0 h-6 flex items-center justify-end text-[11px] font-mono ${oppDiff > 0 ? 'text-bad' : oppDiff < 0 ? 'text-accent' : ''}`}>
                         {opp.wins + opp.losses + opp.ties > 0 ? `${oppDiff >= 0 ? '+' : ''}${oppDiff} diff` : 'no games'}
                       </span>
                     </>
@@ -196,6 +238,19 @@ export default async function SchedulePage({
                   weekLabel={g.played ? 'Final' : 'Upcoming'}
                   score={g.played ? { away: g.awayScore, home: g.homeScore } : undefined}
                 />
+                {/* Margin, under the card rather than inside it — the card is
+                    shared with the dashboard and is not this change's to
+                    restyle. Computed from the two scores already on the row. */}
+                {g.played && (
+                  <div className="flex items-center justify-center gap-2 pt-1.5">
+                    <MarginTag margin={Math.abs(g.homeScore - g.awayScore)} />
+                    <span className="text-[10px] text-muted uppercase tracking-wider">
+                      {Math.abs(g.homeScore - g.awayScore) === 0 ? 'tie'
+                        : Math.abs(g.homeScore - g.awayScore) <= 8 ? 'one score'
+                        : Math.abs(g.homeScore - g.awayScore) >= 28 ? 'decisive' : 'margin'}
+                    </span>
+                  </div>
+                )}
               </Link>
             ))}
           </div>

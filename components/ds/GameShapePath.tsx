@@ -120,7 +120,11 @@ export function GameShapePath({
         {showMarkers && deepest !== null && shape.largestDeficit > 0 && (
           <circle cx={x(deepest)} cy={y(shape.points[deepest].diff)} r={3.5} fill={TONE_HEX.bad} />
         )}
-        {showMarkers && goAhead !== null && shape.goAheadIndex !== null && (
+        {/* The go-ahead marker only means something when there was a lead to
+            take back: on a wire-to-wire game the "go-ahead" is the opening
+            score, which is not a moment, and from the losing bench a green
+            dot on the winner's decisive drive reads backwards. */}
+        {showMarkers && goAhead !== null && shape.finalMargin > 0 && shape.largestDeficit > 0 && (
           <circle cx={x(goAhead)} cy={y(shape.points[goAhead].diff)} r={4} fill={TONE_HEX.good} />
         )}
       </svg>

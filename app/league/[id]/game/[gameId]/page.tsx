@@ -4,13 +4,28 @@ import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { BoxScore } from '@/lib/types';
 import { TeamLogo } from '@/components/TeamLogo';
+import { computeGameShape, marginPhrase, wentToOvertime } from '@/lib/gameShape';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { GameShapePath, ArchetypeTag } from '@/components/ds/GameShapePath';
+import { QuarterLinescore } from '@/components/ds/QuarterLinescore';
 
 export default async function GamePage({ params }: { params: { id: string; gameId: string } }) {
-  const { league } = await getLeagueContext(params.id);
+  const { league, userTeam } = await getLeagueContext(params.id);
   const game = await prisma.game.findUnique({ where: { id: params.gameId }, include: { homeTeam: true, awayTeam: true } });
   if (!game || game.leagueId !== league.id || !game.played) notFound();
 
   const box = readJson<BoxScore>(game.boxScore, null as any);
+
+  // The silhouette is drawn from whichever side the reader has a stake in —
+  // their own club when they played in this game, the home team otherwise.
+  // Comeback and Collapse are the same game seen from opposite benches, so
+  // the perspective has to be chosen rather than assumed.
+  const perspective: 'home' | 'away' = userTeam && game.awayTeamId === userTeam.id ? 'away' : 'home';
+  const shape = computeGameShape(box, perspective);
+  const perspectiveTeam = perspective === 'home' ? game.homeTeam : game.awayTeam;
+  const shapeColor = generateTeamLogoParams(perspectiveTeam.id).primary;
+  const overtime = wentToOvertime(box);
+  const margin = Math.abs(game.homeScore - game.awayScore);
 
   const StatRow = ({ label, home, away }: { label: string; home: string | number; away: string | number }) => (
     <div className="grid grid-cols-3 text-sm py-1.5 border-b border-line/50">
@@ -25,10 +40,56 @@ export default async function GamePage({ params }: { params: { id: string; gameI
       <div className="card card-pad">
         <div className="flex items-center justify-between">
           <TeamScore id={game.awayTeam.id} name={`${game.awayTeam.city} ${game.awayTeam.nickname}`} abbr={game.awayTeam.abbr} score={game.awayScore} won={game.awayScore > game.homeScore} />
-          <div className="text-muted text-sm px-4">Week {game.week} · {game.kind}</div>
+          <div className="text-center px-3 shrink-0">
+            {shape && <ArchetypeTag shape={shape} />}
+            <div className="text-muted text-sm mt-1">Week {game.week} · {game.kind}</div>
+            <div className="font-mono text-[11px] text-muted mt-0.5">
+              {margin === 0 ? 'tied' : marginPhrase(margin)}
+              {overtime && <span className="text-accent2"> · OT</span>}
+            </div>
+          </div>
           <TeamScore id={game.homeTeam.id} name={`${game.homeTeam.city} ${game.homeTeam.nickname}`} abbr={game.homeTeam.abbr} score={game.homeScore} won={game.homeScore > game.awayScore} align="right" />
         </div>
       </div>
+
+      {shape && (
+        <div className="card card-pad" style={{ ['--team-accent' as never]: shapeColor }}>
+          <div className="flex items-baseline justify-between gap-3 mb-1">
+            <h2 className="font-semibold">How it happened</h2>
+            <span className="label-sm">
+              {perspectiveTeam.abbr} score differential · {shape.points.length - 1} drives
+            </span>
+          </div>
+          <GameShapePath shape={shape} color={shapeColor} width={640} height={150} variant="full" />
+          {/* Centred inside each quarter, not on the boundaries — the faint
+              rules in the path already mark where the quarters break. */}
+          <div className="grid grid-cols-4 px-2 font-mono text-[10px] text-muted text-center">
+            <span>Q1</span><span>Q2</span><span>Q3</span><span>Q4</span>
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-2 mt-4 pt-3 border-t border-line/60">
+            <ShapeFact label="Shape" value={shape.archetype} />
+            <ShapeFact label="Lead changes" value={String(shape.leadChanges)} />
+            <ShapeFact label="Biggest lead" value={shape.largestLead > 0 ? `${perspectiveTeam.abbr} +${shape.largestLead}` : 'never led'} />
+            <ShapeFact label="Biggest deficit" value={shape.largestDeficit > 0 ? `${perspectiveTeam.abbr} -${shape.largestDeficit}` : 'never trailed'} />
+            <ShapeFact
+              label="Swing index"
+              value={`${shape.drama}`}
+              hint="Sum of every score swing, weighted by how late it came and how close the game was — a curiosity, not a rating."
+            />
+          </div>
+        </div>
+      )}
+
+      {box?.quarters && (
+        <div className="card card-pad">
+          <QuarterLinescore
+            away={{ teamId: game.awayTeam.id, abbr: game.awayTeam.abbr, score: game.awayScore }}
+            home={{ teamId: game.homeTeam.id, abbr: game.homeTeam.abbr, score: game.homeScore }}
+            quarters={box.quarters}
+            overtime={overtime}
+          />
+        </div>
+      )}
 
       <div className="card card-pad">
         <h2 className="font-semibold mb-2">Recap</h2>
@@ -56,6 +117,15 @@ export default async function GamePage({ params }: { params: { id: string; gameI
           <BoxLines title={`${game.homeTeam.abbr} Leaders`} lines={box.lines.home} />
         </div>
       )}
+    </div>
+  );
+}
+
+function ShapeFact({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div title={hint}>
+      <div className="label-sm">{label}</div>
+      <div className="font-display font-bold text-sm mt-0.5">{value}</div>
     </div>
   );
 }

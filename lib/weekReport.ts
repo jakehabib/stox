@@ -89,6 +89,7 @@ export interface ReportChange {
   gamesBack: number | null;
   streakBefore: string | null;
   streakAfter: string | null;
+  pointDiffBefore: number;
   pointDiff: number;
   clinch: { label: string; tone: 'good' | 'bad' } | null;
   /** The clinch line only shouts on the week it actually flips. */
@@ -343,6 +344,13 @@ export interface BuildWeekReportOptions {
   summary: string;
   /** REGULAR weeks move the standings; playoff rounds deliberately do not. */
   trackStandings: boolean;
+  /**
+   * The week the games that were just played are stamped with. The wire is
+   * filtered to it: without that, "42 other injury reports" was counting the
+   * whole season and this week's report was quoting a cut from five weeks
+   * ago as news.
+   */
+  wireWeek: number;
 }
 
 export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOptions): Promise<WeekReport | null> {
@@ -443,6 +451,7 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
         gamesBack: gamesBackOfCutLine(userTeam.id, confAfter),
         streakBefore: before.streak,
         streakAfter: await trailingStreakLabel(leagueId, userTeam.id, league.seasonYear),
+        pointDiffBefore: beforeRow.pointsFor - beforeRow.pointsAgnst,
         pointDiff: afterRow.pointsFor - afterRow.pointsAgnst,
         clinch: clinchAfter,
         clinchFlipped: (clinchAfter?.label ?? null) !== (clinchBefore?.label ?? null),
@@ -491,15 +500,15 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
   }
 
   const wireRows = await prisma.transaction.findMany({
-    where: { leagueId, seasonYear: league.seasonYear },
+    where: { leagueId, seasonYear: league.seasonYear, week: opts.wireWeek },
     orderBy: { createdAt: 'desc' },
-    take: 80,
+    take: 120,
     select: { id: true, type: true, headline: true, detail: true, teamId: true, seasonYear: true, week: true, createdAt: true },
   });
   const ranked = rankWire(wireRows, {
     userTeamId: userTeam.id,
     currentSeasonYear: league.seasonYear,
-    currentWeek: league.week,
+    currentWeek: opts.wireWeek,
     limit: 3,
   });
   base.otherInjuryCount = ranked.collapsedInjuries?.count ?? 0;
@@ -527,7 +536,7 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
       oppId: opp.id, oppAbbr: opp.abbr, oppCity: opp.city, oppNickname: opp.nickname,
       oppRecord: oppRow ? recordString(oppRow) : '',
       atHome, winChance,
-      stakes: await stakesLine(leagueId, userTeam.id),
+      stakes: await stakesLine(leagueId, userTeam.id, opp.id, league.seasonYear),
     };
   } else if (league.phase === 'PLAYOFFS') {
     base.nextNote = userTeam.eliminated
@@ -541,20 +550,46 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
 }
 
 /**
- * One forward-looking beat from the storyline engine.
+ * One true line about the game you are about to play.
  *
- * RIVALRY is deliberately excluded: lib/storyline.ts's header states that the
- * rivalry beat frames the UPCOMING matchup from the pre-game head-to-head
- * state, and this runs after the week's games are simulated, so its framing
- * would be one game stale. STAKES is excluded too — it is the clinch tag,
- * which the "what it changed" band already prints, and printing it twice is
- * how a report becomes wallpaper.
+ * First choice is the head-to-head this season, which is a fact sitting in a
+ * Game row and is unambiguously *about this matchup* — "they beat you by 16
+ * in week 3" is the line a GM actually wants under a next-up strip.
+ *
+ * Fallback is the storyline engine's STREAK beat, which is about current
+ * form and therefore still reads forward. The other categories are
+ * deliberately not used here: RIVALRY frames the upcoming matchup from the
+ * PRE-game head-to-head state (lib/storyline.ts's header says so) and this
+ * runs after the week is simulated; STAKES is the clinch tag, which the
+ * "what it changed" band already prints; MILESTONE and PLAYER_ARC are about
+ * a player's season, not about Sunday, and reading one under "Next up" is a
+ * non-sequitur.
  */
-async function stakesLine(leagueId: string, teamId: string): Promise<string | null> {
+async function stakesLine(leagueId: string, teamId: string, oppId: string, seasonYear: number): Promise<string | null> {
+  const met = await prisma.game.findFirst({
+    where: {
+      leagueId, seasonYear, played: true,
+      OR: [
+        { homeTeamId: teamId, awayTeamId: oppId },
+        { homeTeamId: oppId, awayTeamId: teamId },
+      ],
+    },
+    orderBy: { week: 'desc' },
+    select: { week: true, homeTeamId: true, homeScore: true, awayScore: true },
+  });
+  if (met) {
+    const atHome = met.homeTeamId === teamId;
+    const mine = atHome ? met.homeScore : met.awayScore;
+    const theirs = atHome ? met.awayScore : met.homeScore;
+    if (mine === theirs) return `You tied them ${mine}-${theirs} in week ${met.week}.`;
+    return mine > theirs
+      ? `You beat them ${mine}-${theirs} in week ${met.week}.`
+      : `They beat you ${theirs}-${mine} in week ${met.week}.`;
+  }
   try {
     const lines = await generateStorylines(leagueId, teamId, { limit: 6 });
-    const usable = lines.find((s) => s.category !== 'RIVALRY' && s.category !== 'STAKES');
-    return usable ? usable.detail : null;
+    const streak = lines.find((s) => s.category === 'STREAK');
+    return streak ? streak.headline : null;
   } catch {
     return null;
   }

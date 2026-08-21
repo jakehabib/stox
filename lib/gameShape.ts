@@ -231,15 +231,18 @@ export function computeGameShape(box: BoxScore | null | undefined, perspective: 
   } else if (absMargin >= BLOWOUT_MARGIN && Math.abs(marginAfterQ3) >= NEVER_IN_DOUBT_Q3_LEAD) {
     archetype = 'Never in doubt';
     note = `${Math.abs(marginAfterQ3)} clear after three quarters`;
+  } else if (absMargin <= ONE_SCORE_MARGIN) {
+    // Checked ahead of wire-to-wire on purpose: a one-point win in which the
+    // winner happened to lead throughout is a one-score game first and a
+    // wire-to-wire second, and the tighter fact is the more useful headline.
+    archetype = 'One score';
+    note = `${absMargin}-point game`;
   } else if (won && largestDeficit === 0) {
     archetype = 'Wire to wire';
     note = 'never trailed';
   } else if (!won && largestLead === 0) {
     archetype = 'Never led';
     note = 'never in front';
-  } else if (absMargin <= ONE_SCORE_MARGIN) {
-    archetype = 'One score';
-    note = `${absMargin}-point game`;
   } else {
     archetype = won ? 'Pulled away' : 'Slipped away';
     note = `${absMargin}-point margin`;

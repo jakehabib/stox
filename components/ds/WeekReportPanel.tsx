@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import type { WeekReport, ReportSide } from '@/lib/weekReport';
 import { ordinal } from '@/lib/standingsOrder';
@@ -60,7 +61,15 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
   const r = report.result;
   const multi = (span?.weeks ?? 1) > 1;
 
-  return (
+  // Portalled to <body>. The league header this button lives in carries
+  // `backdrop-blur`, and a backdrop-filter makes its element the containing
+  // block for every fixed-position descendant — so a full-viewport overlay
+  // rendered in place gets pinned to, and clipped by, a 60px header strip.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6 report-backdrop"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -163,8 +172,8 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
                     variant="full"
                     animate
                   />
-                  <div className="flex justify-between px-2 font-mono text-[10px] text-muted">
-                    <span>Q1</span><span>Q2</span><span>HALF</span><span>Q3</span><span>Q4</span>
+                  <div className="grid grid-cols-4 px-2 font-mono text-[10px] text-muted text-center">
+                    <span>Q1</span><span>Q2</span><span>Q3</span><span>Q4</span>
                   </div>
                   <p className="text-[11px] text-muted mt-1.5">
                     Score differential across {r.shape.points.length - 1} drives · {r.shape.note}
@@ -299,7 +308,8 @@ export function WeekReportPanel({ report, span, onClose, leagueId }: {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
