@@ -7,6 +7,7 @@ import { buildScoutedView } from '@/lib/scouting';
 import { ratingColor, playerLabel } from '@/lib/ratings';
 import { formatMoney, capHit, remainingValue, marketValue, deadMoneyOnCut } from '@/lib/cap';
 import { classifyContractValue } from '@/lib/analytics';
+import { generateScoutingReport } from '@/lib/scoutingProse';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { sortStatEntries, statLabel } from '@/lib/statLabels';
 import { CutButton } from '@/components/CutButton';
@@ -123,6 +124,15 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
   const releaseCost = deadMoneyOnCut(player.contract, settings.capMode);
   const capTotal = capSummary?.capTotal ?? 0;
   const valueTier = player.contract ? classifyContractValue(market - hit, market) : 'market';
+
+  const scoutingReport = generateScoutingReport({
+    playerId: player.id,
+    position: player.position as any,
+    age: player.age,
+    experience: player.experience,
+    isDraftee: player.isDraftee,
+    view,
+  });
 
   const heroFacts: { label: string; value: string; detail?: string; color?: string }[] = player.isDraftee
     ? [
@@ -283,6 +293,16 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           )}
         </div>
       )}
+
+      <div className="section">
+        <SectionHeading title="Scouting Report" action={<span className="text-xs text-muted">{Math.round(view.confidence)}% confidence</span>} />
+        {/* Hedging in this prose is driven by each attribute's own displayed
+            band width, not one aggregate number — so it can never assert more
+            precision than the fog above is already showing. */}
+        <div className="panel p-5">
+          <p className="text-sm leading-relaxed text-chalk/90">{scoutingReport}</p>
+        </div>
+      </div>
 
       <div className="section">
         <SectionHeading title="Attributes" action={!view.revealed ? <span className="text-xs text-muted">Scouted range shown — true values hidden</span> : undefined} />

@@ -70,6 +70,17 @@ const CATEGORY_LABEL: Record<RecordCategory, string> = {
   recYds: 'receiving yards', tackles: 'tackles', sacks: 'sacks', defInt: 'interceptions',
 };
 
+/**
+ * Labels above are stored plural because that's the common case, which left
+ * gaps of exactly one reading "1 sacks from 5". Every category here is a
+ * regular plural, so dropping the trailing s is sufficient — revisit if an
+ * irregular one is ever added.
+ */
+function unit(cat: RecordCategory, n: number): string {
+  const label = CATEGORY_LABEL[cat];
+  return n === 1 ? label.replace(/s$/, '') : label;
+}
+
 // ---------------------------------------------------------------------------
 // Postseason stakes — thin wrapper around lib/clinchScenario.ts, which
 // already does the actual math. Nothing reimplemented here.
@@ -246,7 +257,7 @@ async function recordChaseStorylines(leagueId: string, teamId: string): Promise<
               : `${name} is closing in on the ${scope.toLowerCase()} ${CATEGORY_LABEL[cat]} record`,
             detail: isHolder
               ? `Already the record holder at ${value.toLocaleString()} ${CATEGORY_LABEL[cat]}, extending it as the season goes.`
-              : `${gap.toLocaleString()} ${CATEGORY_LABEL[cat]} behind ${rec.playerName}'s record of ${rec.value.toLocaleString()}.`,
+              : `${gap.toLocaleString()} ${unit(cat, gap)} behind ${rec.playerName}'s record of ${rec.value.toLocaleString()}.`,
             teamId, playerId: p.id,
             fact: { label: CATEGORY_LABEL[cat], value },
           },
@@ -298,7 +309,7 @@ async function milestoneStorylines(leagueId: string, teamId: string): Promise<St
         gap,
         storyline: {
           category: 'MILESTONE',
-          headline: `${name} is ${gap.toLocaleString()} ${CATEGORY_LABEL[cat]} from ${nextMilestone.toLocaleString()} this season`,
+          headline: `${name} is ${gap.toLocaleString()} ${unit(cat, gap)} from ${nextMilestone.toLocaleString()} this season`,
           detail: `Sits at ${value.toLocaleString()} through this season's games.`,
           teamId, playerId: p.id,
           fact: { label: CATEGORY_LABEL[cat], value },

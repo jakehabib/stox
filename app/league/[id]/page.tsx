@@ -21,6 +21,8 @@ import { NewsRow, NewsCategory } from '@/components/ds/NewsRow';
 import { StandingsTable } from '@/components/ds/StandingsTable';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { generateStorylines } from '@/lib/storyline';
+import { StorylineFeed } from '@/components/ds/StorylineFeed';
 
 const AWARD_TYPES: { type: string; code: string; label: string }[] = [
   { type: 'AWARD_MVP', code: 'MVP', label: 'MVP' },
@@ -135,6 +137,10 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   const lastFiveMap = new Map(lastFiveByTeam.map((r) => [r.teamId, r.results]));
   const rankDeltas = await computeRankDeltas(league.id, divisionSorted);
 
+  // Ongoing threads, distinct from the League Wire's log of finished events.
+  // Read-only and derived from rows that already exist — see lib/storyline.ts.
+  const storylines = await generateStorylines(league.id, team.id, { limit: 5 });
+
   // --- Clinch scenario — real mathematical clinch/elimination, computed by
   // running the same seeding algorithm lib/season.ts uses (see
   // lib/clinchScenario.ts). Only meaningful mid-season. ---------------------
@@ -243,6 +249,16 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           {brief.length > 0 && (
             <div className="section">
               <FrontOfficeBrief items={brief.map((b) => ({ ...b, href: `/league/${league.id}${b.href}` }))} weekLabel={`Week ${league.week}`} />
+            </div>
+          )}
+
+          {storylines.length > 0 && (
+            <div className="section">
+              <SectionHeading
+                title="Storylines"
+                action={<span className="text-xs text-muted">This season's threads</span>}
+              />
+              <StorylineFeed leagueId={league.id} storylines={storylines} />
             </div>
           )}
 

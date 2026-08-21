@@ -795,3 +795,43 @@ ever force-pushed over, so every state below still exists in git history).
     than one aggregate confidence number, so it can never state more
     precision than the fog actually allows. Not yet wired into the
     player card.
+- **2026-08-21 — Narrative layer: rivalries, storylines, prose scouting
+  reports — and wired into the UI.** Checkpoint before this batch:
+  `211026d`. The genre research named a storyline engine as the single
+  highest-leverage addition: this game had a strong *facts* layer (news
+  wire, transactions, recaps, history, awards) but nothing threading
+  those facts into an ongoing *story*, which is what OOTP and Football
+  Manager are credited for when players explain why they stay attached
+  to a save.
+  - **`lib/rivalry.ts`** computes rivalry purely from existing `Game`
+    rows plus division membership — no schema. Head-to-head record,
+    average margin, streaks and a derived intensity.
+  - **`lib/storyline.ts`** generates beats in six categories (stakes,
+    rivalry, streak, record chase, milestone, player arc). Every beat
+    carries the concrete number it was derived from, so nothing is
+    invented. It wraps `clinchScenario.ts` and `records.ts` rather than
+    reimplementing their maths.
+  - **`lib/scoutingProse.ts`** writes a scout's note instead of a bare
+    numeric range. Crucially its hedging is driven by each attribute's
+    *displayed band width* rather than one aggregate confidence number,
+    so it can never assert more precision than the fog is already
+    showing — a low-confidence player reads genuinely uncertain.
+  - **Wired in** (these were dead code until now): storylines render on
+    the Dashboard via a new `components/ds/StorylineFeed`, and the
+    scouting report leads the player card above the Attributes grid.
+  - Two bugs caught in review rather than shipped: an unreachable
+    "first-ever meeting" rivalry branch (with no prior meetings the
+    intensity can never clear the narrative threshold, so the sentence
+    was dead code), and beats reading "1 **sacks** from 5" — the
+    category labels are stored plural, so a gap of exactly one needed
+    singularising.
+  - Verified against real saved leagues rather than trusting the
+    generator: a claimed 3-game losing streak was checked game-by-game
+    against raw `Game` rows (wk14/15/16 losses, wk13 a win — correct),
+    and a record-chase gap was checked against raw `careerStats`.
+  - Known soft spot: the tuning constants (rivalry narrative threshold,
+    streak minimum, decline ratios) are all marked `[TUNE]` and are
+    defensible but unvalidated against a full season of real play.
+  - Note: agent verification advanced the shared demo league
+    (`cmt1vj55h...`) through a full season and offseason, so its state
+    differs from earlier screenshots in this changelog.
