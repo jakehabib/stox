@@ -5,8 +5,8 @@ import { resolveStartYear } from '@/lib/leagueYear';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { capForYear, capHit, formatMoney, marketValue } from '@/lib/cap';
 import { buildLeagueRatings, estimateGameWinChance } from '@/lib/teamRating';
-import { POSITION_GROUPS, positionGroup, PositionGroup } from '@/lib/positionGroups';
-import { STARTERS_AT_GROUP, splitStarters, positionsInGroup } from '@/lib/lineup';
+import { positionGroup } from '@/lib/positionGroups';
+import { STARTERS_AT_GROUP, splitStarters } from '@/lib/lineup';
 import { computeGameShape, BLOWOUT_MARGIN, ONE_SCORE_MARGIN } from '@/lib/gameShape';
 import { loadPlayerSeasons, reconstructPlayerSeasons, withAges, ageBasisYear, SeasonLine } from '@/lib/playerSeasons';
 import { leadColumnKey, statLabel } from '@/lib/statLabels';
@@ -18,7 +18,7 @@ import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import {
   buildPythagoreanTable, buildLuckLedger, buildUnitSpendTable, buildMarginProfile,
   buildAgeProfile, buildDraftReturn, buildCapHealth, strengthOfSchedule,
-  classifyContractValue, rankContractValue, unitSide,
+  classifyContractValue, rankContractValue,
   type SurplusRow, type MarginGame, type DraftPickRow,
 } from '@/lib/analytics';
 import { PageMasthead } from '@/components/ds/PageMasthead';
@@ -357,7 +357,13 @@ export default async function AnalyticsPage({ params }: { params: { id: string }
   const projWins = me.wins + me.ties * 0.5 + projectedExtra;
   const seasonLength = settings.seasonLength || 17;
   const hasPreHistory = ledger.some((r) => !r.tenure);
-  const expiringCount = rosterRows.filter((r) => r.yearsRemaining <= 1 && r.hit > 0).length;
+  // The season is on the ledger once the rollover has written its
+  // TeamSeasonRecord row. Until then the live Team record is the only source
+  // for it, and the panel must not describe a finished year as "in progress".
+  const seasonOnLedger = ledger.some((r) => r.year === league.seasonYear);
+  // Counted the same way the nine-unit strip counts it, so the "19 of 53"
+  // headline and the nine denominators under it can never disagree.
+  const expiringCount = rosterRows.filter((r) => r.yearsRemaining <= 1).length;
 
   const facts = [
     {
@@ -427,6 +433,7 @@ export default async function AnalyticsPage({ params }: { params: { id: string }
           seasonLength={seasonLength}
           teamAbbr={me.abbr}
           hasPreHistory={hasPreHistory}
+          seasonOnLedger={seasonOnLedger}
           thisSeason={myLuck ? {
             wins: me.wins, losses: me.losses, ties: me.ties,
             expectedWins: myLuck.expectedWins, luck: myLuck.luck,
@@ -474,7 +481,7 @@ export default async function AnalyticsPage({ params }: { params: { id: string }
           seasonYear={league.seasonYear}
           nextYearCap={capForYear(league.seasonYear + 1, startYear)}
           activeSalary={cap.activeSalary}
-          contractCount={surplusRows.length}
+          contractCount={rosterRows.length}
           expiringCount={expiringCount}
           capEnabled={cap.capEnabled}
         />

@@ -1,5 +1,3 @@
-import { TXT } from './viz';
-
 /**
  * The chrome every panel on the Analytics Department shares.
  *
@@ -192,5 +190,3 @@ export function TableTwin({ caption, columns, rows }: {
 export function ChartBox({ children }: { children: React.ReactNode }) {
   return <div className="overflow-x-auto">{children}</div>;
 }
-
-export { TXT };

@@ -14,13 +14,15 @@ import { VIZ, TXT, signed, ordinal } from './viz';
  * franchise falling off a cliff. The masthead carries the live figure as a
  * rate instead.
  */
-export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLength, teamAbbr, hasPreHistory, thisSeason }: {
+export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLength, teamAbbr, hasPreHistory, seasonOnLedger, thisSeason }: {
   rows: LuckSeasonRow[];
   tenureStartYear: number;
   seasonYear: number;
   seasonLength: number;
   teamAbbr: string;
   hasPreHistory: boolean;
+  /** True once the season in progress has been rolled into TeamSeasonRecord — i.e. it is finished and already on the line. */
+  seasonOnLedger: boolean;
   /** The live season, for the tile that replaces the league-wide luck swarm. */
   thisSeason: { wins: number; losses: number; ties: number; expectedWins: number; luck: number; unluckRank: number; clubs: number; played: number } | null;
 }) {
@@ -28,16 +30,21 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
   const tenureLuck = tenure.reduce((a, r) => a + r.luck, 0);
   const banked = [...rows].sort((a, b) => b.luck - a.luck)[0];
   const robbed = [...rows].sort((a, b) => a.luck - b.luck)[0];
+  const tenureBanked = [...tenure].sort((a, b) => b.luck - a.luck)[0];
+  const tenureRobbed = [...tenure].sort((a, b) => a.luck - b.luck)[0];
 
   return (
     <Panel
       span={12}
       eyebrow="Wins earned vs wins banked"
       title="The Luck Ledger"
-      flag={rows.length === 0 ? undefined : {
+      // No flag before the first finished season: "+0.0 across your tenure"
+      // is a true number that says nothing.
+      flag={tenure.length === 0 ? undefined : {
         text: `${signed(tenureLuck)} wins across your tenure`,
         tone: tenureLuck > 0.5 ? 'good' : tenureLuck < -0.5 ? 'bad' : 'warn',
       }}
+      aside={tenure.length === 0 ? 'Franchise record only — you have not finished a season' : undefined}
       why={<>
         Pythagorean expectation turns points scored and allowed into the record that scoring deserved
         (exponent 2.37, the football fit). Where the blue line sits above the orange one, the club banked
@@ -57,7 +64,16 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
           </div>
           {hasPreHistory && (
             <div className="hidden group-data-[era=tenure]/an:block">
-              <ChartBox><LedgerChart rows={tenure} tenureStartYear={tenureStartYear} /></ChartBox>
+              {/* A GM appointed this year has no completed season of his own.
+                  The tenure view says that rather than drawing an empty axis. */}
+              {tenure.length === 0 ? (
+                <p className="text-sm text-muted py-6">
+                  You have not finished a season yet. Everything on the franchise view above happened before you
+                  took the job in {tenureStartYear}.
+                </p>
+              ) : (
+                <ChartBox><LedgerChart rows={tenure} tenureStartYear={tenureStartYear} /></ChartBox>
+              )}
             </div>
           )}
 
@@ -77,27 +93,37 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
               detail={tenure.length ? `${tenure.length} completed season${tenure.length === 1 ? '' : 's'} since ${tenureStartYear}` : 'no completed season yet'}
               tone={tenureLuck > 0.5 ? 'good' : tenureLuck < -0.5 ? 'bad' : undefined}
             />
-            <Tile
-              label="Most wins banked"
-              value={`${banked.year}`}
-              detail={`${banked.wins}-${banked.losses} on ${banked.expectedWins.toFixed(1)} deserved · ${signed(banked.luck)}`}
-              tone={banked.luck > 0.5 ? 'good' : undefined}
-            />
-            <Tile
-              label="Most wins robbed"
-              value={`${robbed.year}`}
-              detail={`${robbed.wins}-${robbed.losses} on ${robbed.expectedWins.toFixed(1)} deserved · ${signed(robbed.luck)}`}
-              tone={robbed.luck < -0.5 ? 'bad' : undefined}
-            />
+            {/* Banked and robbed follow the era switch, so the tiles and the
+                line above them are never describing two different sets of
+                seasons. Both are rendered; the filter chooses. */}
+            <div className={hasPreHistory ? 'contents group-data-[era=tenure]/an:hidden' : 'contents'}>
+              <Extreme label="Most wins banked" row={banked} good />
+              <Extreme label="Most wins robbed" row={robbed} />
+            </div>
+            {hasPreHistory && (
+              <div className="hidden group-data-[era=tenure]/an:contents">
+                {tenure.length > 0 ? (
+                  <>
+                    <Extreme label="Most wins banked, your tenure" row={tenureBanked} good />
+                    <Extreme label="Most wins robbed, your tenure" row={tenureRobbed} />
+                  </>
+                ) : (
+                  <>
+                    <Tile label="Most wins banked, your tenure" value="—" detail="no completed season yet" />
+                    <Tile label="Most wins robbed, your tenure" value="—" detail="no completed season yet" />
+                  </>
+                )}
+              </div>
+            )}
             {thisSeason ? (
               <Tile
-                label={`${seasonYear}, in progress`}
+                label={`${seasonYear} · ${seasonOnLedger ? 'final' : 'in progress'}`}
                 value={signed(thisSeason.luck, 2)}
                 detail={`${thisSeason.wins}-${thisSeason.losses} against ${thisSeason.expectedWins.toFixed(1)} deserved · ${ordinal(thisSeason.unluckRank)}-unluckiest of ${thisSeason.clubs}`}
                 tone={thisSeason.luck < -0.5 ? 'bad' : thisSeason.luck > 0.5 ? 'good' : undefined}
               />
             ) : (
-              <Tile label={`${seasonYear}, in progress`} value="—" detail="no games played yet this season" />
+              <Tile label={`${seasonYear}`} value="—" detail="no games played yet this season" />
             )}
           </Tiles>
 
@@ -105,7 +131,9 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
             {tenure.length > 0 ? (
               <>
                 Your completed seasons: <b>{tenure.map((t) => `${t.year} ${t.wins}-${t.losses} (${signed(t.luck)})`).join(', ')}</b>.
-                {' '}{seasonYear} is still running — a part-season on a wins axis reads as a collapse, so it sits in the tile above rather than on the line.
+                {seasonOnLedger
+                  ? ` ${seasonYear} is finished and is the last point on the line.`
+                  : ` ${seasonYear} is still running — a part-season on a wins axis reads as a collapse, so it sits in the tile above rather than on the line.`}
               </>
             ) : (
               <>Every season on this chart predates your appointment. It is the franchise you inherited, not a record of your work — the tenure view above filters it out once you have a finished season of your own.</>
@@ -130,6 +158,18 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
         </p>
       )}
     </Panel>
+  );
+}
+
+/** One extreme season as a tile — the same shape whichever era is in view. */
+function Extreme({ label, row, good }: { label: string; row: LuckSeasonRow; good?: boolean }) {
+  return (
+    <Tile
+      label={label}
+      value={`${row.year}`}
+      detail={`${row.wins}-${row.losses} on ${row.expectedWins.toFixed(1)} deserved · ${signed(row.luck)}`}
+      tone={good ? (row.luck > 0.5 ? 'good' : undefined) : (row.luck < -0.5 ? 'bad' : undefined)}
+    />
   );
 }
 

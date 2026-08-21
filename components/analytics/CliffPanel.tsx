@@ -65,7 +65,7 @@ export function CliffPanel({ bands, cliff, capHealth, groups, seasonYear, nextYe
               tone={cliff.startersOver30InTwo > cliff.starterCount / 3 ? 'warn' : undefined}
             />
             <Tile
-              label={`Signed past ${seasonYear + 2}`}
+              label={`Signed through ${seasonYear + 2}`}
               value={String(cliff.startersSignedPastTwo)}
               detail={`first-teamers, ${cliff.rosterSignedPastTwo} in all`}
             />

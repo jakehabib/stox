@@ -14,6 +14,9 @@ import { positionBadgeClass } from '@/components/ds/positionColor';
 import { MetricTiles } from '@/components/ds/MetricTiles';
 import { buildPythagoreanTable, strengthOfSchedule, type PythagoreanRow } from '@/lib/analytics';
 import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/ds/StatScopeToggle';
+// One definition of the passer rating formula, shared with the career table's
+// Rate column. The two used to be separate copies that agreed only by luck.
+import { passerRating } from '@/lib/statLabels';
 
 interface LeaderCol { key: keyof SeasonStats; label: string; format?: (n: number) => string }
 interface LeaderCategory { title: string; primary: LeaderCol; extra: LeaderCol[] }
@@ -27,18 +30,6 @@ const CATEGORIES: LeaderCategory[] = [
   { title: 'Sacks', primary: { key: 'sacks', label: 'Sacks' }, extra: [{ key: 'tackles', label: 'Tkl' }, { key: 'ff', label: 'FF' }] },
   { title: 'Interceptions', primary: { key: 'defInt', label: 'INT' }, extra: [{ key: 'pd', label: 'PD' }, { key: 'tackles', label: 'Tkl' }] },
 ];
-
-/** The real NFL passer rating formula — every component clamped to [0, 2.375] before averaging. */
-function passerRating(s: SeasonStats): number | null {
-  const att = s.passAtt ?? 0;
-  if (att < 1) return null;
-  const clamp = (v: number) => Math.max(0, Math.min(2.375, v));
-  const a = clamp(((s.passCmp ?? 0) / att - 0.3) * 5);
-  const b = clamp(((s.passYds ?? 0) / att - 3) * 0.25);
-  const c = clamp(((s.passTd ?? 0) / att) * 20);
-  const d = clamp(2.375 - ((s.int ?? 0) / att) * 25);
-  return ((a + b + c + d) / 6) * 100;
-}
 
 /** Position-shaped nerdy per-player line — efficiency rates, not just volume, for the My Team deep-dive. */
 function nerdyLine(position: string, s: SeasonStats): { label: string; value: string }[] {

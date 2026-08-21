@@ -1,5 +1,5 @@
 import { TeamLogo } from '@/components/TeamLogo';
-import { careerColumns, leadColumnKey } from '@/lib/statLabels';
+import { careerColumns, leadColumnKey, formatColumn, isDerived, type StatColumn } from '@/lib/statLabels';
 import type { CareerTable, CareerTableRow } from '@/lib/playerSeasons';
 
 /**
@@ -133,7 +133,7 @@ function Row({
   leadKey,
 }: {
   row: CareerTableRow;
-  cols: { key: string; short: string }[];
+  cols: StatColumn[];
   leadKey?: string;
 }) {
   const isSplit = row.kind === 'split';
@@ -170,7 +170,12 @@ function Row({
           <span className="text-muted">—</span>
         ) : row.teamId ? (
           <span className={`flex items-center gap-1.5 ${isSplit ? 'pl-3' : ''}`}>
-            <TeamLogo seed={row.teamId} abbr={row.teamAbbr} size={18} />
+            {/* The crest is decorative HERE and only here: the abbreviation it
+                labels is the very next node, so leaving TeamLogo's own
+                aria-label in makes the cell announce "CLT logo CLT". */}
+            <span aria-hidden="true" className="flex">
+              <TeamLogo seed={row.teamId} abbr={row.teamAbbr} size={18} />
+            </span>
             <span className="font-semibold text-xs">{row.teamAbbr}</span>
           </span>
         ) : (
@@ -181,14 +186,25 @@ function Row({
         {row.age ?? '—'}
       </td>
       {cols.map((c) => {
-        const v = (row.stats as Record<string, number | undefined>)[c.key] ?? 0;
+        // Derived columns compute from THIS row's components. The career row
+        // and the "Before <year>" row carry the sum of their components, so a
+        // career passer rating comes out of the summed attempts rather than as
+        // the mean of the season ratings. See lib/statLabels.ts.
+        const text = formatColumn(c, row.stats);
         const lead = c.key === leadKey && !isSplit;
+        const zero = !isDerived(c) && ((row.stats as Record<string, number | undefined>)[c.key] ?? 0) === 0;
         return (
           <td
             key={c.key}
             className={`${topRule} text-right font-mono tabular-nums ${lead ? 'font-semibold text-chalk' : ''} ${isSplit ? 'text-muted' : ''}`}
           >
-            {v === 0 && !isCareer ? <span className="text-muted/50">0</span> : v.toLocaleString()}
+            {text == null
+              // No denominator — he has no rate, which is a different fact
+              // from a rate of zero. A dash says so; "0.0" would not.
+              ? <span className="text-muted/50" title="No attempts to compute this from">—</span>
+              : zero && !isCareer
+                ? <span className="text-muted/50">0</span>
+                : text}
           </td>
         );
       })}

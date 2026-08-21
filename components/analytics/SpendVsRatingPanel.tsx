@@ -34,9 +34,9 @@ export function SpendVsRatingPanel({ rows, capEnabled }: { rows: UnitSpendRow[];
       aside="Bubble size = share of team quality that unit carries"
       why={<>
         Right of the centre line you are spending more of your own cap at that unit than the league does;
-        above it you are fielding a better one than the league fields. The rating and the rank are
-        <span className="text-chalk"> buildLeagueRatings()</span>&apos; own numbers — the same ones the dashboard,
-        the schedule screen and the win estimate all read — not a second opinion computed here.
+        above it you are fielding a better one than the league fields. The rating and the rank come straight from
+        <span className="text-chalk"> buildLeagueRatings()</span> — the same numbers the dashboard, the schedule
+        screen and every win estimate read — rather than a second opinion computed here.
       </>}
     >
       {!capEnabled ? (
@@ -160,16 +160,27 @@ function Scatter({ rows }: { rows: UnitSpendRow[] }) {
     for (const [sx, sy] of SEATS) {
       const lx = p.cx + sx * (p.r + 13);
       const ly = p.cy + sy * (p.r + 13);
-      if (lx < L + 14 || lx > W - R - 14 || ly < TOP + 8 || ly > TOP + ph - 6) continue;
+      // The top and bottom bands are reserved for the quadrant names — a unit
+      // label seated there overprints "GETTING IT CHEAP" and both become
+      // unreadable.
+      if (lx < L + 14 || lx > W - R - 14 || ly < TOP + 26 || ly > TOP + ph - 20) continue;
       let cost = 0;
       for (const q of pts) if (q !== p) cost += Math.max(0, 46 - Math.hypot(lx - q.cx, ly - q.cy));
-      for (const t of taken) cost += Math.max(0, 34 - Math.hypot(lx - t.x, ly - t.y));
+      // Label-on-label is the collision a reader actually notices, so it is
+      // charged at twice the rate of label-on-bubble and over a wider radius.
+      for (const t of taken) cost += 2 * Math.max(0, 46 - Math.hypot(lx - t.x, ly - t.y));
       if (!best || cost < best.cost) best = { x: lx, y: ly, sx, sy, cost };
     }
     const seat: Seat = best ?? { x: p.cx, y: p.cy - p.r - 8, sx: 0, sy: -1 };
     taken.push(seat);
     return { ...p, seat };
-  });
+  })
+    // Painted largest first, so a small bubble is never buried under a big
+    // one. Seating is computed in POSITION_GROUPS order above (stable), and
+    // only the DRAW order changes here — RB behind LB was invisible until
+    // this, which is exactly the failure a screenshot catches and a unit test
+    // does not.
+    .sort((a, b) => b.r - a.r);
 
   const xticks = [-12, -8, -4, 0, 4, 8, 12].filter((v) => Math.abs(v) < xlim);
   const yticks = [-8, -4, 0, 4, 8, 12].filter((v) => v > ylo && v < yhi);

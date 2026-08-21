@@ -74,11 +74,14 @@ export function ProductionPanel({ men, leagueId, teamAccent, teamAbbr, seasonYea
 
           {noLine.length > 0 && (
             <NotOnRecord>
-              {noLine.length} of these {men.length} have no line at all, and each absence is a different fact.
+              {noLine.length === men.length ? `All ${men.length} of these` : `${noLine.length} of these ${men.length}`}
+              {' '}have no line at all, and each absence is a different fact.
               {linemen.length > 0 && (
                 <> <b className="text-chalk">{linemen.map((m) => m.name).join(', ')}</b>
-                  {linemen.length === 1 ? ' is an offensive lineman' : ' are offensive linemen'} — the box score records
-                  nothing they do: no snaps, no blocks, no pressures allowed. There is no line to draw.</>
+                  {linemen.length === 1
+                    ? ' is an offensive lineman — the box score records nothing he does'
+                    : ' are offensive linemen — the box score records nothing they do'}: no snaps, no blocks, no
+                  pressures allowed. There is no line to draw.</>
               )}
               {tooNew.length > 0 && (
                 <> <b className="text-chalk">{tooNew.map((m) => m.name).join(', ')}</b>
@@ -182,5 +185,3 @@ function Spark({ points, color, label, name }: {
     </svg>
   );
 }
-
-export { TXT };

@@ -81,8 +81,9 @@ export function MarginPanel({ games, profile, thresholds, teamRatingRank, season
             {profile.narrowLosses.length > 0 ? (
               <>
                 {profile.narrowLosses.length} of the {games.filter((g) => g.margin < 0).length} defeat
-                {games.filter((g) => g.margin < 0).length === 1 ? '' : 's'} came by
-                {' '}{Math.abs(profile.narrowLosses[0].margin)} point{Math.abs(profile.narrowLosses[0].margin) === 1 ? '' : 's'} or fewer
+                {games.filter((g) => g.margin < 0).length === 1 ? '' : 's'} came inside one score
+                {' '}({thresholds.oneScore} points or fewer), the closest by
+                {' '}{Math.abs(profile.narrowLosses[0].margin)}
                 {profile.blownLeads.length > 0 ? `, and ${profile.blownLeads.length} of them after leading by ${BLOWN_LEAD_MARGIN} or more` : ''}.
                 {' '}A roster that rates {ordinal(teamRatingRank)} going {profile.oneScoreWins}-{profile.oneScoreLosses} in one-score
                 games points at the fourth quarter, not at the talent.

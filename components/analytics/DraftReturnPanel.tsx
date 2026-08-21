@@ -49,11 +49,14 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-7 items-start">
           <div className="min-w-0">
             <ChartBox><DotPlot bands={bands} leagueMeanOvr={leagueMeanOvr} /></ChartBox>
+            {/* The "no longer here" key only appears when somebody actually
+                left. A legend entry for an empty class is a chart claiming a
+                category it does not have. */}
             <Legend
               keys={[
                 { color: VIZ.seriesA, label: 'First team now' },
                 { label: 'On the roster, not starting', shape: 'ring', ringColor: VIZ.seriesA },
-                { color: VIZ.muted, label: 'No longer on this roster', shape: 'dot' },
+                ...(gone.length > 0 ? [{ color: VIZ.muted, label: 'No longer on this roster', shape: 'dot' as const }] : []),
                 { color: VIZ.chalk, label: 'Round mean', shape: 'line' },
               ]}
             />
@@ -102,11 +105,14 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
               taken in, which is exactly the point of the chart.
             </Note>
 
+          </div>
+
+          <div className="xl:col-span-2">
             <NotOnRecord>
-              What the scouting department <em>said</em> a prospect would be is not recoverable. `ScoutingReport` is
-              re-centred in place as confidence rises, so by the time a pick has been on the roster a year his
-              report describes the player he became rather than the projection that was made. This panel can show
-              the return on a round; it cannot show a scouting miss.
+              What the scouting department <em>said</em> a prospect would be is not recoverable.
+              {' '}<code>ScoutingReport</code> is re-centred in place as confidence rises, so by the time a pick has
+              been on the roster a year his report describes the player he became rather than the projection that
+              was made. This panel can show the return on a round; it cannot show a scouting miss.
             </NotOnRecord>
             {gone.length === 0 && (
               <NotOnRecord>
@@ -130,7 +136,7 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
 }
 
 function DotPlot({ bands, leagueMeanOvr }: { bands: DraftRoundBand[]; leagueMeanOvr: number }) {
-  const W = 700, H = 300, L = 42, R = 76, TOP = 26, BOT = 38;
+  const W = 700, H = 340, L = 42, R = 76, TOP = 26, BOT = 38;
   const pw = W - L - R, ph = H - TOP - BOT;
 
   const all = bands.flatMap((b) => b.picks.map((p) => p.ovr));

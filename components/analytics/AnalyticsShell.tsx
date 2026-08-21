@@ -57,7 +57,9 @@ export function AnalyticsShell({ showEra, children }: {
       </div>
 
       <div
-        className="group/an grid grid-cols-12 gap-4 mt-4"
+        // items-start: a five-column card next to a tall seven-column one
+        // ends where its content ends rather than stretching into a void.
+        className="group/an grid grid-cols-12 items-start gap-4 mt-4"
         data-era={era}
         data-units={units}
         data-numbers={numbers ? 'on' : 'off'}
