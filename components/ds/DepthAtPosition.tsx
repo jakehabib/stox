@@ -103,13 +103,24 @@ export function DepthAtPosition({ position, depth, capOn }: {
         {depth.map((d, i) => {
           const starts = i < starterCount;
           return (
+            <div key={d.playerId}>
+              {/* Where the lineup ends. The ST/# labels alone made the reader
+                  count, and at WR — three starters — counting is exactly what
+                  they were getting wrong. */}
+              {i === starterCount && starterCount > 0 && (
+                <div className="flex items-center gap-2 pt-1.5 pb-1">
+                  <span className="label-sm text-[10px]">Bench</span>
+                  <span className="h-px flex-1 bg-line/70" />
+                </div>
+              )}
             <div
-              key={d.playerId}
-              className={`flex items-center gap-2.5 px-2 py-1.5 -mx-1 rounded-lg ${d.isSubject ? 'bg-accent/10 border border-accent/30' : ''}`}
+              className={`flex items-center gap-2.5 px-2 py-1.5 -mx-1 rounded-lg border-l-2 ${
+                starts ? 'bg-chalk/[0.05] border-accent2/70' : 'border-transparent opacity-80'
+              } ${d.isSubject ? 'ring-1 ring-accent/40 bg-accent/10' : ''}`}
             >
-              <span className="label-sm w-8 shrink-0">{starts ? `ST${starterCount > 1 ? i + 1 : ''}` : `#${i + 1}`}</span>
+              <span className={`label-sm w-8 shrink-0 ${starts ? 'text-chalk' : ''}`}>{starts ? `ST${starterCount > 1 ? i + 1 : ''}` : `#${i + 1}`}</span>
               <PlayerAvatar seed={d.playerId} age={d.age} size={24} weightLb={d.weightLb} heightIn={d.heightIn} position={position} />
-              <span className={`flex-1 truncate text-sm ${d.isSubject ? 'font-semibold' : ''}`}>
+              <span className={`flex-1 truncate text-sm ${d.isSubject || starts ? 'font-semibold' : ''}`}>
                 {d.name}{d.isSubject ? ' — this negotiation' : ''}
               </span>
               <span className="text-xs text-muted w-10 text-right">{d.age}yo</span>
@@ -120,6 +131,7 @@ export function DepthAtPosition({ position, depth, capOn }: {
                   : <span className="text-muted">{d.yearsRemaining} yr{d.yearsRemaining === 1 ? '' : 's'}</span>}
               </span>
               <span className={`stat-value text-stat-sm w-8 text-right ${ratingColor(d.ovr)}`}>{d.ovr}</span>
+            </div>
             </div>
           );
         })}

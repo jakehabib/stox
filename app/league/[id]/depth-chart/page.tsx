@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { POSITIONS } from '@/lib/tuning';
+import { startersAt, splitStarters, OFFENSE_STARTERS, DEFENSE_STARTERS } from '@/lib/lineup';
 import { DepthChartGroup } from '@/components/DepthChartGroup';
 import { AutoSortButton } from '@/components/AutoSortButton';
 import { PageMasthead } from '@/components/ds/PageMasthead';
@@ -25,17 +26,35 @@ export default async function DepthChartPage({ params }: { params: { id: string 
     orderByPosition[pos] = [...ranked, ...rest];
   }
 
+  const byId = new Map(players.map((p) => [p.id, p]));
+
+  /**
+   * The men actually on the field at a position — the top `startersAt(pos)` of
+   * its chart, not its top man. Every number on this masthead used to take the
+   * first player at each position and call that the starter, which is right at
+   * QB and wrong at WR, CB, EDGE, DT, LB and S. It counted 16 starters for a
+   * lineup that fields 22.
+   */
+  const startersAtPosition = (pos: string) =>
+    splitStarters(pos, orderByPosition[pos] ?? [])
+      .starters.map((id) => byId.get(id))
+      .filter((p): p is NonNullable<typeof p> => !!p);
+
   const groupCount = POSITIONS.filter((pos) => byPosition[pos].length > 0).length;
-  const emptyPositions = POSITIONS.filter((pos) => byPosition[pos].length === 0);
-  const emptyGroups = emptyPositions.length;
   const thinPositions = POSITIONS.filter((pos) => byPosition[pos].length === 1);
-  // Average rating of whoever currently sits atop each group — the closest
-  // single number to "how good is the lineup this page actually sets."
-  const starterOvrs = POSITIONS
-    .map((pos) => orderByPosition[pos]?.[0])
-    .filter((id): id is string => !!id)
-    .map((id) => players.find((p) => p.id === id)?.trueOvr)
-    .filter((v): v is number => typeof v === 'number');
+
+  // "Unmanned" means a starting slot with nobody in it, which is not the same
+  // as a position group with nobody in it: two receivers at a position that
+  // starts three is a hole in the lineup, and this tile used to read "every
+  // spot covered" over exactly that.
+  const shortPositions = POSITIONS.filter((pos) => startersAtPosition(pos).length < startersAt(pos));
+  const openStarterSlots = POSITIONS.reduce(
+    (n, pos) => n + Math.max(0, startersAt(pos) - startersAtPosition(pos).length), 0);
+
+  // Average across the STARTERS — all 22 of them plus the specialists, each
+  // counted once per slot he fills, so a three-deep receiver group weighs what
+  // it does on the field.
+  const starterOvrs = POSITIONS.flatMap((pos) => startersAtPosition(pos).map((p) => p.trueOvr));
   const starterAvgOvr = starterOvrs.length > 0
     ? starterOvrs.reduce((s, v) => s + v, 0) / starterOvrs.length
     : 0;
@@ -52,12 +71,10 @@ export default async function DepthChartPage({ params }: { params: { id: string 
     return healthy.some((p, i) => healthy.slice(i + 1).some((q) => q.trueOvr > p.trueOvr));
   });
 
-  const injuredStarters = POSITIONS.filter((pos) => {
-    const topId = orderByPosition[pos]?.[0];
-    if (!topId) return false;
-    const starter = players.find((p) => p.id === topId);
-    return (starter?.injuryWeeks ?? 0) > 0;
-  }).length;
+  // Every starter, not every position's top man — an injured WR2 is an injured
+  // starter, and this tile used to read zero with him on the field.
+  const injuredStarters = POSITIONS.reduce(
+    (n, pos) => n + startersAtPosition(pos).filter((p) => p.injuryWeeks > 0).length, 0);
 
   return (
     <div className="space-y-6">
@@ -66,19 +83,24 @@ export default async function DepthChartPage({ params }: { params: { id: string 
         teamAbbr={team.abbr}
         eyebrow="Depth Chart"
         title={`${team.city} ${team.nickname}`}
-        subtitle="Set who starts. The sim engine uses this order every game."
+        subtitle={`Set who starts. The sim engine uses this order every game — ${OFFENSE_STARTERS} on offense, ${DEFENSE_STARTERS} on defense, highlighted below.`}
         action={<AutoSortButton teamId={team.id} />}
         facts={[
           // Colour stays off the group count itself — 16 groups isn't the
           // problem, an unmanned one is, and that gets its own tile below.
           { label: 'Position Groups', value: String(groupCount), detail: 'with at least one player' },
           {
-            label: 'Unmanned',
-            value: String(emptyGroups),
-            detail: emptyGroups > 0 ? emptyPositions.join(', ') : 'every spot covered',
-            color: emptyGroups > 0 ? 'text-bad' : 'text-accent',
+            label: 'Open Starting Slots',
+            value: String(openStarterSlots),
+            detail: openStarterSlots > 0 ? shortPositions.join(', ') : 'every starting slot filled',
+            color: openStarterSlots > 0 ? 'text-bad' : 'text-accent',
           },
-          { label: 'Starter OVR', value: starterAvgOvr.toFixed(1), detail: 'average across the ones', color: undefined },
+          {
+            label: 'Starter OVR',
+            value: starterAvgOvr.toFixed(1),
+            detail: `across all ${starterOvrs.length} starters`,
+            color: undefined,
+          },
           { label: 'No Backup', value: String(thinPositions.length), detail: thinPositions.length > 0 ? thinPositions.join(', ') : 'depth everywhere', color: thinPositions.length > 0 ? 'text-warn' : 'text-accent' },
           { label: 'Injured Starters', value: String(injuredStarters), detail: injuredStarters > 0 ? 'reorder before kickoff' : 'none', color: injuredStarters > 0 ? 'text-bad' : 'text-accent' },
           {

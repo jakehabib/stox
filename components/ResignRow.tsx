@@ -77,7 +77,11 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   const [structure, setStructure] = useState<DealStructure>(OPENING_STRUCTURE);
   // A lookup, not a column: the list is already long and this is the answer to
   // a question you only ask about one man at a time.
-  const [showDepth, setShowDepth] = useState(false);
+  // Open by default. "Do I pay this man" is not answerable without knowing who
+  // plays if he walks, so the answer should not be behind a second click on a
+  // row you already had to open — the app owner's note was that the re-sign
+  // pop-out "always needs to show the starter".
+  const [showDepth, setShowDepth] = useState(true);
   const [confirmingWalk, setConfirmingWalk] = useState(false);
   const [tagPending, setTagPending] = useState(false);
   const [tagMessage, setTagMessage] = useState<string | null>(null);
