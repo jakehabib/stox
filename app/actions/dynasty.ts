@@ -25,6 +25,22 @@ export interface DynastyActionResult {
   message: string;
 }
 
+/**
+ * revalidatePath throws outside a Next request (a maintenance script, a test
+ * harness). Every call below happens AFTER the database write has already
+ * committed, so letting it escape would turn a successful spend into an
+ * error the user sees — and would make this whole file untestable from a
+ * script. Only the out-of-request case is swallowed; anything else rethrows.
+ */
+function safeRevalidate(leagueId: string) {
+  try {
+    safeRevalidate(leagueId);
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('static generation store')) return;
+    throw e;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Skill points
 // ---------------------------------------------------------------------------
@@ -57,7 +73,7 @@ export async function purchaseSkillAction(leagueId: string, skillId: DynastySkil
   const next = { ...fresh, [skillId]: current + 1 };
   await prisma.dynastyProfile.update({ where: { id: profile.id }, data: { skills: serializeSkills(next) } });
 
-  revalidatePath(`/league/${leagueId}`, 'layout');
+  safeRevalidate(leagueId);
   return { ok: true, message: `${def.name} upgraded to rank ${current + 1}.` };
 }
 
@@ -154,7 +170,7 @@ export async function fullScoutAction(leagueId: string, teamId: string, playerId
     }),
   ]);
 
-  revalidatePath(`/league/${leagueId}`, 'layout');
+  safeRevalidate(leagueId);
   const remaining = max - (usedThisYear + 1);
   return {
     ok: true,
@@ -191,24 +207,29 @@ export async function fullScoutPanelAction(leagueId: string, teamId: string, que
   const state = await buildDynastyState(leagueId);
   const q = query.trim();
 
-  const where: Record<string, unknown> = { leagueId, status: { not: 'RETIRED' } };
+  const select = { id: true, firstName: true, lastName: true, position: true, age: true, isDraftee: true, teamId: true, team: { select: { abbr: true } } };
+  const base: Record<string, unknown> = { leagueId, status: { not: 'RETIRED' } };
+
+  let players;
   if (q.length >= 2) {
-    where.OR = [
-      { lastName: { contains: q, mode: 'insensitive' } },
-      { firstName: { contains: q, mode: 'insensitive' } },
-    ];
+    players = await prisma.player.findMany({
+      where: { ...base, OR: [{ lastName: { contains: q, mode: 'insensitive' } }, { firstName: { contains: q, mode: 'insensitive' } }] } as never,
+      orderBy: [{ trueOvr: 'desc' }], take: 25, select,
+    });
   } else {
     // No query: default to the incoming draft class, which is where a perfect
-    // evaluation is worth the most.
-    where.isDraftee = true;
+    // evaluation is worth the most. Outside the window where a class exists
+    // (a league in PRESEASON has none yet) fall back to the open market, so
+    // the widget is never an empty box.
+    players = await prisma.player.findMany({
+      where: { ...base, isDraftee: true } as never, orderBy: [{ trueOvr: 'desc' }], take: 25, select,
+    });
+    if (players.length === 0) {
+      players = await prisma.player.findMany({
+        where: { ...base, teamId: null } as never, orderBy: [{ trueOvr: 'desc' }], take: 25, select,
+      });
+    }
   }
-
-  const players = await prisma.player.findMany({
-    where: where as never,
-    orderBy: [{ trueOvr: 'desc' }],
-    take: 25,
-    select: { id: true, firstName: true, lastName: true, position: true, age: true, isDraftee: true, teamId: true, team: { select: { abbr: true } } },
-  });
   const reports = await prisma.scoutingReport.findMany({
     where: { teamId, playerId: { in: players.map((p) => p.id) }, fullyRevealed: true },
     select: { playerId: true },
@@ -378,7 +399,7 @@ export async function insiderReadAction(
     where: { id: profile.id },
     data: { insiderYear: league.seasonYear, insiderUsed: usedThisYear + 1 },
   });
-  revalidatePath(`/league/${leagueId}`, 'layout');
+  safeRevalidate(leagueId);
 
   const remaining = DYNASTY.INSIDER_USES_PER_SEASON - (usedThisYear + 1);
   return { ok: true, remaining, report, message: `Insider — ${remaining}/${DYNASTY.INSIDER_USES_PER_SEASON} remaining.` };

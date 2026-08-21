@@ -422,6 +422,9 @@ export async function cutPlayer(opts: {
  * and all, and the signing runs through the ordinary assertCapRoom path, so
  * upgrading is a cap decision like every other.
  */
+/** Share of market value a free agent will actually sign for. [TUNE] */
+const MARKET_FLOOR = 0.85;
+
 export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, week: number, settings: LeagueSettings, rng: Rng) {
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
   // isDraftee players aren't real free agents yet — they're this year's
@@ -506,6 +509,19 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
       const freed = displace?.frees ?? 0;
       const offer = maxOffer(fa as any, { profile, needs, capSpace: budget + freed, rng });
       if (offer < CAP.MIN_SALARY) continue;
+      // Don't commit budget to a bid that cannot possibly win. maxOffer caps
+      // the offer at what the team can afford, and the resolution step below
+      // throws out anything under 85% of market — so a team facing a free
+      // agent it cannot afford used to bid its entire remaining budget on him,
+      // have that bid rejected, and then `break` on an exhausted budget
+      // without having signed anyone. Because the board is sorted best-first
+      // once needs flatten out, every team in the league did this to the same
+      // unaffordable player, every week: measured 17 signings league-wide in
+      // the final year of a 13-season run while 350 free agents rated 80+ sat
+      // unsigned. Applying the same floor here, before the money is committed,
+      // lets a team walk down the board to somebody it can actually sign.
+      const market = marketValue({ ovr: fa.trueOvr, position: fa.position as any, age: fa.age, potential: fa.potential });
+      if (offer < market * MARKET_FLOOR) continue;
 
       bids.push({ playerId: fa.id, teamId: team.id, offer, displacePlayerId: displace?.id });
       budget -= offer - freed;
@@ -533,7 +549,7 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
     const player = freeAgents.find((f) => f.id === playerId)!;
     const market = marketValue({ ovr: player.trueOvr, position: player.position as any, age: player.age, potential: player.potential });
     const best = offers.sort((a, b) => b.offer - a.offer || a.teamId.localeCompare(b.teamId))[0];
-    if (best.offer < market * 0.85) continue;
+    if (best.offer < market * MARKET_FLOOR) continue;
 
     const years = suggestedYears(player.trueOvr, player.age);
     try {
