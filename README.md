@@ -1526,3 +1526,19 @@ ever force-pushed over, so every state below still exists in git history).
   benching him — measured over **27,895 position-group orderings, zero
   divergence** on well-formed data, so it is a safety net, not a balance
   change.
+- **2026-08-21 — Every starter is highlighted, not just the top man
+  (`3b354f6`).** The Depth Chart tinted exactly one row per position, which
+  is correct at the nine positions where one man starts and wrong
+  everywhere else: **three receivers start, three corners, two of each
+  front-seven position**, so WR showed one highlighted man and six
+  identical rows beneath him with no way to tell WR3 (a starter) from WR4
+  (not). Starters now come from `startersAt()` in `lib/lineup.ts` — the
+  app's single definition of the starting eleven — and every one is tinted
+  and labelled ST1..STn, with a **Bench** rule where the lineup ends and a
+  red ghost row for an unfilled starting slot. The re-sign pop-out gets the
+  same treatment and **opens with the row**, since who plays if he walks is
+  the decision, not an optional detail. Three masthead numbers were reading
+  off index 0 for the same reason and were wrong: "Starter OVR" averaged
+  16 men and called them the starters (now the actual 24), "Injured
+  Starters" could not see an injured WR2, and "Unmanned" read "every spot
+  covered" over a group two deep at a three-starter position.
