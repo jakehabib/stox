@@ -2,7 +2,7 @@ import { prisma } from '../db';
 import { Rng, clamp } from '../rng';
 import { LEAGUE, CAP, OFF_SCHEMES, DEF_SCHEMES, Position, SCOUTING } from '../tuning';
 import { LeagueSettings, serializeSettings, DEFAULT_SETTINGS } from '../settings';
-import { TEAM_SEEDS, COACH_FIRST, COACH_LAST, FIRST_NAMES, LAST_NAMES } from './names';
+import { TEAM_SEEDS, COACH_FIRST, COACH_LAST, FIRST_NAMES, LAST_NAMES, NameRegistry } from './names';
 import { generateRoster, generatePlayer, toPlayerCreate, GeneratedPlayer } from './players';
 import { buildSchedule } from '../schedule';
 import { buildContract, marketValue, suggestedYears } from '../cap';
@@ -120,26 +120,30 @@ export async function createLeague(opts: {
     }
   };
 
+  // One ledger for the whole league, so no two players anywhere in it share
+  // a name — not across rosters, not between a roster and the free agents.
+  const names = new NameRegistry();
+
   if (fantasy) {
     // Fantasy draft: everyone starts empty and one giant pool is drafted.
     // Pool = enough players for every team to fill a roster, plus slack.
     const poolSize = LEAGUE.TEAM_COUNT * LEAGUE.ROSTER_MAX + 120;
     for (let i = 0; i < poolSize; i++) {
-      const p = generatePlayer(rng, {});
+      const p = generatePlayer(rng, { names });
       registerPlayer(p, { status: 'FREE_AGENT', isDraftee: true, teamId: null }, false);
     }
   } else {
     for (const team of teams) {
       // [TUNE] team strength spread: -6 .. +6 rating points around league mean.
       const strength = rng.normal(0, 4);
-      for (const p of generateRoster(rng, strength)) {
+      for (const p of generateRoster(rng, strength, names)) {
         registerPlayer(p, { teamId: team.id, status: 'ACTIVE' }, true);
       }
     }
     // Free agent pool — leftovers, mostly replacement level with a few real
     // players still unsigned. [TUNE] 140 free agents at league start.
     for (let i = 0; i < 140; i++) {
-      const p = generatePlayer(rng, { ovrTarget: rng.normalClamped(58, 8, 38, 84) });
+      const p = generatePlayer(rng, { ovrTarget: rng.normalClamped(58, 8, 38, 84), names });
       registerPlayer(p, { status: 'FREE_AGENT', teamId: null }, false);
     }
   }

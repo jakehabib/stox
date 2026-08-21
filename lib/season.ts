@@ -18,6 +18,7 @@ import { SeasonStats } from './types';
 import { gameHeadlines } from './news';
 import { COACH_FIRST, COACH_LAST } from './gen/names';
 import { generateDraftClass, toPlayerCreate } from './gen/players';
+import { NameRegistry } from './gen/names';
 import { classStrengthSummary } from './gen/prospectProfile';
 import { checkAndUpdateRecords, recordBreakHeadline } from './records';
 import { reseedDraftOrder, startRookieDraft } from './draft';
@@ -846,7 +847,15 @@ async function runAiResignWave(leagueId: string, seasonYear: number, week: numbe
 
 async function addDraftClass(leagueId: string, seasonYear: number, rng: Rng) {
   const size = GENERATION.DRAFT_CLASS_SIZE + GENERATION.DRAFT_CLASS_EXTRA_UDFA;
-  const { players, strengthByGroup } = generateDraftClass(rng, size);
+  // Seed the ledger from everyone already in the league so this year's class
+  // can't hand a rookie the name of a sitting starter. Generation is a pure
+  // in-memory batch, so this one query is the only way it can know.
+  const existing = await prisma.player.findMany({
+    where: { leagueId },
+    select: { firstName: true, lastName: true },
+  });
+  const names = new NameRegistry(existing.map((p) => `${p.firstName} ${p.lastName}`));
+  const { players, strengthByGroup } = generateDraftClass(rng, size, names);
   const rows = players.map((p) => toPlayerCreate(p, leagueId, { status: 'FREE_AGENT', isDraftee: true, draftYear: seasonYear }));
   const CHUNK = 400;
   for (let i = 0; i < rows.length; i += CHUNK) await prisma.player.createMany({ data: rows.slice(i, i + CHUNK) });

@@ -1,7 +1,7 @@
 import { Rng, clamp } from '../rng';
 import { GENERATION, Position, POSITIONS, ROSTER_TARGETS } from '../tuning';
 import { attrsForPosition, computeOverall, AttrMap, POSITION_WEIGHTS } from '../ratings';
-import { FIRST_NAMES, LAST_NAMES, COLLEGES } from './names';
+import { COLLEGES, NameRegistry, pickUniqueName } from './names';
 import { writeJson } from '../json';
 import { generateCollegeProfile, generateCombineTesting, generateClassStrength, CollegeProfile, CombineTesting } from './prospectProfile';
 import { positionGroup, PositionGroup } from '../positionGroups';
@@ -105,6 +105,13 @@ export function generatePlayer(
     /** Force an overall target — used for draft classes and star seeding. */
     ovrTarget?: number;
     ageOverride?: number;
+    /**
+     * League-wide name ledger. Pass one and every player generated against it
+     * is guaranteed a name nobody else in the league has. Omit it and names
+     * are drawn independently, which is fine for a one-off player but will
+     * produce collisions across any batch — see NameRegistry in ./names.
+     */
+    names?: NameRegistry;
   } = {},
 ): GeneratedPlayer {
   const position = opts.position ?? weightedPosition(rng);
@@ -133,9 +140,11 @@ export function generatePlayer(
   const body = BODY[position];
   const attrs = generateAttributes(rng, position, trueOvr);
 
+  const { firstName, lastName } = pickUniqueName(rng, opts.names ?? new NameRegistry());
+
   return {
-    firstName: rng.pick(FIRST_NAMES),
-    lastName: rng.pick(LAST_NAMES),
+    firstName,
+    lastName,
     position,
     age,
     experience: rookie ? 0 : clamp(age - 22, 0, 15),
@@ -180,7 +189,7 @@ export function toPlayerCreate(p: GeneratedPlayer, leagueId: string, extra: Reco
  * roster targets and giving each team a couple of genuinely good players so no
  * team is uniformly gray.
  */
-export function generateRoster(rng: Rng, teamStrength: number): GeneratedPlayer[] {
+export function generateRoster(rng: Rng, teamStrength: number, names?: NameRegistry): GeneratedPlayer[] {
   const out: GeneratedPlayer[] = [];
 
   for (const pos of POSITIONS) {
@@ -193,7 +202,7 @@ export function generateRoster(rng: Rng, teamStrength: number): GeneratedPlayer[
         Math.round(rng.normal(GENERATION.VETERAN_OVR_MEAN + teamStrength - depthPenalty, GENERATION.VETERAN_OVR_SD * 0.8)),
         40, 99,
       );
-      out.push(generatePlayer(rng, { position: pos, ovrTarget }));
+      out.push(generatePlayer(rng, { position: pos, ovrTarget, names }));
     }
   }
 
@@ -206,6 +215,7 @@ export function generateRoster(rng: Rng, teamStrength: number): GeneratedPlayer[
       position: pos,
       ovrTarget: clamp(Math.round(rng.normal(85 + teamStrength * 0.3, 4)), 78, 99),
       ageOverride: rng.int(23, 29),
+      names,
     });
     const replaceIdx = out.findIndex((p) => p.position === pos);
     if (replaceIdx >= 0) out[replaceIdx] = star;
@@ -222,7 +232,7 @@ export function generateRoster(rng: Rng, teamStrength: number): GeneratedPlayer[
  * classes always have, rather than every year being an identical flat
  * random sample at every position.
  */
-export function generateDraftClass(rng: Rng, size: number): { players: GeneratedPlayer[]; strengthByGroup: Record<PositionGroup, number> } {
+export function generateDraftClass(rng: Rng, size: number, names?: NameRegistry): { players: GeneratedPlayer[]; strengthByGroup: Record<PositionGroup, number> } {
   const strengthByGroup = generateClassStrength(rng);
   const out: GeneratedPlayer[] = [];
   for (let i = 0; i < size; i++) {
@@ -235,10 +245,29 @@ export function generateDraftClass(rng: Rng, size: number): { players: Generated
       position,
       rookie: true,
       ovrTarget: clamp(Math.round(rng.normal(tierMean, GENERATION.ROOKIE_OVR_SD)), 38, 95),
+      names,
     });
     player.collegeProfile = generateCollegeProfile(rng, player.position, player.trueAttrs, player.trueOvr);
-    player.combineTesting = generateCombineTesting(rng, player.position, player.trueAttrs, player.trueOvr);
     out.push(player);
   }
+
+  // Combine testing is a SEPARATE pass: it needs each prospect's trueOvr
+  // percentile within his own position group, and that doesn't exist until
+  // the whole class above has been rolled — a single prospect generated in
+  // isolation has no peers yet to rank against.
+  const byPosition = new Map<Position, GeneratedPlayer[]>();
+  for (const p of out) {
+    if (!byPosition.has(p.position)) byPosition.set(p.position, []);
+    byPosition.get(p.position)!.push(p);
+  }
+  for (const group of byPosition.values()) {
+    const sorted = [...group].sort((a, b) => a.trueOvr - b.trueOvr); // ascending: worst first
+    const n = sorted.length;
+    sorted.forEach((p, idx) => {
+      const truePercentile = n > 1 ? idx / (n - 1) : 0.5; // 0 = worst in the group, 1 = best
+      p.combineTesting = generateCombineTesting(rng, p.position, p.trueAttrs, p.trueOvr, truePercentile);
+    });
+  }
+
   return { players: out, strengthByGroup };
 }
