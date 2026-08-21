@@ -8,7 +8,7 @@ import { shortResult } from '@/lib/sim/recap';
 import { teamNeeds, needSeverity } from '@/lib/ai/gm';
 import { buildFrontOfficeBrief } from '@/lib/frontOffice';
 import { buildGmCareerSummary } from '@/lib/gmCareer';
-import { estimateWinProbability } from '@/lib/winProbability';
+import { buildLeagueRatings, estimateGameWinChance } from '@/lib/teamRating';
 import { transactionCategory } from '@/lib/newsCategory';
 import { rankWire } from '@/lib/wireRank';
 import { computeClinchStatus, clinchScenarioTag } from '@/lib/clinchScenario';
@@ -110,16 +110,43 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   const teamColor = generateTeamLogoParams(team.id).primary;
 
   // --- Next matchup + a display-only win probability read (see lib/winProbability.ts) ---
-  let nextGame: { teamId: string; abbr: string; city: string; wins: number; losses: number; winProb: number; home: boolean } | undefined;
+  // League-wide ratings: one query set, reused by the matchup read below and
+  // by anything else on this page that needs to know how good a team is.
+  const leagueRatings = await buildLeagueRatings(league.id);
+  const myRating = leagueRatings.get(team.id);
+
+  let nextGame: {
+    teamId: string; abbr: string; city: string; wins: number; losses: number;
+    winProb: number; home: boolean; why: { label: string; points: number; detail: string }[];
+  } | undefined;
   if (next) {
     const oppTeam = next.homeTeamId === team.id ? next.awayTeam : next.homeTeam;
-    const oppRoster = await prisma.player.findMany({ where: { teamId: oppTeam.id }, select: { trueOvr: true } });
-    const oppOverall = Math.round(oppRoster.reduce((s, p) => s + p.trueOvr, 0) / Math.max(1, oppRoster.length));
-    const winProb = estimateWinProbability({
-      myOverall: overall, oppOverall,
-      myWins: team.wins, myLosses: team.losses, oppWins: oppTeam.wins, oppLosses: oppTeam.losses,
-    });
-    nextGame = { teamId: oppTeam.id, abbr: oppTeam.abbr, city: oppTeam.city, wins: oppTeam.wins, losses: oppTeam.losses, winProb, home: next.homeTeamId === team.id };
+    const oppRating = leagueRatings.get(oppTeam.id);
+    const home = next.homeTeamId === team.id;
+
+    // Previously this took a flat mean of the opponent's whole roster, which
+    // is the measure lib/teamRating.ts exists to avoid: it rates a team down
+    // for carrying depth and treats an elite quarterback as worth the same as
+    // an elite punter. The weighted starter rating is the honest input.
+    const estimate = myRating && oppRating
+      ? estimateGameWinChance({
+          me: myRating, opp: oppRating, atHome: home,
+          myRecord: team, oppRecord: oppTeam,
+        })
+      : null;
+
+    nextGame = {
+      teamId: oppTeam.id, abbr: oppTeam.abbr, city: oppTeam.city,
+      wins: oppTeam.wins, losses: oppTeam.losses,
+      winProb: estimate?.percent ?? 50,
+      home,
+      // The two biggest movers, so the badge can say why instead of just
+      // asserting a number the user has to take on faith.
+      why: (estimate?.factors ?? [])
+        .filter((f) => Math.abs(f.points) >= 1)
+        .sort((a, b) => Math.abs(b.points) - Math.abs(a.points))
+        .slice(0, 2),
+    };
   }
 
   // --- Division standings + a real "last five" form guide (existing Game

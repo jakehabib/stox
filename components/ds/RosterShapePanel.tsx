@@ -1,4 +1,11 @@
 import type { RosterShape, GroupShape } from '@/lib/rosterShape';
+import type { TeamRating } from '@/lib/teamRating';
+
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
+}
 
 const GROUP_LABEL: Record<string, string> = {
   QB: 'QB', RB: 'Backfield', 'WR/TE': 'Receivers', OL: 'O-Line',
@@ -27,7 +34,7 @@ function DeltaBar({ delta }: { delta: number }) {
   );
 }
 
-function GroupTile({ g }: { g: GroupShape }) {
+function GroupTile({ g, unitRank }: { g: GroupShape; unitRank?: number }) {
   if (g.count === 0) {
     return (
       <div className="px-3 py-2.5 opacity-50">
@@ -44,7 +51,9 @@ function GroupTile({ g }: { g: GroupShape }) {
     <div className="px-3 py-2.5">
       <div className="flex items-baseline justify-between gap-1">
         <span className="label-sm text-[10px]">{GROUP_LABEL[g.group] ?? g.group}</span>
-        <span className="text-[10px] text-muted">{g.count}</span>
+        {unitRank
+          ? <span className={`text-[10px] font-mono ${unitRank <= 8 ? 'text-accent' : unitRank >= 25 ? 'text-bad' : 'text-muted'}`}>#{unitRank}</span>
+          : <span className="text-[10px] text-muted">{g.count}</span>}
       </div>
       <div className="flex items-baseline gap-1.5 mt-1">
         <span className="stat-value text-stat-sm">{g.starterOvr.toFixed(0)}</span>
@@ -68,16 +77,44 @@ function GroupTile({ g }: { g: GroupShape }) {
  * average starter at the same group, because a raw 78 is meaningless on its
  * own.
  */
-export function RosterShapePanel({ shape }: { shape: RosterShape }) {
+export function RosterShapePanel({ shape, rating }: { shape: RosterShape; rating?: TeamRating }) {
   const { strongest, weakest } = shape;
 
   return (
     <div className="panel overflow-hidden">
+      {rating && (
+        <div className="px-4 py-3 border-b border-line/70 flex items-center gap-5 flex-wrap">
+          {/* The headline number. A rating with no rank is far less useful —
+              "77 overall" means nothing until you know it is 4th of 32. */}
+          <div className="flex items-baseline gap-2.5">
+            <span className="stat-value text-stat-xl leading-none">{rating.overall}</span>
+            <div>
+              <div className="label-sm">Team Overall</div>
+              <div className={`text-xs mt-0.5 font-semibold ${rating.rank <= 8 ? 'text-accent' : rating.rank >= 25 ? 'text-bad' : 'text-muted'}`}>
+                {ordinal(rating.rank)} of 32 · {ordinal(rating.confRank)} in the {rating.conference} · {ordinal(rating.divRank)} in the {rating.division}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 ml-auto">
+            {[
+              { label: 'Offense', value: rating.offense },
+              { label: 'Defense', value: rating.defense },
+              { label: 'Special Teams', value: rating.specialTeams },
+            ].map((s) => (
+              <div key={s.label}>
+                <div className="label-sm text-[10px]">{s.label}</div>
+                <div className="stat-value text-stat-sm mt-0.5">{s.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="px-4 py-3 border-b border-line/70 flex items-center justify-between flex-wrap gap-2">
         <div>
           <div className="label-sm">Roster Construction</div>
           <div className="text-xs text-muted mt-0.5">
-            Starter rating at each unit, measured against the league average starter there.
+            Starter rating at each unit, with its league rank, measured against the league average starter there.
           </div>
         </div>
         <div className="flex items-center gap-4 text-[11px]">
@@ -102,7 +139,9 @@ export function RosterShapePanel({ shape }: { shape: RosterShape }) {
         </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 divide-x divide-y lg:divide-y-0 divide-line/40">
-        {shape.groups.map((g) => <GroupTile key={g.group} g={g} />)}
+        {shape.groups.map((g) => (
+          <GroupTile key={g.group} g={g} unitRank={rating?.units.find((u) => u.group === g.group)?.rank} />
+        ))}
       </div>
     </div>
   );

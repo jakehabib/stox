@@ -2,7 +2,12 @@ import { TeamLogo } from '../TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { StatNumber } from './StatNumber';
 
-interface NextGame { teamId: string; abbr: string; city: string; wins: number; losses: number; winProb: number; home: boolean }
+interface NextGame {
+  teamId: string; abbr: string; city: string; wins: number; losses: number;
+  winProb: number; home: boolean;
+  /** The biggest drivers behind winProb, so the badge can justify itself. */
+  why?: { label: string; points: number; detail: string }[];
+}
 interface StatTile { value: string; label: string; color?: string }
 
 export function TeamHeader({
@@ -73,6 +78,21 @@ export function TeamHeader({
           >
             {nextGame.winProb}% Win
           </span>
+        </div>
+      )}
+      {nextGame && nextGame.why && nextGame.why.length > 0 && (
+        // A bare percentage is something to accept; the reasoning makes it
+        // something to argue with, and a wrong number obvious rather than
+        // merely surprising.
+        <div className="relative px-5 pb-3 -mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 bg-ink/40">
+          {nextGame.why.map((f) => (
+            <span key={f.label} className="text-[11px] text-muted">
+              <span className={f.points >= 0 ? 'text-accent' : 'text-bad'}>
+                {f.points >= 0 ? '+' : ''}{Math.round(f.points)}%
+              </span>{' '}
+              {f.label.toLowerCase()} — {f.detail}
+            </span>
+          ))}
         </div>
       )}
     </div>

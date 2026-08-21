@@ -16,6 +16,7 @@ import { PageMasthead } from '@/components/ds/PageMasthead';
 import { RosterGroupHeader } from '@/components/ds/RosterGroupHeader';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { buildRosterShape } from '@/lib/rosterShape';
+import { buildLeagueRatings } from '@/lib/teamRating';
 import { RosterShapePanel } from '@/components/ds/RosterShapePanel';
 
 type SortKey = 'pos' | 'ovr' | 'age' | 'potential' | 'cap' | 'years';
@@ -104,6 +105,9 @@ export default async function RosterPage({ params, searchParams }: { params: { i
   // What kind of team this is, not just who's on it — starter rating at each
   // unit against the league's average starter there. Computed after the
   // starter map above so "aging starters" means the men who actually play.
+  const leagueRatings = await buildLeagueRatings(league.id);
+  const myRating = leagueRatings.get(team.id);
+
   const shape = await buildRosterShape(
     league.id,
     team.id,
@@ -263,7 +267,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
         ]}
       />
 
-      <RosterShapePanel shape={shape} />
+      <RosterShapePanel shape={shape} rating={myRating} />
 
       <div className="panel overflow-hidden">
         <div className="overflow-x-auto">
