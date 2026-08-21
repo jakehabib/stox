@@ -544,13 +544,17 @@ export async function loadDynastyProfile(leagueId: string): Promise<DynastyProfi
   const existing = await prisma.dynastyProfile.findUnique({ where: { leagueId } });
   if (existing) return existing;
   // A concurrent first render can race here; the unique constraint decides
-  // the winner and the loser just re-reads.
+  // the winner and the loser just re-reads. If the write is impossible
+  // altogether (a read-only replica, a build-time prerender) fall back to an
+  // in-memory default rather than blowing up a page: a GM with no profile row
+  // has no skills and no charges spent, which is exactly what this describes.
   try {
     return await prisma.dynastyProfile.create({
       data: { ownerKind: 'LEAGUE', ownerKey: leagueId, leagueId },
     });
   } catch {
-    return await prisma.dynastyProfile.findUniqueOrThrow({ where: { leagueId } });
+    const raced = await prisma.dynastyProfile.findUnique({ where: { leagueId } }).catch(() => null);
+    return raced ?? { id: '', skills: '{}', fullScoutYear: 0, fullScoutUsed: 0, insiderYear: 0, insiderUsed: 0 };
   }
 }
 

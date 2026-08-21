@@ -63,14 +63,16 @@ export async function advanceWeek(leagueId: string): Promise<AdvanceResult> {
  * Phases where a team is legitimately over the cap through no fault of its
  * own, so compliance is NOT demanded yet.
  *
- * The books are mid-roll here: agePlayersAndContracts() has already stepped
- * every deal onto its next (escalating) base-salary year and booked void-year
- * charges, but releaseUnresignedExpiringContracts() — which drops every
- * expiring contract off the ledger — doesn't run until the END of RESIGN.
- * A sim-health trace across four seasons shows this window is exactly where
- * teams go negative and where they come back on their own: over-cap teams
- * appear at OFFSEASON wk4 and clear the moment FREE_AGENCY opens, every year,
- * league-wide.
+ * The books are mid-roll here: ageContractsForYear() has already stepped every
+ * deal onto its next (escalating) base-salary year, but
+ * releaseUnresignedExpiringContracts() — which drops every expiring contract
+ * off the ledger — doesn't run until the END of RESIGN. A sim-health trace
+ * across four seasons shows this window is exactly where teams go negative and
+ * where they come back on their own: over-cap teams appear at OFFSEASON wk1
+ * and clear the moment FREE_AGENCY opens, every year, league-wide. (They used
+ * to appear at wk4 instead; the ledger now ages when the season ends rather
+ * than at the wk3 step, so the same teams show up three steps earlier in the
+ * same window. Nothing about the window's boundaries changed.)
  *
  * Blocking there would fire on almost everyone every single offseason for a
  * condition that resolves itself one step later — a rule that reads as a bug.

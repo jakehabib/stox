@@ -3,6 +3,7 @@ import { readJson } from './json';
 import { capHit, capForYear, formatMoney } from './cap';
 import { resolveStartYear } from './leagueYear';
 import { parseSettings } from './settings';
+import { rosterMinFor } from './tuning';
 import { PHASE_LABELS } from './season';
 import { SeasonStats } from './types';
 import { ContractLike } from './cap';
@@ -26,6 +27,12 @@ export interface Violation {
 }
 
 const ACTIVE_STATUSES = new Set(['ACTIVE', 'FREE_AGENT', 'RETIRED']);
+/**
+ * Phases where a roster under the minimum is legal: contracts have expired and
+ * free agency has not opened yet. Mirrors CAP_ROLLOVER_PHASES in lib/season.ts,
+ * which exempts the same window from cap compliance for the same reason.
+ */
+const ROSTER_FLOOR_EXEMPT_PHASES = new Set(['OFFSEASON', 'RESIGN']);
 const VALID_PHASES = new Set(Object.keys(PHASE_LABELS));
 
 function violation(id: string, severity: 'error' | 'warning', message: string, ids: string[]): Violation | null {
@@ -88,6 +95,21 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
   }
   push(violation('INV-08', 'warning', `Team roster exceeds settings.rosterMax (${settings.rosterMax})`,
     [...activeByTeam.entries()].filter(([, n]) => n > settings.rosterMax).map(([teamId, n]) => `${teamId} (${n})`)));
+
+  // --- INV-20: roster size floor ---
+  // Only outside the offseason window, where a short roster is legitimate:
+  // every expiring contract has just been released and free agency has not
+  // opened yet, so essentially every team is briefly under the line by design.
+  // Anywhere else, a team below the minimum is fielding an illegal roster —
+  // which is exactly the state 19 of 22 measured saves were left in when the
+  // re-sign wave under-retained and nothing in the game ever refilled.
+  const rosterMin = rosterMinFor(settings.rosterMax);
+  if (!ROSTER_FLOOR_EXEMPT_PHASES.has(league.phase)) {
+    push(violation('INV-20', 'warning', `Team roster is below the roster minimum (${rosterMin})`,
+      teams
+        .filter((t) => (activeByTeam.get(t.id) ?? 0) < rosterMin)
+        .map((t) => `${t.abbr} (${activeByTeam.get(t.id) ?? 0})`)));
+  }
 
   // --- INV-09/10: pick used <-> playerId ---
   push(violation('INV-09', 'error', 'DraftPick marked used with no player attached',

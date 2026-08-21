@@ -52,6 +52,17 @@ other — `lib/invariants.ts` reports violations by ID.
 - **INV-08** — A team's active roster (`status: 'ACTIVE'` players with that
   `teamId`) should not exceed `settings.rosterMax` (default 53). See **Known
   violations** — nothing currently enforces this.
+- **INV-20** *(warning)* — Outside the offseason window in which contracts
+  expire and free agency has not yet opened, no team's active roster falls
+  below the roster minimum for the league's configured ceiling
+  (`rosterMinFor(settings.rosterMax)` in `lib/tuning.ts`, 46 of 53 by
+  default). A team below it is fielding an illegal roster.
+  Warning rather than error, and skipped during `OFFSEASON`/`RESIGN`, because
+  a legal short roster genuinely exists there: every expiring contract has
+  been released and free agency has not opened yet. AI teams refill at the
+  first `fillTeamsToRosterMinimum` pass; a USER team below the line is the
+  user's own call to make and the game never signs on his behalf, so this
+  check reports it rather than acting on it.
 
 ## Draft picks
 
