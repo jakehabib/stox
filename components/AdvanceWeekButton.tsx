@@ -6,17 +6,40 @@ import Link from 'next/link';
 import { advanceWeekAction, getLeaguePhaseAction, AdvanceMode } from '@/app/actions/league';
 import { formatMoney } from '@/lib/cap';
 
-/** The salary-cap compliance refusal, plus the sentence explaining it. */
+/**
+ * A refusal to advance, plus the sentence explaining it. The salary-cap gate
+ * was the only one when this component was written, so the panel hard-coded
+ * its heading and its "Open Cap Sheet" link; cut-down day now refuses too
+ * (see trimRostersToLimit in lib/season.ts), and a roster-limit block reading
+ * "Over the salary cap" would be a lie. Title and link travel with the block.
+ */
 interface CapBlock {
   teamAbbr: string;
   shortfall: number;
   path: { playerId: string; name: string; position: string; frees: number; deadMoney: number }[];
   summary: string;
+  title?: string;
+  href?: string;
+  linkLabel?: string;
 }
 
 /** Phases that need the user to actually do something before the sim keeps going. */
 const GATE_PHASES = new Set(['RESIGN', 'DRAFT', 'FANTASY_DRAFT']);
 const MAX_ITERATIONS = 60; // safety backstop, not a real target
+
+/**
+ * Normalize whichever refusal came back into the one shape the panel renders.
+ * `capBlock` carries the cap gate's shortfall + escape path; `block` carries
+ * any other gate's heading and its route to a fix.
+ */
+function blockShape(result: {
+  capBlock?: { teamAbbr: string; shortfall: number; path: CapBlock['path'] } | null;
+  block?: { title: string; href: string; linkLabel: string } | null;
+}): Omit<CapBlock, 'summary'> | null {
+  if (result.capBlock) return { ...result.capBlock, title: 'Over the salary cap', href: 'cap', linkLabel: 'Open Cap Sheet' };
+  if (result.block) return { teamAbbr: '', shortfall: 0, path: [], ...result.block };
+  return null;
+}
 
 const PHASE_NOUN: Record<string, string> = {
   PRESEASON: 'preseason', REGULAR: 'week', PLAYOFFS: 'playoff round', OFFSEASON: 'offseason step',
@@ -106,7 +129,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
       setProgress('Simulating…');
       const result = await advanceWeekAction(leagueId);
       setProgress(null);
-      if (result.blocked) { showBlock(result.summary, result.capBlock ?? null); return; }
+      if (result.blocked) { showBlock(result.summary, blockShape(result)); return; }
       showToast(result.summary);
     });
   };
@@ -139,7 +162,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
         // rather than spinning MAX_ITERATIONS times against a closed door.
         if (result.blocked) {
           setProgress(null);
-          showBlock(result.summary, result.capBlock ?? null);
+          showBlock(result.summary, blockShape(result));
           return;
         }
         lastSummary = result.summary;
@@ -210,7 +233,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
       {!pending && capBlock && (
         <div className="absolute right-0 top-full mt-2 w-[22rem] card card-pad z-30 animate-fadeUp shadow-lg border-bad/40 space-y-3">
           <div className="flex items-start justify-between gap-3">
-            <div className="label-sm text-bad">Over the salary cap</div>
+            <div className="label-sm text-bad">{capBlock.title ?? 'Over the salary cap'}</div>
             <button onClick={() => setCapBlock(null)} className="text-muted hover:text-chalk text-xs leading-none" aria-label="Dismiss">✕</button>
           </div>
           {capBlock.shortfall > 0 && (
@@ -228,8 +251,8 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
               ))}
             </div>
           )}
-          <Link href={`/league/${leagueId}/cap`} onClick={() => setCapBlock(null)} className="btn-secondary w-full text-xs">
-            Open Cap Sheet
+          <Link href={`/league/${leagueId}/${capBlock.href ?? 'cap'}`} onClick={() => setCapBlock(null)} className="btn-secondary w-full text-xs">
+            {capBlock.linkLabel ?? 'Open Cap Sheet'}
           </Link>
         </div>
       )}

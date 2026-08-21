@@ -40,6 +40,84 @@ export const LEAGUE = {
   DRAFT_ROUNDS: 7,
 };
 
+/**
+ * The roster floor for a league whose ceiling the user has moved. ROSTER_MIN
+ * is calibrated against ROSTER_MAX (46 of 53), so a league configured with a
+ * 40-man limit must not be told its minimum is 46 — every keep-or-cut site
+ * would then read "short of the minimum" permanently. Scales the same ratio
+ * and never exceeds the ceiling itself.
+ */
+export function rosterMinFor(rosterMax: number): number {
+  const scaled = Math.round((rosterMax * LEAGUE.ROSTER_MIN) / LEAGUE.ROSTER_MAX);
+  return Math.max(1, Math.min(LEAGUE.ROSTER_MIN, Math.min(rosterMax, scaled)));
+}
+
+/**
+ * [TUNE] What happens to a player NOBODY signs, and how far a team will go to
+ * sign one.
+ *
+ * The free-agent pool used to be a permanent sink: `progressAllPlayers` only
+ * touched `status: 'ACTIVE'`, so an unsigned player never aged, never
+ * developed and never retired, while ~400 new prospects entered every draft.
+ * Measured over 14 simulated seasons the pool grew 140 -> 4,740 and held 798
+ * unsigned players rated 80+ (201 of them 90+, five of them 97 OVR) in a
+ * 32-team league. Two things fix that, and both live here: unsigned players
+ * now age out of football on their own, and a team at a full roster signs a
+ * clear upgrade and releases the man he beats instead of declining to look.
+ */
+export const FREE_AGENCY = {
+  /**
+   * Share of a full year's development roll an unsigned player gets. He is
+   * still training, but he has no coaching staff, no scheme, and played no
+   * snaps — half a year's growth, applied in one offseason roll (a rostered
+   * player earns his in weekly in-season checkpoints instead; see
+   * lib/development.ts).
+   */
+  UNSIGNED_PROGRESSION_SCALE: 0.5,
+  /**
+   * Chance a player who spent a whole league year unsigned is simply out of
+   * football, before the quality shield below is applied. This is the real
+   * outflow that stops the pool growing without bound: ordinary retirement
+   * alone can't, since it doesn't start until 32 and most of the annual
+   * inflow is 22-year-old undrafted rookies.
+   */
+  UNSIGNED_ATTRITION_BASE: 0.42,
+  /** Each FURTHER year on the street adds this much on top of the base. */
+  UNSIGNED_ATTRITION_PER_YEAR: 0.18,
+  /**
+   * A player this good always gets a call, so attrition scales linearly to
+   * zero as he approaches it. Below UNSIGNED_ATTRITION_FLOOR_OVR it applies
+   * at full strength.
+   */
+  UNSIGNED_ATTRITION_SHIELD_OVR: 78,
+  UNSIGNED_ATTRITION_FLOOR_OVR: 55,
+  /** Nobody is ever rolled out of football at higher odds than this. */
+  UNSIGNED_ATTRITION_MAX: 0.85,
+
+  /**
+   * UPGRADE-AND-DISPLACE. A front office at a full roster does not stop
+   * reading the wire — it signs the better player and releases the worst man
+   * at that position. These guard it from churning for nothing:
+   *   MIN_UPGRADE_DELTA — true-rating points the free agent must beat the
+   *     displaced player by before the move is worth a transaction at all.
+   *   MAX_DISPLACE_OVR — never displace a genuine contributor this way; if
+   *     the worst man at the position is already this good, the roster spot
+   *     is not the problem.
+   *   MAX_PER_TEAM_PER_WAVE — how many displacements one team may make in a
+   *     single wave, so a roster can't be rebuilt in one click.
+   */
+  MIN_UPGRADE_DELTA: 5,
+  MAX_DISPLACE_OVR: 74,
+  MAX_DISPLACE_PER_TEAM_PER_WAVE: 2,
+  /**
+   * How deep into the free-agent board an AI wave looks. The old value (60)
+   * is fine while the pool is small; once it holds thousands of players the
+   * top-60 slice is all 80+ stars nobody has room for and no team ever signs
+   * the ordinary depth it actually needs.
+   */
+  WAVE_BOARD_SIZE: 140,
+};
+
 // ---------------------------------------------------------------------------
 // Positions
 // ---------------------------------------------------------------------------

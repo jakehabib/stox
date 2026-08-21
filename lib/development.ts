@@ -1,9 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db';
-import { Rng } from './rng';
-import { Position, PROGRESSION } from './tuning';
+import { Rng, clamp } from './rng';
+import { Position, PROGRESSION, FREE_AGENCY } from './tuning';
 import { AttrMap } from './ratings';
-import { progressPlayer, bumpForMilestone } from './progression';
+import { progressPlayer, bumpForMilestone, retirementChance } from './progression';
 import { readJson, writeJson } from './json';
 import { SeasonStats } from './types';
 import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS } from './awards';
@@ -166,4 +166,111 @@ export async function applyInSeasonProgression(
       })),
     });
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// UNSIGNED PLAYERS
+// ---------------------------------------------------------------------------
+
+/**
+ * Odds an unsigned player is simply out of football after another year on the
+ * street. Constants live in FREE_AGENCY (lib/tuning.ts).
+ *
+ * Ordinary retirement can't be the only way off the free-agent list: it does
+ * not start until 32, and most of the ~400 players who enter the pool every
+ * year are 22-year-old undrafted rookies who would otherwise sit there for a
+ * decade. Quality shields a player almost completely — somebody always calls
+ * a genuinely good player, and with upgrade-and-displace in the AI wave
+ * somebody now actually does.
+ */
+export function unsignedAttritionChance(yearsUnsigned: number, trueOvr: number): number {
+  const years = Math.max(1, yearsUnsigned);
+  const base = FREE_AGENCY.UNSIGNED_ATTRITION_BASE + (years - 1) * FREE_AGENCY.UNSIGNED_ATTRITION_PER_YEAR;
+  const span = FREE_AGENCY.UNSIGNED_ATTRITION_SHIELD_OVR - FREE_AGENCY.UNSIGNED_ATTRITION_FLOOR_OVR;
+  const exposure = clamp((FREE_AGENCY.UNSIGNED_ATTRITION_SHIELD_OVR - trueOvr) / span, 0, 1);
+  return clamp(base * exposure, 0, FREE_AGENCY.UNSIGNED_ATTRITION_MAX);
+}
+
+/**
+ * The offseason roll for players NOBODY has signed — the other half of the
+ * yearly PROGRESS step (see progressAllPlayers in lib/season.ts, which owns
+ * the rostered side).
+ *
+ * Until now this did not exist at all: progression, aging and retirement all
+ * filtered on `status: 'ACTIVE'`, so a free agent was frozen in time forever.
+ * That is the mechanical reason the pool could only grow — measured 140 ->
+ * 4,411 unsigned players over 13 simulated seasons, holding 593 players rated
+ * 80+ — and a large part of why mean ACTIVE rating climbed without bound: the
+ * only players who ever left the active pool were the ones who declined, and
+ * nothing ever came back.
+ *
+ * Unsigned players now:
+ *   - age a year and accrue a year of being unsigned,
+ *   - roll the ordinary age/rating retirement AND the out-of-football
+ *     attrition above, whichever is worse,
+ *   - develop at FREE_AGENCY.UNSIGNED_PROGRESSION_SCALE of a full year. A
+ *     rostered player earns his growth in weekly in-season checkpoints with a
+ *     coaching staff and real snaps; a man training on his own gets less, but
+ *     a 22-year-old on the street should not be frozen at 22-year-old ratings
+ *     either.
+ *
+ * Draftees are deliberately excluded — `isDraftee` players are the class
+ * waiting for a draft that hasn't happened yet, not free agents, and aging
+ * them here would hand every rookie an extra year before he was ever picked.
+ */
+export async function progressFreeAgents(
+  leagueId: string,
+  rng: Rng,
+  opts: { retirementEnabled: boolean; progressionSpeed: number },
+): Promise<{ retired: number; developed: number }> {
+  const players = await prisma.player.findMany({
+    where: { leagueId, status: 'FREE_AGENT', isDraftee: false },
+    select: { id: true, age: true, trueOvr: true, position: true, potential: true, devTrait: true, trueAttrs: true, yearsUnsigned: true },
+  });
+  if (players.length === 0) return { retired: 0, developed: 0 };
+
+  const retiringIds: string[] = [];
+  const updates: { id: string; attrs: string; ovr: number }[] = [];
+
+  for (const p of players) {
+    const unsignedYears = p.yearsUnsigned + 1;
+    const odds = Math.max(
+      retirementChance(p.age, p.trueOvr, p.position as Position),
+      unsignedAttritionChance(unsignedYears, p.trueOvr),
+    );
+    if (opts.retirementEnabled && rng.bool(odds)) {
+      retiringIds.push(p.id);
+      continue;
+    }
+    const attrs = readJson<AttrMap>(p.trueAttrs, {});
+    const { attrs: rolled, ovr } = progressPlayer(
+      rng, p.position as Position, attrs, p.age, p.potential, p.devTrait,
+      opts.progressionSpeed, FREE_AGENCY.UNSIGNED_PROGRESSION_SCALE,
+    );
+    updates.push({ id: p.id, attrs: writeJson(rolled), ovr });
+  }
+
+  if (retiringIds.length > 0) {
+    // A free agent has no contract by construction, but retirement is the one
+    // status change that historically left rows behind — clear defensively.
+    await prisma.contract.deleteMany({ where: { playerId: { in: retiringIds } } });
+    await prisma.player.updateMany({ where: { id: { in: retiringIds } }, data: { status: 'RETIRED', teamId: null } });
+  }
+
+  if (updates.length > 0) {
+    const CHUNK = 500;
+    for (let i = 0; i < updates.length; i += CHUNK) {
+      const slice = updates.slice(i, i + CHUNK);
+      const values = Prisma.join(slice.map((u) => Prisma.sql`(${u.id}::text, ${u.attrs}::text, ${u.ovr}::int)`));
+      await prisma.$executeRaw`
+        UPDATE "Player" AS p
+        SET "trueAttrs" = v.attrs, "trueOvr" = v.ovr, age = p.age + 1, "yearsUnsigned" = p."yearsUnsigned" + 1
+        FROM (VALUES ${values}) AS v(id, attrs, ovr)
+        WHERE p.id = v.id
+      `;
+    }
+  }
+
+  return { retired: retiringIds.length, developed: updates.length };
 }

@@ -39,6 +39,21 @@ model League {
   // Phase machine (see lib/season.ts): PRESEASON | REGULAR | PLAYOFFS | OFFSEASON
   // | RESIGN | FREE_AGENCY | DRAFT | FANTASY_DRAFT
   phase      String @default("PRESEASON")
+  // The league year the CONTRACT ledger has already been stepped onto (see
+  // ageContractsForYear in lib/season.ts). Contracts are aged the moment the
+  // season ends rather than three offseason steps later, so dead money and
+  // cap hits always describe the same league year a cut booked right now is
+  // charged against — that mismatch is what made an early cut cost more than
+  // an identical late one. Nullable so `prisma db push` can add it to an
+  // existing database, and so a save created before this column existed still
+  // gets its aging run by the offseason AGE_CONTRACTS catch-up step.
+  contractsAgedYear Int?
+  // The league year the user was last warned that advancing out of RESIGN
+  // would drop his roster below the legal minimum. The warning blocks the
+  // advance ONCE per year and then gets out of the way — letting players walk
+  // is a legitimate choice, losing two thirds of a roster without being told
+  // is not. Nullable for the same `prisma db push` reason as the column above.
+  resignWarnedYear Int?
 
   userTeamId String?
 
@@ -210,6 +225,12 @@ model Player {
   // Each charge multiplies the next in-season development checkpoint roll and
   // is consumed by it (see lib/development.ts). 0 for every existing save.
   devFocus  Int      @default(0)
+
+  // Consecutive offseasons this player has spent unsigned. Drives the
+  // out-of-football attrition roll in lib/development.ts — without it the free
+  // agent pool only ever grew, because nothing off a roster aged or retired.
+  // Reset to 0 the moment he signs anywhere.
+  yearsUnsigned Int  @default(0)
 
   injuryWeeks Int    @default(0)
   injuryType  String?  // human-readable description, e.g. "Hamstring strain" — set when injured, cleared on recovery

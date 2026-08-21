@@ -207,6 +207,26 @@ export function suggestedYears(ovr: number, age: number): number {
 }
 
 /**
+ * The LONGEST deal this age may be handed, at any rating, by any negotiator.
+ *
+ * The age gates in suggestedYears() are documented in CONTRACT (lib/tuning.ts)
+ * as absolute — "a 34-year-old gets one year no matter how good he is, which
+ * is what keeps an aging star from being handed a five-year deal the team can
+ * never escape". They weren't: the AI re-sign wave adds a +1 term nudge for an
+ * eager GM on top of suggestedYears() and clamps only against
+ * CONTRACT.MAX_DEAL_YEARS, so a 34-year-old's mandatory 1 became 2 and a
+ * 40-year-old's became 2 as well. Any code that nudges term has to clamp
+ * against this instead, so the gate is enforced where it is decided rather
+ * than trusted to every caller.
+ */
+export function maxYearsForAge(age: number): number {
+  if (age >= CONTRACT.AGE_ONE_YEAR) return 1;
+  if (age >= CONTRACT.AGE_TWO_YEAR) return 2;
+  if (age >= CONTRACT.AGE_THREE_YEAR) return 3;
+  return CONTRACT.MAX_DEAL_YEARS;
+}
+
+/**
  * Build a contract offer: APY split into escalating base salaries plus a
  * signing bonus, which is how real deals are shaped (low year-1 cap hit).
  */
@@ -236,10 +256,20 @@ export function buildContract(opts: {
   isRookieDeal: boolean;
 } {
   const years = Math.max(1, Math.round(opts.years));
-  const total = Math.round(opts.apy * years);
+  // No year of any contract may pay below the league minimum, so the smallest
+  // deal that can exist over `years` is MIN_SALARY x years. Deciding that HERE
+  // rather than silently clamping year by year is the whole fix: the base
+  // salaries were floored at MIN_SALARY while the signing bonus was still
+  // computed off the un-floored nominal total, so every league-minimum deal
+  // quietly cost 28-39% more than the APY it was written for (measured:
+  // {apy: $1.00M, years: 3} produced a $1.28M year-1 cap hit; {apy: $0.90M,
+  // years: 4} produced $5.01M of contract against a $3.60M nominal). Every
+  // budget that priced a minimum signing off `apy` — the re-sign reserve most
+  // of all — was short by exactly that much.
+  const total = Math.max(Math.round(opts.apy * years), CAP.MIN_SALARY * years);
   const bonusPct = opts.bonusPct ?? 0.28; // [TUNE]
-  const signingBonus = Math.round(total * bonusPct);
-  const baseTotal = total - signingBonus;
+  const nominalBonus = Math.round(total * bonusPct);
+  const baseTotal = total - nominalBonus;
 
   // Escalate base salary ~12% per year so year 1 is cap-friendly. [TUNE]
   const escalation = opts.escalation ?? 1.12;
@@ -250,13 +280,20 @@ export function buildContract(opts: {
     Math.max(CAP.MIN_SALARY, Math.round((baseTotal * w) / wSum / 100_000) * 100_000),
   );
 
+  // Whatever the minimum-salary floor (and the 100K rounding) added to the
+  // base schedule comes OUT of the signing bonus, so the deal is still worth
+  // what it was written for. At a true league-minimum deal this drives the
+  // bonus to exactly 0 — which is what a minimum contract looks like anyway.
+  const baseSum = baseSalaries.reduce((a, b) => a + b, 0);
+  const signingBonus = Math.max(0, nominalBonus - (baseSum - baseTotal));
+
   return {
     years,
     yearsRemaining: years,
     signedYear: opts.signedYear,
     baseSalaries,
     signingBonus,
-    guaranteed: Math.round(total * (opts.guaranteedPct ?? 0.45)),
+    guaranteed: Math.round((baseSum + signingBonus) * (opts.guaranteedPct ?? 0.45)),
     isRookieDeal: opts.isRookieDeal ?? false,
   };
 }

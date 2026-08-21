@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
-import { CAP, CONTRACT, LEAGUE, Position, PROGRESSION, RESIGN, ROSTER_TARGETS, SCOUTING, GENERATION } from './tuning';
+import { CAP, CONTRACT, LEAGUE, Position, PROGRESSION, RESIGN, ROSTER_TARGETS, SCOUTING, GENERATION, rosterMinFor } from './tuning';
 import { parseSettings, LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { simulateGame, SimTeamInput } from './sim/engine';
@@ -9,9 +9,9 @@ import { generateRecap } from './sim/recap';
 import { SimPlayer, SimStaff } from './sim/units';
 import { retirementChance, bumpForMilestone } from './progression';
 import { AttrMap } from './ratings';
-import { applyInSeasonProgression } from './development';
+import { applyInSeasonProgression, progressFreeAgents } from './development';
 import { proration, deadMoneyOnCut } from './cap';
-import { runAiFreeAgencyWave } from './freeagency';
+import { runAiFreeAgencyWave, fillTeamsToRosterMinimum } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
 import { mergeStats } from './stats';
 import { SeasonStats } from './types';
@@ -103,6 +103,19 @@ export interface AdvanceResult {
     shortfall: number;
     /** Cuts that, taken together, clear the shortfall — biggest saver first. */
     path: { playerId: string; name: string; position: string; frees: number; deadMoney: number }[];
+  };
+  /**
+   * A refusal that ISN'T about the salary cap — cut-down day finding the
+   * user's roster over the limit, for instance. Same contract as `capBlock`:
+   * time did not move, `summary` says why, and this says what to call it and
+   * where the user fixes it. Without it every block rendered under the cap
+   * panel's hard-coded "Over the salary cap" heading.
+   */
+  block?: {
+    title: string;
+    /** Path within the league, e.g. `roster` — the caller prefixes the league id. */
+    href: string;
+    linkLabel: string;
   };
 }
 
@@ -196,9 +209,50 @@ async function advanceWeekStep(leagueId: string) {
     case 'RESIGN': {
       // Whoever the user (or an AI team) didn't extend by now walks.
       const releasedBefore = await prisma.contract.count({ where: { yearsRemaining: 0, player: { leagueId, status: 'ACTIVE' } } });
+
+      // A roster does not lose two thirds of itself in one click without the
+      // user being told first. Saves whose RESIGN step ran under the old AI
+      // wave reach this point with almost the whole roster expiring — one
+      // measured save went from 37 active players to 14 in a single step, with
+      // nothing on screen beforehand. The warning stops time exactly ONCE per
+      // league year (League.resignWarnedYear): letting a class walk is a real
+      // decision a GM is allowed to make, being ambushed by it is not.
+      const rosterMin = rosterMinFor(settings.rosterMax || LEAGUE.ROSTER_MAX);
+      const userTeam = await prisma.team.findFirst({ where: { leagueId, isUser: true }, select: { id: true, abbr: true } });
+      if (userTeam && league.resignWarnedYear !== league.seasonYear) {
+        const [active, walking] = await Promise.all([
+          prisma.player.count({ where: { teamId: userTeam.id, status: 'ACTIVE' } }),
+          prisma.contract.count({ where: { teamId: userTeam.id, yearsRemaining: 0, player: { status: 'ACTIVE' } } }),
+        ]);
+        const after = active - walking;
+        if (walking > 0 && after < rosterMin) {
+          await prisma.league.update({ where: { id: leagueId }, data: { resignWarnedYear: league.seasonYear } });
+          return {
+            summary: `Hold on — advancing now lets ${walking} of your ${active} players walk, leaving the `
+              + `${userTeam.abbr} with ${after} under contract against a ${rosterMin}-man minimum. `
+              + `Re-sign whoever you mean to keep first; anyone you don't will be available in free agency, `
+              + `where you can also sign replacements. Advance again to let them go.`,
+            blocked: true,
+            block: { title: 'Your roster is about to collapse', href: 'resign', linkLabel: 'Open Re-sign Window' },
+          };
+        }
+      }
+
       await releaseUnresignedExpiringContracts(leagueId, league.seasonYear);
+      // Every AI team that came out of that below a legal roster fills back up
+      // immediately, at the league minimum, from the players who just hit the
+      // market. Without this a team that had a bad re-sign year stayed 20
+      // bodies short for the rest of its existence — measured on 19 of 22
+      // pre-existing saves, min roster 27 and median 33.
+      const refilled = await fillTeamsToRosterMinimum(leagueId, league.seasonYear, 1, settings, rng);
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'FREE_AGENCY', week: 1 } });
-      return { summary: releasedBefore > 0 ? `${releasedBefore} unsigned player(s) hit free agency. Free agency is open.` : 'Free agency is open.' };
+      return {
+        summary: [
+          releasedBefore > 0 ? `${releasedBefore} unsigned player(s) hit free agency.` : null,
+          refilled > 0 ? `${refilled} minimum-salary signing(s) got short-handed rosters back to a legal size.` : null,
+          'Free agency is open.',
+        ].filter(Boolean).join(' '),
+      };
     }
 
     case 'FREE_AGENCY': {
@@ -239,7 +293,17 @@ async function advanceWeekStep(leagueId: string) {
       // carrying 57 players (INV-08). Nobody notices while the re-sign wave
       // is leaking 400 players a year into free agency; once rosters actually
       // recover, cut-down day has to exist.
-      const trimmed = await trimRostersToLimit(leagueId, league.seasonYear, settings);
+      const { trimmed, userOverflow } = await trimRostersToLimit(leagueId, league.seasonYear, settings);
+      if (userOverflow) {
+        return {
+          summary: `Can't advance — the ${userOverflow.abbr} are carrying ${userOverflow.rosterSize} players `
+            + `against a ${settings.rosterMax}-man limit. Release ${userOverflow.over} `
+            + `player${userOverflow.over === 1 ? '' : 's'} and the new league year opens. `
+            + `Every other roster in the league has already made its final cuts.`,
+          blocked: true,
+          block: { title: 'Over the roster limit', href: 'roster', linkLabel: 'Open Roster' },
+        };
+      }
 
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'PRESEASON', week: 1 } });
       return {
@@ -565,6 +629,11 @@ async function simulatePlayoffRound(leagueId: string, settings: ReturnType<typeo
     await snapshotSeasonHistory(leagueId, league.seasonYear);
     await recordSeasonAwards(leagueId, league.seasonYear, league.week);
     await fireStrugglingCoordinators(leagueId, league.seasonYear, rng);
+    // The contract ledger steps onto the NEXT league year here, the instant
+    // the season is over — not three offseason steps later. See
+    // ageContractsForYear() for why the old timing made an early cut cost
+    // more than an identical late one.
+    await ageContractsForYear(leagueId, league.seasonYear + 1);
     await prisma.league.update({ where: { id: leagueId }, data: { phase: 'OFFSEASON', week: 1 } });
     return { summary: 'The championship game is complete! Welcome to the offseason.' };
   }
@@ -712,8 +781,17 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
   switch (step) {
     case 'PROGRESS': {
       await progressAllPlayers(leagueId, rng, settings.retirementEnabled);
+      // Free agents age on the same schedule. Skipping them is what turned the
+      // unsigned pool into a permanent sink — see progressFreeAgents().
+      const fa = await progressFreeAgents(leagueId, rng, {
+        retirementEnabled: settings.retirementEnabled,
+        progressionSpeed: settings.progressionSpeed,
+      });
       await prisma.league.update({ where: { id: leagueId }, data: { week: league.week + 1 } });
-      return { summary: 'Rosters have aged a year — some careers are over, the rest are a year further along.' };
+      return {
+        summary: 'Rosters have aged a year — some careers are over, the rest are a year further along.'
+          + (fa.retired > 0 ? ` ${fa.retired} unsigned player(s) are out of football.` : ''),
+      };
     }
     case 'RESET_STANDINGS': {
       await rollSeasonStatsIntoCareer(leagueId, league.seasonYear);
@@ -725,9 +803,19 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
       return { summary: 'Standings reset for the new league year.' };
     }
     case 'AGE_CONTRACTS': {
-      await agePlayersAndContracts(leagueId);
+      // Normally a no-op now: the ledger already stepped onto this league year
+      // when the season ended. It still runs for any save created before
+      // League.contractsAgedYear existed, which reached this point with its
+      // contracts un-aged — that is the whole point of making the call
+      // idempotent rather than moving it outright.
+      const aged = await ageContractsForYear(leagueId, league.seasonYear);
+      await expireStaleCapCharges(leagueId, league.seasonYear);
       await prisma.league.update({ where: { id: leagueId }, data: { week: league.week + 1 } });
-      return { summary: 'Contracts advanced a year — expiring deals are up for renegotiation.' };
+      return {
+        summary: aged
+          ? 'Contracts advanced a year — expiring deals are up for renegotiation.'
+          : 'Expiring deals are up for renegotiation.',
+      };
     }
     case 'ADD_DRAFT_CLASS': {
       // This year's class was already added back at week 1 of the season
@@ -817,8 +905,11 @@ async function rollSeasonStatsIntoCareer(leagueId: string, seasonYear: number) {
 }
 
 /**
- * Yearly aging: age +1, a completed season of experience, and (past 32) a
- * retirement roll. Attribute growth itself no longer happens here — it's
+ * Yearly aging for ROSTERED players: age +1, a completed season of experience,
+ * and (past 32) a retirement roll. Unsigned players are handled by
+ * progressFreeAgents() in lib/development.ts — this deliberately narrow
+ * `status: 'ACTIVE'` filter used to be the ONLY aging in the game, which is
+ * why a free agent never aged, never developed and never retired. Attribute growth itself no longer happens here — it's
  * spread across in-season checkpoints all year (see lib/development.ts) so
  * it's visible well before the offseason, not delivered as one lump. Batched
  * into two updateMany calls instead of one round trip per player, matching
@@ -857,23 +948,58 @@ async function progressAllPlayers(leagueId: string, rng: Rng, retirementEnabled:
 }
 
 /**
- * Decrement every contract a year. A deal that hits 0 remaining years is
+ * Step every contract onto `targetYear`. A deal that hits 0 remaining years is
  * NOT released here — that used to happen automatically, which meant
  * every "expiring" player vanished to free agency before the RESIGN phase
  * (where the user is supposed to get a chance to extend them) ever ran.
  * They now sit at 0 years remaining — still rostered, flagged as pending
  * free agents — until releaseUnresignedExpiringContracts() actually lets
  * whichever ones weren't re-signed go, once RESIGN is over.
+ *
+ * WHEN this runs is a cap-correctness question, not a cosmetic one. It used
+ * to be the OFFSEASON week-3 step, two steps after capChargeYear() starts
+ * filing dead money against the NEXT league year — so a cut made in OFFSEASON
+ * week 1 computed its dead money off an un-aged `yearsRemaining` and charged
+ * the result to a year the contract had already spent one season of. Measured:
+ * a 4-year deal with $17.76M of bonus ($4.44M/yr of proration) and 3 years
+ * remaining booked $13.32M against 2027 when cut at OFFSEASON wk1, and $8.88M
+ * against the same 2027 when cut two steps later — $4.44M of dead money
+ * created by nothing but timing, and always in the direction that punished
+ * acting early.
+ *
+ * Aging the ledger the moment the season ends closes that window at the
+ * source instead of asking every reader of a contract to correct for it:
+ * deadMoneyOnCut(), capHit(), capSavingsOnCut(), the Cap page's savings and
+ * dead-money columns and capComplianceReport's escape path all describe the
+ * same league year a charge booked right now would land in, with no extra
+ * argument to remember to pass.
+ *
+ * Idempotent, keyed on League.contractsAgedYear, because it is now called
+ * from two places: the end of the playoffs (for the year being entered) and
+ * the offseason AGE_CONTRACTS step (a catch-up for saves that predate the
+ * column, which would otherwise never age again). Returns whether it did
+ * anything.
  */
-async function agePlayersAndContracts(leagueId: string) {
-  const contracts = await prisma.contract.findMany({ where: { player: { leagueId, status: 'ACTIVE' } } });
-  for (const c of contracts) {
-    const remaining = Math.max(0, c.yearsRemaining - 1);
-    await prisma.contract.update({ where: { id: c.id }, data: { yearsRemaining: remaining } });
-  }
-  // Dead money charges only apply to the year they were incurred.
-  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  await prisma.capCharge.deleteMany({ where: { year: { lt: league.seasonYear }, teamId: { in: (await prisma.team.findMany({ where: { leagueId }, select: { id: true } })).map((t) => t.id) } } });
+async function ageContractsForYear(leagueId: string, targetYear: number): Promise<boolean> {
+  const league = await prisma.league.findUniqueOrThrow({
+    where: { id: leagueId }, select: { contractsAgedYear: true },
+  });
+  if (league.contractsAgedYear != null && league.contractsAgedYear >= targetYear) return false;
+
+  await prisma.contract.updateMany({
+    where: { player: { leagueId, status: 'ACTIVE' }, yearsRemaining: { gt: 0 } },
+    data: { yearsRemaining: { decrement: 1 } },
+  });
+  await prisma.league.update({ where: { id: leagueId }, data: { contractsAgedYear: targetYear } });
+  return true;
+}
+
+/** Dead money charges only apply to the year they were incurred. */
+async function expireStaleCapCharges(leagueId: string, seasonYear: number) {
+  const teams = await prisma.team.findMany({ where: { leagueId }, select: { id: true } });
+  await prisma.capCharge.deleteMany({
+    where: { year: { lt: seasonYear }, teamId: { in: teams.map((t) => t.id) } },
+  });
 }
 
 /**
@@ -921,16 +1047,28 @@ async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: 
  * Run once, when the draft closes, so every roster enters the new league
  * year legal.
  *
- * The worst players go, by true rating. Their dead money is booked like any
- * other cut, because over-signing has to cost something — but the players at
- * the bottom of a 57-man roster are on small deals, so the bill is small.
- * One transaction per team rather than one per player: 100+ individual CUT
- * rows a year would bury the wire.
+ * On AI teams the worst players go, by true rating. Their dead money is booked
+ * like any other cut, because over-signing has to cost something — but the
+ * players at the bottom of a 57-man roster are on small deals, so the bill is
+ * small. One transaction per team rather than one per player: 100+ individual
+ * CUT rows a year would bury the wire.
+ *
+ * The USER's team is never trimmed. This used to run `findMany({ where: {
+ * leagueId } })` with no isUser filter, sort the human's roster by `trueOvr`
+ * ascending and waive the overflow — releasing players the user chose, booking
+ * dead money against him, and picking the victims by a rating the fog-of-war
+ * settings mean he cannot even see. Deciding who to cut is the single most
+ * characteristic decision in the genre; the game does not get to make it. When
+ * the user is over the limit the advance is blocked instead, the same shape the
+ * cap-compliance gate already uses, and he cuts whoever he wants to cut.
  */
-async function trimRostersToLimit(leagueId: string, seasonYear: number, settings: LeagueSettings): Promise<number> {
+async function trimRostersToLimit(
+  leagueId: string, seasonYear: number, settings: LeagueSettings,
+): Promise<{ trimmed: number; userOverflow: { abbr: string; over: number; rosterSize: number } | null }> {
   const limit = settings.rosterMax || LEAGUE.ROSTER_MAX;
-  const teams = await prisma.team.findMany({ where: { leagueId }, select: { id: true, abbr: true } });
+  const teams = await prisma.team.findMany({ where: { leagueId }, select: { id: true, abbr: true, isUser: true } });
   let total = 0;
+  let userOverflow: { abbr: string; over: number; rosterSize: number } | null = null;
 
   for (const team of teams) {
     const roster = await prisma.player.findMany({
@@ -940,6 +1078,10 @@ async function trimRostersToLimit(leagueId: string, seasonYear: number, settings
     });
     const overflow = roster.length - limit;
     if (overflow <= 0) continue;
+    if (team.isUser) {
+      userOverflow = { abbr: team.abbr, over: overflow, rosterSize: roster.length };
+      continue;
+    }
 
     const cuts = roster.slice(0, overflow);
     for (const p of cuts) {
@@ -961,7 +1103,7 @@ async function trimRostersToLimit(leagueId: string, seasonYear: number, settings
     });
     total += cuts.length;
   }
-  return total;
+  return { trimmed: total, userOverflow };
 }
 
 /**
@@ -1004,9 +1146,20 @@ export async function resignDecisionsForTeam(
   rng: Rng,
 ) {
   const { parseGmProfile, teamNeeds } = await import('./ai/gm');
-  const { marketValue, suggestedYears, buildContract, capHit } = await import('./cap');
+  const { marketValue, suggestedYears, maxYearsForAge, buildContract, capHit } = await import('./cap');
   const { extendContract } = await import('./freeagency');
   const { teamCapSummary } = await import('./cap-summary');
+
+  // Roster limits come from the league's own settings, like every other
+  // roster-limit site in the codebase (trimRostersToLimit, runAiFreeAgencyWave,
+  // fillRosterForTeam, INV-08). This function alone read the LEAGUE.* defaults,
+  // so a league configured with a 40- or 60-man roster had its re-sign wave
+  // budgeting against 46/53 regardless — either refusing to keep players it had
+  // room for, or keeping players it would have to waive on cut-down day.
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { settings: true } });
+  const settings = parseSettings(league.settings);
+  const rosterMax = settings.rosterMax || LEAGUE.ROSTER_MAX;
+  const rosterMin = rosterMinFor(rosterMax);
 
   const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
   const roster = await prisma.player.findMany({ where: { teamId, status: 'ACTIVE' }, include: { contract: true } });
@@ -1074,7 +1227,7 @@ export async function resignDecisionsForTeam(
     // the team can't even fill that many bodies without him, it's a hole.
     const replacement = depth[ideal - 1] ?? 0;
     const bar = RESIGN.FLOOR_OVR + (1 - willingness) * RESIGN.REBUILD_BAR_SPAN;
-    const shortOfMinimum = projected < LEAGUE.ROSTER_MIN;
+    const shortOfMinimum = projected < rosterMin;
 
     const worthKeeping = p.trueOvr >= bar && (
       p.trueOvr >= RESIGN.PREMIUM_OVR
@@ -1088,7 +1241,7 @@ export async function resignDecisionsForTeam(
       || (p.trueOvr >= RESIGN.PREMIUM_OVR && willingness >= RESIGN.EARLY_EXTENSION_WILLINGNESS);
     // Don't re-sign past a legal roster — free agency and the draft still
     // have to fit, and anyone over the limit gets waived on cut-down day.
-    const roomOnRoster = !expired || projected < LEAGUE.ROSTER_MAX;
+    const roomOnRoster = !expired || projected < rosterMax;
 
     if (!worthKeeping || !worthExtendingEarly || !roomOnRoster) {
       if (expired) released++;
@@ -1101,7 +1254,15 @@ export async function resignDecisionsForTeam(
     const priceMult = RESIGN.OFFER_FLOOR_MULT + willingness * RESIGN.OFFER_WILLINGNESS_SPAN;
     const apy = Math.max(CAP.MIN_SALARY, Math.round(market * priceMult * (1 + rng.float(-RESIGN.OFFER_NOISE, RESIGN.OFFER_NOISE))));
     const termNudge = willingness >= RESIGN.LENGTH_BONUS_ABOVE ? 1 : willingness <= RESIGN.LENGTH_PENALTY_BELOW ? -1 : 0;
-    const years = clamp(suggestedYears(p.trueOvr, p.age) + termNudge, 1, CONTRACT.MAX_DEAL_YEARS);
+    // The nudge may shorten a deal freely, but it may NOT reach past the age
+    // ceiling. CONTRACT (lib/tuning.ts) documents that ceiling as absolute —
+    // "a 34-year-old gets one year no matter how good he is, which is what
+    // keeps an aging star from being handed a five-year deal the team can
+    // never escape" — and clamping only against MAX_DEAL_YEARS quietly broke
+    // it: measured, ovr 76 age 34 was nudged from 1 year to 2, and ovr 62
+    // age 40 from 1 to 2 as well.
+    const termCeiling = Math.min(CONTRACT.MAX_DEAL_YEARS, maxYearsForAge(p.age));
+    const years = clamp(suggestedYears(p.trueOvr, p.age) + termNudge, 1, termCeiling);
 
     // Budget against the DELTA, not the gross: the old deal is torn up the
     // instant the new one is signed, which is exactly what extendContract's
@@ -1111,7 +1272,7 @@ export async function resignDecisionsForTeam(
     const newHit = capHit({ ...preview, baseSalaries: writeJson(preview.baseSalaries) }, capMode);
     // Hold back money for free agency and the draft class, plus the league
     // minimum for every roster slot still short of a legal roster.
-    const openSlots = Math.max(0, LEAGUE.ROSTER_MIN - projected);
+    const openSlots = Math.max(0, rosterMin - projected);
     const reserve = capMode === 'OFF' ? 0 : RESIGN.CAP_RESERVE + openSlots * CAP.MIN_SALARY;
     if (newHit - oldHit > capSpace - reserve) {
       if (expired) released++;

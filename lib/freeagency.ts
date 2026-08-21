@@ -1,9 +1,9 @@
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
-import { CAP, LEAGUE } from './tuning';
+import { CAP, LEAGUE, FREE_AGENCY, ROSTER_TARGETS, Position, rosterMinFor } from './tuning';
 import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
-import { buildContract, marketValue, suggestedYears, capHit, formatMoney } from './cap';
+import { buildContract, marketValue, suggestedYears, capHit, capSavingsOnCut, formatMoney } from './cap';
 import { maxOffer, parseGmProfile, teamNeeds, RosterPlayer } from './ai/gm';
 import { teamCapSummary } from './cap-summary';
 import { assertCapRoom } from './capEnforcement';
@@ -87,7 +87,10 @@ export async function signFreeAgent(opts: {
   await assertCapRoom({ action: 'Signing', seasonYear, capMode, charges: [{ teamId, delta: hit }] });
 
   await prisma.$transaction(async (tx) => {
-    await tx.player.update({ where: { id: playerId }, data: { teamId, status: 'ACTIVE' } });
+    // yearsUnsigned resets the moment somebody signs him — it only counts
+    // CONSECUTIVE years on the street (see progressFreeAgents in
+    // lib/development.ts, which rolls attrition off it).
+    await tx.player.update({ where: { id: playerId }, data: { teamId, status: 'ACTIVE', yearsUnsigned: 0 } });
     await tx.contract.deleteMany({ where: { playerId } });
     await tx.contract.create({
       data: {
@@ -398,6 +401,25 @@ export async function cutPlayer(opts: {
  * One AI free-agency pass: every non-user team with cap room + a real need
  * bids on the best available fits; highest bidder wins each contested player.
  * Deliberately simple — no multi-round bidding wars, one shot per call.
+ *
+ * UPGRADE-AND-DISPLACE. This used to `continue` past any team with no open
+ * roster slot, which read as reasonable and was in fact a permanent sink: at
+ * a steady-state roster of 50-52 essentially every team was excluded every
+ * week, so nobody bid on anybody. Measured over 13 simulated seasons the
+ * unsigned pool grew 140 -> 4,411 and ended up holding 593 players rated 80+
+ * and 151 rated 90+ — including 97-overall players — in a 32-team league,
+ * while league-wide SIGN transactions fell to single digits per year.
+ *
+ * A real front office at a full roster does not stop reading the wire. It
+ * signs the better player and releases the man he beats. So a team with no
+ * open slot now still bids, on the condition that the free agent is a clear
+ * upgrade on the WORST player it has at that position — guarded by
+ * FREE_AGENCY.MIN_UPGRADE_DELTA (no churning for a rounding error),
+ * MAX_DISPLACE_OVR (never displace a real contributor this way) and
+ * MAX_DISPLACE_PER_TEAM_PER_WAVE (no rebuilding a roster in one click). The
+ * displaced player's release runs through the ordinary cut path, dead money
+ * and all, and the signing runs through the ordinary assertCapRoom path, so
+ * upgrading is a cap decision like every other.
  */
 export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, week: number, settings: LeagueSettings, rng: Rng) {
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
@@ -407,77 +429,187 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
   // happened, quietly draining the draft pool.
   const freeAgents = await prisma.player.findMany({
     where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
-    orderBy: { trueOvr: 'desc' },
-    take: 60,
+    orderBy: [{ trueOvr: 'desc' }, { id: 'asc' }],
+    take: FREE_AGENCY.WAVE_BOARD_SIZE,
   });
-  if (freeAgents.length === 0 || teams.length === 0) return { signings: 0 };
+  if (freeAgents.length === 0 || teams.length === 0) return { signings: 0, displaced: 0 };
 
-  const bids: { playerId: string; teamId: string; offer: number }[] = [];
+  interface Bid { playerId: string; teamId: string; offer: number; displacePlayerId?: string }
+  const bids: Bid[] = [];
 
   for (const team of teams) {
-    const roster = await prisma.player.findMany({ where: { teamId: team.id }, select: { id: true, position: true, trueOvr: true, age: true, potential: true } });
+    const roster = await prisma.player.findMany({
+      where: { teamId: team.id, status: 'ACTIVE' },
+      select: { id: true, position: true, trueOvr: true, age: true, potential: true },
+      orderBy: [{ trueOvr: 'asc' }, { id: 'asc' }],
+    });
     const needs = teamNeeds(roster as RosterPlayer[]);
     const summary = await teamCapSummary(team.id, seasonYear, settings.capMode);
     const profile = parseGmProfile(team.gmProfile, rng);
 
-    // Nothing in the game reads LEAGUE.ROSTER_MAX outside league generation,
-    // so AI rosters had no ceiling at all — they simply never reached one
-    // while the re-sign wave was leaking 400 players a year into free agency.
-    // With retention repaired they do, so the frenzy stops at a legal roster
-    // instead of running to 56+ bodies.
     // Leave room for the rookie class. This wave only ever runs during
     // FREE_AGENCY, and the draft lands immediately after it, so filling all
     // the way to rosterMax here just means cutting those same players again
-    // on cut-down day (see trimRostersToLimit in lib/season.ts).
-    // Reserve only the share of the draft class that realistically sticks,
-    // not the whole class. Subtracting all 7 rounds from a 53-man limit gives
-    // an effective ceiling of exactly 46 — ROSTER_MIN — so once the re-sign
-    // repair pushed rosters back to a legal size, every team skipped free
-    // agency and the market shut down league-wide. Measured before this fix:
-    // 12 of 32 teams excluded in the second season, 20 of 32 in the third,
-    // and 29 of 31 by the time rosters reached their 50-52 steady state.
+    // on cut-down day (see trimRostersToLimit in lib/season.ts). Reserve only
+    // the share of the class that realistically sticks, not the whole class.
     const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
     const rookieReserve = Math.ceil(settings.draftRounds * LEAGUE.ROOKIE_ROSTER_HIT_RATE);
-    const openSlots = Math.max(0, rosterMax - summary.rosterSize - rookieReserve);
-    if (openSlots <= 0) continue;
+    let openSlots = Math.max(0, rosterMax - roster.length - rookieReserve);
+    let displacesLeft = FREE_AGENCY.MAX_DISPLACE_PER_TEAM_PER_WAVE;
 
-    // Bid on the 3 highest-need positions among top available talent.
+    // The worst man at each position — the one a genuine upgrade would push
+    // off the roster. `roster` is already sorted worst-first, so the first
+    // hit per position is the answer.
+    const worstAtPosition = new Map<string, { id: string; trueOvr: number }>();
+    const countAtPosition = new Map<string, number>();
+    for (const p of roster) {
+      if (!worstAtPosition.has(p.position)) worstAtPosition.set(p.position, { id: p.id, trueOvr: p.trueOvr });
+      countAtPosition.set(p.position, (countAtPosition.get(p.position) ?? 0) + 1);
+    }
+    const alreadyDisplaced = new Set<string>();
+
+    // Bid on the highest-need positions among top available talent.
     const ranked = [...freeAgents].sort((a, b) => (needs[b.position] ?? 0) - (needs[a.position] ?? 0) || b.trueOvr - a.trueOvr);
     let budget = Math.max(0, summary.capSpace - 4_000_000);
-    for (const fa of ranked.slice(0, Math.min(8, openSlots))) {
+    for (const fa of ranked) {
+      if (openSlots <= 0 && displacesLeft <= 0) break;
       if (budget <= 0) break;
+
+      let displace: { id: string; trueOvr: number } | null = null;
+      if (openSlots <= 0) {
+        // No room — this only happens if he beats somebody already here.
+        const worst = worstAtPosition.get(fa.position);
+        if (!worst || alreadyDisplaced.has(worst.id)) continue;
+        if (worst.trueOvr > FREE_AGENCY.MAX_DISPLACE_OVR) continue;
+        if (fa.trueOvr - worst.trueOvr < FREE_AGENCY.MIN_UPGRADE_DELTA) continue;
+        // Swapping like for like keeps the position count intact, so this can
+        // never open a hole the roster spec says has to be filled.
+        if ((countAtPosition.get(fa.position) ?? 0) < (ROSTER_TARGETS[fa.position as Position]?.min ?? 1)) continue;
+        displace = worst;
+      } else if ((needs[fa.position] ?? 0) <= 0.15) {
+        continue; // no real need and no upgrade case — not a bid
+      }
+
       const offer = maxOffer(fa as any, { profile, needs, capSpace: budget, rng });
-      if (offer >= CAP.MIN_SALARY && (needs[fa.position] ?? 0) > 0.15) {
-        bids.push({ playerId: fa.id, teamId: team.id, offer });
-        budget -= offer;
+      if (offer < CAP.MIN_SALARY) continue;
+
+      bids.push({ playerId: fa.id, teamId: team.id, offer, displacePlayerId: displace?.id });
+      budget -= offer;
+      if (displace) {
+        alreadyDisplaced.add(displace.id);
+        displacesLeft--;
+      } else {
+        openSlots--;
       }
     }
   }
 
   // Resolve: highest bid per player wins, if it clears market floor.
   let signings = 0;
-  const byPlayer = new Map<string, typeof bids>();
+  let displaced = 0;
+  const byPlayer = new Map<string, Bid[]>();
   for (const b of bids) {
     if (!byPlayer.has(b.playerId)) byPlayer.set(b.playerId, []);
     byPlayer.get(b.playerId)!.push(b);
   }
+  // A player can only be displaced once across the whole wave, and only by the
+  // bid that actually lands.
+  const releasedThisWave = new Set<string>();
   for (const [playerId, offers] of byPlayer) {
     const player = freeAgents.find((f) => f.id === playerId)!;
     const market = marketValue({ ovr: player.trueOvr, position: player.position as any, age: player.age, potential: player.potential });
-    const best = offers.sort((a, b) => b.offer - a.offer)[0];
-    if (best.offer >= market * 0.85) {
-      const years = suggestedYears(player.trueOvr, player.age);
-      try {
-        await signFreeAgent({
-          leagueId, playerId, teamId: best.teamId, apy: Math.round(best.offer), years, seasonYear, capMode: settings.capMode, week,
-        });
-        signings += 1;
-      } catch {
-        /* cap edge case — skip this signing */
+    const best = offers.sort((a, b) => b.offer - a.offer || a.teamId.localeCompare(b.teamId))[0];
+    if (best.offer < market * 0.85) continue;
+
+    const years = suggestedYears(player.trueOvr, player.age);
+    try {
+      if (best.displacePlayerId) {
+        if (releasedThisWave.has(best.displacePlayerId)) continue;
+        // Check the swap fits BEFORE anyone is released, so a failed signing
+        // can never leave a team a body short for nothing. The release frees
+        // this year's hit minus the dead money it leaves behind, which is
+        // exactly capSavingsOnCut.
+        const outgoing = await prisma.player.findUnique({ where: { id: best.displacePlayerId }, include: { contract: true } });
+        if (!outgoing || outgoing.teamId !== best.teamId) continue;
+        const preview = buildContract({ apy: Math.round(best.offer), years, signedYear: seasonYear });
+        const incomingHit = capHit({ ...preview, baseSalaries: writeJson(preview.baseSalaries) }, settings.capMode);
+        const freed = capSavingsOnCut(outgoing.contract, settings.capMode);
+        const summary = await teamCapSummary(best.teamId, seasonYear, settings.capMode);
+        if (incomingHit > summary.capSpace + freed) continue;
+
+        await cutPlayer({ leagueId, playerId: best.displacePlayerId, capMode: settings.capMode, seasonYear, week });
+        releasedThisWave.add(best.displacePlayerId);
+        displaced += 1;
       }
+      await signFreeAgent({
+        leagueId, playerId, teamId: best.teamId, apy: Math.round(best.offer), years, seasonYear, capMode: settings.capMode, week,
+      });
+      signings += 1;
+    } catch {
+      /* cap edge case — skip this signing */
     }
   }
-  return { signings };
+  return { signings, displaced };
+}
+
+/**
+ * Every AI team below a legal roster signs minimum-salary bodies until it
+ * isn't. Recovery, not strategy — it exists because a team that had a bad
+ * re-sign year used to stay short forever: nothing in the game ever measured
+ * a roster against ROSTER_MIN, and the free-agency wave (which might have
+ * fixed it) was itself gated on having open slots the short team did have but
+ * never used, because its remaining needs scored below the bid threshold.
+ * Measured on 19 of 22 pre-existing saves: minimum roster 27, median 33, and
+ * one save with all 32 teams under the minimum.
+ *
+ * Deliberately blunt: best available body at the least-covered position,
+ * league minimum, one year. A short team is not in a position to be picky,
+ * and every one of these deals expires immediately so it costs the franchise
+ * nothing beyond this season. User teams are never touched — filling the
+ * human's roster is the "Fill Roster" button's job, on his own click.
+ */
+export async function fillTeamsToRosterMinimum(
+  leagueId: string, seasonYear: number, week: number, settings: LeagueSettings, rng: Rng,
+): Promise<number> {
+  const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
+  const rosterMin = rosterMinFor(rosterMax);
+  const teams = await prisma.team.findMany({ where: { leagueId, isUser: false }, select: { id: true }, orderBy: { id: 'asc' } });
+
+  let signed = 0;
+  const taken = new Set<string>();
+
+  for (const team of teams) {
+    let roster = await prisma.player.findMany({
+      where: { teamId: team.id, status: 'ACTIVE' },
+      select: { id: true, position: true, trueOvr: true, age: true, potential: true },
+    });
+    if (roster.length >= rosterMin) continue;
+
+    const pool = await prisma.player.findMany({
+      where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+      orderBy: [{ trueOvr: 'desc' }, { id: 'asc' }],
+      take: (rosterMin - roster.length) * 8 + 120,
+    });
+
+    while (roster.length < rosterMin) {
+      const needs = teamNeeds(roster as RosterPlayer[]);
+      const wanted = Object.entries(needs).sort((a, b) => b[1] - a[1]).map(([pos]) => pos);
+      const pick = pool.find((c) => !taken.has(c.id) && c.position === wanted[0])
+        ?? pool.find((c) => !taken.has(c.id) && wanted.slice(0, 5).includes(c.position))
+        ?? pool.find((c) => !taken.has(c.id));
+      if (!pick) break; // the market is genuinely empty
+
+      const ok = await signFreeAgent({
+        leagueId, playerId: pick.id, teamId: team.id,
+        apy: CAP.MIN_SALARY, years: 1, seasonYear, capMode: settings.capMode, week,
+      }).then(() => true).catch(() => false);
+      taken.add(pick.id);
+      if (!ok) break; // no cap room even for the minimum — nothing more to try
+      signed += 1;
+      roster = [...roster, { id: pick.id, position: pick.position, trueOvr: pick.trueOvr, age: pick.age, potential: pick.potential }];
+    }
+  }
+  return signed;
 }
 
 /**
