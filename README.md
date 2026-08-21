@@ -707,3 +707,43 @@ ever force-pushed over, so every state below still exists in git history).
   honestly means running real generation against a seed and passing that
   same seed to `createLeague` (which already accepts one) so the preview
   and the league match — tracked as follow-up rather than faked.
+- **2026-08-21 — Trade screen made properly usable.** Checkpoint before
+  this change: `1decbc3`. Commit: `8f235dd`. The two roster panels were
+  flat, unsorted lists of ~50 players each showing only position, OVR,
+  name, age, cap hit and years — no sorting, no filtering, and no way to
+  tell whether a player was actually producing without leaving the page.
+  Each panel now has its own independent sort state (clickable headers,
+  the same idiom the Roster page uses), a name search plus a position
+  filter with a live match count and a real empty state, a compact
+  season-production line per player, and a link through to the full
+  player card. The row had to stop being a `<button>` — a `<Link>`
+  nested inside a button is invalid HTML — so it became a
+  `div[role=button]` with `tabIndex`, Enter/Space handling and
+  `aria-pressed` for the selection state, and the card link stops
+  propagation so opening a player doesn't also toss him into the deal.
+  The asymmetric cap model (`freedIfSent` vs `addedIfAcquired`) and the
+  dead-money readout are untouched. Verified functionally rather than by
+  eye: sort headers reorder, row click selects, the card link navigates
+  *without* toggling selection, the position filter narrows 37 rows to
+  2, and a non-matching search shows the empty state.
+- **2026-08-21 — Genre research (`docs/genre-research.md`).** A research
+  pass across football/baseball/soccer GM sims, player forums and
+  sports-media UI patterns, cross-checked against what this codebase
+  actually has. Findings are tagged **[Verified] / [Reported] /
+  [Inference] / [Codebase]** and the doc has an explicit "what I could
+  not verify" section — `WebFetch` was blocked by the network proxy for
+  all eight domains attempted, so every external claim is a search-index
+  synthesis rather than a direct read. Treat it accordingly.
+  Three findings about *this* codebase are worth calling out because
+  they were confirmed by reading the source, not inferred:
+  - Coordinators already carry a hidden `rating` that feeds unit
+    performance in `lib/sim/units.ts`, and `fireStrugglingCoordinators`
+    in `lib/season.ts` already fires underperforming **AI** ones — but
+    the player can never see, hire, fire, or scheme their own. The sim
+    plumbing exists; only the management layer is missing.
+  - `Player.morale` exists in the schema, is explicitly commented as an
+    unwired placeholder, and has zero real usages anywhere in `lib/`.
+  - `lib/season.ts` states outright that user teams are never auto-fired,
+    so there is no job-security or owner-pressure mechanic at all.
+  Ranked recommendations, with rough sizing and whether foundations
+  already exist, are in the doc's prioritised table.
