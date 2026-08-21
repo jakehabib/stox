@@ -20,15 +20,15 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
 
-  // Best player on the market, independent of whatever position filter is
-  // currently applied — a fixed spotlight, not just "row 1 of the table."
-  const topAvailable = await prisma.player.findFirst({
-    where: { leagueId: league.id, status: 'FREE_AGENT', teamId: null, isDraftee: false },
-    orderBy: { trueOvr: 'desc' },
-  });
-
   const where: any = { leagueId: league.id, status: 'FREE_AGENT', teamId: null, isDraftee: false };
   if (searchParams.pos) where.position = searchParams.pos;
+
+  // The spotlight FOLLOWS the position filter. It used to be deliberately
+  // unfiltered — "a fixed spotlight, not row 1 of the table" — and that put a
+  // right tackle under a masthead reading "filtered to TE", on the same screen
+  // as a depth panel naming a different man as the best available at TE. Two
+  // elements claiming different bests is worse than a spotlight that moves.
+  const topAvailable = await prisma.player.findFirst({ where, orderBy: { trueOvr: 'desc' } });
 
   // The headline count and the position filters must describe the WHOLE pool,
   // not the slice rendered below it — reporting slice.length as a total claimed
@@ -40,9 +40,13 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   // table, the same order the Depth Chart screen renders and the sim plays.
   // Joined in one query rather than a lookup per row, and deliberately NOT
   // re-sorted by rating here — the order IS who plays.
-  const [freeAgents, totalAvailable, positionGroups, depthSlots] = await Promise.all([
+  const [freeAgents, totalAvailable, filteredAvailable, positionGroups, depthSlots] = await Promise.all([
     prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: 100 }),
     prisma.player.count({ where: { leagueId: league.id, status: 'FREE_AGENT', teamId: null, isDraftee: false } }),
+    // What the table is actually showing. The pool count above still drives the
+    // pills; this drives every number that sits over the filtered table, which
+    // used to read "140 AVAILABLE / filtered to TE" above eight tight ends.
+    prisma.player.count({ where }),
     prisma.player.groupBy({
       by: ['position'],
       where: { leagueId: league.id, status: 'FREE_AGENT', teamId: null, isDraftee: false },
@@ -152,7 +156,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         teamId={team.id}
         teamAbbr={team.abbr}
         eyebrow="Free Agency"
-        title={`${totalAvailable} Available`}
+        title={`${filteredAvailable} Available`}
         subtitle="Open talks and his agent takes the call. Salary, term and guarantee are yours to set — the interest meter tells you how it is landing, and every offer he turns down costs you patience. Rival teams are bidding on the same players, so a fair offer isn't always the winning one."
         facts={[
           ...(capSummary ? [{
@@ -161,7 +165,11 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
             detail: 'room to spend',
             color: capSummary.capSpace >= 0 ? 'text-accent' : 'text-bad',
           }] : []),
-          { label: 'On The Market', value: String(totalAvailable), detail: searchParams.pos ? `filtered to ${searchParams.pos}` : 'all positions' },
+          {
+            label: 'On The Market',
+            value: String(filteredAvailable),
+            detail: searchParams.pos ? `${searchParams.pos} · ${totalAvailable} in the whole pool` : 'all positions',
+          },
           ...(topAvailable && topView ? [{
             label: 'Best Available',
             value: String(topView.revealed || topView.confidence >= 90 ? topView.scoutedOvr : `${topView.ovrLow}-${topView.ovrHigh}`),

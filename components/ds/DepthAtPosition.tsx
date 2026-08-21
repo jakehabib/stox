@@ -103,7 +103,10 @@ export function DepthAtPosition({ position, depth, capOn }: {
         {depth.map((d, i) => {
           const starts = i < starterCount;
           return (
-            <div key={d.playerId}>
+            // px-1 compensates the row's -mx-1 bleed. Without it this wrapper's
+            // scrollWidth exceeds its clientWidth by 4px and the panel scrolls
+            // sideways inside the re-sign row.
+            <div key={d.playerId} className="px-1">
               {/* Where the lineup ends. The ST/# labels alone made the reader
                   count, and at WR — three starters — counting is exactly what
                   they were getting wrong. */}

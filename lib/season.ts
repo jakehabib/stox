@@ -427,14 +427,15 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   const nextWeek = week + 1;
   const seasonOver = nextWeek > settings.seasonLength;
   if (seasonOver) {
-    // All-Stars are selected HERE, at the last moment this season's stat lines
-    // are purely regular season. simulateAndSaveGame gates only the STANDINGS
-    // on kind === 'REGULAR' — seasonStats keep accumulating through the
-    // playoffs — so selecting alongside the other awards after the final would
-    // fold two to four postseason games into the totals of the twelve teams
-    // that got there and none of the twenty that didn't, then rank them
-    // against each other. See lib/allStars.ts. Dynamic import to match
-    // recordSeasonAwards below.
+    // All-Stars are selected HERE, at the end of the regular season, which is
+    // when the real thing is named. This USED to be load-bearing for
+    // correctness — seasonStats accumulated straight through the postseason,
+    // so selecting after the final folded playoff games into the totals of
+    // the twelve clubs that got there and none of the twenty that didn't.
+    // seasonStats is now regular season only (see Player.seasonStats in the
+    // schema), so the timing is a choice about when an honour is awarded
+    // rather than a workaround. It stays where it is. See lib/allStars.ts.
+    // Dynamic import to match recordSeasonAwards below.
     const { recordAllStars } = await import('./allStars');
     await recordAllStars(leagueId, league.seasonYear, week, settings.seasonLength);
     await seedPlayoffs(leagueId);
@@ -542,14 +543,24 @@ export async function simulateAndSaveGame(leagueId: string, gameId: string, sett
     }
     if (newsRows.length > 0) await tx.transaction.createMany({ data: newsRows });
 
+    // Which bucket this game's production lands in. The standings gate three
+    // statements up has always been `kind === 'REGULAR'`; the stat gate used
+    // to be missing entirely, which is how a Super Bowl run added four games
+    // of yardage AND four games of `gp` to a season line that the leaderboard
+    // then ranked against a seventeen-game one. Two columns, one meaning
+    // each — see Player.seasonStats in the schema.
+    const statColumn = game.kind === 'REGULAR' ? 'seasonStats' : 'playoffStats';
     const allLines = [...result.boxScore.lines.home, ...result.boxScore.lines.away];
-    const existing = await tx.player.findMany({ where: { id: { in: allLines.map((l) => l.playerId) } }, select: { id: true, seasonStats: true } });
-    const existingById = new Map(existing.map((p) => [p.id, p.seasonStats]));
+    const existing = await tx.player.findMany({
+      where: { id: { in: allLines.map((l) => l.playerId) } },
+      select: { id: true, seasonStats: true, playoffStats: true },
+    });
+    const existingById = new Map(existing.map((p) => [p.id, p[statColumn]]));
     const statUpdates: [string, string][] = allLines.map((line) => {
       const current = readJson<SeasonStats>(existingById.get(line.playerId), {});
       return [line.playerId, writeJson(mergeStats(current, line.stats))];
     });
-    await bulkSetText(tx, 'seasonStats', statUpdates);
+    await bulkSetText(tx, statColumn, statUpdates);
   });
 
   return result;
@@ -574,7 +585,7 @@ async function bulkIncrementInt(tx: Prisma.TransactionClient, column: 'fatigue',
   await tx.$executeRaw`UPDATE "Player" AS p SET "${Prisma.raw(column)}" = p."${Prisma.raw(column)}" + v.val FROM (VALUES ${values}) AS v(id, val) WHERE p.id = v.id`;
 }
 
-async function bulkSetText(tx: Prisma.TransactionClient, column: 'seasonStats' | 'careerStats' | 'injuryType', entries: [string, string][]) {
+async function bulkSetText(tx: Prisma.TransactionClient, column: 'seasonStats' | 'playoffStats' | 'careerStats' | 'careerPlayoffStats' | 'injuryType', entries: [string, string][]) {
   if (entries.length === 0) return;
   const values = Prisma.join(entries.map(([id, v]) => Prisma.sql`(${id}::text, ${v}::text)`));
   await tx.$executeRaw`UPDATE "Player" AS p SET "${Prisma.raw(column)}" = v.val FROM (VALUES ${values}) AS v(id, val) WHERE p.id = v.id`;
@@ -1028,18 +1039,36 @@ async function fireStrugglingCoordinators(leagueId: string, seasonYear: number, 
  * line, active or not, so a player cut mid-season still keeps what he earned.
  * Also checks the just-finalized season/career lines against LeagueRecord
  * while both are in hand — see lib/records.ts.
+ *
+ * The postseason pair rolls on exactly the same schedule and never mixes with
+ * the regular-season pair. LeagueRecord is fed the REGULAR line only, which is
+ * what "single-season record" means everywhere the phrase is used — a 4,300-
+ * yard year and a 4,300-yard year plus a playoff run are not the same
+ * achievement and the record book must not treat them as one.
  */
 async function rollSeasonStatsIntoCareer(leagueId: string, seasonYear: number) {
   const players = await prisma.player.findMany({
-    where: { leagueId, NOT: { seasonStats: '{}' } },
-    select: { id: true, firstName: true, lastName: true, seasonStats: true, careerStats: true, team: { select: { abbr: true } } },
+    where: { leagueId, NOT: { seasonStats: '{}', playoffStats: '{}' } },
+    select: {
+      id: true, firstName: true, lastName: true, seasonStats: true, careerStats: true,
+      playoffStats: true, careerPlayoffStats: true, team: { select: { abbr: true } },
+    },
   });
   const recordInputs: Parameters<typeof checkAndUpdateRecords>[2] = [];
   for (const p of players) {
     const season = readJson<SeasonStats>(p.seasonStats, {});
-    if (Object.keys(season).length === 0) continue;
+    const playoff = readJson<SeasonStats>(p.playoffStats, {});
+    if (Object.keys(season).length === 0 && Object.keys(playoff).length === 0) continue;
     const career = mergeStats(readJson<SeasonStats>(p.careerStats, {}), season);
-    await prisma.player.update({ where: { id: p.id }, data: { careerStats: writeJson(career), seasonStats: '{}' } });
+    const careerPlayoff = mergeStats(readJson<SeasonStats>(p.careerPlayoffStats, {}), playoff);
+    await prisma.player.update({
+      where: { id: p.id },
+      data: {
+        careerStats: writeJson(career), seasonStats: '{}',
+        careerPlayoffStats: writeJson(careerPlayoff), playoffStats: '{}',
+      },
+    });
+    if (Object.keys(season).length === 0) continue;
     recordInputs.push({ id: p.id, firstName: p.firstName, lastName: p.lastName, teamAbbr: p.team?.abbr ?? 'FA', seasonFinal: season, careerFinal: career });
   }
 

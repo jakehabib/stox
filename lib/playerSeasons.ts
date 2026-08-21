@@ -57,6 +57,21 @@ import type { BoxScore, SeasonStats } from './types';
  * awards are not Player rows at all — they exist only as denormalized names
  * on Transaction/LeagueRecord. Nothing there can produce a player-season.)
  *
+ * REGULAR SEASON AND POSTSEASON ARE TWO BUCKETS, NOT ONE
+ * -------------------------------------------------------
+ * Every row carries both — `stats`/`gp` for the regular season, and
+ * `playoffStats`/`playoffGp` for WILDCARD through FINAL. `Game.kind` is
+ * stored on every game, so the split falls straight out of the replay below
+ * and is recoverable for every save that predates the split.
+ *
+ * They are never added together, because adding them produces a number no
+ * label can honestly describe: a Super Bowl back's 21 games ranked against a
+ * non-playoff back's 17 on the same leaderboard rewards the club he happened
+ * to be on. The one thing that CANNOT be split is a seeded pre-league career
+ * — see below, it has no box scores at all — so it stays wholly on the
+ * regular-season side and the postseason view says so out loud rather than
+ * inventing a share of it.
+ *
  * MID-SEASON TRADES: TWO ROWS, PLUS A COMBINED ONE
  * ------------------------------------------------
  * A season row is keyed on (player, year, TEAM), not (player, year). A back
@@ -78,10 +93,23 @@ export interface SeasonLine {
   teamAbbr: string;
   /** His age that season, or null when it isn't knowable — see ageInSeason(). */
   age: number | null;
+  /** Regular-season games. The postseason ones are counted by `playoffGp`. */
   gp: number;
+  /** Regular season only. */
   stats: SeasonStats;
+  /** Postseason only — empty for the twenty clubs a year that don't get one. */
+  playoffStats: SeasonStats;
+  playoffGp: number;
   /** Sort key within a season — where his first game for this club fell. */
   firstSeen: number;
+}
+
+/** Which half of the year a stat view is about. Regular season is the default everywhere. */
+export type StatScope = 'REGULAR' | 'PLAYOFFS';
+
+/** True when a line has any postseason production at all — see the empty-state rule. */
+export function hasPlayoffLine(l: { playoffGp: number; playoffStats: SeasonStats }): boolean {
+  return l.playoffGp > 0 || Object.keys(l.playoffStats).length > 0;
 }
 
 const GAME_SELECT = { seasonYear: true, week: true, kind: true, homeTeamId: true, awayTeamId: true, boxScore: true } as const;
@@ -107,23 +135,31 @@ export function buildSeasonLines(
   abbrByTeamId: Map<string, string>,
 ): Map<string, SeasonLine[]> {
   // key: playerId | year | teamId
-  const acc = new Map<string, { playerId: string; seasonYear: number; teamId: string; firstSeen: number; stats: SeasonStats }>();
+  const acc = new Map<string, {
+    playerId: string; seasonYear: number; teamId: string; firstSeen: number;
+    stats: SeasonStats; playoffStats: SeasonStats;
+  }>();
 
   for (const g of games) {
     const box = readJson<BoxScore | null>(g.boxScore, null);
     if (!box?.lines) continue;
+    // The split, in one line. Game.kind has always been stored, so this is
+    // exactly as recoverable for a five-year-old save as for tonight's game.
+    const bucket = g.kind === 'REGULAR' ? 'stats' : 'playoffStats';
     for (const [side, teamId] of [['home', g.homeTeamId], ['away', g.awayTeamId]] as const) {
       for (const line of box.lines[side] ?? []) {
         const key = `${line.playerId}|${g.seasonYear}|${teamId}`;
         const cur = acc.get(key);
         if (cur) {
-          cur.stats = mergeStats(cur.stats, line.stats);
+          cur[bucket] = mergeStats(cur[bucket], line.stats);
           cur.firstSeen = Math.min(cur.firstSeen, seasonOrder(g));
         } else {
-          acc.set(key, {
+          const fresh = {
             playerId: line.playerId, seasonYear: g.seasonYear, teamId,
-            firstSeen: seasonOrder(g), stats: { ...line.stats },
-          });
+            firstSeen: seasonOrder(g), stats: {} as SeasonStats, playoffStats: {} as SeasonStats,
+          };
+          fresh[bucket] = { ...line.stats };
+          acc.set(key, fresh);
         }
       }
     }
@@ -139,6 +175,8 @@ export function buildSeasonLines(
       age: null,
       gp: entry.stats.gp ?? 0,
       stats: entry.stats,
+      playoffStats: entry.playoffStats,
+      playoffGp: entry.playoffStats.gp ?? 0,
       firstSeen: entry.firstSeen,
     });
   }
@@ -308,11 +346,20 @@ const WRITE_CHUNK = 500;
  * `skipDuplicates` against the (playerId, seasonYear, teamAbbr) unique key
  * makes a re-run a no-op rather than a doubling, which matters because the
  * offseason step around it can be re-entered on a restored save.
+ *
+ * `rebuild: true` drops the league's existing rows for the years it is about
+ * to write and replays them instead of skipping the years already present.
+ * That is how the regular/postseason split was backfilled onto saves whose
+ * rows were written while both halves shared one bucket: every column in this
+ * table is derived from box scores that are still on disk, so a rewrite
+ * cannot lose anything that a fresh replay wouldn't produce. It is not the
+ * ordinary path — the rollover still wants the cheap skip.
  */
 export async function syncPlayerSeasons(
   leagueId: string,
   throughYear: number,
   basisYear: number,
+  opts: { rebuild?: boolean } = {},
 ): Promise<{ years: number[]; rows: number }> {
   const [havePlayerSeasons, havePlayedGames] = await Promise.all([
     prisma.playerSeason.groupBy({ by: ['seasonYear'], where: { leagueId } }),
@@ -322,8 +369,10 @@ export async function syncPlayerSeasons(
     }),
   ]);
   const done = new Set(havePlayerSeasons.map((r) => r.seasonYear));
-  const missing = havePlayedGames.map((r) => r.seasonYear).filter((y) => !done.has(y)).sort((a, b) => a - b);
+  const played = havePlayedGames.map((r) => r.seasonYear).sort((a, b) => a - b);
+  const missing = opts.rebuild ? played : played.filter((y) => !done.has(y));
   if (missing.length === 0) return { years: [], rows: 0 };
+  if (opts.rebuild) await prisma.playerSeason.deleteMany({ where: { leagueId, seasonYear: { in: missing } } });
 
   const [byPlayer, roster] = await Promise.all([
     reconstructLeagueSeasons(leagueId, { years: missing }),
@@ -337,7 +386,7 @@ export async function syncPlayerSeasons(
   const rows: {
     leagueId: string; playerId: string; seasonYear: number;
     teamId: string | null; teamAbbr: string; age: number | null; gp: number;
-    firstSeen: number; stats: string;
+    firstSeen: number; stats: string; playoffStats: string; playoffGp: number;
   }[] = [];
   for (const [playerId, lines] of byPlayer) {
     // A box score can name a player the Player table no longer has (a save
@@ -355,6 +404,8 @@ export async function syncPlayerSeasons(
         gp: line.gp,
         firstSeen: line.firstSeen,
         stats: writeJson(line.stats),
+        playoffStats: writeJson(line.playoffStats),
+        playoffGp: line.playoffGp,
       });
     }
   }
@@ -400,6 +451,8 @@ export async function loadPlayerSeasons(
     age: r.age,
     gp: r.gp,
     stats: readJson<SeasonStats>(r.stats, {}),
+    playoffStats: readJson<SeasonStats>(r.playoffStats, {}),
+    playoffGp: r.playoffGp,
     firstSeen: r.firstSeen,
   }));
 }
@@ -426,10 +479,21 @@ export interface CareerTableRow {
 }
 
 export interface CareerTable {
+  /** Which half of the year these rows are — the table header says so out loud. */
+  scope: StatScope;
   rows: CareerTableRow[];
   /** True when any part of the career could not be attributed to a played season. */
   hasUndecomposed: boolean;
-  /** Nothing at all to show — not even a career total. */
+  /**
+   * He arrived with a career this league never recorded season by season.
+   * True in BOTH scopes even though the residual itself only ever lands on
+   * the regular-season side — the postseason table has to be able to say
+   * "those years aren't in here" instead of silently omitting them. See the
+   * header: a seeded career has no box scores, so it has no derivable
+   * postseason share and the game will not invent one.
+   */
+  hasPreLeagueCareer: boolean;
+  /** Nothing at all to show in this scope — for PLAYOFFS that means he never made one. */
   empty: boolean;
 }
 
@@ -458,6 +522,11 @@ function residualBeforeRow(careerStats: SeasonStats, attributed: SeasonStats): S
   return any ? out : null;
 }
 
+/** One season line flattened to whichever half of the year the table is showing. */
+function inScope(line: SeasonLine, scope: StatScope): { line: SeasonLine; stats: SeasonStats } {
+  return { line, stats: scope === 'REGULAR' ? line.stats : line.playoffStats };
+}
+
 /**
  * Assemble the rendered table. The career row is summed from the rows above
  * it rather than read from Player.careerStats — by construction they are the
@@ -465,26 +534,42 @@ function residualBeforeRow(careerStats: SeasonStats, attributed: SeasonStats): S
  * the visible rows means the total on screen is always the total of the
  * table on screen. A stat page whose bottom line doesn't match its own
  * column is the exact failure this project keeps writing down.
+ *
+ * `scope` picks which bucket every row reads. It is a filter as well as a
+ * projection: a season with no games in the chosen half produces NO row,
+ * because a row of zeroes reads as "he played and did nothing" when the truth
+ * is "he wasn't there". A player who never made a postseason therefore comes
+ * back `empty` and the view says so in words.
  */
 export function buildCareerTable(args: {
   position: string;
-  /** Persisted, attributable seasons — completed years only. */
+  /** Persisted, attributable seasons — completed years only. Both buckets on each line. */
   seasons: SeasonLine[];
   /** The season not yet rolled into careerStats, reconstructed live. */
   live: SeasonLine[];
   /** Whether that season is still actually being played, or merely un-rolled. */
   liveInProgress: boolean;
-  /** Player.careerStats: every completed season, merged, undecomposable. */
+  /** Player.careerStats: every completed REGULAR season, merged, undecomposable. */
   careerStats: SeasonStats;
+  /** Player.careerPlayoffStats: the same for the postseason. */
+  careerPlayoffStats: SeasonStats;
   /** League founding year — the label for anything older than the record. */
   startYear: number;
+  /** Which half of the year to render. Regular season is the default everywhere. */
+  scope?: StatScope;
 }): CareerTable {
-  const { seasons, live, liveInProgress, careerStats, startYear } = args;
+  const { seasons, live, liveInProgress, careerStats, careerPlayoffStats, startYear } = args;
+  const scope: StatScope = args.scope ?? 'REGULAR';
 
   const rows: CareerTableRow[] = [];
 
-  const attributed = sumStats(seasons);
-  const before = residualBeforeRow(careerStats, attributed);
+  // The pre-league residual is defined against the REGULAR-season career
+  // total in both scopes, because that is where a seeded career lives — see
+  // CareerTable.hasPreLeagueCareer.
+  const preLeague = residualBeforeRow(careerStats, sumStats(seasons.map((l) => ({ stats: l.stats }))));
+  const scopedCareer = scope === 'REGULAR' ? careerStats : careerPlayoffStats;
+  const attributed = sumStats(seasons.map((l) => inScope(l, scope)));
+  const before = scope === 'REGULAR' ? preLeague : residualBeforeRow(scopedCareer, attributed);
   const earliestKnown = seasons.length > 0 ? seasons[0].seasonYear : (live[0]?.seasonYear ?? startYear);
 
   if (before) {
@@ -497,13 +582,18 @@ export function buildCareerTable(args: {
       age: null,
       stats: before,
       inProgress: false,
-      note: 'Career total carried into this league — the individual seasons behind it were never recorded.',
+      note: scope === 'REGULAR'
+        ? 'Career total carried into this league — the individual seasons behind it were never recorded.'
+        : 'Postseason total carried into this league — the individual seasons behind it were never recorded.',
     });
   }
 
-  const byYear = new Map<number, SeasonLine[]>();
+  const byYear = new Map<number, { line: SeasonLine; stats: SeasonStats }[]>();
   for (const line of [...seasons, ...live]) {
-    (byYear.get(line.seasonYear) ?? byYear.set(line.seasonYear, []).get(line.seasonYear)!).push(line);
+    const scoped = inScope(line, scope);
+    // No games in this half of the year is not a zero, it is an absence.
+    if (Object.keys(scoped.stats).length === 0) continue;
+    (byYear.get(line.seasonYear) ?? byYear.set(line.seasonYear, []).get(line.seasonYear)!).push(scoped);
   }
   const liveYear = liveInProgress ? (live[0]?.seasonYear ?? null) : null;
 
@@ -515,9 +605,9 @@ export function buildCareerTable(args: {
         kind: 'season',
         seasonLabel: String(year),
         showSeasonLabel: true,
-        teamId: group[0].teamId,
-        teamAbbr: group[0].teamAbbr,
-        age: group[0].age,
+        teamId: group[0].line.teamId,
+        teamAbbr: group[0].line.teamAbbr,
+        age: group[0].line.age,
         stats: group[0].stats,
         inProgress,
       });
@@ -531,26 +621,28 @@ export function buildCareerTable(args: {
       showSeasonLabel: true,
       teamId: null,
       teamAbbr: `${group.length}TM`,
-      age: group.find((g) => g.age != null)?.age ?? null,
+      age: group.find((g) => g.line.age != null)?.line.age ?? null,
       stats: sumStats(group),
       inProgress,
     });
-    for (const line of group) {
+    for (const g of group) {
       rows.push({
         kind: 'split',
         seasonLabel: String(year),
         showSeasonLabel: false,
-        teamId: line.teamId,
-        teamAbbr: line.teamAbbr,
-        age: line.age,
-        stats: line.stats,
+        teamId: g.line.teamId,
+        teamAbbr: g.line.teamAbbr,
+        age: g.line.age,
+        stats: g.stats,
         inProgress,
       });
     }
   }
 
   const totalled = rows.filter((r) => r.kind !== 'split');
-  if (totalled.length === 0) return { rows: [], hasUndecomposed: false, empty: true };
+  if (totalled.length === 0) {
+    return { scope, rows: [], hasUndecomposed: false, hasPreLeagueCareer: preLeague != null, empty: true };
+  }
 
   rows.push({
     kind: 'career',
@@ -563,5 +655,5 @@ export function buildCareerTable(args: {
     inProgress: liveYear != null,
   });
 
-  return { rows, hasUndecomposed: before != null, empty: false };
+  return { scope, rows, hasUndecomposed: before != null, hasPreLeagueCareer: preLeague != null, empty: false };
 }

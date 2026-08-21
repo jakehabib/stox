@@ -283,9 +283,27 @@ model Player {
   fatigue     Int     @default(0) // 0-100, restores between weeks
   morale      Int     @default(70) // 0-100. PLACEHOLDER effect on re-sign odds.
 
-  // Season stat accumulators, JSON string (see lib/types.ts SeasonStats)
+  // Season stat accumulators, JSON string (see lib/types.ts SeasonStats).
+  //
+  // REGULAR SEASON AND POSTSEASON ARE SEPARATE BUCKETS, deliberately. They
+  // used to share one: simulateAndSaveGame gates only the STANDINGS on
+  // kind === 'REGULAR', so a Super Bowl run silently added up to four games
+  // of production — and four games of `gp` — to the season totals of the
+  // twelve clubs that got there and none of the twenty that did not. League
+  // leaders then ranked a 21-game back against a 17-game back on one list,
+  // which rewards making the playoffs rather than playing well, and career
+  // totals inherited it. Two buckets, one meaning each.
+  //
+  // seasonStats/careerStats are REGULAR SEASON ONLY — that is the convention
+  // every real football reference uses when it says "career stats", and it is
+  // what every ranking, award and record in this codebase wants.
   seasonStats String @default("{}")
   careerStats String @default("{}")
+
+  // The same two accumulators for postseason games only (WILDCARD through
+  // FINAL). Rolled over on the identical schedule as the pair above.
+  playoffStats       String @default("{}")
+  careerPlayoffStats String @default("{}")
 
   contract      Contract?
   reports       ScoutingReport[]
@@ -602,6 +620,9 @@ model PlayerSeason {
   // where the arithmetic can't be trusted; a fabricated 24 is not.
   age Int?
 
+  // Regular-season games played. `playoffGp` below counts the postseason ones
+  // — separately, because a column headed "G" next to regular-season yardage
+  // has to count the games those yards came from.
   gp Int @default(0)
 
   // Where his FIRST game for this club fell in the season, as a sortable
@@ -615,8 +636,15 @@ model PlayerSeason {
   firstSeen Int @default(0)
 
   // JSON string, SeasonStats (lib/types.ts) — the same shape and the same keys
-  // the box score wrote.
+  // the box score wrote. REGULAR SEASON ONLY; see Player.seasonStats for why
+  // the two buckets are separate.
   stats String @default("{}")
+
+  // The postseason half of the same season, same shape. Zero-valued for the
+  // twenty clubs a year that don't get one, which is a real answer and is
+  // rendered as one ("no postseason games") rather than as a row of zeroes.
+  playoffStats String @default("{}")
+  playoffGp    Int    @default(0)
 
   // The query this table exists to serve is "every season for one player,
   // oldest first", which this unique index serves as a prefix scan. It is also
