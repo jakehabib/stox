@@ -52,7 +52,10 @@ export interface SeasonAwards {
 }
 
 function statLineFor(s: SeasonStats, isDefensive: boolean): string {
-  if (isDefensive) return `${s.tackles ?? 0} tkl, ${s.sacks ?? 0} sacks, ${s.defInt ?? 0} INT`;
+  // Pluralised because this string is printed verbatim on the dashboard
+  // announcement, the league wire and the GM honours list, where "1 sacks"
+  // reads as a bug in a sentence the player is meant to enjoy.
+  if (isDefensive) return `${s.tackles ?? 0} tkl, ${s.sacks ?? 0} sack${(s.sacks ?? 0) === 1 ? '' : 's'}, ${s.defInt ?? 0} INT`;
   if ((s.passAtt ?? 0) > 0) return `${s.passYds ?? 0} pass yds, ${s.passTd ?? 0} TD, ${s.int ?? 0} INT`;
   if ((s.rushAtt ?? 0) > (s.targets ?? 0)) return `${s.rushYds ?? 0} rush yds, ${s.rushTd ?? 0} TD`;
   return `${s.recYds ?? 0} rec yds, ${s.recTd ?? 0} TD`;
