@@ -1,0 +1,330 @@
+<!--
+  DIRECTION B — EVOLVE
+  Concept: the front office as a newsroom — the league's paper of record rather than a broadcast
+  overlay. Same information architecture, but a serif editorial masthead replaces the condensed
+  sports display face, a warm charcoal-and-bone palette replaces the cool graphite-and-green, and
+  depth comes from hairline rules and a typographic scale instead of bordered, shadowed cards.
+-->
+<title>Direction B — Evolve</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#14110f; --surface:#1d1916; --deep:#0d0b0a;
+    --rule:#38322c; --rule-soft:#26221e;
+    --bone:#f6f1e7; --muted:#a49b8d;
+    --ember:#ff8a3d; --steel:#8fb8d8; --good:#68c98c; --bad:#ec7360; --team:#c8102e;
+    --serif:'Newsreader',Georgia,'Times New Roman',serif;
+    --sans:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--bone);font-family:var(--sans);font-size:13px;line-height:1.45;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1300px;margin:0 auto;padding:0 34px 64px}
+  /* every figure in the app is mono — columns align without help and numbers read as data */
+  .n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .kick{font-family:var(--sans);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;
+    font-weight:600;color:var(--muted)}
+
+  /* ---------- chrome: a masthead, not a toolbar ---------- */
+  .ticker{border-bottom:1px solid var(--rule);font-size:11px;display:flex;align-items:center;height:25px;
+    overflow:hidden;background:var(--deep)}
+  .ticker b{font-family:var(--sans);font-size:9.5px;letter-spacing:.14em;font-weight:600;color:var(--ember);
+    padding:0 14px;border-right:1px solid var(--rule);height:100%;display:flex;align-items:center;flex:none}
+  .ticker .run{display:flex;gap:28px;padding-left:16px;white-space:nowrap;color:var(--muted);font-family:var(--serif)}
+  .ticker .run em{font-style:normal;color:var(--bone)}
+
+  .masthead{max-width:1300px;margin:0 auto;padding:16px 34px 12px;display:flex;align-items:flex-end;gap:22px}
+  .logo{font-family:var(--serif);font-size:25px;font-weight:600;letter-spacing:-.015em;line-height:1}
+  .logo span{color:var(--ember)}
+  .edition{font-family:var(--sans);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);border-left:1px solid var(--rule);padding-left:18px;margin-bottom:2px}
+  .spacer{flex:1}
+  .mstat{margin-bottom:1px;padding-left:26px}
+  .mstat .k{font-family:var(--sans);font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .mstat .v{font-family:var(--mono);font-size:14px;font-weight:500;font-variant-numeric:tabular-nums}
+  .adv{margin-left:26px;margin-bottom:1px;background:var(--ember);color:#160d06;border:0;padding:9px 18px;
+    font-family:var(--sans);font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer}
+  nav{border-top:1px solid var(--rule);border-bottom:2px solid var(--rule)}
+  nav div{max-width:1300px;margin:0 auto;padding:0 34px;display:flex;gap:26px}
+  nav a{font-family:var(--sans);font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;font-weight:600;
+    color:var(--muted);padding:9px 0;text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-2px}
+  nav a.on{color:var(--bone);border-bottom-color:var(--ember)}
+
+  /* ---------- lede: the team as a story headline ---------- */
+  .lede{padding:26px 0 0;position:relative}
+  .lede .rail{position:absolute;left:-34px;top:26px;bottom:0;width:3px;background:var(--team)}
+  h1{font-family:var(--serif);font-size:50px;font-weight:600;letter-spacing:-.022em;line-height:.98}
+  .standfirst{font-family:var(--serif);font-size:17px;color:var(--muted);margin-top:7px;max-width:760px;line-height:1.4}
+  .standfirst em{font-style:italic;color:var(--bone)}
+  /* stat strip: rules only, no tiles */
+  .strip{display:flex;margin-top:22px;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+  .strip div{flex:1;padding:12px 20px 13px;border-right:1px solid var(--rule-soft)}
+  .strip div:first-child{padding-left:0} .strip div:last-child{border-right:0}
+  .strip .v{font-family:var(--mono);font-size:23px;font-weight:500;font-variant-numeric:tabular-nums;
+    margin-top:4px;letter-spacing:-.02em}
+  .strip .m{font-size:10.5px;color:var(--muted);margin-top:3px;font-family:var(--serif);font-size:12px}
+
+  .next{display:flex;align-items:center;gap:16px;padding:15px 0;border-bottom:1px solid var(--rule)}
+  .next .who{font-family:var(--serif);font-size:22px;font-weight:600}
+  .next .why{font-family:var(--serif);font-size:13px;color:var(--muted);margin-top:1px}
+  .next .why b{color:var(--bad);font-weight:600;font-family:var(--mono);font-size:12px}
+  .prob{margin-left:auto;text-align:right}
+  .prob .p{font-family:var(--mono);font-size:26px;font-weight:500;color:var(--bad)}
+
+  .cols{display:grid;grid-template-columns:1fr 336px;gap:44px;margin-top:30px;align-items:start}
+  section{margin-bottom:32px}
+  .shead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+    border-bottom:2px solid var(--rule);padding-bottom:5px;margin-bottom:12px}
+  .stitle{font-family:var(--serif);font-size:20px;font-weight:600;letter-spacing:-.012em}
+  .more{font-family:var(--sans);font-size:9.5px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--ember);text-decoration:none;font-weight:600}
+
+  /* ---------- brief: numbered dispatches, no boxes ---------- */
+  .brief{border-bottom:1px solid var(--rule-soft)}
+  .brow{display:flex;gap:18px;padding:14px 0;border-top:1px solid var(--rule-soft);align-items:flex-start}
+  .brow:first-child{border-top:0}
+  .idx{font-family:var(--mono);font-size:11px;color:var(--muted);width:20px;flex:none;padding-top:4px}
+  .brow h4{font-family:var(--serif);font-size:19px;font-weight:600;line-height:1.15;letter-spacing:-.01em}
+  .brow p{font-family:var(--serif);font-size:14px;color:var(--muted);margin-top:3px;line-height:1.45;max-width:560px}
+  .brow p b{color:var(--bone);font-weight:600;font-family:var(--mono);font-size:12.5px}
+  .tag{font-family:var(--sans);font-size:9px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;
+    display:inline-block;margin-bottom:4px}
+  .act{margin-left:auto;flex:none;background:none;border:1px solid var(--rule);color:var(--bone);
+    padding:7px 14px;font-family:var(--sans);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    font-weight:600;cursor:pointer;margin-top:3px}
+  .act.pri{background:var(--bone);color:var(--deep);border-color:var(--bone)}
+
+  /* ---------- table: rules only, mono figures ---------- */
+  table{width:100%;border-collapse:collapse}
+  th{font-family:var(--sans);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+    font-weight:600;text-align:left;padding:0 9px 6px;border-bottom:1px solid var(--rule)}
+  th.r,td.r{text-align:right}
+  td{padding:0 9px;height:30px;border-bottom:1px solid var(--rule-soft);font-size:13px}
+  tr:hover td{background:rgba(255,255,255,.03)}
+  .grp td{height:26px;font-family:var(--sans);font-size:9px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);font-weight:600;border-bottom:1px solid var(--rule);padding-top:12px}
+  .grp .agg{float:right;font-family:var(--mono);letter-spacing:0;font-size:10.5px;text-transform:none}
+  .pos{font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:500}
+  .pname{font-family:var(--serif);font-size:15.5px;font-weight:500}
+  .st{font-family:var(--sans);font-size:8.5px;letter-spacing:.13em;color:var(--muted);margin-left:7px;font-weight:600}
+  /* rating: one ramp expressed in weight and warmth, tier also carried by a rule beneath */
+  .ovr{font-family:var(--mono);font-size:15px;font-weight:600;position:relative}
+  .t1{color:var(--ember)} .t2{color:var(--bone)} .t3{color:var(--bone);opacity:.7} .t4{color:var(--muted)}
+  .ovr.t1::after{content:'';position:absolute;left:0;right:0;bottom:-4px;height:2px;background:var(--ember)}
+  .ovr.t4::after{content:'';position:absolute;left:0;right:0;bottom:-4px;height:2px;background:var(--rule)}
+  .note{font-family:var(--sans);font-size:9px;letter-spacing:.12em;text-transform:uppercase;font-weight:600}
+
+  /* ---------- chart ---------- */
+  .chart{display:grid;grid-template-columns:86px 1fr 66px 42px;gap:10px 14px;align-items:center}
+  .cl{font-family:var(--sans);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .track{position:relative;height:14px;background:var(--surface)}
+  .fill{position:absolute;left:0;top:0;bottom:0;background:var(--steel)}
+  .fill.hot{background:var(--ember)} .fill.cold{background:#3a332c}
+  .avgline{position:absolute;top:-4px;bottom:-4px;width:1px;background:var(--bone);opacity:.6}
+  .cv{font-family:var(--mono);font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
+  .cd{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right}
+  .legend{font-size:10.5px;color:var(--muted);margin-top:11px;display:flex;gap:18px;font-family:var(--serif);font-size:12px}
+  .legend i{display:inline-block;width:9px;height:9px;margin-right:6px;vertical-align:-1px;font-style:normal}
+
+  /* ---------- rail ---------- */
+  .needs{display:grid;grid-template-columns:34px 1fr auto;gap:8px 11px;align-items:center}
+  .needs .p{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .nt{height:4px;background:var(--surface)}
+  .nf{height:100%}
+  .needs .g{font-family:var(--mono);font-size:10.5px;color:var(--muted);text-align:right}
+  .stab{width:100%;border-collapse:collapse}
+  .stab td{height:27px;padding:0 6px;border-bottom:1px solid var(--rule-soft);font-family:var(--serif);font-size:14px}
+  .stab .sd{font-family:var(--mono);font-size:10.5px;color:var(--muted);width:16px}
+  .stab .r{text-align:right;font-family:var(--mono);font-size:12px}
+  .you td{background:rgba(255,138,61,.07)}
+  .you .tn{font-weight:600}
+  .strk i{display:inline-block;width:6px;height:12px;margin-left:2px;font-style:normal}
+  .w{background:var(--good)} .l{background:#4d302c}
+  .lead{display:flex;align-items:baseline;gap:10px;padding:8px 0;border-bottom:1px solid var(--rule-soft)}
+  .lead .k{font-family:var(--sans);font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);
+    font-weight:600;width:76px;flex:none}
+  .lead .who{font-family:var(--serif);font-size:14.5px}
+  .lead .v{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .wire{padding:11px 0;border-bottom:1px solid var(--rule-soft)}
+  .wire .sc{float:right;font-family:var(--mono);font-size:12px;font-weight:600}
+  .wire h5{font-family:var(--serif);font-size:16px;font-weight:600;margin:3px 0 3px;line-height:1.2;letter-spacing:-.01em}
+  .wire p{font-family:var(--serif);font-size:13.5px;color:var(--muted);line-height:1.45}
+</style>
+
+<div class="ticker">
+  <b>League Wire</b>
+  <div class="run">
+    <span><em>Draft</em> — Round 7, Pick 32: Nehemiah Delacroix (WR)</span>
+    <span><em>League</em> — Final cuts, 3 released</span>
+    <span><em>Draft</em> — Round 7, Pick 31: Jamison Tackett (RB)</span>
+    <span><em>Injury</em> — Amari Leflore (ATL), groin strain, two weeks</span>
+  </div>
+</div>
+
+<div class="masthead">
+  <div class="logo">Dynasty<span>.</span>GM</div>
+  <div class="edition">Atlanta Blaze · 2030 Season · Week 6</div>
+  <div class="spacer"></div>
+  <div class="mstat"><div class="k">Cap Space</div><div class="v" style="color:var(--good)">$221.1M</div></div>
+  <div class="mstat"><div class="k">Scouting</div><div class="v">138/138</div></div>
+  <div class="mstat"><div class="k">Record</div><div class="v">3–2</div></div>
+  <button class="adv">Advance week</button>
+</div>
+<nav><div>
+  <a class="on" href="#">Home</a><a href="#">Team</a><a href="#">Market</a><a href="#">Draft</a>
+  <a href="#">League</a><a href="#">GM Career</a><a href="#">System</a>
+</div></nav>
+
+<div class="wrap">
+  <div class="lede">
+    <div class="rail"></div>
+    <div class="kick">Week 6 · Front Office Report</div>
+    <h1>Atlanta Blaze</h1>
+    <p class="standfirst">Second in the NFC South at <em>3–2</em>, year five of your tenure. The youngest roster in the
+      league and the most cap room in it — and the <em>32nd-rated</em> team overall. Nothing here is a money problem.</p>
+    <div class="strip">
+      <div><div class="kick">Cap Space</div><div class="v" style="color:var(--good)">$221.1M</div><div class="m">$113.2M committed</div></div>
+      <div><div class="kick">Roster</div><div class="v">28</div><div class="m">One injured</div></div>
+      <div><div class="kick">Team Overall</div><div class="v">70</div><div class="m">Off 76 · Def 68 · ST 40</div></div>
+      <div><div class="kick">Average Age</div><div class="v">23.5</div><div class="m">Youngest in the league</div></div>
+      <div><div class="kick">Picks Owned</div><div class="v">14</div><div class="m">Seven in 2031</div></div>
+      <div><div class="kick">Expiring</div><div class="v" style="color:var(--ember)">7</div><div class="m">Up within a year</div></div>
+    </div>
+    <div class="next">
+      <div class="kick" style="margin-bottom:0">Week 6<br>Away</div>
+      <div><div class="who">Tampa Corsairs <span class="n" style="color:var(--muted);font-size:14px">4–1</span></div>
+        <div class="why">Roster <b>−11%</b> (70 against 75) · your defense against their offense <b>−8%</b> (68 against 79)</div></div>
+      <div class="prob"><div class="p">26%</div><div class="kick">Win probability</div></div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div>
+      <section>
+        <div class="shead"><div class="stitle">This week's brief</div><span class="kick">Four open items</span></div>
+        <div class="brief">
+          <div class="brow"><div class="idx">01</div>
+            <div><div class="tag" style="color:var(--bad)">Roster</div>
+              <h4>QB is your thinnest position</h4>
+              <p>Ibrahim Tillman grades <b>65</b> — <b>13.9</b> below the league starter average, the widest gap on the roster.
+                Worth addressing before it costs you a game.</p></div>
+            <button class="act pri">Browse free agents</button></div>
+          <div class="brow"><div class="idx">02</div>
+            <div><div class="tag" style="color:var(--ember)">Contracts</div>
+              <h4>Nolan Rutkowski's deal expires after 2030</h4>
+              <p>Market rate is around <b>$23.9M</b>/yr and you have him at <b>$6.76M</b>. Get ahead of it before he reaches
+                the open market.</p></div>
+            <button class="act">Open extension</button></div>
+          <div class="brow"><div class="idx">03</div>
+            <div><div class="tag" style="color:var(--steel)">Trade market</div>
+              <h4>Chicago is short at running back</h4>
+              <p>A position you are three deep at. Soren Dalrymple is expiring and has <b>9</b> scores already this season.</p></div>
+            <button class="act">Explore trade</button></div>
+          <div class="brow"><div class="idx">04</div>
+            <div><div class="tag" style="color:var(--steel)">Trade offers</div>
+              <h4>Two offers waiting on a response</h4>
+              <p>Denver and Milwaukee are both waiting to hear back.</p></div>
+            <button class="act">Review offers</button></div>
+        </div>
+      </section>
+
+      <section>
+        <div class="shead"><div class="stitle">Roster</div><a class="more" href="#">All 28 players →</a></div>
+        <table>
+          <thead><tr>
+            <th style="width:46px">Pos</th><th>Player</th><th class="r" style="width:40px">Age</th>
+            <th class="r" style="width:50px">Ovr</th><th class="r" style="width:44px">Pot</th>
+            <th class="r" style="width:74px">Cap hit</th><th class="r" style="width:38px">Yrs</th>
+            <th style="width:196px;padding-left:20px">2030</th><th style="width:76px"></th></tr></thead>
+          <tbody>
+            <tr class="grp"><td colspan="9">Offensive line <span class="agg">7 players · avg 82.7 · $25.6M · +1.8 vs league</span></td></tr>
+            <tr><td class="pos">LG</td><td><span class="pname">Nolan Rutkowski</span><span class="st">Starter</span></td><td class="r n">26</td><td class="r"><span class="ovr t1">95</span></td><td class="r n">99</td><td class="r n">$6.76M</td><td class="r n">1</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">—</td><td class="r"><span class="note" style="color:var(--ember)">Expiring</span></td></tr>
+            <tr><td class="pos">RG</td><td><span class="pname">Rocco Sandoval</span><span class="st">Starter</span></td><td class="r n">22</td><td class="r"><span class="ovr t1">92</span></td><td class="r n">99</td><td class="r n">$4.12M</td><td class="r n">4</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">—</td><td></td></tr>
+            <tr><td class="pos">C</td><td><span class="pname">Rodrigo Garrity</span><span class="st">Starter</span></td><td class="r n">22</td><td class="r"><span class="ovr t2">84</span></td><td class="r n">99</td><td class="r n">$4.42M</td><td class="r n">3</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">—</td><td></td></tr>
+            <tr><td class="pos">RG</td><td><span class="pname">Quinton Fitzhugh</span></td><td class="r n">24</td><td class="r"><span class="ovr t2">82</span></td><td class="r n">99</td><td class="r n">$3.24M</td><td class="r n">3</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">—</td><td></td></tr>
+            <tr><td class="pos">LT</td><td><span class="pname">Nash Cortland</span><span class="st">Starter</span></td><td class="r n">25</td><td class="r"><span class="ovr t4">70</span></td><td class="r n">83</td><td class="r n">$3.60M</td><td class="r n">1</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">—</td><td class="r"><span class="note" style="color:var(--ember)">Expiring</span></td></tr>
+
+            <tr class="grp"><td colspan="9">Receivers <span class="agg">8 players · avg 79.4 · $43.9M · 39% of cap</span></td></tr>
+            <tr><td class="pos">WR</td><td><span class="pname">Desmond Braddock</span><span class="st">Starter</span></td><td class="r n">22</td><td class="r"><span class="ovr t2">87</span></td><td class="r n">99</td><td class="r n">$8.24M</td><td class="r n">3</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">48 rec · 465 yd · 2 td</td><td></td></tr>
+            <tr><td class="pos">TE</td><td><span class="pname">Remy Scarborough</span><span class="st">Starter</span></td><td class="r n">22</td><td class="r"><span class="ovr t2">82</span></td><td class="r n">99</td><td class="r n">$3.04M</td><td class="r n">4</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">25 rec · 276 yd · 2 td</td><td></td></tr>
+            <tr><td class="pos">WR</td><td><span class="pname">Bryce Clearwater</span></td><td class="r n">24</td><td class="r"><span class="ovr t2">81</span></td><td class="r n">97</td><td class="r n">$8.84M</td><td class="r n">2</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">37 rec · 369 yd · 1 td</td><td></td></tr>
+            <tr><td class="pos">WR</td><td><span class="pname">Amari Leflore</span></td><td class="r n">25</td><td class="r"><span class="ovr t3">79</span></td><td class="r n">97</td><td class="r n">$5.00M</td><td class="r n">1</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">18 rec · 231 yd · 0 td</td><td class="r"><span class="note" style="color:var(--bad)">Out 2w</span></td></tr>
+            <tr><td class="pos">WR</td><td><span class="pname">Malik Gainsford</span></td><td class="r n">24</td><td class="r"><span class="ovr t3">78</span></td><td class="r n">88</td><td class="r n">$6.40M</td><td class="r n">2</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">4 rec · 30 yd · 0 td</td><td></td></tr>
+
+            <tr class="grp"><td colspan="9">Defensive line <span class="agg">5 players · avg 82.0 · $26.7M</span></td></tr>
+            <tr><td class="pos">EDGE</td><td><span class="pname">Devante Hadnot</span><span class="st">Starter</span></td><td class="r n">25</td><td class="r"><span class="ovr t1">94</span></td><td class="r n">95</td><td class="r n">$9.38M</td><td class="r n">1</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">38 tkl · 2 sk</td><td class="r"><span class="note" style="color:var(--ember)">Expiring</span></td></tr>
+            <tr><td class="pos">EDGE</td><td><span class="pname">Vidal Cadogan</span></td><td class="r n">21</td><td class="r"><span class="ovr t2">86</span></td><td class="r n">99</td><td class="r n">$7.74M</td><td class="r n">4</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">37 tkl · 1 sk · 1 ff</td><td></td></tr>
+            <tr><td class="pos">DT</td><td><span class="pname">Ignacio Millsap</span><span class="st">Starter</span></td><td class="r n">24</td><td class="r"><span class="ovr t2">83</span></td><td class="r n">95</td><td class="r n">$2.48M</td><td class="r n">2</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">37 tkl · 0 sk</td><td></td></tr>
+
+            <tr class="grp"><td colspan="9">Quarterback <span class="agg">1 player · avg 65.0 · $1.30M · thin</span></td></tr>
+            <tr><td class="pos">QB</td><td><span class="pname">Ibrahim Tillman</span><span class="st">Starter</span></td><td class="r n">25</td><td class="r"><span class="ovr t4">65</span></td><td class="r n">78</td><td class="r n">$1.30M</td><td class="r n">4</td><td style="padding-left:20px;color:var(--muted);white-space:nowrap" class="n">1,739 yd · 13 td · 6 int</td><td class="r"><span class="note" style="color:var(--bad)">Need</span></td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <div class="shead"><div class="stitle">Where the money is</div><span class="kick">$113.2M of $334.3M committed</span></div>
+        <div class="chart">
+          <div class="cl">Receivers</div><div class="track"><div class="fill hot" style="width:100%"></div><div class="avgline" style="left:47%"></div></div><div class="cv">$43.9M</div><div class="cd">39%</div>
+          <div class="cl">D-line</div><div class="track"><div class="fill" style="width:61%"></div><div class="avgline" style="left:56%"></div></div><div class="cv">$26.7M</div><div class="cd">24%</div>
+          <div class="cl">O-line</div><div class="track"><div class="fill" style="width:58%"></div><div class="avgline" style="left:62%"></div></div><div class="cv">$25.6M</div><div class="cd">23%</div>
+          <div class="cl">Secondary</div><div class="track"><div class="fill cold" style="width:18%"></div><div class="avgline" style="left:48%"></div></div><div class="cv">$7.96M</div><div class="cd">7%</div>
+          <div class="cl">Backfield</div><div class="track"><div class="fill cold" style="width:17%"></div><div class="avgline" style="left:22%"></div></div><div class="cv">$7.62M</div><div class="cd">7%</div>
+          <div class="cl">Quarterback</div><div class="track"><div class="fill cold" style="width:3%"></div><div class="avgline" style="left:64%"></div></div><div class="cv">$1.30M</div><div class="cd">1%</div>
+          <div class="cl">Linebacker</div><div class="track"><div class="fill cold" style="width:0"></div><div class="avgline" style="left:31%"></div></div><div class="cv" style="color:var(--bad)">$0</div><div class="cd">0%</div>
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--ember)"></i>Above league share</span>
+          <span><i style="background:var(--steel)"></i>In line</span>
+          <span><i style="background:#3a332c"></i>Below</span>
+          <span><i style="background:var(--bone);width:1px;height:11px"></i>League average</span>
+        </div>
+      </section>
+    </div>
+
+    <aside>
+      <section>
+        <div class="shead"><div class="stitle">Roster needs</div><a class="more" href="#">Browse →</a></div>
+        <div class="needs">
+          <div class="p">LB</div><div class="nt"><div class="nf" style="width:100%;background:var(--bad)"></div></div><div class="g">none rostered</div>
+          <div class="p">K</div><div class="nt"><div class="nf" style="width:100%;background:var(--bad)"></div></div><div class="g">none rostered</div>
+          <div class="p">P</div><div class="nt"><div class="nf" style="width:100%;background:var(--bad)"></div></div><div class="g">none rostered</div>
+          <div class="p">QB</div><div class="nt"><div class="nf" style="width:72%;background:var(--ember)"></div></div><div class="g">−13.9 ovr</div>
+          <div class="p">S</div><div class="nt"><div class="nf" style="width:41%;background:var(--ember)"></div></div><div class="g">1 deep</div>
+          <div class="p">CB</div><div class="nt"><div class="nf" style="width:22%;background:#3a332c"></div></div><div class="g">−0.6 ovr</div>
+        </div>
+      </section>
+
+      <section>
+        <div class="shead"><div class="stitle">NFC South</div><a class="more" href="#">Standings →</a></div>
+        <table class="stab">
+          <tr><td class="sd">1</td><td class="tn">Tampa Corsairs</td><td class="r">4–1</td><td class="r" style="color:var(--muted)">.800</td><td class="r strk"><i class="l"></i><i class="w"></i><i class="w"></i><i class="w"></i><i class="w"></i></td></tr>
+          <tr class="you"><td class="sd">2</td><td class="tn">Atlanta Blaze</td><td class="r">3–2</td><td class="r" style="color:var(--muted)">.600</td><td class="r strk"><i class="w"></i><i class="w"></i><i class="w"></i><i class="l"></i><i class="l"></i></td></tr>
+          <tr><td class="sd">3</td><td>Charlotte Pumas</td><td class="r">2–3</td><td class="r" style="color:var(--muted)">.400</td><td class="r strk"><i class="w"></i><i class="l"></i><i class="w"></i><i class="w"></i><i class="w"></i></td></tr>
+          <tr><td class="sd">4</td><td>New Orleans Krewe</td><td class="r">1–4</td><td class="r" style="color:var(--muted)">.200</td><td class="r strk"><i class="l"></i><i class="l"></i><i class="l"></i><i class="l"></i><i class="w"></i></td></tr>
+        </table>
+      </section>
+
+      <section>
+        <div class="shead"><div class="stitle">Season leaders</div><a class="more" href="#">All stats →</a></div>
+        <div class="lead"><span class="k">Passing</span><span class="who">Ibrahim Tillman</span><span class="v">1,739 yd · 13 td</span></div>
+        <div class="lead"><span class="k">Rushing</span><span class="who">Soren Dalrymple</span><span class="v">410 yd · 9 td</span></div>
+        <div class="lead"><span class="k">Receiving</span><span class="who">Desmond Braddock</span><span class="v">48 rec · 465 yd</span></div>
+        <div class="lead"><span class="k">Pass rush</span><span class="who">Vance Buckhalter</span><span class="v">3 sk · 37 tkl</span></div>
+      </section>
+
+      <section>
+        <div class="shead"><div class="stitle">The wire</div><a class="more" href="#">View all →</a></div>
+        <div class="wire"><span class="sc">JAX 62 — ATL 9</span><div class="kick">Game · Week 17</div>
+          <h5>Atlanta buried in Jacksonville</h5>
+          <p>Turnovers told the story — Atlanta gave it away twice to none. Solomon Cargill carried them: 21 for 160 and three scores.</p></div>
+        <div class="wire"><span class="sc">DEN 23 — ATL 20</span><div class="kick">Game · Week 15</div>
+          <h5>One-score game the whole way</h5>
+          <p>Denver outgained Atlanta 368 to 426 and still won it. Stellan Wainwright went 33 of 55 for 309.</p></div>
+      </section>
+    </aside>
+  </div>
+</div>
