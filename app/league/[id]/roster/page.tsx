@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
+import { ratingColor } from '@/lib/ratings';
 import { formatMoney, capHit } from '@/lib/cap';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
@@ -8,13 +9,12 @@ import { loadScoutMods } from '@/lib/dynasty';
 import { positionSortKey } from '@/lib/league-data';
 import { POSITION_GROUPS, PositionGroup, positionGroup } from '@/lib/positionGroups';
 import { SeasonStats } from '@/lib/types';
+import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { FillRosterButton } from '@/components/FillRosterButton';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { PageMasthead } from '@/components/ds/PageMasthead';
-import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { RosterGroupHeader } from '@/components/ds/RosterGroupHeader';
-import { RatingValue } from '@/components/ds/RatingValue';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { buildRosterShape } from '@/lib/rosterShape';
 import { buildLeagueRatings } from '@/lib/teamRating';
@@ -175,7 +175,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
     if (unit !== lastUnit) {
       bodyRows.push(
         <tr key={`unit-${unit}`}>
-          <td colSpan={9} className={`px-2.5 text-[11px] font-display font-bold uppercase tracking-[0.18em] text-muted/60 ${lastUnit ? 'pt-5' : 'pt-1'} pb-1`}>
+          <td colSpan={8} className={`px-3 text-[11px] font-display font-bold uppercase tracking-[0.18em] text-muted/60 ${lastUnit ? 'pt-5' : 'pt-1'} pb-1`}>
             {unit}
           </td>
         </tr>
@@ -203,44 +203,37 @@ export default async function RosterPage({ params, searchParams }: { params: { i
     for (const { p, view, hit } of groupRows) {
       const isStarter = starterIdByPosition.get(p.position) === p.id;
       const production = productionLine(p.position, readJson<SeasonStats>(p.seasonStats, {}));
-      const yearsLeft = p.contract?.yearsRemaining ?? null;
       bodyRows.push(
         <tr key={p.id} style={isStarter ? { background: `${teamColor}0d` } : undefined}>
           <td style={{ borderLeft: `3px solid ${isStarter ? teamColor : 'transparent'}` }}>
             <span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span>
           </td>
-          <td className="whitespace-nowrap">
-            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
-              <PlayerAvatar seed={p.id} age={p.age} size={24} teamColor={teamColor} />
-              <span className={isStarter ? 'font-semibold' : 'font-medium'}>{p.firstName} {p.lastName}</span>
-              {isStarter && <span className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: teamColor }}>Starter</span>}
+          <td>
+            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2.5">
+              <PlayerAvatar seed={p.id} age={p.age} size={30} teamColor={teamColor} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className={isStarter ? 'font-semibold' : 'font-medium'}>{p.firstName} {p.lastName}</span>
+                  {isStarter && <span className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: teamColor }}>Starter</span>}
+                </div>
+                {production && <div className="text-[11px] text-muted font-mono mt-0.5 truncate">{production}</div>}
+              </div>
             </Link>
           </td>
-          <td className="text-muted text-right">{p.age}</td>
-          <td className="text-right">
-            <RatingValue
-              value={view.scoutedOvr}
-              display={view.revealed || view.confidence >= 90 ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}
-              mark={view.revealed || view.confidence >= 90}
-            />
+          <td className="text-muted">{p.age}</td>
+          <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>
+            {view.revealed || view.confidence >= 90 ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}
           </td>
-          <td className="text-muted text-right">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
-          <td className="text-right">{settings.capMode === 'OFF' ? <span className="text-muted/50">—</span> : <span className="stat-value text-[13px]">{formatMoney(hit)}</span>}</td>
-          <td className="text-muted text-right">{yearsLeft ?? '—'}</td>
-          {/* Season production moves out from under the name and into its own
-              column. Same data, half the row height — and it now lines up
-              down the page instead of ragging under 28 different names. */}
-          <td className="text-[11px] text-muted whitespace-nowrap pl-4">{production ?? <span className="text-muted/40">—</span>}</td>
-          {/* Blank unless notable. This column used to say "Active" on 27 of
-              28 rows in a green pill — a value that never varies carries no
-              information and should not be the loudest thing in the row. */}
-          <td className="text-right whitespace-nowrap">
+          <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+          <td>
             {p.injuryWeeks > 0 ? (
-              <span title={p.injuryType ?? 'Injured'} className="text-[10px] font-semibold uppercase tracking-wider text-bad cursor-help">Out {p.injuryWeeks}w</span>
-            ) : yearsLeft !== null && yearsLeft <= 1 ? (
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-warn">Expiring</span>
-            ) : null}
+              <span title={p.injuryType ?? 'Injured'} className="pill border-bad/30 text-bad bg-bad/10 cursor-help">Injured · {p.injuryWeeks}w</span>
+            ) : (
+              <span className="pill border-accent/30 text-accent bg-accent/10">Active</span>
+            )}
           </td>
+          <td className="font-mono text-muted">{settings.capMode === 'OFF' ? '—' : formatMoney(hit)}</td>
+          <td className="text-muted">{p.contract?.yearsRemaining ?? '—'}</td>
         </tr>
       );
     }
@@ -285,15 +278,14 @@ export default async function RosterPage({ params, searchParams }: { params: { i
           <table className="table-clean">
             <thead>
               <tr>
-                <th className="w-14"><Link href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
-                <th className="w-[1%]">Player</th>
-                <th className="text-right w-12"><Link href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
-                <th className="text-right w-14"><Link href={sortHref('ovr')} className="hover:text-chalk">{ovrLabel}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
-                <th className="text-right w-14"><Link href={sortHref('potential')} className="hover:text-chalk">Pot.{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
-                <th className="text-right w-24"><Link href={sortHref('cap')} className="hover:text-chalk">Cap Hit{sortKey === 'cap' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
-                <th className="text-right w-10"><Link href={sortHref('years')} className="hover:text-chalk">Yrs{sortKey === 'years' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
-                <th className="pl-4 w-full">{league.seasonYear}</th>
-                <th className="text-right w-20">Status</th>
+                <th><Link href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
+                <th>Player</th>
+                <th><Link href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
+                <th><Link href={sortHref('ovr')} className="hover:text-chalk">{ovrLabel}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
+                <th><Link href={sortHref('potential')} className="hover:text-chalk">Pot.{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
+                <th>Status</th>
+                <th><Link href={sortHref('cap')} className="hover:text-chalk">Cap Hit{sortKey === 'cap' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
+                <th><Link href={sortHref('years')} className="hover:text-chalk">Years Left{sortKey === 'years' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
               </tr>
             </thead>
             <tbody>

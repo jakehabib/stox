@@ -3,7 +3,8 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ExtendContractForm } from './ExtendContractForm';
-import { RatingValue } from './ds/RatingValue';
+import { PlayerAvatar } from './PlayerAvatar';
+import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
 import { positionBadgeClass } from './ds/positionColor';
 import { CapMode } from '@/lib/types';
@@ -44,7 +45,8 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
 
   return (
     <div className="panel overflow-hidden">
-      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-raised transition-colors">
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-raised transition-colors">
+        <PlayerAvatar seed={playerId} age={age} size={30} />
         <div className="flex-1 min-w-0">
           <div className="font-semibold truncate">{name}</div>
           <div className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap">
@@ -52,15 +54,12 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
             <span className="text-muted">Age {age}</span>
             <span className="text-muted">·</span>
             <span className="text-muted">~{formatMoney(currentApy)}/yr</span>
-            {/* Every player on this page is in a walk year — that is what the
-                page is. Only the genuinely expired case is news, so it keeps
-                the pill and the other recedes to a word. */}
             {isTrulyExpiring
               ? <span className="pill border-bad/40 text-bad text-[10px]">Expired</span>
-              : <span className="cell-constant uppercase tracking-wider">Walk year</span>}
+              : <span className="pill border-warn/40 text-warn text-[10px]">Walk Year</span>}
           </div>
         </div>
-        <RatingValue value={ovr} />
+        <span className={`stat-value text-stat-sm ${ratingColor(ovr)}`}>{ovr}</span>
         <span className="pill border-line text-muted">{open ? 'Close' : 'Negotiate'}</span>
       </button>
       {open && (

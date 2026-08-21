@@ -30,14 +30,9 @@ export function NewsRow({ teamId, abbr, category, headline, detail, meta, metric
 }) {
   const body = (
     <div className={`flex items-start gap-3 ${featured ? 'py-4' : 'py-2.5'}${href ? ' -mx-2 px-2 rounded hover:bg-raised/40 transition-colors' : ''}`}>
-      {/* A league-wide dispatch has no crest, and an empty grey disc in its
-          place is decoration standing in for information it does not have.
-          The row simply starts at the text instead. */}
-      {teamId && abbr && (
-        <div className={`${featured ? 'w-10' : 'w-8'} pt-0.5 shrink-0`}>
-          <TeamLogo seed={teamId} abbr={abbr} size={featured ? 36 : 28} />
-        </div>
-      )}
+      <div className={`${featured ? 'w-10' : 'w-8'} pt-0.5 shrink-0`}>
+        {teamId && abbr ? <TeamLogo seed={teamId} abbr={abbr} size={featured ? 36 : 28} /> : <div className={`${featured ? 'w-9 h-9' : 'w-7 h-7'} rounded-full bg-raised`} />}
+      </div>
       <div className="min-w-0 flex-1">
         <div className={`label-sm ${CATEGORY_COLOR[category]}`}>{category}</div>
         <div className={`font-display font-bold leading-snug mt-0.5 ${featured ? 'text-lg' : 'text-sm'}`}>{headline}</div>
@@ -45,7 +40,7 @@ export function NewsRow({ teamId, abbr, category, headline, detail, meta, metric
       </div>
       <div className="shrink-0 text-right">
         {metric && <div className="stat-value text-stat-sm">{metric}</div>}
-        <div className="text-[11px] text-muted pt-0.5 tnum">{meta}</div>
+        <div className="text-[11px] text-muted pt-0.5 font-mono">{meta}</div>
       </div>
     </div>
   );

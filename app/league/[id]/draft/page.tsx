@@ -3,7 +3,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
-import { playerLabel } from '@/lib/ratings';
+import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE, AI, Position } from '@/lib/tuning';
 import { bigBoardScore, CombineTesting } from '@/lib/gen/prospectProfile';
@@ -13,12 +13,11 @@ import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { DraftPickButton } from '@/components/DraftPickButton';
 import { LiveDraftTicker } from '@/components/LiveDraftTicker';
 import { ShortlistStar } from '@/components/ShortlistStar';
+import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { positionBadgeClass } from '@/components/ds/positionColor';
-import { PlayerAvatar } from '@/components/PlayerAvatar';
-import { RatingValue } from '@/components/ds/RatingValue';
 
 type SortKey = 'consensus' | 'pos' | 'ovr' | 'age' | 'potential';
 
@@ -231,15 +230,11 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   });
 
   return (
-    <div className="space-y-4">
-      {/* One line, no box. This is a caption on the class below it, not a
-          panel competing with the masthead for the top of the page — it was
-          costing ~60px of the 512px of chrome that sat above the first of
-          400 board rows. */}
+    <div className="space-y-6">
       {classOutlook && (
-        <div className="flex items-baseline gap-2.5">
-          <span className="section-eyebrow text-accent2 shrink-0">Class Outlook</span>
-          <p className="text-xs text-muted">{classOutlook.detail}</p>
+        <div className="panel px-4 py-3 flex items-start gap-3">
+          <span className="label-sm text-accent2 shrink-0 mt-0.5">Class Outlook</span>
+          <p className="text-sm text-chalk/90">{classOutlook.detail}</p>
         </div>
       )}
 
@@ -356,9 +351,9 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th><a href={sortHref('consensus')} className="hover:text-chalk">Rank{sortKey === 'consensus' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
                 <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
                 <th>Name</th>
-                <th className="text-right"><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-                <th className="text-right"><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-                <th className="text-right"><a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th><a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
                 <th>Projection</th>
                 <th></th>
               </tr>
@@ -369,31 +364,24 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0, confidence: view.confidence });
                 return (
                   <tr key={p.id}>
-                    <td className="w-6"><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>
+                    <td><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>
                     <td className="stat-value text-stat-sm text-muted text-right">{rankById.get(p.id) ?? '—'}</td>
                     <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                     <td className="font-medium">
-                      <div className="flex items-center gap-2 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
                         <a href={`/league/${league.id}/player/${p.id}`} className="flex items-center gap-2 hover:text-accent2">
-                          <PlayerAvatar seed={p.id} age={p.age} size={24} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
+                          <PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
                         </a>
                         {rankBadge(p.id) && (
-                          <span className={`text-[10px] font-semibold uppercase tracking-wider ${rankBadge(p.id)!.className}`}>{rankBadge(p.id)!.label}</span>
+                          <span className={`pill text-[10px] px-1.5 py-0.5 border-current ${rankBadge(p.id)!.className}`}>{rankBadge(p.id)!.label}</span>
                         )}
                       </div>
                     </td>
-                    <td className="text-muted text-right">{p.age}</td>
-                    <td className="text-right"><RatingValue value={view.scoutedOvr} display={view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`} mark={view.revealed} /></td>
-                    <td className="text-muted text-right">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
-                    {/* "Unevaluated" is the value on 300 of 300 rows in an
-                        unscouted class — it is the default state, not news.
-                        It recedes until scouting has actually produced a read. */}
-                    <td>
-                      {label.label === 'Unevaluated'
-                        ? <span className="cell-constant">Unevaluated</span>
-                        : <span className={`text-xs font-medium ${label.className}`}>{label.label}</span>}
-                    </td>
-                    <td className="text-right">{isUserOnClock && <DraftPickButton leagueId={league.id} teamId={team.id} playerId={p.id} />}</td>
+                    <td className="text-muted">{p.age}</td>
+                    <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
+                    <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+                    <td><span className={`text-xs font-medium ${label.className}`}>{label.label}</span></td>
+                    <td>{isUserOnClock && <DraftPickButton leagueId={league.id} teamId={team.id} playerId={p.id} />}</td>
                   </tr>
                 );
               })}

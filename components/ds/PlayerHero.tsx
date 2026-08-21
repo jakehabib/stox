@@ -32,7 +32,7 @@ export function PlayerHero({
     >
       <div className="flex flex-wrap items-center gap-6 p-6">
         <div className="relative shrink-0 rounded-lg p-3" style={{ background: teamColor ? `color-mix(in srgb, ${teamColor} 14%, transparent)` : undefined }}>
-          <PlayerAvatar seed={playerId} age={age} size={64} teamColor={teamColor} />
+          <PlayerAvatar seed={playerId} age={age} size={112} teamColor={teamColor} />
         </div>
 
         <div className="flex-1 min-w-[240px]">

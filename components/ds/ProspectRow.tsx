@@ -1,3 +1,4 @@
+import { PlayerAvatar } from '../PlayerAvatar';
 import { ScoutingRange } from './ScoutingRange';
 import { IconStar } from './icons';
 import { positionBadgeClass } from './positionColor';
@@ -12,8 +13,9 @@ export function ProspectRow({
   onClock?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-4 py-2 border-b border-line/60 last:border-0">
+    <div className="flex items-center gap-4 py-2.5 border-b border-line/60 last:border-0">
       <div className="stat-value text-stat-sm text-muted w-8 text-right shrink-0">{rank}</div>
+      <PlayerAvatar seed={playerId} age={21} size={40} />
       <div className="min-w-0 flex-1">
         {/* Name gets its own full-width line — tags/position/college live
             below rather than fighting the name for horizontal space, which

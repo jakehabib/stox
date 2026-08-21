@@ -3,7 +3,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
-import { RatingValue } from '@/components/ds/RatingValue';
+import { ratingColor } from '@/lib/ratings';
 import { marketValue, formatMoney } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { positionSortKey } from '@/lib/league-data';
@@ -158,9 +158,9 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
             <tr>
               <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
               <th>Name</th>
-              <th className="text-right"><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-              <th className="text-right"><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-              <th className="text-right"><a href={sortHref('market')} className="hover:text-chalk">Est. Market{sortKey === 'market' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th><a href={sortHref('market')} className="hover:text-chalk">Est. Market{sortKey === 'market' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
               <th></th>
             </tr>
           </thead>
@@ -168,15 +168,11 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
             {sorted.map(({ p, view, market }) => (
               <tr key={p.id}>
                 <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
-                <td><a href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={24} /> {p.firstName} {p.lastName}</a></td>
-                <td className="text-muted text-right">{p.age}</td>
-                <td className="text-right"><RatingValue value={view.scoutedOvr} display={view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`} mark={view.revealed} /></td>
-                <td className="text-right"><span className="stat-value text-[13px]">{formatMoney(market)}</span><span className="text-muted text-xs">/yr</span></td>
-                {/* Every one of these 100 rows offers the same action, so a
-                    boxed button on each is 100 identical pieces of chrome
-                    saying nothing. A quiet link is still a target and still
-                    reads as the row's verb. */}
-                <td className="text-right"><a href={`/league/${league.id}/player/${p.id}`} className="text-xs text-accent2 hover:underline">Negotiate →</a></td>
+                <td><a href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={26} /> {p.firstName} {p.lastName}</a></td>
+                <td className="text-muted">{p.age}</td>
+                <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
+                <td className="font-mono text-muted">{formatMoney(market)}/yr</td>
+                <td><a href={`/league/${league.id}/player/${p.id}`} className="btn-secondary text-xs px-2.5 py-1">Negotiate</a></td>
               </tr>
             ))}
           </tbody>

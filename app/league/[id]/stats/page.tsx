@@ -5,11 +5,11 @@ import { PageMasthead } from '@/components/ds/PageMasthead';
 import { readJson } from '@/lib/json';
 import { SeasonStats } from '@/lib/types';
 import { TeamLogo } from '@/components/TeamLogo';
+import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { Tooltip } from '@/components/Tooltip';
 import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
 import { LineChart } from '@/components/charts/LineChart';
 import { ScatterChart } from '@/components/charts/ScatterChart';
-import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { MetricTiles } from '@/components/ds/MetricTiles';
 import { buildPythagoreanTable, strengthOfSchedule, type PythagoreanRow } from '@/lib/analytics';
@@ -340,7 +340,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                             <td colSpan={5} className="text-xs text-muted">—</td>
                           ) : (
                             line.map((m) => (
-                              <td key={m.label} className="text-sm">
+                              <td key={m.label} className="font-mono text-sm">
                                 <span className="text-muted text-xs mr-1.5">{m.label}</span>{m.value}
                               </td>
                             ))
@@ -381,8 +381,8 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                               <span className={`text-xs font-semibold shrink-0 ${positionBadgeClass(p.position)}`}>{p.position}</span>
                             </Link>
                           </td>
-                          <td className="stat-value text-stat-sm text-right">{stats[cat.primary.key] ?? 0}</td>
-                          {cat.extra.map((c) => <td key={c.key} className="text-muted text-right">{stats[c.key] ?? 0}</td>)}
+                          <td className="stat-value text-stat-sm">{stats[cat.primary.key] ?? 0}</td>
+                          {cat.extra.map((c) => <td key={c.key} className="font-mono text-muted">{stats[c.key] ?? 0}</td>)}
                         </tr>
                       ))}
                       {leaders.length === 0 && (

@@ -11,7 +11,6 @@ import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
 import { LineChart } from '@/components/charts/LineChart';
 import { ScatterChart } from '@/components/charts/ScatterChart';
 import { positionBadgeClass } from '@/components/ds/positionColor';
-import { RatingValue } from '@/components/ds/RatingValue';
 import { MetricTiles } from '@/components/ds/MetricTiles';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { buildCapHealth, rankContractValue, classifyContractValue, type CapHealth, type SurplusRow } from '@/lib/analytics';
@@ -426,7 +425,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
               <tr>
                 <th>Player</th>
                 {COLUMNS.map((c) => (
-                  <th key={c.key} className={c.key === 'pos' ? '' : 'text-right'}>
+                  <th key={c.key}>
                     <span className="inline-flex items-center gap-1">
                       <Link href={sortHref(c.key)} className="hover:text-chalk whitespace-nowrap">
                         {c.label}{sortKey === c.key && (dir === -1 ? ' ▾' : ' ▴')}
@@ -447,12 +446,12 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
                 <tr key={p.id}>
                   <td><Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium">{p.firstName} {p.lastName}</Link></td>
                   <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
-                  <td className="text-muted text-right">{p.age}</td>
-                  <td className="text-right"><RatingValue value={p.trueOvr} /></td>
-                  <td className="text-right"><span className="stat-value text-[13px]">{formatMoney(hit)}</span></td>
-                  <td className="text-muted text-right">{formatMoney(base)}</td>
-                  <td className="text-right">{p.contract?.yearsRemaining ?? '—'}</td>
-                  <td className="text-xs whitespace-nowrap text-right">
+                  <td className="text-muted">{p.age}</td>
+                  <td className="stat-value text-stat-sm text-muted">{p.trueOvr}</td>
+                  <td className="font-mono">{formatMoney(hit)}</td>
+                  <td className="font-mono text-muted">{formatMoney(base)}</td>
+                  <td className="font-mono">{p.contract?.yearsRemaining ?? '—'}</td>
+                  <td className="font-mono text-xs whitespace-nowrap">
                     <span className={savings >= 0 ? 'text-accent' : 'text-bad'}>{formatMoney(savings)}</span>
                     <span className="text-muted"> / </span>
                     <span className="text-bad">{formatMoney(dead)}</span>

@@ -20,10 +20,10 @@ export function RosterGroupHeader({ label, count, avgOvr, capHit, thin }: {
 }) {
   return (
     <tr>
-      <td colSpan={9} className="px-2.5 py-1 bg-raised/40 border-y border-line/70">
+      <td colSpan={8} className="px-3 py-1.5 bg-raised/40 border-y border-line/70">
         <div className="flex items-center justify-between gap-3">
           <span className="font-display font-bold text-xs uppercase tracking-wide text-chalk">{label}</span>
-          <span className={`text-[11px] tnum ${thin ? 'text-warn' : 'text-muted'}`}>
+          <span className={`text-[11px] font-mono ${thin ? 'text-warn' : 'text-muted'}`}>
             {count} {count === 1 ? 'player' : 'players'} · avg {avgOvr.toFixed(1)} OVR{capHit !== null ? ` · ${formatMoney(capHit)}` : ''}{thin ? ' · thin' : ''}
           </span>
         </div>

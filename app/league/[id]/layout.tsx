@@ -80,51 +80,44 @@ export default async function LeagueLayout({ children, params }: { children: Rea
     <div className="min-h-screen">
       <LeagueWireTicker items={tickerItems} />
       <header className="border-b border-line bg-surface/80 backdrop-blur sticky top-0 z-20">
-        {/* Ambient status reads as a divided strip rather than three bordered
-            tiles. The tiles gave cap space, scouting focus and the week the
-            same visual weight as the one primary action next to them, and
-            cost ~20px of band height to do it. Dividers do the same grouping
-            job for a fraction of the ink. */}
-        <div className="max-w-7xl mx-auto px-6 py-2 flex items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
           <Link href="/" className="flex items-center gap-2 shrink-0">
-            <div className="w-6 h-6 rounded bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-display font-bold text-xs">D</div>
-            <span className="font-display font-bold text-sm tracking-wide uppercase hidden sm:inline">Dynasty GM</span>
+            <div className="w-7 h-7 rounded-md bg-accent/15 border border-accent/30 flex items-center justify-center text-accent font-display font-bold text-sm">D</div>
+            <span className="font-display font-bold text-base tracking-wide uppercase hidden sm:inline">Dynasty GM</span>
           </Link>
-          <div className="flex items-stretch gap-0 shrink-0 divide-x divide-line/70">
-            <div className="flex items-center gap-2 pr-4">
-              <TeamLogo seed={userTeam.id} abbr={userTeam.abbr} size={26} className="hidden sm:block" />
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-2">
+              <TeamLogo seed={userTeam.id} abbr={userTeam.abbr} size={32} className="hidden sm:block" />
               <div className="text-right hidden md:block">
-                <div className="text-sm font-display font-bold leading-tight">{userTeam.city} {userTeam.nickname}</div>
-                <div className="text-[11px] text-muted leading-tight tnum">{userTeam.wins}-{userTeam.losses}{userTeam.ties ? `-${userTeam.ties}` : ''} · {userTeam.conference} {userTeam.division}</div>
+                <div className="text-sm font-semibold leading-tight">{userTeam.city} {userTeam.nickname}</div>
+                <div className="text-xs text-muted leading-tight">{userTeam.wins}-{userTeam.losses}{userTeam.ties ? `-${userTeam.ties}` : ''} · {userTeam.conference} {userTeam.division}</div>
               </div>
             </div>
             {compliance && (
-              <div className="hidden lg:block text-right px-4">
-                <div className="section-eyebrow leading-none">Cap Space</div>
-                <div className={`stat-value text-sm leading-none mt-1 ${compliance.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(compliance.capSpace)}</div>
+              <div className="stat-tile hidden lg:block text-right">
+                <div className="label-sm">Cap Space</div>
+                <div className={`text-sm font-mono font-semibold ${compliance.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(compliance.capSpace)}</div>
               </div>
             )}
             {scouting && (
               <Link
                 href={`/league/${league.id}/scouting`}
-                className="hidden lg:block text-right px-4 hover:text-chalk transition-colors"
+                className="stat-tile hidden lg:block text-right hover:border-accent2/50 transition-colors"
                 title={`${scouting.points} of ${scouting.grant} focus left this period. ${scouting.replenishLabel}`}
               >
-                <div className="section-eyebrow leading-none">Scouting</div>
-                <div className={`stat-value text-sm leading-none mt-1 ${
-                  scouting.points === 0 ? 'text-bad' : scouting.points < scouting.grant * 0.25 ? 'text-warn' : 'text-chalk'
+                <div className="label-sm">Scouting</div>
+                <div className={`text-sm font-mono font-semibold ${
+                  scouting.points === 0 ? 'text-bad' : scouting.points < scouting.grant * 0.25 ? 'text-warn' : 'text-accent2'
                 }`}>
                   {scouting.points}<span className="text-muted">/{scouting.grant}</span>
                 </div>
               </Link>
             )}
-            <div className="text-right px-4">
-              <div className="section-eyebrow leading-none">{phaseLabel}</div>
-              <div className="stat-value text-sm leading-none mt-1">{league.seasonYear} · Wk {league.week}</div>
+            <div className="stat-tile text-right">
+              <div className="label-sm">{phaseLabel}</div>
+              <div className="text-sm font-mono font-semibold">{league.seasonYear} · Wk {league.week}</div>
             </div>
-            <div className="pl-4 flex items-center">
-              <AdvanceWeekButton leagueId={league.id} currentPhase={league.phase} />
-            </div>
+            <AdvanceWeekButton leagueId={league.id} currentPhase={league.phase} />
           </div>
         </div>
         <LeagueNav leagueId={league.id} />
@@ -143,7 +136,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
           />
         )}
       </header>
-      <main className="max-w-7xl mx-auto px-6 py-5">{children}</main>
+      <main className="max-w-7xl mx-auto px-6 py-8">{children}</main>
     </div>
   );
 }

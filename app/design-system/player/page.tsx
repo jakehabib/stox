@@ -138,7 +138,7 @@ export default function PlayerPageMockup() {
           number, not PlayerHero's RatingBadge (which assumes a known overall).
         </p>
         <div className="card card-pad flex flex-wrap items-start gap-6">
-          <PlayerAvatar seed="demo-prospect-1" age={21} size={64} teamColor={TEAM_COLOR} />
+          <PlayerAvatar seed="demo-prospect-1" age={21} size={112} teamColor={TEAM_COLOR} />
           <div className="flex-1 min-w-[220px]">
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`pill border ${positionBadgeClass('EDGE')}`}>EDGE</span>

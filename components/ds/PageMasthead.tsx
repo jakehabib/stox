@@ -31,18 +31,10 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
   facts?: MastheadFact[];
 }) {
   const accent = teamId ? generateTeamLogoParams(teamId).primary : undefined;
-  // The strip sizes itself to the number of facts. A fixed 5-column grid left
-  // a sixth fact stranded alone on a second row (Depth Chart), which read as
-  // a layout bug rather than as a sixth number.
-  const FACT_COLS: Record<number, string> = {
-    1: 'lg:grid-cols-1', 2: 'lg:grid-cols-2', 3: 'lg:grid-cols-3',
-    4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5', 6: 'lg:grid-cols-6', 7: 'lg:grid-cols-7',
-  };
-  const factCols = FACT_COLS[facts.length] ?? 'lg:grid-cols-5';
 
   return (
     <div
-      className="relative overflow-hidden rounded-md border shadow-card"
+      className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
       style={{
         ['--team-accent' as never]: accent,
         borderColor: accent ? 'var(--team-accent)' : undefined,
@@ -64,32 +56,26 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
         <TeamLogo seed={teamId} abbr={teamAbbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
       )}
 
-      {/* Identity and the numbers share one band. They used to be two stacked
-          blocks — a tall title block, then a separate bordered fact strip —
-          which cost ~150px of furniture on every one of the 14 pages that
-          import this before any of the page's own content began. The title
-          keeps display scale; everything around it got its padding back. */}
-      <div className="relative flex flex-wrap items-end justify-between gap-x-6 gap-y-2 px-5 pt-3 pb-2.5">
+      <div className="relative flex flex-wrap items-center justify-between gap-4 px-6 py-5">
         <div className="min-w-0">
-          {eyebrow && <div className="section-eyebrow leading-none">{eyebrow}</div>}
+          {eyebrow && <div className="label-sm">{eyebrow}</div>}
           <h1
-            className={`font-display font-extrabold text-2xl uppercase tracking-wide leading-none mt-1${accent ? ' text-team' : ''}`}
+            className={`font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1${accent ? ' text-team' : ''}`}
           >
             {title}
           </h1>
-          {subtitle && <p className="text-muted text-xs mt-1.5 max-w-2xl">{subtitle}</p>}
+          {subtitle && <p className="text-muted text-sm mt-2 max-w-2xl">{subtitle}</p>}
         </div>
-        {action && <div className="shrink-0 ml-auto">{action}</div>}
+        {action && <div className="shrink-0">{action}</div>}
       </div>
 
       {facts.length > 0 && (
-        /* Dividers, not five bordered boxes — same job, a quarter of the ink. */
-        <div className={`relative border-t border-line/60 grid grid-cols-2 sm:grid-cols-3 ${factCols} divide-x divide-line/40 bg-ink/30`}>
+        <div className="relative border-t border-line/60 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 divide-x divide-line/40 bg-ink/30">
           {facts.map((f) => (
-            <div key={f.label} className="px-4 py-2">
-              <div className="section-eyebrow leading-none">{f.label}</div>
+            <div key={f.label} className="px-4 py-3">
+              <div className="label-sm">{f.label}</div>
               <div className={`stat-value text-stat-sm leading-none mt-1 ${f.color ?? ''}`}>{f.value}</div>
-              {f.detail && <div className="text-[11px] text-muted leading-tight mt-0.5">{f.detail}</div>}
+              {f.detail && <div className="text-[11px] text-muted mt-1">{f.detail}</div>}
             </div>
           ))}
         </div>

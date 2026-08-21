@@ -8,6 +8,7 @@ import { insiderReadAction, tradeIntelAction, type TradeIntelRead } from '@/app/
 import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
 import { sortStatEntries, statLabel } from '@/lib/statLabels';
+import { PlayerAvatar } from './PlayerAvatar';
 import { TeamLogo } from './TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { Tooltip } from './Tooltip';
@@ -486,8 +487,9 @@ function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks,
             aria-pressed={selected.has(p.id)}
             onClick={() => onToggle(p.id)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(p.id); } }}
-            className={`flex items-center gap-2 w-full text-left px-2 py-1 rounded text-sm cursor-pointer ${selected.has(p.id) ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised border border-transparent'}`}
+            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm cursor-pointer ${selected.has(p.id) ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised border border-transparent'}`}
           >
+            <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} />
             <span className={`text-xs font-semibold w-8 shrink-0 ${positionBadgeClass(p.position)}`}>{p.position}</span>
             <span className={`stat-value text-xs w-8 shrink-0 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
             <div className="flex-1 min-w-0">
@@ -504,9 +506,9 @@ function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks,
               </div>
               <div className="text-[11px] text-muted truncate">{productionLine(p.seasonStats)}</div>
             </div>
-            <span className="w-12 text-right text-xs text-muted tnum shrink-0">{p.age}</span>
-            <span className="w-16 text-right text-xs text-muted tnum shrink-0">{p.capHit > 0 ? formatMoney(p.capHit) : '—'}</span>
-            <span className="w-10 text-right text-xs text-muted tnum shrink-0">{p.yearsRemaining > 0 ? `${p.yearsRemaining}yr` : '—'}</span>
+            <span className="w-12 text-right text-xs text-muted font-mono shrink-0">{p.age}</span>
+            <span className="w-16 text-right text-xs text-muted font-mono shrink-0">{p.capHit > 0 ? formatMoney(p.capHit) : '—'}</span>
+            <span className="w-10 text-right text-xs text-muted font-mono shrink-0">{p.yearsRemaining > 0 ? `${p.yearsRemaining}yr` : '—'}</span>
           </div>
         ))}
         {rows.length === 0 && <p className="text-xs text-muted px-2 py-3">No players match this filter.</p>}
