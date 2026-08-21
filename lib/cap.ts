@@ -130,7 +130,7 @@ export function restructureContract(
  * Which league year a cap charge booked RIGHT NOW belongs to.
  *
  * The offseason phase machine bumps League.seasonYear at its RESET_STANDINGS
- * step (OFFSEASON week 2), and agePlayersAndContracts() then hard-deletes
+ * step (OFFSEASON week 2), and expireStaleCapCharges() then hard-deletes
  * every CapCharge from a year before the new one. So dead money booked during
  * OFFSEASON weeks 1-2 was filed under the season that was ending, sat in a
  * window where cap compliance is deliberately not enforced (see
@@ -142,6 +142,16 @@ export function restructureContract(
  * Real football has the same boundary and answers it the same way: a player
  * released after the season ends but before the new league year opens counts
  * against the NEW year. So do we.
+ *
+ * The AMOUNT has to describe that same year, which is a separate question and
+ * used to have a different answer: deadMoneyOnCut() reads `yearsRemaining`,
+ * and the contract ledger only stepped forward at the OFFSEASON week-3 step —
+ * two steps after this function starts pointing at the new year. A cut made
+ * early therefore charged one extra year of proration to a season the deal
+ * had already spent a year of. The ledger now ages the moment the season ends
+ * (ageContractsForYear in lib/season.ts), so by the time this returns
+ * `seasonYear + 1` the contract is already counted in that year's terms and
+ * an early cut and a late one cost exactly the same.
  */
 export function capChargeYear(opts: { phase: string; week: number; seasonYear: number }): number {
   const beforeYearRoll = opts.phase === 'OFFSEASON' && opts.week <= CAP.OFFSEASON_YEAR_ROLL_WEEK;

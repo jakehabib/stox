@@ -256,15 +256,20 @@ async function advanceWeekStep(leagueId: string) {
     }
 
     case 'FREE_AGENCY': {
-      const { signings } = await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings, rng);
+      // Short-handed teams get back to a legal roster before the bidding, so
+      // the wave isn't the only path back and a team that had a bad re-sign
+      // year doesn't spend the season 20 bodies light.
+      await fillTeamsToRosterMinimum(leagueId, league.seasonYear, league.week, settings, rng);
+      const { signings, displaced } = await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings, rng);
+      const displacedNote = displaced > 0 ? ` ${displaced} veteran(s) released to make room.` : '';
       const nextWeek = league.week + 1;
       if (nextWeek > 4) {
         await reseedDraftOrder(leagueId, league.seasonYear);
         await startRookieDraft(leagueId, league.seasonYear, rng);
-        return { summary: `Free agency closed. ${signings} signing(s) this week. The draft is on the clock.` };
+        return { summary: `Free agency closed. ${signings} signing(s) this week.${displacedNote} The draft is on the clock.` };
       }
       await prisma.league.update({ where: { id: leagueId }, data: { week: nextWeek } });
-      return { summary: `Free agency, week ${league.week}: ${signings} AI signing(s) league-wide.` };
+      return { summary: `Free agency, week ${league.week}: ${signings} AI signing(s) league-wide.${displacedNote}` };
     }
 
     case 'DRAFT': {

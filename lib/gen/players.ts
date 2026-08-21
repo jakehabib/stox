@@ -211,10 +211,19 @@ export function generateRoster(rng: Rng, teamStrength: number, names?: NameRegis
   const premiumPositions: Position[] = ['QB', 'WR', 'EDGE', 'CB', 'LT', 'DT', 'TE', 'RB', 'S', 'LB'];
   for (let i = 0; i < starCount; i++) {
     const pos = rng.pick(premiumPositions);
+    // Age band: a star used to be capped at 29, which meant a brand-new
+    // league contained no elite veterans at all — nobody old enough to have
+    // a decade of production, an MVP and a couple of rings behind him, which
+    // is exactly the kind of player a league needs for its past to feel
+    // inherited rather than invented (see lib/gen/leagueHistory.ts, which
+    // builds these men's careers). Roughly a quarter of them are now
+    // 30-to-34-year-olds on the back nine. [TUNE]
+    const era = rng.weighted({ RISING: 0.28, PRIME: 0.46, VETERAN: 0.26 });
+    const ageOverride = era === 'RISING' ? rng.int(23, 25) : era === 'PRIME' ? rng.int(26, 29) : rng.int(30, 34);
     const star = generatePlayer(rng, {
       position: pos,
       ovrTarget: clamp(Math.round(rng.normal(85 + teamStrength * 0.3, 4)), 78, 99),
-      ageOverride: rng.int(23, 29),
+      ageOverride,
       names,
     });
     const replaceIdx = out.findIndex((p) => p.position === pos);

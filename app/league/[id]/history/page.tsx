@@ -44,6 +44,35 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
     where: { team: { leagueId: league.id }, playoffResult: 'CHAMPION' },
   });
 
+  // The championship roll — every title ever decided in this league, whether
+  // the user won it or it happened decades before he took the job (a new
+  // league now arrives with a seeded past; see lib/gen/leagueHistory.ts).
+  // Read from TeamSeasonRecord rather than the CHAMPION transaction feed
+  // because the season row is the one that also carries the record the club
+  // finished with, and the two can't disagree if only one of them is used.
+  const titleRows = await prisma.teamSeasonRecord.findMany({
+    where: { leagueId: league.id, playoffResult: { in: ['CHAMPION', 'RUNNER_UP'] } },
+    orderBy: { year: 'desc' },
+  });
+  const finalsByYear = new Map<number, { champion?: (typeof titleRows)[number]; runnerUp?: (typeof titleRows)[number] }>();
+  for (const r of titleRows) {
+    const entry = finalsByYear.get(r.year) ?? {};
+    if (r.playoffResult === 'CHAMPION') entry.champion = r; else entry.runnerUp = r;
+    finalsByYear.set(r.year, entry);
+  }
+  const finals = [...finalsByYear.entries()].sort((a, b) => b[0] - a[0]);
+  const sbMvpByYear = new Map(awardWinners.filter((t) => t.type === 'AWARD_SBMVP').map((t) => [t.seasonYear, t]));
+  const titleCounts = new Map<string, number>();
+  for (const r of titleRows) {
+    if (r.playoffResult !== 'CHAMPION') continue;
+    titleCounts.set(r.teamId, (titleCounts.get(r.teamId) ?? 0) + 1);
+  }
+  const mostDecorated = [...titleCounts.entries()]
+    .map(([id, count]) => ({ team: teamById.get(id), count }))
+    .filter((x) => x.team)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
   return (
     <div className="space-y-5">
       <PageMasthead
@@ -83,6 +112,60 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
           </tbody>
         </table>
       </div>
+
+      {finals.length > 0 && (
+        <div className="panel overflow-hidden">
+          <div className="px-4 py-3 border-b border-line/70 flex items-baseline justify-between gap-3 flex-wrap">
+            <div>
+              <div className="label-sm">Championship Roll</div>
+              <div className="text-xs text-muted mt-0.5">Every title this league has decided, oldest silverware included.</div>
+            </div>
+            {mostDecorated.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {mostDecorated.map(({ team: t, count }) => (
+                  <span key={t!.id} className="pill border-gold/40 text-gold bg-gold/10 text-[10px] flex items-center gap-1">
+                    <TeamLogo seed={t!.id} abbr={t!.abbr} size={12} />{t!.abbr} ×{count}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="table-clean">
+              <thead><tr><th>Year</th><th>Champion</th><th>Record</th><th>Runner-Up</th><th>Championship MVP</th></tr></thead>
+              <tbody>
+                {finals.map(([year, f]) => {
+                  const champTeam = f.champion ? teamById.get(f.champion.teamId) : null;
+                  const ruTeam = f.runnerUp ? teamById.get(f.runnerUp.teamId) : null;
+                  const mvp = sbMvpByYear.get(year);
+                  return (
+                    <tr key={year} className={champTeam?.id === teamId ? 'bg-gold/5' : ''}>
+                      <td className="font-mono text-muted">{year}</td>
+                      <td className="text-gold font-semibold">
+                        {champTeam ? (
+                          <span className="flex items-center gap-1.5">
+                            <TeamLogo seed={champTeam.id} abbr={champTeam.abbr} size={18} />
+                            🏆 {champTeam.city} {champTeam.nickname}
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="font-mono">{f.champion ? `${f.champion.wins}-${f.champion.losses}${f.champion.ties ? `-${f.champion.ties}` : ''}` : '—'}</td>
+                      <td className="text-muted">
+                        {ruTeam ? (
+                          <span className="flex items-center gap-1.5">
+                            <TeamLogo seed={ruTeam.id} abbr={ruTeam.abbr} size={16} />{ruTeam.city} {ruTeam.nickname}
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="text-xs">{mvp ? <>{mvp.headline} <span className="text-muted">· {mvp.detail}</span></> : <span className="text-muted">—</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {leagueRecords.length > 0 && (
         <div className="grid md:grid-cols-2 gap-5">

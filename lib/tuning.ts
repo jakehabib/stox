@@ -100,14 +100,16 @@ export const FREE_AGENCY = {
    * at that position. These guard it from churning for nothing:
    *   MIN_UPGRADE_DELTA — true-rating points the free agent must beat the
    *     displaced player by before the move is worth a transaction at all.
-   *   MAX_DISPLACE_OVR — never displace a genuine contributor this way; if
-   *     the worst man at the position is already this good, the roster spot
-   *     is not the problem.
-   *   MAX_PER_TEAM_PER_WAVE — how many displacements one team may make in a
-   *     single wave, so a roster can't be rebuilt in one click.
+   *   MAX_DISPLACE_PER_TEAM_PER_WAVE — how many displacements one team may
+   *     make in a single wave, so a roster can't be rebuilt in one click.
+   * WHO may be displaced is a structural test rather than a rating threshold:
+   * only the worst man at the position, and only while that position still
+   * carries more bodies than ROSTER_TARGETS asks for. An absolute "never
+   * displace anyone rated above 74" cap was tried here first and it quietly
+   * stopped working as soon as league-wide ratings moved — every roster spot
+   * sat above the line, so no upgrade was ever legal.
    */
   MIN_UPGRADE_DELTA: 5,
-  MAX_DISPLACE_OVR: 74,
   MAX_DISPLACE_PER_TEAM_PER_WAVE: 2,
   /**
    * How deep into the free-agent board an AI wave looks. The old value (60)

@@ -4,6 +4,7 @@ import { LEAGUE, CAP, OFF_SCHEMES, DEF_SCHEMES, Position, SCOUTING } from '../tu
 import { LeagueSettings, serializeSettings, DEFAULT_SETTINGS } from '../settings';
 import { TEAM_SEEDS, COACH_FIRST, COACH_LAST, FIRST_NAMES, LAST_NAMES, NameRegistry } from './names';
 import { generateRoster, generatePlayer, toPlayerCreate, GeneratedPlayer } from './players';
+import { generateLeagueHistory } from './leagueHistory';
 import { buildSchedule } from '../schedule';
 import { buildContract, marketValue, suggestedYears } from '../cap';
 import { defaultGmProfile } from '../ai/gm';
@@ -267,6 +268,32 @@ export async function createLeague(opts: {
   if (!fantasy) {
     await autoDepthChartAll(league.id);
   }
+
+  // --- Backstory ------------------------------------------------------------
+  // A league with no past has an empty Ring of Honor, an empty franchise
+  // history, no award ever won and no record on the books — every long-arc
+  // screen in the app pointing at an empty room on day one. Invent the
+  // missing decades instead: see lib/gen/leagueHistory.ts. Runs AFTER depth
+  // charts because the career lines it writes for veterans are shaped by
+  // each player's depth rank, and after contracts because it deliberately
+  // touches nothing but history.
+  await generateLeagueHistory({
+    leagueId: league.id,
+    seasonYear,
+    seasonLength: settings.seasonLength,
+    teams: teams.map((t) => ({
+      id: t.id, abbr: t.abbr, city: t.city, nickname: t.nickname,
+      conference: t.conference, division: t.division,
+    })),
+    roster: players
+      .filter((p) => p.teamId)
+      .map((p) => ({
+        id: p.id, firstName: p.firstName, lastName: p.lastName, position: p.position,
+        age: p.age, experience: p.experience, trueOvr: p.trueOvr, teamId: p.teamId,
+      })),
+    rng,
+    names,
+  });
 
   // --- User's scouting book -------------------------------------------------
   await seedScoutingReports(league.id, userTeam.id, rng, settings);

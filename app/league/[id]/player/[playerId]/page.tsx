@@ -27,6 +27,33 @@ import {
   prospectBuzzNote, COLLEGE_WEEKS,
 } from '@/lib/gen/prospectProfile';
 import { CollegeStatLine } from '@/components/CollegeStatLine';
+import { CareerHonors, HonorAward } from '@/components/ds/CareerHonors';
+import { ringYearsFor } from '@/lib/gen/leagueHistory';
+
+/** Transaction types lib/season.ts writes one of per award, per season. */
+const AWARD_LABEL: Record<string, string> = {
+  AWARD_MVP: 'MVP', AWARD_OPOY: 'Offensive Player of the Year', AWARD_DPOY: 'Defensive Player of the Year',
+  AWARD_ROTY: 'Rookie of the Year', AWARD_SBMVP: 'Championship MVP',
+};
+
+/**
+ * The two-to-four numbers that define a career at each position — the full
+ * breakdown still lives in the Career Stats panel further down; this is the
+ * line a broadcast graphic would show.
+ */
+const CAREER_HEADLINE: Record<string, [string, string][]> = {
+  QB: [['passYds', 'Pass Yds'], ['passTd', 'Pass TD'], ['int', 'INT'], ['gp', 'Games']],
+  RB: [['rushYds', 'Rush Yds'], ['rushTd', 'Rush TD'], ['rec', 'Receptions'], ['gp', 'Games']],
+  WR: [['recYds', 'Rec Yds'], ['rec', 'Receptions'], ['recTd', 'Rec TD'], ['gp', 'Games']],
+  TE: [['recYds', 'Rec Yds'], ['rec', 'Receptions'], ['recTd', 'Rec TD'], ['gp', 'Games']],
+  EDGE: [['sacks', 'Sacks'], ['tackles', 'Tackles'], ['ff', 'Forced Fum'], ['gp', 'Games']],
+  DT: [['sacks', 'Sacks'], ['tackles', 'Tackles'], ['ff', 'Forced Fum'], ['gp', 'Games']],
+  LB: [['tackles', 'Tackles'], ['ff', 'Forced Fum'], ['gp', 'Games']],
+  CB: [['defInt', 'INT'], ['pd', 'Pass Def'], ['tackles', 'Tackles'], ['gp', 'Games']],
+  S: [['tackles', 'Tackles'], ['defInt', 'INT'], ['pd', 'Pass Def'], ['gp', 'Games']],
+  K: [['fgm', 'FG Made'], ['fga', 'FG Att'], ['xpm', 'XP Made'], ['gp', 'Games']],
+  P: [['punts', 'Punts'], ['puntYds', 'Punt Yds'], ['gp', 'Games']],
+};
 
 export default async function PlayerPage({ params }: { params: { id: string; playerId: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -140,6 +167,42 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
         .map(([key, lbl]) => [lbl, collegeToDate[key] ?? 0] as const)
         .filter(([, v]) => v > 0)
     : [];
+
+  // --- Career honors -------------------------------------------------------
+  // Awards are matched by name because Transaction has no player relation —
+  // safe here because lib/gen/names.ts's NameRegistry guarantees no two
+  // players in a league ever share one. Rings can't be looked up at all:
+  // nothing records which roster a generated veteran was on eight years ago,
+  // so lib/gen/leagueHistory.ts derives them deterministically from his own
+  // id, his club's actual title years, and his calibre. Both queries return
+  // nothing for a save created before any of this existed, and the block
+  // simply doesn't render.
+  const careerStartYear = league.seasonYear - player.experience;
+  const [awardTxs, titleSeasons] = await Promise.all([
+    prisma.transaction.findMany({
+      where: {
+        leagueId: league.id, type: { in: Object.keys(AWARD_LABEL) },
+        headline: { startsWith: `${player.firstName} ${player.lastName} (` },
+      },
+      orderBy: { seasonYear: 'asc' },
+    }),
+    player.teamId
+      ? prisma.teamSeasonRecord.findMany({
+          where: { teamId: player.teamId, playoffResult: 'CHAMPION' },
+          select: { year: true }, orderBy: { year: 'asc' },
+        })
+      : Promise.resolve([]),
+  ]);
+  const honorAwards: HonorAward[] = awardTxs.map((t) => ({
+    year: t.seasonYear, label: AWARD_LABEL[t.type] ?? t.type, statLine: t.detail,
+  }));
+  const ringYears = player.isDraftee ? [] : ringYearsFor({
+    playerId: player.id, trueOvr: player.trueOvr, careerStartYear,
+    currentYear: league.seasonYear, titleYears: titleSeasons.map((s) => s.year),
+  });
+  const careerHighlights = (CAREER_HEADLINE[player.position] ?? [])
+    .map(([key, lbl]) => ({ label: lbl, value: (careerStats[key] ?? 0).toLocaleString() }))
+    .filter((h) => h.value !== '0');
 
   const market = marketValue({ ovr: view.scoutedOvr, position: player.position as any, age: player.age, potential: player.potential });
   const releaseCost = deadMoneyOnCut(player.contract, settings.capMode);
@@ -299,6 +362,16 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           </div>
         )}
       </div>
+
+      {!player.isDraftee && (
+        <CareerHonors
+          position={player.position}
+          ringYears={ringYears}
+          awards={honorAwards}
+          careerHighlights={careerHighlights}
+          seasons={player.experience}
+        />
+      )}
 
       {!view.revealed && (
         <div className="panel border-l-2 border-l-accent2 p-4 flex items-center justify-between gap-4">

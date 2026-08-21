@@ -414,8 +414,9 @@ export async function cutPlayer(opts: {
  * signs the better player and releases the man he beats. So a team with no
  * open slot now still bids, on the condition that the free agent is a clear
  * upgrade on the WORST player it has at that position — guarded by
- * FREE_AGENCY.MIN_UPGRADE_DELTA (no churning for a rounding error),
- * MAX_DISPLACE_OVR (never displace a real contributor this way) and
+ * FREE_AGENCY.MIN_UPGRADE_DELTA (no churning for a rounding error), by the
+ * rule that only depth beyond what ROSTER_TARGETS asks for may be displaced
+ * (so an upgrade can never open a hole), and by
  * MAX_DISPLACE_PER_TEAM_PER_WAVE (no rebuilding a roster in one click). The
  * displaced player's release runs through the ordinary cut path, dead money
  * and all, and the signing runs through the ordinary assertCapRoom path, so
@@ -480,11 +481,12 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
         // No room — this only happens if he beats somebody already here.
         const worst = worstAtPosition.get(fa.position);
         if (!worst || alreadyDisplaced.has(worst.id)) continue;
-        if (worst.trueOvr > FREE_AGENCY.MAX_DISPLACE_OVR) continue;
         if (fa.trueOvr - worst.trueOvr < FREE_AGENCY.MIN_UPGRADE_DELTA) continue;
-        // Swapping like for like keeps the position count intact, so this can
-        // never open a hole the roster spec says has to be filled.
-        if ((countAtPosition.get(fa.position) ?? 0) < (ROSTER_TARGETS[fa.position as Position]?.min ?? 1)) continue;
+        // Only depth BEYOND what the position spec asks for is displaceable,
+        // so an upgrade can never open a hole the roster is required to fill.
+        // Structural on purpose: a rating threshold stops meaning anything the
+        // moment league-wide ratings move.
+        if ((countAtPosition.get(fa.position) ?? 0) <= (ROSTER_TARGETS[fa.position as Position]?.min ?? 1)) continue;
         displace = worst;
       } else if ((needs[fa.position] ?? 0) <= 0.15) {
         continue; // no real need and no upgrade case — not a bid
