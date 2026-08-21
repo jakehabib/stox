@@ -1337,3 +1337,84 @@ ever force-pushed over, so every state below still exists in git history).
   problems. All 27 routes compile, exit 0. Every league route is dynamic
   (`cookies()` in the ownership check makes them so); only `/design-system/*`
   is static — and publicly reachable, which is worth knowing.
+- **2026-08-21 — User accounts, so a save is no longer a cookie
+  (`d1ffad7`, `c6b3686`).** Until now the browser cookie *was* the
+  credential: clearing cookies destroyed a twenty-season dynasty
+  permanently, and no save could follow anyone to a second device. Username
+  and password accounts, with `League.userId` nullable and
+  `onDelete: SetNull` so deleting an account can never cascade away the
+  leagues. **`ownerKey` deliberately survives alongside it** — it is what a
+  signed-out player still owns saves by, and what the claim flow matches on
+  when somebody signs up, so existing saves become theirs rather than being
+  orphaned. Signed-out visitors can still play; the app invites an account,
+  it does not demand one.
+  Both properties were *proven*, not assumed. The claim round-trip asserts
+  the cookie jar is literally empty before signing in — the obvious version
+  of that test passes for the wrong reason — and then confirms the league
+  returns. Access control was attacked at the wire with nine real Server
+  Action ids from account B against account A's league (delete, advance, cut,
+  franchise tag, trade…): all nine refused, and **the same calls against B's
+  own league succeeded**, so the refusals are the guard and not a broken
+  harness.
+  *Known gap, stated on the sign-up form itself:* there is no email, so there
+  is no self-service password reset. An operator script is the whole recovery
+  story. Password hashing uses Node's built-in scrypt rather than
+  bcrypt/argon2 — pure-JS bcrypt blocks the serverless event loop for over a
+  second and native builds must match Vercel's runtime — with a versioned
+  format and `needsRehash`, so switching later is a branch plus a re-hash on
+  next login.
+- **2026-08-21 — Contract negotiation gaps closed (`05ecfc6`).** Patience
+  was taken from the client, so **a page reload reset it** and the entire
+  loss condition was defeated by pressing F5 — "they accept everything"
+  again, with more clicks. It now lives server-side. And the re-sign window
+  gained a rumoured suitor, built from `leadingCompetingBid` — *the same
+  function free agency uses* — so the rumour cannot be dishonest: it is
+  literally the AI's own bid, and the named club genuinely pursues him if he
+  reaches the market.
+- **2026-08-21 — Public leaderboard, custom league files, password change
+  (`4cf1d4a`).** The leaderboard is opt-in and **default off**, and opting
+  out *deletes* the rows rather than hiding them. There is no stored `level`
+  column, because a stored level can disagree with `levelFromXp`. It is
+  gameable — XP comes from a sim the player controls — and the page says so:
+  the denominator is on every row, a per-season sort moves a grinder *down*,
+  and fewer seasons wins a tie. League import/export ships with the
+  validation as the actual feature: **51 hostile files, 51 specific
+  refusals, zero partial leagues**, including a 30MB upload refused in 59ms
+  without reading the body.
+- **2026-08-21 — A real front door (`4cf1d4a`, `9289831`).** Landing pitch,
+  a 32-crest team-select board replacing a dropdown of abbreviations, and a
+  handover screen showing the club's **real** overall/offense/defense/special
+  teams with real league ranks. The picker deliberately shows no rating and
+  says why: no roster exists until you press start.
+- **2026-08-21 — Difficulty is three rungs, Normal by default (`9289831`).**
+  Easy/Normal/Hard. The part that would have broken quietly: settings live as
+  a JSON blob that nothing rewrites on read, so 83 existing saves still said
+  `ROOKIE`/`PRO`/`LEGEND` and would have indexed the modifier table as
+  `undefined` — every difficulty knob silently NaN. `parseSettings` maps the
+  old names on the way in.
+- **2026-08-21 — A franchise has colours (`90efdc6`).** Crest colour derived
+  from the team row's cuid, minted during league generation — so the Boston
+  Minutemen were crimson in one save and olive in the next, and **no
+  pre-league screen could show the crest the player was about to get**: the
+  picker and the handover screen drew the same club differently. Identity now
+  derives from the abbreviation, which is franchise-stable and exists before
+  any league does.
+- **2026-08-21 — Three deploy blockers, each only visible in production.**
+  (1) **P1002** — `DATABASE_URL` was the pooled endpoint, and `migrate
+  deploy` runs DDL in a held-open session that a transaction-mode pooler
+  cannot hold; it hangs rather than failing fast. The schema now declares
+  `directUrl` (`3524226`). (2) **P1012** — `DIRECT_URL` existed but was not
+  ticked for Preview environments. (3) **npm 11.6 blocks dependencies'
+  install scripts**, which is how Prisma downloads its engine binaries, so
+  the build died seconds in with the cause showing only as a warning fifty
+  lines above the error. `package.json` now carries an `allowScripts` block
+  (`f977bc4`). All three could **only** fail in production: this machine runs
+  an npm with no such feature and no pooler.
+- **2026-08-21 — Team strength in the dashboard hero (`da0eff8`).** Overall
+  appeared only inside the win-probability small print — "71 overall vs 75"
+  — which is the one place a GM would never look. The hero now carries
+  overall, offense, defense and special teams with league ranks, from the
+  ratings the page was already computing. The three composites are ranked at
+  the call site because `TeamRating` carries a rank for the overall and for
+  each unit but not for them, and a rank under a figure must be the rank of
+  that figure.
