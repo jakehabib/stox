@@ -1,134 +1,119 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { extendContractAction } from '@/app/actions/roster';
-import { marketValue, suggestedYears, formatMoney, buildContract, capHitSchedule } from '@/lib/cap';
+import { openExtensionNegotiationAction, submitExtensionOfferAction } from '@/app/actions/extension';
+import { capHit, formatMoney, type ContractLike } from '@/lib/cap';
+import type { DealStructure, NegotiationSession } from '@/lib/negotiation';
 import { CapMode } from '@/lib/types';
-import { MoneyInput } from './MoneyInput';
+import { NegotiationPanel } from './NegotiationPanel';
+import { DealStructureControls, DEFAULT_ESCALATION } from './DealStructureControls';
+import { SuitorRumour } from './ds/SuitorRumour';
+import { ContractLedger } from './ds/ContractLedger';
+
+/** Where a fresh deal opens. Reset terms returns the shape here. */
+const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidYears: 0 };
 
 /**
- * Extension negotiation for a player already on the roster — the real-NFL
- * structuring the SignOfferForm (free agency) intentionally keeps simple.
- * The whole point here is showing the FULL per-year schedule, since
- * front-loading vs back-loading only means anything across multiple years.
+ * Extending a player who is still under contract — the third contract screen,
+ * and the last one to get the negotiation.
+ *
+ * It used to be a form of its own: a salary box, four percent-of-market
+ * presets, a length slider, and a Sign Extension button that the server
+ * honoured. No meter, no patience, no refusal worth the name — the "they
+ * accept everything" behaviour the minigame was written to remove, still
+ * alive on the screen a GM spends most of his time on. The app owner found it
+ * from the outside: *"Also the player interest slider is missing for the
+ * player profile negotiate extension"*.
+ *
+ * So this is `NegotiationPanel` now, like the other two, and the decision is
+ * `decideOffer`, like the other two. Everything that makes an extension
+ * different is resolved server-side in the session (see
+ * app/actions/extension.ts): nobody may bid on a man under contract, and the
+ * years you still control are the leverage that replaces the rival.
+ *
+ * IT ADDS YEARS ON TOP. The owner's ruling — *"it should add a year on top, as
+ * it does it real life"* — so the years he is already owed survive at the
+ * salaries he was already promised and the new years go on the end. Which
+ * makes "new money" the number he negotiates and the full contract a longer,
+ * cheaper-per-year thing: both are on screen, under their own names, because
+ * quoting either as the other is the lying metric this flow invites.
  */
-export function ExtendContractForm({ leagueId, playerId, ovr, position, age, availableSpace, capMode, onDone }: {
-  leagueId: string; playerId: string; ovr: number; position: string; age: number;
-  availableSpace: number; capMode: CapMode; onDone?: () => void;
+export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDone }: {
+  leagueId: string; playerId: string; capMode: CapMode;
+  /**
+   * The deal this extension would REPLACE. Display only — the session resolves
+   * its own cap room and its own leverage server-side. It is here so the
+   * screen can show what is being torn up, in full, before anything is signed.
+   */
+  contract: ContractLike & { guaranteed: number; voidYears?: number };
+  onDone?: () => void;
+  /** Accepted from the old call site; the live figures all come from the session now. */
+  ovr?: number; position?: string; age?: number; availableSpace?: number;
 }) {
-  const suggested = marketValue({ ovr, position: position as any, age });
-  const [apy, setApy] = useState(Math.round(suggested / 100_000) * 100_000);
-  const [years, setYears] = useState(suggestedYears(ovr, age));
-  const [structure, setStructure] = useState(1.0); // <1 front-loaded, 1 flat, >1 back-loaded
-  const [voidYears, setVoidYears] = useState(0);
-  const [pending, startTransition] = useTransition();
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [session, setSession] = useState<NegotiationSession | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const [structure, setStructure] = useState<DealStructure>(OPENING_STRUCTURE);
   const router = useRouter();
 
-  const preview = useMemo(() => {
-    const c = buildContract({ apy, years, signedYear: 0, escalation: structure });
-    const schedule = capHitSchedule({ ...c, baseSalaries: JSON.stringify(c.baseSalaries), voidYears }, capMode);
-    const total = c.baseSalaries.reduce((a, b) => a + b, 0) + c.signingBonus;
-    // What void years push past the end of the deal — charged as dead money
-    // the season it expires (see releaseUnresignedExpiringContracts).
-    const prorated = Math.min(years + voidYears, 5);
-    const stranded = voidYears > 0 ? Math.max(0, c.signingBonus - Math.round(c.signingBonus / prorated) * years) : 0;
-    return { schedule, total, guaranteed: c.guaranteed, stranded };
-  }, [apy, years, structure, voidYears, capMode]);
+  useEffect(() => {
+    let cancelled = false;
+    openExtensionNegotiationAction(leagueId, playerId)
+      .then((s) => { if (!cancelled) setSession(s); })
+      .catch((e) => { if (!cancelled) { setSession(null); setError(e instanceof Error ? e.message : 'Could not open talks.'); } });
+    return () => { cancelled = true; };
+  }, [leagueId, playerId]);
 
-  const year1 = preview.schedule[0] ?? 0;
-  const overCap = capMode !== 'OFF' && year1 > availableSpace;
-
-  const submit = () => {
-    startTransition(async () => {
-      const result = await extendContractAction(leagueId, playerId, apy, years, structure, voidYears);
-      setMsg({ ok: result.ok, text: result.message });
-      if (result.ok) { router.refresh(); onDone?.(); }
-    });
-  };
-
-  const setApyPct = (pct: number) => setApy(Math.round((suggested * pct) / 100 / 100_000) * 100_000);
-  const structureLabel = structure < 0.95 ? 'Front-loaded' : structure > 1.05 ? 'Back-loaded' : 'Balanced';
+  if (session === undefined) {
+    return <div className="panel p-4 text-sm text-muted">Getting his agent on the phone…</div>;
+  }
+  if (!session) {
+    return <div className="panel p-4 text-sm text-bad">{error ?? 'Could not open extension talks with this player.'}</div>;
+  }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <label className="label-sm">Annual salary</label>
-          <span className="text-xs text-muted">Market est. ~{formatMoney(suggested)}/yr</span>
-        </div>
-        <MoneyInput value={apy} onChange={setApy} min={1_000_000} />
-        <div className="flex gap-1.5 mt-1.5">
-          <button type="button" onClick={() => setApyPct(85)} className="pill border-line text-muted hover:text-chalk">85%</button>
-          <button type="button" onClick={() => setApyPct(100)} className="pill border-line text-muted hover:text-chalk">Match Market</button>
-          <button type="button" onClick={() => setApyPct(115)} className="pill border-line text-muted hover:text-chalk">115%</button>
-          <button type="button" onClick={() => setApyPct(130)} className="pill border-line text-muted hover:text-chalk">130%</button>
-        </div>
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <label className="label-sm">Contract length</label>
-          <span className="text-xs font-mono">{years} yr{years === 1 ? '' : 's'}</span>
-        </div>
-        <input type="range" min={1} max={7} step={1} value={years} onChange={(e) => setYears(Number(e.target.value))} className="w-full accent-accent" />
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <label className="label-sm">Structure</label>
-          <span className="text-xs font-mono">{structureLabel}</span>
-        </div>
-        <input type="range" min={0.85} max={1.25} step={0.01} value={structure} onChange={(e) => setStructure(Number(e.target.value))} className="w-full accent-accent2" />
-        <div className="flex justify-between text-[10px] text-muted mt-0.5"><span>Front-load (pay now)</span><span>Back-load (defer cap)</span></div>
-      </div>
-
-      {capMode === 'REALISTIC' && (
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="label-sm">Void years</label>
-            <span className="text-xs font-mono">{voidYears === 0 ? 'None' : `+${voidYears}`}</span>
+    <NegotiationPanel
+      title="Extension Talks"
+      initialSession={session}
+      structure={structure}
+      onSigned={() => { router.refresh(); onDone?.(); }}
+      onReset={() => setStructure(OPENING_STRUCTURE)}
+      onCancel={onDone}
+      onOffer={(offer, str, fingerprint) =>
+        submitExtensionOfferAction(leagueId, playerId, offer, str, fingerprint)}
+      banner={
+        <>
+          {/* The sentence the old form never said. An extension is a
+              replacement, and the years already on the books go away with it. */}
+          <div className="text-sm px-3 py-2.5 rounded-lg border border-accent2/30 bg-accent2/10 text-accent2">
+            This <span className="font-semibold">adds years on top</span> of his current deal. The{' '}
+            {contract.yearsRemaining} year{contract.yearsRemaining === 1 ? '' : 's'} he is already owed keep
+            their salaries — {formatMoney(capHit(contract, capMode))} against this year&apos;s cap right now —
+            and the new money goes on the end. Whatever bonus he has left carries into the extended deal,
+            so the dead money if you ever cut him is both put together.
           </div>
-          <input type="range" min={0} max={3} step={1} value={voidYears} onChange={(e) => setVoidYears(Number(e.target.value))} className="w-full accent-warn" />
-          <p className="text-[11px] text-muted mt-1">Spreads bonus proration further to lower every real year's cap hit — but all of it accelerates as dead money the moment this deal ends.</p>
-        </div>
-      )}
 
-      <div className="card-pad !p-3 rounded-lg bg-raised space-y-1.5 text-sm">
-        <div className="flex justify-between"><span className="text-muted">Total value</span><span className="font-mono">{formatMoney(preview.total)}</span></div>
-        <div className="flex justify-between"><span className="text-muted">Guaranteed (est.)</span><span className="font-mono">{formatMoney(preview.guaranteed)}</span></div>
-        {capMode !== 'OFF' && (
-          <>
-            <div className="flex justify-between pt-2 border-t border-line/60">
-              <span className="text-muted">Cap space after signing</span>
-              <span className={`font-mono font-semibold ${availableSpace - year1 < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(availableSpace - year1)}</span>
-            </div>
-            <div>
-              <div className="text-xs text-muted mb-1">Cap hit by year</div>
-              <div className="flex flex-wrap gap-2">
-                {preview.schedule.map((hit, i) => (
-                  <div key={i} className={`pill ${i === 0 && overCap ? 'border-bad/40 text-bad' : 'border-line text-chalk'}`}>
-                    Yr{i + 1}: {formatMoney(hit)}
-                  </div>
-                ))}
-                {preview.stranded > 0 && (
-                  <div className="pill border-warn/40 text-warn" title="Bonus proration pushed past the end of the deal by void years — charged as dead money the season it expires.">
-                    Void: {formatMoney(preview.stranded)}
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
+          {/* And here is exactly what is being torn up, year by year, with the
+              dead money each of those years would have cost. "It replaces his
+              deal" is a sentence; this is the sentence with the figures
+              attached, on screen before anything is agreed rather than
+              discoverable afterwards. */}
+          <details className="rounded-lg border border-line bg-raised/40 px-3 py-2">
+            <summary className="text-sm cursor-pointer select-none">
+              The deal he is on now, before anything is added
+            </summary>
+            <ContractLedger contract={contract} capMode={capMode} seasonYear={session.ctx.seasonYear} className="pt-3" />
+          </details>
 
-      {overCap && <p className="text-xs text-bad">Year 1's cap hit exceeds your available space — lower the salary, front-load less, or clear room elsewhere.</p>}
-
-      <button disabled={pending || overCap} onClick={submit} className="btn-primary w-full disabled:opacity-40">
-        {pending ? 'Negotiating…' : overCap ? 'Not Enough Cap Space' : 'Sign Extension'}
-      </button>
-      {msg && <p className={`text-xs ${msg.ok ? 'text-accent' : 'text-accent2'}`}>{msg.text}</p>}
-    </div>
+          {/* He cannot be bid on — but the club that would want him if he ever
+              got out is a real one, and it hardens what he asks for. Same
+              evidence the re-sign window shows, for the same reason. */}
+          {session.suitor && <SuitorRumour session={session} />}
+        </>
+      }
+      structureSlot={
+        <DealStructureControls capMode={capMode} structure={structure} onChange={setStructure} />
+      }
+    />
   );
 }

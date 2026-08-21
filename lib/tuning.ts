@@ -138,13 +138,45 @@ export const FREE_AGENCY = {
 // Positions
 // ---------------------------------------------------------------------------
 export const POSITIONS = [
-  'QB', 'RB', 'FB', 'WR', 'TE', 'LT', 'LG', 'C', 'RG', 'RT',
+  'QB', 'RB', 'WR', 'TE', 'LT', 'LG', 'C', 'RG', 'RT',
   'EDGE', 'DT', 'LB', 'CB', 'S', 'K', 'P',
 ] as const;
 export type Position = (typeof POSITIONS)[number];
 
+/**
+ * Positions that used to exist and no longer do, mapped to what they became.
+ *
+ * The fullback was retired: he is not a starter in eleven personnel, he is
+ * not on the field in the modern game, and the roster spot goes to a fourth
+ * receiver. But retiring a position from the TYPE does not retire it from the
+ * DATABASE — `Player.position` is a plain string column, and every save
+ * written before the change still holds fullbacks on rosters, under contract,
+ * in depth charts and in draft history. A data migration converts the ones we
+ * know about; this alias covers the ones we do not (an imported league file,
+ * a restored backup, a save that was mid-write).
+ *
+ * This matters more than it looks. Every `Record<Position, …>` table in this
+ * file is indexed by a position string that ultimately came from the
+ * database. Indexing one with a retired position returns `undefined`, which
+ * does not throw — it silently becomes NaN inside an average or a multiply,
+ * and a NaN rating looks like a rendering bug rather than a data bug. That is
+ * the same failure mode that let a twelve-man defence ship unnoticed.
+ */
+const RETIRED_POSITIONS: Record<string, Position> = {
+  FB: 'RB', // fullback -> running back: same group, same stat line, same build
+};
+
+/**
+ * The live position a stored position string means. Unknown values fall back
+ * to the string itself, so a genuinely bad value still fails visibly at the
+ * lookup rather than being silently mapped onto a real position.
+ */
+export function canonicalPosition(raw: string): Position {
+  return RETIRED_POSITIONS[raw] ?? (raw as Position);
+}
+
 export const POSITION_GROUP: Record<Position, 'OL' | 'SKILL' | 'FRONT7' | 'SECONDARY' | 'SPEC'> = {
-  QB: 'SKILL', RB: 'SKILL', FB: 'SKILL', WR: 'SKILL', TE: 'SKILL',
+  QB: 'SKILL', RB: 'SKILL', WR: 'SKILL', TE: 'SKILL',
   LT: 'OL', LG: 'OL', C: 'OL', RG: 'OL', RT: 'OL',
   EDGE: 'FRONT7', DT: 'FRONT7', LB: 'FRONT7',
   CB: 'SECONDARY', S: 'SECONDARY',
@@ -155,8 +187,7 @@ export const POSITION_GROUP: Record<Position, 'OL' | 'SKILL' | 'FRONT7' | 'SECON
 export const ROSTER_TARGETS: Record<Position, { min: number; ideal: number; max: number }> = {
   QB:   { min: 2, ideal: 3, max: 3 },
   RB:   { min: 3, ideal: 4, max: 5 },
-  FB:   { min: 0, ideal: 1, max: 1 },
-  WR:   { min: 5, ideal: 6, max: 7 },
+  WR:   { min: 5, ideal: 7, max: 8 },
   TE:   { min: 2, ideal: 3, max: 4 },
   LT:   { min: 1, ideal: 2, max: 2 },
   LG:   { min: 1, ideal: 2, max: 2 },
@@ -175,13 +206,13 @@ export const ROSTER_TARGETS: Record<Position, { min: number; ideal: number; max:
 /**
  * How much a mediocre starter at this position should register as a
  * roster "need" — separate from whether the position is filled at all.
- * A below-average kicker, punter, or fullback is real but nowhere near
+ * A below-average kicker or punter is real but nowhere near
  * as urgent as a below-average corner or tackle, since these positions
  * touch the game far less and are trivially replaceable off the street.
  * Missing [TUNE] entries default to full weight (1).
  */
 export const ROSTER_NEED_QUALITY_WEIGHT: Partial<Record<Position, number>> = {
-  K: 0.25, P: 0.25, FB: 0.25,
+  K: 0.25, P: 0.25,
 };
 
 // ---------------------------------------------------------------------------
@@ -343,7 +374,7 @@ export const SIM = {
 
 /** [FRAGILE] How much each positional unit contributes to team offense score. */
 export const OFFENSE_UNIT_WEIGHTS: Partial<Record<Position, number>> = {
-  QB: 0.34, RB: 0.07, FB: 0.01, WR: 0.17, TE: 0.07,
+  QB: 0.34, RB: 0.07, WR: 0.18, TE: 0.07,
   LT: 0.07, LG: 0.055, C: 0.055, RG: 0.055, RT: 0.065,
 };
 
@@ -356,7 +387,6 @@ export const DEFENSE_UNIT_WEIGHTS: Partial<Record<Position, number>> = {
 export const UNIT_DEPTH_WEIGHTS: Partial<Record<Position, number[]>> = {
   QB: [1.0],
   RB: [0.62, 0.28, 0.10],
-  FB: [1.0],
   WR: [0.42, 0.31, 0.19, 0.08],
   TE: [0.7, 0.3],
   LT: [1.0], LG: [1.0], C: [1.0], RG: [1.0], RT: [1.0],
@@ -521,7 +551,7 @@ export const MARKET = {
   SCALE: 7_000_000,
   /** Positional value multipliers — the premium-position tax. */
   POSITION_MULT: {
-    QB: 1.85, RB: 0.62, FB: 0.35, WR: 1.15, TE: 0.85,
+    QB: 1.85, RB: 0.62, WR: 1.15, TE: 0.85,
     LT: 1.30, LG: 0.80, C: 0.85, RG: 0.80, RT: 1.05,
     EDGE: 1.45, DT: 1.05, LB: 0.82, CB: 1.25, S: 0.85,
     K: 0.30, P: 0.25,
@@ -646,7 +676,7 @@ export const CONSENSUS = {
   SCARCITY_HALF_LIFE: 2,
 
   /**
-   * Extra weight on the NEGATIVE positional pulls — kicker, punter, fullback.
+   * Extra weight on the NEGATIVE positional pulls — kicker and punter.
    * The plain penalty left a 99-grade kicker at board #28. A first-round
    * kicker is not a thing, however good the kicker is, and the specialist
    * positions are exactly where a flat points-per-grade board goes wrong.
@@ -849,7 +879,7 @@ export const AI = {
   DRAFT_POSITION_VALUE: {
     QB: 1.5, EDGE: 1.25, LT: 1.2, WR: 1.15, CB: 1.15,
     DT: 1.05, S: 1.0, LB: 1.0, TE: 1.0, RB: 0.9,
-    RT: 0.9, RG: 0.85, LG: 0.85, C: 0.8, FB: 0.55,
+    RT: 0.9, RG: 0.85, LG: 0.85, C: 0.8,
     K: 0.35, P: 0.3,
   } as Record<Position, number>,
 };
@@ -879,7 +909,7 @@ export const PICK_VALUE_CHART = (overallPick: number): number => {
  * still fetch true blue-chip value; DT/RT/IOL/TE/S/LB matter but the market
  * doesn't pay a premium-position price for them; RB is real but shallow —
  * even a great one caps out around Day 2 value on the age curve realities
- * of the position; K/P/FB stay compressed near the bottom no matter the
+ * of the position; K/P stay compressed near the bottom no matter the
  * rating, because a replacement at those spots is always close by.
  */
 export type TradeValueTier = 'QB' | 'PREMIUM' | 'MID' | 'LOW' | 'MINIMAL';
@@ -889,7 +919,7 @@ export const TRADE_VALUE_TIER: Record<Position, TradeValueTier> = {
   EDGE: 'PREMIUM', LT: 'PREMIUM', WR: 'PREMIUM', CB: 'PREMIUM',
   DT: 'MID', RT: 'MID', LG: 'MID', RG: 'MID', C: 'MID', TE: 'MID', S: 'MID', LB: 'MID',
   RB: 'LOW',
-  K: 'MINIMAL', P: 'MINIMAL', FB: 'MINIMAL',
+  K: 'MINIMAL', P: 'MINIMAL',
 };
 
 export const TRADE_VALUE = {

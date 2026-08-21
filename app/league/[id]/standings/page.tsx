@@ -7,6 +7,8 @@ import { PageMasthead } from '@/components/ds/PageMasthead';
 import { prisma } from '@/lib/db';
 import { PlayoffBracket, BracketGame } from '@/components/ds/PlayoffBracket';
 import { LEAGUE } from '@/lib/tuning';
+import { buildPowerRankings, ensurePowerSnapshot, PowerRow } from '@/lib/powerRankings';
+import { PowerRankingsCapsule } from '@/components/ds/PowerRankingsTable';
 
 /**
  * A team's own roster page only ever shows the user's team, so linking all 32
@@ -28,6 +30,34 @@ function TeamCell({ leagueId, t }: { leagueId: string; t: StandingsRow }) {
   );
 }
 
+/**
+ * Team strength beside the record — the half of the ask this column answers
+ * directly. The figure is buildLeagueRatings()'s overall with
+ * buildLeagueRatings()'s rank, the same pair the dashboard hero and the
+ * handover screen print, never a second opinion computed here.
+ *
+ * The power rank is deliberately NOT a second column in here. Ten columns did
+ * not fit the two-up division panels — the last one was being clipped at the
+ * panel edge, which is worse than not showing it — and the capsule above the
+ * tables already carries the ranking, with the whole 32 one click away. The
+ * cell links there.
+ */
+function StrengthCells({ leagueId, row }: { leagueId: string; row: PowerRow | undefined }) {
+  if (!row) return <td className="text-right px-1.5 hidden sm:table-cell text-muted">—</td>;
+  return (
+    <td className="text-right px-1.5 hidden sm:table-cell whitespace-nowrap">
+      <Link
+        href={`/league/${leagueId}/power-rankings`}
+        className="hover:text-accent2"
+        title={`${row.rating} overall, ${row.ratingRank} of 32 — ${row.rank}th in this week's power ranking`}
+      >
+        <span className="stat-value text-stat-sm">{row.rating}</span>
+        <span className="text-[10px] text-muted ml-1">#{row.ratingRank}</span>
+      </Link>
+    </td>
+  );
+}
+
 function StreakChip({ streak }: { streak: string | null }) {
   if (!streak) return <span className="text-muted">—</span>;
   const hot = streak.startsWith('W') && Number(streak.slice(1)) >= 2;
@@ -43,6 +73,15 @@ export default async function StandingsPage({ params }: { params: { id: string }
   // Rank movement only means anything once games have been played.
   const board = await buildStandingsBoard(league.id, { withStreaks: true });
   const allTeams = board.flatMap((c) => c.divisions.flatMap((d) => d.teams));
+
+  // The other half of "who is actually good". The standings say who is
+  // winning; these columns say how good the roster is and where the weekly
+  // ranking puts them, and the distance between the two is the most
+  // interesting thing on the page — a 5-2 club sitting 14th in the power
+  // ranking is a story the record column cannot tell.
+  const power = await buildPowerRankings(league.id);
+  await ensurePowerSnapshot(league.id, { board: power, league }).catch(() => {});
+  const powerByTeam = new Map<string, PowerRow>(power.rows.map((r) => [r.teamId, r]));
 
   const deltas = league.phase === 'REGULAR'
     ? new Map(
@@ -122,6 +161,8 @@ export default async function StandingsPage({ params }: { params: { id: string }
         <PlayoffPicture leagueId={league.id} conf={userConf} />
       )}
 
+      <PowerRankingsCapsule leagueId={league.id} board={power} />
+
       {board.map((conf) => (
         <div key={conf.conference} className="section">
           <div className="section-head">
@@ -142,6 +183,7 @@ export default async function StandingsPage({ params }: { params: { id: string }
                       <th className="text-right w-8 px-1.5">W</th><th className="text-right w-8 px-1.5">L</th>
                       <th className="text-right w-8 px-1.5">T</th><th className="text-right w-12 px-1.5">PCT</th>
                       <th className="text-right w-12 px-1.5">DIFF</th><th className="text-right w-10 px-1.5">STRK</th>
+                      <th className="text-right w-14 px-1.5 hidden sm:table-cell" title="Team rating from the roster, with its rank across the league">OVR</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -181,6 +223,7 @@ export default async function StandingsPage({ params }: { params: { id: string }
                             {t.diff >= 0 ? '+' : ''}{t.diff}
                           </td>
                           <td className="text-right px-1.5"><StreakChip streak={t.streak} /></td>
+                          <StrengthCells leagueId={league.id} row={powerByTeam.get(t.id)} />
                         </tr>
                       );
                     })}

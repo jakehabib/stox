@@ -11,7 +11,11 @@ import { formatMoney, capHit, remainingValue, marketValue, deadMoneyOnCut } from
 import { classifyContractValue } from '@/lib/analytics';
 import { generateScoutingReport } from '@/lib/scoutingProse';
 import { teamCapSummary } from '@/lib/cap-summary';
-import { sortStatEntries, statLabel } from '@/lib/statLabels';
+import { sortStatEntries, statLabel, headlineColumns } from '@/lib/statLabels';
+import { resolveStartYear } from '@/lib/leagueYear';
+import {
+  loadPlayerSeasons, reconstructPlayerSeasons, withAges, ageBasisYear, buildCareerTable,
+} from '@/lib/playerSeasons';
 import { CutButton } from '@/components/CutButton';
 import { ContractActions } from '@/components/ContractActions';
 import { FullScoutButton } from '@/components/FullScoutButton';
@@ -32,31 +36,13 @@ import {
 } from '@/lib/gen/prospectProfile';
 import { CollegeStatLine } from '@/components/CollegeStatLine';
 import { CareerHonors, HonorAward } from '@/components/ds/CareerHonors';
+import { CareerStatTable } from '@/components/ds/CareerStatTable';
 import { ringYearsFor } from '@/lib/gen/leagueHistory';
 
 /** Transaction types lib/season.ts writes one of per award, per season. */
 const AWARD_LABEL: Record<string, string> = {
   AWARD_MVP: 'MVP', AWARD_OPOY: 'Offensive Player of the Year', AWARD_DPOY: 'Defensive Player of the Year',
   AWARD_ROTY: 'Rookie of the Year', AWARD_SBMVP: 'Championship MVP',
-};
-
-/**
- * The two-to-four numbers that define a career at each position — the full
- * breakdown still lives in the Career Stats panel further down; this is the
- * line a broadcast graphic would show.
- */
-const CAREER_HEADLINE: Record<string, [string, string][]> = {
-  QB: [['passYds', 'Pass Yds'], ['passTd', 'Pass TD'], ['int', 'INT'], ['gp', 'Games']],
-  RB: [['rushYds', 'Rush Yds'], ['rushTd', 'Rush TD'], ['rec', 'Receptions'], ['gp', 'Games']],
-  WR: [['recYds', 'Rec Yds'], ['rec', 'Receptions'], ['recTd', 'Rec TD'], ['gp', 'Games']],
-  TE: [['recYds', 'Rec Yds'], ['rec', 'Receptions'], ['recTd', 'Rec TD'], ['gp', 'Games']],
-  EDGE: [['sacks', 'Sacks'], ['tackles', 'Tackles'], ['ff', 'Forced Fum'], ['gp', 'Games']],
-  DT: [['sacks', 'Sacks'], ['tackles', 'Tackles'], ['ff', 'Forced Fum'], ['gp', 'Games']],
-  LB: [['tackles', 'Tackles'], ['ff', 'Forced Fum'], ['gp', 'Games']],
-  CB: [['defInt', 'INT'], ['pd', 'Pass Def'], ['tackles', 'Tackles'], ['gp', 'Games']],
-  S: [['tackles', 'Tackles'], ['defInt', 'INT'], ['pd', 'Pass Def'], ['gp', 'Games']],
-  K: [['fgm', 'FG Made'], ['fga', 'FG Att'], ['xpm', 'XP Made'], ['gp', 'Games']],
-  P: [['punts', 'Punts'], ['puntYds', 'Punt Yds'], ['gp', 'Games']],
 };
 
 export default async function PlayerPage({ params }: { params: { id: string; playerId: string } }) {
@@ -145,6 +131,56 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
     : null;
   const GRADE_CLASS: Record<string, string> = { A: 'text-gold', B: 'text-accent', C: 'text-chalk', D: 'text-warn', F: 'text-bad' };
 
+  // --- Year-by-year stat lines --------------------------------------------
+  // The season rows come from played box scores, which is the only place the
+  // club-he-played-for-THAT-year actually exists: seasonStats and careerStats
+  // are merged blobs with no season and no team on them. Whatever careerStats
+  // carries beyond what the box scores account for is history this league
+  // never recorded — it becomes one honestly-labelled "Before <year>" row and
+  // is never split into invented seasons. See lib/playerSeasons.ts.
+  //
+  // A draftee has never played a down here, so he gets the College Profile
+  // above instead and this doesn't run at all.
+  const careerTable = player.isDraftee ? null : await (async () => {
+    const [persisted, startYear] = await Promise.all([
+      loadPlayerSeasons(league.id, player.id),
+      resolveStartYear(league),
+    ]);
+    const basis = ageBasisYear(league);
+    const common = {
+      position: player.position,
+      liveInProgress: league.phase === 'REGULAR' || league.phase === 'PLAYOFFS',
+      careerStats,
+      startYear,
+    };
+
+    // The season in progress never comes from PlayerSeason — its rows aren't
+    // written until the rollover — so it is always replayed from this year's
+    // box scores. That is also what lets the CURRENT year split a mid-season
+    // trade correctly instead of filing the whole year under whichever jersey
+    // he happens to be wearing today.
+    if (persisted) {
+      const live = withAges(
+        await reconstructPlayerSeasons(league.id, player.id, league.seasonYear), player, basis,
+      );
+      return buildCareerTable({
+        ...common,
+        seasons: persisted.filter((l) => l.seasonYear < league.seasonYear),
+        live,
+      });
+    }
+
+    // No rows for this league yet — a save that hasn't rolled over since the
+    // table landed. Replay everything instead of showing an empty table; the
+    // numbers are identical, it just isn't indexed.
+    const aged = withAges(await reconstructPlayerSeasons(league.id, player.id), player, basis);
+    return buildCareerTable({
+      ...common,
+      seasons: aged.filter((l) => l.seasonYear < league.seasonYear),
+      live: aged.filter((l) => l.seasonYear === league.seasonYear),
+    });
+  })();
+
   // Your team's current depth at this player's position — the point is
   // answering "do I need a replacement here" without leaving the card,
   // whether you're looking at your own player, a free agent, or a trade
@@ -221,8 +257,12 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
     playerId: player.id, trueOvr: player.trueOvr, careerStartYear,
     currentYear: league.seasonYear, titleYears: titleSeasons.map((s) => s.year),
   });
-  const careerHighlights = (CAREER_HEADLINE[player.position] ?? [])
-    .map(([key, lbl]) => ({ label: lbl, value: (careerStats[key] ?? 0).toLocaleString() }))
+  // Same per-position column list the year-by-year table below renders, cut
+  // to the broadcast-graphic subset — see lib/statLabels.ts. Deriving it
+  // rather than keeping a second list here is what stops the hero and the
+  // table from ever disagreeing about what defines the position.
+  const careerHighlights = headlineColumns(player.position)
+    .map(({ key, label }) => ({ label, value: (careerStats[key] ?? 0).toLocaleString() }))
     .filter((h) => h.value !== '0');
 
   const market = marketValue({ ovr: view.scoutedOvr, position: player.position as any, age: player.age, potential: player.potential });
@@ -384,6 +424,93 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
         )}
       </div>
 
+      {/* Contract sits directly under the hero on purpose. It is the only
+          section on this page that DOES anything — the offer form for a free
+          agent, extend/restructure/cut for your own man — and everything below
+          it informs the decision this box commits. Its POSITION is
+          unconditional: reordering the page by player state would make the
+          layout unlearnable, so a rostered player and a free agent find it in
+          the same place.
+
+          Its PRESENCE is not, and that is a different question. A draft
+          prospect cannot be signed at all, so the box had nothing to offer him
+          but one sentence saying so — a full-width panel in the best slot on
+          the page carrying no decision. He doesn't get one. That matches what
+          this page already does either side of it: the Season/Career Stats
+          panels below skip a draftee, and CareerHonors renders nothing when
+          there is nothing to honour. Hiding an empty section is not reordering
+          a full one. */}
+      {!player.isDraftee && (
+      <div className="section">
+        <SectionHeading
+          title="Contract"
+          action={
+            <div className="flex gap-1.5">
+              {player.contract?.isRookieDeal && <span className="pill border-accent2/30 text-accent2 bg-accent2/10">Rookie Deal</span>}
+              {player.contract?.isFranchiseTag && <span className="pill border-warn/30 text-warn bg-warn/10">Franchise Tag</span>}
+            </div>
+          }
+        />
+        <div className="panel p-5">
+          {player.contract ? (
+            <div className="space-y-4">
+              <StatNumber value={formatMoney(hit)} label="Cap hit this year" size="lg" />
+
+              <div>
+                <div className="flex gap-1">
+                  {Array.from({ length: player.contract.years }, (_, i) => (
+                    <div
+                      key={i}
+                      className={`h-1.5 flex-1 rounded-full ${i < player.contract!.years - player.contract!.yearsRemaining ? 'bg-line' : 'bg-accent'}`}
+                    />
+                  ))}
+                </div>
+                <div className="text-xs text-muted mt-1">
+                  {player.contract.yearsRemaining} yr{player.contract.yearsRemaining === 1 ? '' : 's'} remaining of {player.contract.years}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-sm pt-3 border-t border-line/60">
+                <div>
+                  <div className="label-sm mb-0.5">Remaining Value</div>
+                  <div className="font-mono">{formatMoney(remaining)}</div>
+                </div>
+                <div>
+                  <div className="label-sm mb-0.5">Guaranteed</div>
+                  <div className="font-mono">{formatMoney(player.contract.guaranteed)}</div>
+                </div>
+                {player.contract.voidYears > 0 && (
+                  <div>
+                    <div className="label-sm mb-0.5">Void Years</div>
+                    <div className="font-mono text-warn">+{player.contract.voidYears}</div>
+                  </div>
+                )}
+              </div>
+
+              {isOwnRoster && userTeam && (
+                <div className="pt-3 space-y-3 border-t border-line/60">
+                  <ContractActions
+                    leagueId={league.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age}
+                    contract={{
+                      years: player.contract.years, yearsRemaining: player.contract.yearsRemaining, signedYear: player.contract.signedYear,
+                      baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
+                      guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
+                    }}
+                    availableSpaceForExtension={capSpace + hit} capSpace={capSpace} capMode={settings.capMode}
+                  />
+                  <CutButton leagueId={league.id} playerId={player.id} />
+                </div>
+              )}
+            </div>
+          ) : player.status === 'FREE_AGENT' && userTeam ? (
+            <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} />
+          ) : (
+            <p className="text-sm text-muted">No contract on file.</p>
+          )}
+        </div>
+      </div>
+      )}
+
       {!player.isDraftee && (
         <CareerHonors
           position={player.position}
@@ -392,6 +519,26 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           careerHighlights={careerHighlights}
           seasons={player.experience}
         />
+      )}
+
+      {/* The page's marquee block, and deliberately high up: this is the thing
+          the owner asked for, so it sits where a stat page leads rather than
+          under six sections of scouting. It is also the tallest thing here —
+          one row per season the league has actually played, plus at most one
+          "Before <year>" row and the career total, so a young league shows
+          three or four rows and a fifteen-year career shows what a real stat
+          page shows. */}
+      {careerTable && (
+        <div className="section">
+          <SectionHeading
+            eyebrow="Year by year"
+            title="Career Stat Line"
+            action={<span className="text-xs text-muted hidden sm:block">One row per season, per club</span>}
+          />
+          <div className="panel overflow-hidden">
+            <CareerStatTable position={player.position} table={careerTable} />
+          </div>
+        </div>
       )}
 
       {!view.revealed && (
@@ -593,76 +740,6 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
           </div>
         )}
 
-        <div className="section">
-          <SectionHeading
-            title="Contract"
-            action={
-              <div className="flex gap-1.5">
-                {player.contract?.isRookieDeal && <span className="pill border-accent2/30 text-accent2 bg-accent2/10">Rookie Deal</span>}
-                {player.contract?.isFranchiseTag && <span className="pill border-warn/30 text-warn bg-warn/10">Franchise Tag</span>}
-              </div>
-            }
-          />
-          <div className="panel p-5">
-            {player.contract ? (
-              <div className="space-y-4">
-                <StatNumber value={formatMoney(hit)} label="Cap hit this year" size="lg" />
-
-                <div>
-                  <div className="flex gap-1">
-                    {Array.from({ length: player.contract.years }, (_, i) => (
-                      <div
-                        key={i}
-                        className={`h-1.5 flex-1 rounded-full ${i < player.contract!.years - player.contract!.yearsRemaining ? 'bg-line' : 'bg-accent'}`}
-                      />
-                    ))}
-                  </div>
-                  <div className="text-xs text-muted mt-1">
-                    {player.contract.yearsRemaining} yr{player.contract.yearsRemaining === 1 ? '' : 's'} remaining of {player.contract.years}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 text-sm pt-3 border-t border-line/60">
-                  <div>
-                    <div className="label-sm mb-0.5">Remaining Value</div>
-                    <div className="font-mono">{formatMoney(remaining)}</div>
-                  </div>
-                  <div>
-                    <div className="label-sm mb-0.5">Guaranteed</div>
-                    <div className="font-mono">{formatMoney(player.contract.guaranteed)}</div>
-                  </div>
-                  {player.contract.voidYears > 0 && (
-                    <div>
-                      <div className="label-sm mb-0.5">Void Years</div>
-                      <div className="font-mono text-warn">+{player.contract.voidYears}</div>
-                    </div>
-                  )}
-                </div>
-
-                {isOwnRoster && userTeam && (
-                  <div className="pt-3 space-y-3 border-t border-line/60">
-                    <ContractActions
-                      leagueId={league.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age}
-                      contract={{
-                        years: player.contract.years, yearsRemaining: player.contract.yearsRemaining, signedYear: player.contract.signedYear,
-                        baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
-                        guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
-                      }}
-                      availableSpaceForExtension={capSpace + hit} capSpace={capSpace} capMode={settings.capMode}
-                    />
-                    <CutButton leagueId={league.id} playerId={player.id} />
-                  </div>
-                )}
-              </div>
-            ) : player.status === 'FREE_AGENT' && !player.isDraftee && userTeam ? (
-              <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} />
-            ) : player.isDraftee ? (
-              <p className="text-sm text-muted">This prospect is in the draft pool — he can only be acquired through the rookie draft, not signed as a free agent.</p>
-            ) : (
-              <p className="text-sm text-muted">No contract on file.</p>
-            )}
-          </div>
-        </div>
       </div>
     </div>
   );

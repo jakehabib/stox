@@ -15,7 +15,7 @@ export type PositionGroup = (typeof POSITION_GROUPS)[number];
 
 const GROUP_BY_POSITION: Record<Position, PositionGroup> = {
   QB: 'QB',
-  RB: 'RB', FB: 'RB',
+  RB: 'RB',
   WR: 'WR', TE: 'TE',
   LT: 'OL', LG: 'OL', C: 'OL', RG: 'OL', RT: 'OL',
   EDGE: 'DL', DT: 'DL',

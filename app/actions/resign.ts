@@ -22,6 +22,27 @@ export async function letAiResignAction(leagueId: string) {
 }
 
 /**
+ * THE MIRROR OF THE EXTENSION GUARD. A man with real years left on his deal is
+ * an EXTENSION, not a re-sign — he is not on the clock, his loyalty discount
+ * is not decaying, and re-signing him here would hand him the wrong context
+ * and the wrong price. The re-sign page only ever lists players at
+ * `yearsRemaining <= 1`, so this is unreachable through the UI; it is here
+ * because the extension screen refuses the opposite case at the same boundary
+ * and both of these are POST endpoints.
+ */
+async function assertResignable(playerId: string) {
+  const contract = await prisma.contract.findUnique({
+    where: { playerId },
+    select: { yearsRemaining: true },
+  });
+  if (contract && contract.yearsRemaining > 1) {
+    throw new Error(
+      `He is under contract for ${contract.yearsRemaining} more years — that is an extension, and you negotiate it from his player page.`,
+    );
+  }
+}
+
+/**
  * Open re-sign talks with one of your own expiring players.
  *
  * Same model, same function, same meter as free agency. The differences are
@@ -42,6 +63,7 @@ export async function openResignNegotiationAction(
   leagueId: string, playerId: string,
 ): Promise<NegotiationSession> {
   await assertLeagueOwner(leagueId);
+  await assertResignable(playerId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const team = await prisma.team.findFirstOrThrow({ where: { leagueId, isUser: true } });
@@ -61,6 +83,7 @@ export async function submitResignOfferAction(
   offer: Offer, structure: DealStructure, fingerprint: string,
 ): Promise<NegotiationOutcome> {
   await assertLeagueOwner(leagueId);
+  await assertResignable(playerId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const team = await prisma.team.findFirstOrThrow({ where: { leagueId, isUser: true } });
@@ -68,6 +91,24 @@ export async function submitResignOfferAction(
     leagueId, playerId, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
     settings, incumbent: true, offer, structure, fingerprint,
   });
-  if (outcome.ok) revalidatePath(`/league/${leagueId}`, 'layout');
+  // NO revalidatePath ON SUCCESS, and this is the whole reason the signing
+  // confirmation can exist.
+  //
+  // A Server Action that revalidates hands the client a fresh RSC payload for
+  // the current route as part of its own response, so the screen re-renders
+  // the instant the deal closes — and a signed player is no longer in the
+  // re-sign list, no longer a free agent, no longer whatever the panel was
+  // mounted inside. The panel unmounts in the same frame as the answer
+  // arrives, taking any record of what was just agreed with it. That is
+  // measured behaviour, not theory: `ActionButton` documents 746ms from action
+  // to unmount on one league, which is why its done beat so often never
+  // painted.
+  //
+  // So the refresh is the USER's, at the moment they dismiss the confirmation
+  // (see NegotiationPanel and SigningConfirmation). `router.refresh()` there
+  // re-renders this route from the server and invalidates the client router
+  // cache, so nothing is stale once they are done reading. Nothing that
+  // matters is stale before then either: every figure on the confirmation was
+  // read back off the contract row after it was written.
   return outcome;
 }

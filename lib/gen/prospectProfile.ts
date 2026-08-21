@@ -106,11 +106,6 @@ export function generateCollegeProfile(rng: Rng, position: Position, trueAttrs: 
         g.recYds = Math.round((g.rec ?? 0) * clamp(7 + q * 3, 5, 13));
         break;
       }
-      case 'FB': {
-        g.rushAtt = normGame(rng, 3, 1.5); g.rushYds = Math.round((g.rushAtt ?? 0) * 3.8);
-        g.rec = normGame(rng, 1, 1); g.recYds = Math.round((g.rec ?? 0) * 8);
-        break;
-      }
       case 'WR': {
         const targets = normGame(rng, 5 + q * 4, 2.5);
         g.targets = targets;
@@ -262,7 +257,7 @@ function testingQuality(rng: Rng, archetype: TestingArchetype, truePercentile: n
  */
 export const BASE_40: Partial<Record<Position, number>> = {
   WR: 4.48, CB: 4.47, RB: 4.52, S: 4.55, TE: 4.68, LB: 4.72, QB: 4.75, EDGE: 4.68,
-  FB: 4.85, DT: 5.05, RT: 5.25, LT: 5.25, RG: 5.3, LG: 5.3, C: 5.28, K: 4.95, P: 4.95,
+  DT: 5.05, RT: 5.25, LT: 5.25, RG: 5.3, LG: 5.3, C: 5.28, K: 4.95, P: 4.95,
 };
 
 /**

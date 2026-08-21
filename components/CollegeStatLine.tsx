@@ -22,7 +22,7 @@ export function CollegeStatLine({ position, stats }: { position: string; stats: 
         </div>
       );
     }
-    case 'RB': case 'FB':
+    case 'RB':
       return (
         <div className="grid grid-cols-2 gap-x-4 text-sm">
           {row('Carries', stats.rushAtt ?? 0)}

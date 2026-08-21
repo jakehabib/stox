@@ -73,7 +73,6 @@ export type AttrMap = Record<string, number>;
 export const POSITION_WEIGHTS: Record<Position, AttrMap> = {
   QB: { armStrength: 0.14, accuracy: 0.20, deepAccuracy: 0.11, pocket: 0.12, decision: 0.18, awareness: 0.12, football_iq: 0.08, speed: 0.05 },
   RB: { speed: 0.18, acceleration: 0.14, elusiveness: 0.16, power: 0.14, vision: 0.16, carrying: 0.10, catching: 0.07, passBlock: 0.05 },
-  FB: { power: 0.28, runBlock: 0.30, strength: 0.18, catching: 0.12, carrying: 0.12 },
   WR: { speed: 0.18, route: 0.20, catching: 0.20, release: 0.12, contested: 0.13, acceleration: 0.10, agility: 0.07 },
   TE: { catching: 0.22, route: 0.17, runBlock: 0.16, passBlock: 0.10, strength: 0.11, speed: 0.12, contested: 0.12 },
   LT: { passBlock: 0.42, runBlock: 0.22, footwork: 0.18, strength: 0.12, awareness: 0.06 },

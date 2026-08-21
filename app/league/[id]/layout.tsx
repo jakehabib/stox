@@ -12,6 +12,7 @@ import { CapAlertBanner } from '@/components/ds/CapAlertBanner';
 import { capComplianceDueNow } from '@/lib/season';
 import { capComplianceReport } from '@/lib/capEnforcement';
 import { transactionCategory } from '@/lib/newsCategory';
+import { ensurePowerSnapshot, powerRankingWireItems } from '@/lib/powerRankings';
 import { prisma } from '@/lib/db';
 import { AccountBadge } from '@/components/auth/AccountBadge';
 
@@ -34,7 +35,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // capComplianceReport wraps teamCapSummary and short-circuits the extra
   // roster scan when the team is compliant, so this is no more work than
   // the plain summary this used to call, and never two of them.
-  const [compliance, workouts, tickerTx] = await Promise.all([
+  const [compliance, workouts, tickerTx, powerItems] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : capComplianceReport(userTeam.id, league.seasonYear, ctx.settings.capMode),
     // Private workouts are the ONLY scarce thing left in scouting — the
     // consensus board is free and the shortlist costs nothing to work — which
@@ -68,7 +69,27 @@ export default async function LeagueLayout({ children, params }: { children: Rea
       orderBy: { createdAt: 'desc' },
       take: 120,
     }),
+    // The week's power-ranking movers, from the stored weekly snapshots only
+    // (lib/powerRankings.ts). It reads no ranking and computes none — two
+    // indexed queries on a layout that renders on every league page — and it
+    // obeys the same three rules as everything else on this strip: current
+    // league year only (both snapshots are filtered to league.seasonYear, so
+    // an old season cannot scroll past the way the seeded championships used
+    // to), never padded (a quiet week returns nothing and the strip is
+    // shorter), and capped at two so a ranking update cannot crowd out a
+    // trade or a firing. A failure here must not 500 every league page, so it
+    // degrades to no items.
+    powerRankingWireItems(params.id, league).catch(() => []),
   ]);
+
+  // Write this week's ranking down once, the first time any league page is
+  // opened in a new week. Movement CANNOT be recomputed later — a team rating
+  // moves with the roster, so a club that signed a free agent on Tuesday would
+  // retroactively rewrite what it was ranked on Sunday — which is why it has
+  // to be captured as the week is being lived. The ideal home for this is the
+  // week tick in lib/season.ts; this is the version that does not need to own
+  // that file, and it is idempotent either way (see ensurePowerSnapshot).
+  await ensurePowerSnapshot(league.id, { league }).catch(() => {});
   // Last season's title and awards stay wire-worthy through the first few
   // weeks of the new league year — that is still "what just happened" to a GM
   // reporting for a new season — and go quiet after that. Everything older is
@@ -80,7 +101,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // Injuries outnumber every other event type by an order of magnitude, so a
   // straight "most recent 14" is a wall of identical injury lines. Round-robin
   // across categories instead — recency still orders within each category.
-  const byCategory = new Map<string, typeof tickerTx>();
+  const byCategory = new Map<string, { category: ReturnType<typeof transactionCategory>; headline: string }[]>();
   // Breaking news only. Round-robin alone still admitted injury reports and
   // "pacing the league" filler, which is what made the ticker read as a wall
   // of identical lines late in a season — one lane counted fourteen items in
@@ -89,7 +110,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   for (const t of wireEligible.filter((x) => isBreakingNews(x.type, x.headline))) {
     const cat = transactionCategory(t.type, t.headline);
     if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat)!.push(t);
+    byCategory.get(cat)!.push({ category: cat, headline: t.headline });
   }
   // Capped, never padded. If four things have happened this season, the wire
   // carries four; if nothing has, it does not render at all (the component
@@ -101,12 +122,23 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // categories when several are active; the cap is what handles the weeks
   // where only one is.
   const PER_CATEGORY_CAP = 4;
+  // Power-ranking movement enters the round-robin as its own category rather
+  // than being prepended, so it takes at most one slot per round like every
+  // other kind of news and is bound by the same cap. It is genuinely weekly,
+  // genuinely breaking and genuinely about the league, which is why it is here
+  // at all — but it does not get to be special.
+  // Bucketed separately from LEAGUE so it competes with itself for slots
+  // rather than with a coordinator being fired; filed under the LEAGUE kicker
+  // because that is what it is when it is read out.
+  if (powerItems.length > 0) {
+    byCategory.set('POWER', powerItems.map((p) => ({ category: p.category, headline: p.headline })));
+  }
   const tickerItems: { category: ReturnType<typeof transactionCategory>; headline: string }[] = [];
   for (let round = 0; round < PER_CATEGORY_CAP && tickerItems.length < 14; round++) {
     let added = false;
-    for (const [cat, rows] of byCategory) {
+    for (const [, rows] of byCategory) {
       if (round >= rows.length || tickerItems.length >= 14) continue;
-      tickerItems.push({ category: cat as ReturnType<typeof transactionCategory>, headline: rows[round].headline });
+      tickerItems.push(rows[round]);
       added = true;
     }
     if (!added) break;

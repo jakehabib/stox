@@ -143,46 +143,44 @@ export async function submitOfferAction(
   // re-renders him as another team's player and the explanation goes with it.
   // The wire and the pool are correct on the next navigation, which is a
   // second later and after they have read the bad news.
-  if (outcome.ok) revalidatePath(`/league/${leagueId}`, 'layout');
+  // NO revalidatePath ON SUCCESS, and this is the whole reason the signing
+  // confirmation can exist.
+  //
+  // A Server Action that revalidates hands the client a fresh RSC payload for
+  // the current route as part of its own response, so the screen re-renders
+  // the instant the deal closes — and a signed player is no longer in the
+  // re-sign list, no longer a free agent, no longer whatever the panel was
+  // mounted inside. The panel unmounts in the same frame as the answer
+  // arrives, taking any record of what was just agreed with it. That is
+  // measured behaviour, not theory: `ActionButton` documents 746ms from action
+  // to unmount on one league, which is why its done beat so often never
+  // painted.
+  //
+  // So the refresh is the USER's, at the moment they dismiss the confirmation
+  // (see NegotiationPanel and SigningConfirmation). `router.refresh()` there
+  // re-renders this route from the server and invalidates the client router
+  // cache, so nothing is stale once they are done reading. Nothing that
+  // matters is stale before then either: every figure on the confirmation was
+  // read back off the contract row after it was written.
   return outcome;
 }
 
 /**
- * Mid-deal extension — a player with years left on his contract, reached from
- * his own page. Left as it was, deliberately: this is not the re-sign
- * negotiation, and ContractActions/ExtendContractForm have no meter on them.
+ * MID-DEAL EXTENSIONS MOVED, AND THE OLD ENDPOINT IS GONE.
  *
- * The ONE thing added is the hole this would otherwise leave open. A player
- * whose contract is actually expiring is exactly the player the re-sign
- * minigame governs, and reaching him through this form instead of that panel
- * used to hand you the old rubber stamp — sign anything, at any number, no
- * argument. So an expiring deal is refused here and pointed at the window
- * that negotiates it. Every other extension behaves exactly as before.
+ * `extendContractAction` used to live here: cap check, then sign whatever it
+ * was handed, at any number, no argument. It was the last rubber stamp in the
+ * game — free agency and the re-sign window had run through `decideOffer` for
+ * a while, and extending your own player, which is most of a GM's job, had no
+ * negotiation on it at all.
+ *
+ * It is `app/actions/extension.ts` now, on the same evaluator as the other
+ * two. The old function is DELETED rather than left unused, deliberately: a
+ * Server Action is a POST endpoint whether or not any button still points at
+ * it, so leaving it here would have left a live route that signs contracts
+ * without a meter, a patience charge, or a refusal. Moving the UI off it and
+ * leaving it exported would have closed the door and left the window open.
  */
-export async function extendContractAction(
-  leagueId: string, playerId: string, apy: number, years: number, escalation: number, voidYears: number,
-) {
-  await assertLeagueOwner(leagueId);
-  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  const settings = parseSettings(league.settings);
-  const existing = await prisma.contract.findUnique({ where: { playerId }, select: { yearsRemaining: true } });
-  if (existing && existing.yearsRemaining <= 1) {
-    return {
-      ok: false,
-      message: "His deal is up — that's a re-sign, and he negotiates it. Open the Re-sign window and make him an offer there.",
-    };
-  }
-  try {
-    await extendContract({
-      leagueId, playerId, apy, years, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week,
-      escalation, voidYears,
-    });
-  } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : 'Extension failed.' };
-  }
-  revalidatePath(`/league/${leagueId}`, 'layout');
-  return { ok: true, message: 'Extension signed.' };
-}
 
 export async function applyFranchiseTagAction(leagueId: string, playerId: string) {
   await assertLeagueOwner(leagueId);

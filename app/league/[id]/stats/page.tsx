@@ -54,7 +54,7 @@ function nerdyLine(position: string, s: SeasonStats): { label: string; value: st
         { label: 'Rating', value: rating !== null ? rating.toFixed(1) : '—' },
       ];
     }
-    case 'RB': case 'FB':
+    case 'RB':
       return [
         { label: 'YPC', value: rate(s.rushYds ?? 0, s.rushAtt ?? 0, 1) },
         { label: 'Catch %', value: pct(s.rec ?? 0, s.targets ?? 0) },

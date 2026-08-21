@@ -21,6 +21,7 @@ import { generateDraftClass, toPlayerCreate } from './gen/players';
 import { NameRegistry } from './gen/names';
 import { classStrengthSummary } from './gen/prospectProfile';
 import { checkAndUpdateRecords, recordBreakHeadline } from './records';
+import { syncPlayerSeasons } from './playerSeasons';
 import { reseedDraftOrder, startRookieDraft } from './draft';
 import { ensureSeasonSchedule } from './scheduleSeason';
 import { autoDepthChartAll } from './gen/league';
@@ -993,6 +994,17 @@ async function rollSeasonStatsIntoCareer(leagueId: string, seasonYear: number) {
     await prisma.player.update({ where: { id: p.id }, data: { careerStats: writeJson(career), seasonStats: '{}' } });
     recordInputs.push({ id: p.id, firstName: p.firstName, lastName: p.lastName, teamAbbr: p.team?.abbr ?? 'FA', seasonFinal: season, careerFinal: career });
   }
+
+  // Year-by-year stat lines. The merge above is lossy by design — careerStats
+  // comes out with no season and no team on it — so the per-season rows are
+  // rebuilt from this season's played box scores, which are the only place the
+  // club-he-played-for-that-year exists. One sweep, chunked writes, no
+  // per-player round trip; a save that predates PlayerSeason gets its whole
+  // played history caught up here the first time it advances. `seasonYear + 1`
+  // is the age basis: the offseason PROGRESS step ran one step ago and has
+  // already aged everyone for the season about to start. See
+  // lib/playerSeasons.ts and docs/player-seasons.md.
+  await syncPlayerSeasons(leagueId, seasonYear, seasonYear + 1);
 
   const breaks = await checkAndUpdateRecords(leagueId, seasonYear, recordInputs);
   for (const b of breaks) {

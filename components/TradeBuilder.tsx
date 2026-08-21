@@ -363,7 +363,7 @@ const SORT_COLUMNS_RIGHT: { key: SortKey; label: string; width: string }[] = [
 // Duplicated from lib/league-data.ts positionSortKey — that module pulls in
 // prisma, so it can't be imported into this client component. Keep in sync
 // with positionBadgeClass's grouping if positions ever change.
-const POSITION_ORDER = ['QB', 'RB', 'FB', 'WR', 'TE', 'LT', 'LG', 'C', 'RG', 'RT', 'EDGE', 'DT', 'LB', 'CB', 'S', 'K', 'P'];
+const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'LT', 'LG', 'C', 'RG', 'RT', 'EDGE', 'DT', 'LB', 'CB', 'S', 'K', 'P'];
 function localPositionSortKey(pos: string): number {
   const idx = POSITION_ORDER.indexOf(pos);
   return idx === -1 ? 99 : idx;

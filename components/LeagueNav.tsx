@@ -43,6 +43,7 @@ const CATEGORIES: Category[] = [
   {
     key: 'league', label: 'League', items: [
       { href: '/standings', label: 'Standings' },
+      { href: '/power-rankings', label: 'Power Rankings' },
       { href: '/schedule', label: 'Schedule' },
       { href: '/stats', label: 'Stats' },
       { href: '/news', label: 'News' },

@@ -8,7 +8,11 @@ import { formatMoney } from '@/lib/cap';
 import type { DealStructure, NegotiationSession } from '@/lib/negotiation';
 import { CapMode } from '@/lib/types';
 import { NegotiationPanel } from './NegotiationPanel';
+import { DealStructureControls, DEFAULT_ESCALATION } from './DealStructureControls';
 import { SuitorRumour } from './ds/SuitorRumour';
+
+/** Where a fresh deal opens: cap-friendly year 1, no void years. Reset returns here. */
+const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidYears: 0 };
 
 /**
  * Free agency, the user's side of the table.
@@ -27,6 +31,11 @@ import { SuitorRumour } from './ds/SuitorRumour';
  * outside free agent shares with extending your own player. Those are cap
  * decisions on your side of the table; he does not judge them, so they move
  * the ledger and never the meter.
+ *
+ * Those structure controls are no longer written out here. They lived in this
+ * file and only in this file, which is exactly why the re-sign window did not
+ * have them; they are `DealStructureControls` now and all three contract
+ * screens render the same component.
  */
 export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
   leagueId: string; teamId: string; playerId: string;
@@ -37,17 +46,25 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
   // the negotiation and every resolved random draw; see openNegotiationAction.
   const [session, setSession] = useState<NegotiationSession | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
-  const [structure, setStructure] = useState<DealStructure>({ escalation: 1.12, voidYears: 0 });
+  const [structure, setStructure] = useState<DealStructure>(OPENING_STRUCTURE);
   const [estimate, setEstimate] = useState<ContractEstimate | null>(null);
+  // LEFT THE TABLE. Talks were a one-way door — once the panel was open the
+  // only ways out were signing or navigating away, which is what made it feel
+  // like a trap. Walking out closes the panel and NOTHING else: no server
+  // call, no NegotiationTalks write, no pips handed back. Coming back re-opens
+  // talks from the database, which is precisely why the pips are still gone.
+  const [away, setAway] = useState(false);
+  const [visit, setVisit] = useState(0);
   const router = useRouter();
 
   useEffect(() => {
+    if (away) return;
     let cancelled = false;
     openNegotiationAction(leagueId, playerId, teamId)
       .then((s) => { if (!cancelled) setSession(s); })
       .catch((e) => { if (!cancelled) { setSession(null); setError(e instanceof Error ? e.message : 'Could not open talks.'); } });
     return () => { cancelled = true; };
-  }, [leagueId, playerId, teamId]);
+  }, [leagueId, playerId, teamId, away, visit]);
 
   // Dynasty NEGOTIATION -> Market Knowledge. null means the GM has not bought
   // the skill, in which case nothing renders and this behaves as before.
@@ -59,6 +76,24 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
     return () => { cancelled = true; };
   }, [leagueId, playerId, years]);
 
+  if (away) {
+    return (
+      <div className="panel p-4 space-y-3">
+        <p className="text-sm text-muted">
+          You walked away from the table. Nothing was undone by it — any patience you spent is still
+          spent and he remembers every offer he has already turned down.
+        </p>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => { setSession(undefined); setVisit((v) => v + 1); setAway(false); }}
+        >
+          Re-open talks
+        </button>
+      </div>
+    );
+  }
+
   if (session === undefined) {
     return <div className="panel p-4 text-sm text-muted">Getting his agent on the phone…</div>;
   }
@@ -67,13 +102,14 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
   }
 
   const { gate } = session;
-  const structureLabel = structure.escalation < 0.95 ? 'Front-loaded' : structure.escalation > 1.05 ? 'Back-loaded' : 'Balanced';
 
   return (
     <NegotiationPanel
       initialSession={session}
       structure={structure}
       onSigned={() => router.refresh()}
+      onReset={() => setStructure(OPENING_STRUCTURE)}
+      onCancel={() => setAway(true)}
       onOffer={(offer, str, fingerprint) =>
         submitOfferAction(leagueId, playerId, teamId, offer, str, fingerprint)}
       banner={
@@ -109,39 +145,7 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
         </>
       }
       structureSlot={
-        capMode === 'OFF' ? null : (
-          <div className="space-y-3.5 border-t border-line/50 pt-3.5">
-            <div className="label-sm text-[10px]">Deal shape — your books, not his decision</div>
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="label-sm">Structure</label>
-                <span className="text-xs font-mono">{structureLabel}</span>
-              </div>
-              <input
-                type="range" min={0.85} max={1.25} step={0.01} value={structure.escalation}
-                onChange={(e) => setStructure((s) => ({ ...s, escalation: Number(e.target.value) }))}
-                className="w-full accent-accent2"
-              />
-              <div className="flex justify-between text-[10px] text-muted mt-0.5"><span>Front-load (pay now)</span><span>Back-load (defer cap)</span></div>
-            </div>
-            {capMode === 'REALISTIC' && (
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="label-sm">Void years</label>
-                  <span className="text-xs font-mono">{structure.voidYears === 0 ? 'None' : `+${structure.voidYears}`}</span>
-                </div>
-                <input
-                  type="range" min={0} max={3} step={1} value={structure.voidYears}
-                  onChange={(e) => setStructure((s) => ({ ...s, voidYears: Number(e.target.value) }))}
-                  className="w-full accent-warn"
-                />
-                <p className="text-[11px] text-muted mt-1">
-                  Spreads bonus proration further to lower every real year's cap hit — but the remainder lands as dead money the season this deal ends.
-                </p>
-              </div>
-            )}
-          </div>
-        )
+        <DealStructureControls capMode={capMode} structure={structure} onChange={setStructure} />
       }
     />
   );

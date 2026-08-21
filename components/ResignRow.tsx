@@ -8,10 +8,15 @@ import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
 import { positionBadgeClass } from './ds/positionColor';
 import { CapMode } from '@/lib/types';
-import type { NegotiationSession } from '@/lib/negotiation';
+import type { DealStructure, NegotiationSession } from '@/lib/negotiation';
+import { DealStructureControls, DEFAULT_ESCALATION } from './DealStructureControls';
 import { cutPlayerAction, applyFranchiseTagAction } from '@/app/actions/roster';
 import { openResignNegotiationAction, submitResignOfferAction } from '@/app/actions/resign';
 import { SuitorRumour, LoyaltyLine } from './ds/SuitorRumour';
+import { DepthAtPosition, type DepthEntry } from './ds/DepthAtPosition';
+
+/** Where a fresh deal opens. Reset terms returns the shape here. */
+const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidYears: 0 };
 
 /**
  * One expiring contract, and the decision it forces.
@@ -36,16 +41,35 @@ import { SuitorRumour, LoyaltyLine } from './ds/SuitorRumour';
  *
  * Talks are opened lazily, when the row is expanded, so a re-sign page with
  * twelve expiring contracts does not resolve twelve negotiations on load.
+ *
+ * They are also CLOSED honestly. Collapsing the row throws the client session
+ * away and re-opens from the database next time, which is the only correct
+ * behaviour once patience is server state: a negotiation you walked out of has
+ * to still be the negotiation you walked out of when you come back to it.
  */
-export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, canTag, weightLb, heightIn }: {
+export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, canTag, weightLb, heightIn, depth }: {
   leagueId: string; playerId: string; name: string; position: string; age: number; ovr: number;
   currentApy: number; capMode: CapMode; yearsRemaining: number; canTag?: boolean;
+  /**
+   * Your depth chart at his position, in the depth chart's own order, with him
+   * marked. Resolved by the page from DepthChartSlot — the same rows the Depth
+   * Chart screen renders — so the two screens cannot disagree about who plays.
+   */
+  depth?: DepthEntry[];
   /** Still accepted from the page; the negotiation resolves its own cap room server-side. */
   availableSpace?: number;
   weightLb?: number; heightIn?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [session, setSession] = useState<NegotiationSession | null | undefined>(undefined);
+  // The deal SHAPE — front/back-load and void years. The re-sign window simply
+  // did not have this: it passed no structure at all, so every re-signed deal
+  // silently took DEFAULT_STRUCTURE and the app owner was right that the
+  // slider was missing. Same component free agency and extensions render.
+  const [structure, setStructure] = useState<DealStructure>(OPENING_STRUCTURE);
+  // A lookup, not a column: the list is already long and this is the answer to
+  // a question you only ask about one man at a time.
+  const [showDepth, setShowDepth] = useState(false);
   const [confirmingWalk, setConfirmingWalk] = useState(false);
   const [tagPending, setTagPending] = useState(false);
   const [tagMessage, setTagMessage] = useState<string | null>(null);
@@ -64,6 +88,18 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
       .catch(() => { if (!cancelled) setSession(null); });
     return () => { cancelled = true; };
   }, [open, session, leagueId, playerId]);
+
+  /**
+   * Leave the table. It closes the row and drops the client's copy of the
+   * session so re-opening resolves a fresh one from the database — which is
+   * how the pips he has already spent come back with him. Nothing is written,
+   * nothing is refunded, and the panel says so in as many words.
+   */
+  const leaveTable = () => {
+    setOpen(false);
+    setSession(undefined);
+    setStructure(OPENING_STRUCTURE);
+  };
 
   const notResign = () => {
     startTransition(async () => {
@@ -104,15 +140,34 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
       </button>
       {open && (
         <div className="px-4 pb-4 pt-1 border-t border-line/60 space-y-3">
+          {depth && depth.length > 0 && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setShowDepth((v) => !v)}
+                className="btn-secondary text-sm"
+                aria-expanded={showDepth}
+              >
+                {showDepth ? 'Hide' : 'Show'} what&apos;s behind him at {position}
+              </button>
+              {showDepth && <DepthAtPosition position={position} depth={depth} capOn={capMode !== 'OFF'} />}
+            </div>
+          )}
           {session === undefined && <div className="text-sm text-muted py-2">Getting his agent on the phone…</div>}
           {session === null && <div className="text-sm text-bad py-2">Could not open talks with {name}.</div>}
           {session && (
             <NegotiationPanel
               title="Re-sign Talks"
               initialSession={session}
+              structure={structure}
               onSigned={() => { setOpen(false); router.refresh(); }}
-              onOffer={(offer, structure, fingerprint) =>
-                submitResignOfferAction(leagueId, playerId, offer, structure, fingerprint)}
+              onReset={() => setStructure(OPENING_STRUCTURE)}
+              onCancel={leaveTable}
+              onOffer={(offer, str, fingerprint) =>
+                submitResignOfferAction(leagueId, playerId, offer, str, fingerprint)}
+              structureSlot={
+                <DealStructureControls capMode={capMode} structure={structure} onChange={setStructure} />
+              }
               banner={
                 <>
                   {/* Both halves of the same clock, above the meter and before

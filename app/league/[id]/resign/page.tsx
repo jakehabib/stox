@@ -3,6 +3,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { capHit, formatMoney } from '@/lib/cap';
 import { ResignRow } from '@/components/ResignRow';
+import type { DepthEntry } from '@/components/ds/DepthAtPosition';
 import { LetAiResignButton } from '@/components/LetAiResignButton';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 
@@ -22,6 +23,56 @@ export default async function ResignPage({ params }: { params: { id: string } })
   const trulyExpiringCount = expiring.filter((p) => p.contract?.yearsRemaining === 0).length;
 
   const summary = settings.capMode === 'OFF' ? null : await teamCapSummary(team.id, league.seasonYear, settings.capMode);
+
+  // WHAT IS BEHIND EACH OF THEM. "Do I pay this man" cannot be answered without
+  // it — a 74 you can replace with a 72 is a different decision from a 74 whose
+  // backup is a 58 — and the window was asking for the decision without showing
+  // that half of it.
+  //
+  // Read from DepthChartSlot in its own rank order, which is the same table and
+  // the same order the Depth Chart screen renders. Deliberately NOT re-derived
+  // by sorting on rating here: two screens sorting the same players their own
+  // way is how they end up disagreeing about who plays.
+  const depthSlots = await prisma.depthChartSlot.findMany({
+    where: { teamId: team.id },
+    orderBy: { rank: 'asc' },
+    include: { player: { include: { contract: true } } },
+  });
+  const depthByPosition = new Map<string, DepthEntry[]>();
+  for (const slot of depthSlots) {
+    const row: DepthEntry = {
+      playerId: slot.playerId,
+      name: `${slot.player.firstName} ${slot.player.lastName}`,
+      ovr: slot.player.trueOvr,
+      age: slot.player.age,
+      weightLb: slot.player.weightLb,
+      heightIn: slot.player.heightIn,
+      capHit: capHit(slot.player.contract, settings.capMode),
+      yearsRemaining: slot.player.contract?.yearsRemaining ?? 0,
+      isSubject: false,
+    };
+    const list = depthByPosition.get(slot.position) ?? [];
+    list.push(row);
+    depthByPosition.set(slot.position, list);
+  }
+
+  /** His position's chart, with him marked — and appended if he is not slotted. */
+  const depthFor = (playerId: string, position: string): DepthEntry[] => {
+    const list = (depthByPosition.get(position) ?? []).map((d) => ({ ...d, isSubject: d.playerId === playerId }));
+    if (!list.some((d) => d.isSubject)) {
+      const p = expiring.find((e) => e.id === playerId);
+      if (p) {
+        list.push({
+          playerId, name: `${p.firstName} ${p.lastName}`, ovr: p.trueOvr, age: p.age,
+          weightLb: p.weightLb, heightIn: p.heightIn,
+          capHit: capHit(p.contract, settings.capMode),
+          yearsRemaining: p.contract?.yearsRemaining ?? 0,
+          isSubject: true,
+        });
+      }
+    }
+    return list;
+  };
 
   const canTag = settings.franchiseTagEnabled && league.phase === 'RESIGN';
   const alreadyTagged = canTag
@@ -85,6 +136,7 @@ export default async function ResignPage({ params }: { params: { id: string } })
               capMode={settings.capMode}
               yearsRemaining={p.contract?.yearsRemaining ?? 0}
               canTag={canTag && !alreadyTagged}
+              depth={depthFor(p.id, p.position)}
             />
           ))}
         </div>

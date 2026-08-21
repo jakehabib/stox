@@ -21,7 +21,7 @@ export async function getLeagueContext(leagueId: string) {
 }
 
 export function positionSortKey(pos: string): number {
-  const ORDER = ['QB', 'RB', 'FB', 'WR', 'TE', 'LT', 'LG', 'C', 'RG', 'RT', 'EDGE', 'DT', 'LB', 'CB', 'S', 'K', 'P'];
+  const ORDER = ['QB', 'RB', 'WR', 'TE', 'LT', 'LG', 'C', 'RG', 'RT', 'EDGE', 'DT', 'LB', 'CB', 'S', 'K', 'P'];
   const idx = ORDER.indexOf(pos);
   return idx === -1 ? 99 : idx;
 }

@@ -1,5 +1,8 @@
 import { Rng } from './rng';
-import { buildContract, capHitSchedule, deadMoneyOnCut, formatMoney } from './cap';
+import {
+  buildContract, buildExtension, capHitSchedule, deadMoneyOnCut, formatMoney,
+  willingnessHorizon, TERM, type ContractLike,
+} from './cap';
 import { CAP } from './tuning';
 import { CapMode } from './types';
 
@@ -56,7 +59,27 @@ export const PERSONALITY_BLURB: Record<Personality, string> = {
   PROVE_IT: 'He thinks he is worth more than his tape says. Short deal, big number, and he will bet on next year.',
 };
 
-export type Verdict = 'ACCEPT' | 'CLOSE' | 'CONSIDERING' | 'COLD' | 'INSULTED';
+export type Verdict = 'ACCEPT' | 'CLOSE' | 'CONSIDERING' | 'COLD' | 'MAYBE' | 'INSULTED';
+
+/**
+ * Which of the three contract screens this negotiation is.
+ *
+ * All three run this same evaluator — that is the point of the type existing.
+ * Extensions were the last holdout: `ExtendContractForm` had its own form and
+ * `extendContract` signed whatever it was handed, so the one screen a GM
+ * spends most of his time on (keeping his own good players) still had the
+ * rubber stamp this module was written to remove. What differs between the
+ * three is only ever the CONTEXT — who else may bid, what leverage he has,
+ * what discount staying is worth — never the decision.
+ *
+ *   FREE_AGENT — the open market. A rival can outbid you today.
+ *   RESIGN     — his deal is up or nearly up. Nobody may sign him yet, but
+ *                the clock (ResignWindow) is running on your discount.
+ *   EXTENSION  — he is under contract with real years left. Nobody can bid,
+ *                and the years of control you hold are leverage that a man
+ *                with one year left simply does not give you.
+ */
+export type NegotiationMode = 'FREE_AGENT' | 'RESIGN' | 'EXTENSION';
 
 /**
  * Where a re-sign sits on its own clock. Not flavour — it is read off the
@@ -135,6 +158,46 @@ export interface NegotiationContext {
   competition: number;
   /** True for a re-sign — unlocks the loyalty discount. */
   incumbent: boolean;
+  /** Which screen this is. See NegotiationMode. */
+  mode: NegotiationMode;
+  /**
+   * The league year. Part of the seed for the hidden acceptance draw, so a
+   * negotiation reopened next season is genuinely a new one.
+   */
+  seasonYear: number;
+  /**
+   * Seasons still on his CURRENT deal. 0 in free agency, 0 or 1 in the
+   * re-sign window, 2+ in an extension — where it is the whole of your
+   * leverage, since a man you control for three more years cannot walk.
+   */
+  controlYears: number;
+  /**
+   * The deal he is already on, when there is one. Present so an EXTENSION can
+   * be PRICED as what it actually is — years appended to this contract, with
+   * its remaining salaries intact — rather than as a hypothetical fresh deal.
+   * The cap gate and the ledger both read the appended contract, so the year-1
+   * number the panel refuses on is the year-1 number the compliance check will
+   * see once it is signed. Nothing secret is in here: it is the user's own
+   * player's own contract.
+   */
+  currentContract: ContractLike | null;
+  /**
+   * The most seasons he will actually put his name to, and the age he does
+   * not intend to play past. Derived from the retirement model the sim itself
+   * rolls (lib/cap.ts willingnessHorizon) rather than invented here, because a
+   * panel that says he will not play past 38 next to a sim that has him
+   * playing at 41 is a lying metric. Stated in the panel BEFORE a term is
+   * chosen; `decideOffer` refuses anything longer in his own voice.
+   */
+  willingYears: number;
+  intendedFinalAge: number;
+  /**
+   * Half-width, in interest points, of the band around the signing threshold
+   * inside which he MIGHT sign — see `signBandFor`. Narrow for a player your
+   * scouts know cold, wide for one they barely know: the fog at the
+   * negotiating table is the same fog that is on his ratings.
+   */
+  bandHalfWidth: number;
   /** Which half of the re-sign window this is. Null in free agency. */
   resignWindow: ResignWindow | null;
   /**
@@ -222,6 +285,21 @@ export function buildNegotiationContext(opts: {
    * the clock the loyalty discount decays on — see LOYALTY_WINDOW below.
    */
   resignWindow?: ResignWindow | null;
+  /** Which screen. Defaults to the old two-way reading of `incumbent`. */
+  mode?: NegotiationMode;
+  /** League year — seeds the hidden acceptance draw. */
+  seasonYear: number;
+  /** Seasons still on his current deal. Leverage in an extension. */
+  controlYears?: number;
+  /** The deal being extended, for pricing the append. Null everywhere else. */
+  currentContract?: ContractLike | null;
+  /**
+   * How well your staff actually know him, 0-100, straight off
+   * `buildScoutedView`. It already decides how wide his rating range is
+   * drawn; here it decides how wide the "he might sign" band is, so scouting
+   * pays at the table as well as on the board.
+   */
+  scoutConfidence?: number;
   rng: Rng;
 }): NegotiationContext {
   const personality = opts.rng.weighted<Personality>({
@@ -249,13 +327,27 @@ export function buildNegotiationContext(opts: {
   // and mostly gone once it has actually expired, which is both what happens
   // in real football and a thing the panel can state in front of the user
   // BEFORE he commits (see NegotiationPanel's loyalty line).
-  const resignWindow = opts.incumbent ? (opts.resignWindow ?? 'FINAL_CALL') : null;
+  const mode: NegotiationMode = opts.mode ?? (opts.incumbent ? 'RESIGN' : 'FREE_AGENT');
+  // An extension is not on the re-sign clock — his deal is not ending, so
+  // there is no window closing on the discount. It gets the full-size
+  // loyalty figure and its own leverage term below.
+  const resignWindow = mode === 'RESIGN' ? (opts.resignWindow ?? 'FINAL_CALL') : null;
   const loyaltyDiscount = opts.incumbent
     ? (Math.min(LOYALTY_TENURE_CAP, LOYALTY_BASE + opts.yearsWithTeam * LOYALTY_PER_YEAR)
         + (personality === 'LOYAL' ? LOYALTY_WANTS_TO_STAY : 0))
-      * LOYALTY_WINDOW[resignWindow ?? 'FINAL_CALL']
+      * (mode === 'EXTENSION' ? 1 : LOYALTY_WINDOW[resignWindow ?? 'FINAL_CALL'])
     : 0;
   multiplier -= loyaltyDiscount;
+  // YEARS OF CONTROL ARE LEVERAGE, and they are the only leverage an
+  // extension gives you. A man with three seasons still owed cannot go
+  // anywhere, cannot be bid on, and knows it; a man with one is nearly a free
+  // agent. It comes off his price rather than out of his interest so it reads
+  // the same way the loyalty discount does — a cheaper number, not a
+  // mysteriously friendlier meter.
+  const controlDiscount = mode === 'EXTENSION'
+    ? Math.min(CONTROL_DISCOUNT_CAP, Math.max(0, (opts.controlYears ?? 0) - 1) * CONTROL_DISCOUNT_PER_YEAR)
+    : 0;
+  multiplier -= controlDiscount;
   // Ring-chasers discount a contender and charge a rebuild a premium.
   if (personality === 'WINNER') multiplier -= (opts.teamStrength - 0.5) * 0.20;
   // He thinks he is better than his tape. That costs money.
@@ -279,6 +371,13 @@ export function buildNegotiationContext(opts: {
     Math.round(5 - opts.competition * 2 - (opts.ovr >= 85 ? 1 : 0) + (personality === 'LOYAL' ? 1 : 0)),
   );
 
+  // How long he is willing to play on for, off the same retirement model the
+  // sim rolls every offseason. Not a negotiating position and not random
+  // noise: it is what the simulation is going to do to him.
+  const horizon = willingnessHorizon({
+    playerId: opts.playerId, age: opts.age, trueOvr: opts.ovr, position: opts.position,
+  });
+
   return {
     playerId: opts.playerId,
     playerName: opts.playerName,
@@ -292,6 +391,13 @@ export function buildNegotiationContext(opts: {
     patience,
     competition: opts.competition,
     incumbent: opts.incumbent,
+    mode,
+    seasonYear: opts.seasonYear,
+    controlYears: opts.controlYears ?? 0,
+    currentContract: opts.currentContract ?? null,
+    willingYears: horizon.years,
+    intendedFinalAge: horizon.finalAge,
+    bandHalfWidth: bandHalfWidthFor(opts.scoutConfidence ?? 100),
     resignWindow,
     loyaltyDiscount,
   };
@@ -326,6 +432,29 @@ export const LOYALTY_WINDOW: Record<ResignWindow, number> = { WALK_YEAR: 1, FINA
  * also where the suitor is resolved.
  */
 export const RESIGN_LEVERAGE: Record<ResignWindow, number> = { WALK_YEAR: 0.4, FINAL_CALL: 0.85 };
+
+/**
+ * [TUNE] What a year of contractual control is worth off his asking price in
+ * an extension, and the ceiling on it. Two years left is a small nudge; four
+ * is the whole cap. It never applies in free agency or a re-sign, because in
+ * neither of those do you hold anything over him.
+ */
+const CONTROL_DISCOUNT_PER_YEAR = 0.035;
+const CONTROL_DISCOUNT_CAP = 0.10;
+
+/**
+ * How much of a rumoured suitor's interest reaches an EXTENSION table, given
+ * you still hold him for `controlYears` seasons. [TUNE]
+ *
+ * Ceilinged at the walk-year figure and divided by the years you control:
+ * with two seasons still owed a rival club is a rumour his agent files away,
+ * with four it is barely worth mentioning. Same shape as RESIGN_LEVERAGE and
+ * for the same reason — nobody may bid on a man under contract, so this can
+ * only ever move his asking price, never `gate.competingApy`.
+ */
+export function extensionLeverage(controlYears: number): number {
+  return RESIGN_LEVERAGE.WALK_YEAR / Math.max(1, controlYears);
+}
 
 /**
  * The discount stated in words, because stating it as a percentage next to
@@ -363,6 +492,19 @@ function satisfaction(ratio: number, tolerance: number): number {
   return Math.pow(Math.max(0, ratio), exponent);
 }
 
+/**
+ * How many seasons this offer actually ties him to the club.
+ *
+ * The same number everywhere it matters — the player's own view of the term,
+ * the league's 12-year ceiling and his willingness horizon — because those
+ * three disagreeing about what "the term" is would be three different bugs.
+ * On an extension it is the add-on plus the years already owed; everywhere
+ * else the offer is the whole contract.
+ */
+export function committedTerm(ctx: NegotiationContext, offer: Offer): number {
+  return offer.years + (ctx.mode === 'EXTENSION' ? ctx.controlYears : 0);
+}
+
 export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvaluation {
   const w = PERSONALITY_WEIGHTS[ctx.personality];
 
@@ -371,10 +513,17 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
 
   // Years cut both ways: too few reads as a lack of commitment, too many is
   // fine for most and actively unwanted by a prove-it player.
-  const yearsRatio = offer.years / ctx.desiredYears;
+  //
+  // AN EXTENSION IS JUDGED ON THE TOTAL. `offer.years` there is the size of
+  // the ADD-ON — the number he negotiates — but what he is agreeing to is
+  // being tied to this club for the add-on PLUS everything already on his
+  // deal. A 33-year-old with two years left taking four more is committing
+  // through 39, and it is that figure he has an opinion about.
+  const committedYears = committedTerm(ctx, offer);
+  const yearsRatio = committedYears / ctx.desiredYears;
   const yearsScore =
-    ctx.personality === 'PROVE_IT' && offer.years > ctx.desiredYears
-      ? Math.max(0, 1 - (offer.years - ctx.desiredYears) * 0.28)
+    ctx.personality === 'PROVE_IT' && committedYears > ctx.desiredYears
+      ? Math.max(0, 1 - (committedYears - ctx.desiredYears) * 0.28)
       : satisfaction(Math.min(yearsRatio, 1.15), 0.55);
 
   const guaranteeScore = satisfaction(offer.guaranteePct / ctx.desiredGuarantee, 0.7);
@@ -415,9 +564,9 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   }
   if (yearsScore < 0.85) {
     demands.push(
-      ctx.personality === 'PROVE_IT' && offer.years > ctx.desiredYears
+      ctx.personality === 'PROVE_IT' && committedYears > ctx.desiredYears
         ? 'He does not want to be tied down this long — keep it short.'
-        : offer.years < ctx.desiredYears
+        : committedYears < ctx.desiredYears
           ? 'He wants a longer commitment than this.'
           : 'The term is not what he had in mind.',
     );
@@ -460,6 +609,98 @@ export function minimumAcceptableApy(ctx: NegotiationContext, years: number, gua
   return Math.ceil(hi);
 }
 
+// --- The band: where "will he sign?" stops having a clean answer ------------
+
+/**
+ * ===========================================================================
+ * "HE MIGHT SIGN HERE"
+ * ===========================================================================
+ * The meter used to be an oracle. `accepted` flipped at exactly 82 interest,
+ * so the optimal play was to binary-search that number and pay it, every
+ * time, forever. The app owner named it: *"The breakpoints on the contract
+ * interest meter are great, but around the breakpoint to sign lets have some
+ * mystery like 'he might sign here' so that way players can't always just pay
+ * the bare minimum"*.
+ *
+ * So there are three regions instead of two — he will not, he might, he will
+ * — and the middle one is REAL. This is the part that decides whether the
+ * feature is a mechanic or a lie: `decideOffer` genuinely does not accept
+ * every offer inside the band. If the band were a display state over a
+ * deterministic yes, the panel would be over-stating its own uncertainty,
+ * which is the same bug class as under-stating it (README, design principle
+ * 6). The draw below is what the server actually acts on.
+ *
+ * IT CANNOT BE RE-ROLLED. The draw is seeded on the player, the league year
+ * and the EXACT offer — nothing else. Three consequences, all deliberate:
+ *
+ *   - Submitting the identical offer twice gives the identical answer. There
+ *     is no "refuse, resubmit, hope" strategy, which would have been a worse
+ *     calculator than the one this replaces. He said no and he means it: the
+ *     same money will not sign him again this league year, and no wording in
+ *     the panel may imply that waiting might change that.
+ *   - Moving the offer at all — a hundred thousand dollars, one point of
+ *     guarantee — draws a fresh hidden value. Exploration is therefore
+ *     possible but never free: every different offer he turns down costs a
+ *     pip, and patience is the resource that was already there for exactly
+ *     this.
+ *   - Patience spent is deliberately NOT in the seed. It is a value that can
+ *     legitimately differ between the session the client is holding and the
+ *     row the server reads, and anything that can drift may not be allowed to
+ *     decide acceptance, or the meter and the server would disagree for
+ *     reasons neither can show the user.
+ *
+ * It survives a reload and a walk-out for free, because there is nothing to
+ * survive: the answer is a pure function of facts already in the database.
+ * ===========================================================================
+ */
+export type SignBand = 'NO' | 'MAYBE' | 'YES';
+
+/** The interest at which he used to flip from no to yes. Now the centre of the band. */
+export const ACCEPT_INTEREST = 82;
+
+/**
+ * [TUNE] Band half-width in interest points, by how well he is scouted.
+ *
+ * Around the threshold one interest point is worth roughly 0.6% of his
+ * asking price, so a well-scouted player's +-4 is about +-2.5% — shaving the
+ * last few hundred thousand off a $20M deal is a real gamble — and an
+ * unscouted player's +-12 is an honest fog seven times as wide. A fair offer
+ * is never a coin flip; a minimal one always is.
+ */
+const BAND_MIN_HALF_WIDTH = 4;
+const BAND_MAX_HALF_WIDTH = 12;
+
+export function bandHalfWidthFor(scoutConfidence: number): number {
+  const known = Math.max(0, Math.min(100, scoutConfidence)) / 100;
+  return Math.round(BAND_MAX_HALF_WIDTH - (BAND_MAX_HALF_WIDTH - BAND_MIN_HALF_WIDTH) * known);
+}
+
+/** The three regions, as the meter draws them. */
+export function signBandFor(ctx: NegotiationContext, interest: number): SignBand {
+  if (interest >= ACCEPT_INTEREST + ctx.bandHalfWidth) return 'YES';
+  if (interest >= ACCEPT_INTEREST - ctx.bandHalfWidth) return 'MAYBE';
+  return 'NO';
+}
+
+/** Where in the band this offer sits, 0..1. Never rendered as a number. */
+export function maybeChance(ctx: NegotiationContext, interest: number): number {
+  const lo = ACCEPT_INTEREST - ctx.bandHalfWidth;
+  const span = Math.max(1, ctx.bandHalfWidth * 2);
+  return Math.max(0, Math.min(1, (interest - lo) / span));
+}
+
+/**
+ * The hidden draw. Pure, seeded, and identical in the browser and in the
+ * Server Action — see the block above for why it is seeded on exactly these
+ * three things and on nothing else.
+ */
+function acceptanceRoll(ctx: NegotiationContext, offer: Offer): number {
+  return new Rng([
+    'sign', ctx.playerId, ctx.seasonYear,
+    Math.round(offer.apy), Math.round(offer.years), Math.round(offer.guaranteePct * 1000),
+  ].join('-')).next();
+}
+
 // --- The gate: everything about the DEAL that isn't about the player --------
 
 /**
@@ -476,7 +717,12 @@ export interface NegotiationGate {
   minSalary: number;
   /** Slider ceiling. Not a rule — just where the control stops. */
   maxSalary: number;
-  /** Hard term limit for his age (see maxYearsForAge). */
+  /**
+   * The LEAGUE's term limit — flat 12 for everybody (see maxYearsForAge).
+   * It used to be an age ladder; the age part of it belongs to the player now
+   * and lives on the context as `willingYears`, so a refusal on term is his
+   * refusal, in his voice, and not the rulebook's.
+   */
   maxYears: number;
   /** Leading rival offer, 0 when nobody else is bidding. */
   competingApy: number;
@@ -498,6 +744,31 @@ export interface DealStructure {
 export const DEFAULT_STRUCTURE: DealStructure = { escalation: 1.12, voidYears: 0 };
 
 /**
+ * Force an offer into the legal range, whatever it arrived as.
+ *
+ * Exists because the panel grew typed number fields beside its sliders — the
+ * app owner asked for them: *"on the contracts, allow us to type in the
+ * numbers in case the sliders aren't granular enough"* — and a text field can
+ * hold things a range input cannot: empty, negative, `1e9`, `NaN`, letters. A
+ * slider could only ever produce a value between its ends; typing has to be
+ * given the same guarantee explicitly, and it has to be the SAME guarantee,
+ * or the meter would be drawn for one offer and the server handed another.
+ *
+ * Pure and exported rather than living in the component so the sweep in
+ * scripts/checkNegotiationAgreement.ts can generate the widened state space
+ * typed entry opens up and check the clamp is closed under it.
+ */
+export function clampOffer(offer: Offer, gate: NegotiationGate): Offer {
+  const num = (v: number, fallback: number) => (Number.isFinite(v) ? v : fallback);
+  const clampTo = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  return {
+    apy: Math.round(clampTo(num(offer.apy, gate.minSalary), gate.minSalary, gate.maxSalary)),
+    years: Math.round(clampTo(num(offer.years, 1), 1, gate.maxYears)),
+    guaranteePct: clampTo(num(offer.guaranteePct, 0), 0, 1),
+  };
+}
+
+/**
  * How the guarantee slider becomes a real contract.
  *
  * Guaranteed money in this schema is carried by the signing bonus, which is
@@ -511,15 +782,33 @@ export function contractShapeFor(offer: Offer): { bonusPct: number; guaranteedPc
   return { bonusPct: Math.min(0.57, 0.12 + g * 0.45), guaranteedPct: g };
 }
 
-/** Why an offer can't be signed right now, other than him not wanting it. */
-export type Block = 'FLOOR' | 'TERM' | 'CAP';
+/**
+ * Why an offer can't be signed right now.
+ *
+ * FLOOR/TERM/CAP are the ledger's refusals — they never reached him and cost
+ * nothing. WILLING is HIS refusal, and it is here rather than in the
+ * evaluation because it is absolute: no amount of money buys a season he does
+ * not intend to play. It is stated in the panel before the term is chosen, so
+ * it is a limit the user can see rather than a rejection they walk into.
+ */
+export type Block = 'FLOOR' | 'TERM' | 'WILLING' | 'CAP';
 
 export interface OfferDecision {
   evaluation: OfferEvaluation;
   /** Year-1 cap hit this exact offer would carry. The number the cap gate uses. */
   year1CapHit: number;
   capHitSchedule: number[];
+  /** Everything the resulting contract is worth — on an extension, old years included. */
   totalValue: number;
+  /**
+   * The value of the years being ADDED. Identical to `totalValue` on a fresh
+   * deal; on an extension it is the "4 years, $120M" figure he negotiated,
+   * which is a different and smaller number than the contract's total. Both
+   * are carried so neither screen has to guess which one it is holding.
+   */
+  newMoneyValue: number;
+  /** Length of the resulting contract — add-on plus existing years on an extension. */
+  contractYears: number;
   guaranteedMoney: number;
   /** What releasing him in year 1 would leave on the books. */
   deadMoneyIfCut: number;
@@ -528,6 +817,12 @@ export interface OfferDecision {
   blocked: Block | null;
   /** A rival is offering more per year. He signs THERE, not here. */
   outbid: boolean;
+  /**
+   * Which of the three regions this offer is in: he will not, he might, he
+   * will. This is what the panel draws. `accepted` below is the answer, and
+   * inside the band the panel must not show it — that is the whole mechanic.
+   */
+  signBand: SignBand;
   /** True only when submitting this right now signs him. */
   accepted: boolean;
   /**
@@ -543,6 +838,12 @@ export interface OfferDecision {
    * and the server CHARGES it — two places, and they may never differ.
    */
   patienceCost: number;
+  /**
+   * What it costs IF he turns it down — which is what the button may state
+   * inside the band, since `patienceCost` there is 0 or 1 according to a
+   * hidden draw and printing it would hand the answer over on the label.
+   */
+  maxPatienceCost: number;
   /** Stated reason this can't be signed, or null when it can. */
   reason: string | null;
 }
@@ -567,7 +868,26 @@ export function decideOffer(
   const evaluation = evaluateOffer(ctx, offer);
 
   const shape = contractShapeFor(offer);
-  const c = buildContract({
+  // THE CONTRACT THIS OFFER ACTUALLY PRODUCES. On an extension that is the
+  // existing deal with years appended — its remaining salaries untouched, its
+  // unamortized bonus carried — and not a hypothetical fresh contract. It has
+  // to be the real one: the ledger below is drawn from this and so is the cap
+  // gate, and the cap gate has to agree with the compliance check that runs
+  // the instant it is signed.
+  const extending = ctx.mode === 'EXTENSION' && ctx.currentContract !== null;
+  const ext = extending
+    ? buildExtension({
+        current: ctx.currentContract!,
+        newMoneyApy: offer.apy,
+        addYears: offer.years,
+        signedYear: ctx.currentContract!.signedYear,
+        escalation: structure.escalation,
+        bonusPct: shape.bonusPct,
+        guaranteedPct: shape.guaranteedPct,
+        voidYears: structure.voidYears,
+      })
+    : null;
+  const c = ext ?? buildContract({
     apy: offer.apy,
     years: offer.years,
     signedYear: 0,
@@ -579,9 +899,14 @@ export function decideOffer(
   const schedule = capHitSchedule(priced, gate.capMode);
   const year1CapHit = schedule[0] ?? 0;
   const totalValue = c.baseSalaries.reduce((a, b) => a + b, 0) + c.signingBonus;
-  const prorationYears = Math.min(offer.years + structure.voidYears, 5);
+  // What he is agreeing to, as against what the contract is worth in total.
+  // On a fresh deal they are the same figure; on an extension they are not,
+  // and the panel prints both under their own names.
+  const newMoneyValue = ext ? ext.newMoneyTotal : totalValue;
+  const contractYears = c.years;
+  const prorationYears = Math.min(contractYears + structure.voidYears, 5);
   const strandedVoidMoney = structure.voidYears > 0
-    ? Math.max(0, c.signingBonus - Math.round(c.signingBonus / prorationYears) * offer.years)
+    ? Math.max(0, c.signingBonus - Math.round(c.signingBonus / prorationYears) * contractYears)
     : 0;
 
   let blocked: Block | null = null;
@@ -591,7 +916,18 @@ export function decideOffer(
     reason = `No contract may pay under the league minimum of ${formatMoney(gate.minSalary)}.`;
   } else if (offer.years < 1 || offer.years > gate.maxYears) {
     blocked = 'TERM';
-    reason = `At ${ctx.age} the longest deal anyone may be handed is ${gate.maxYears} year${gate.maxYears === 1 ? '' : 's'}.`;
+    reason = extending
+      ? `He is already signed for ${ctx.controlYears} years, and no contract may run past ${TERM.MAX_CONTRACT_YEARS} — ${gate.maxYears} more is the most you may add.`
+      : `No contract may run longer than ${TERM.MAX_CONTRACT_YEARS} years.`;
+  } else if (committedTerm(ctx, offer) > ctx.willingYears) {
+    // HIS refusal, not the rulebook's, and it is on screen beside the term
+    // control before anybody drags it. Money does not move this.
+    blocked = 'WILLING';
+    reason = extending
+      ? `He is ${ctx.age} and has no intention of playing past ${ctx.intendedFinalAge}. With ${ctx.controlYears} years already on his deal that is ${Math.max(0, ctx.willingYears - ctx.controlYears)} more at most, at any price.`
+      : ctx.willingYears <= 1
+        ? `He is ${ctx.age} and will only go year to year now — he does not intend to play past ${ctx.intendedFinalAge}.`
+        : `He is ${ctx.age} and has no intention of playing past ${ctx.intendedFinalAge}. ${ctx.willingYears} years is as long as he will commit, at any price.`;
   } else if (gate.capMode !== 'OFF' && year1CapHit > gate.capSpace) {
     blocked = 'CAP';
     reason = `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room — clear space or lower the deal.`;
@@ -604,22 +940,54 @@ export function decideOffer(
   if (!reason && outbid) {
     reason = `${gate.competingTeam ?? 'Another team'} is at ${formatMoney(gate.competingApy)}/yr. Beat it or he signs there.`;
   }
-  if (!reason && !evaluation.accepted) reason = evaluation.headline;
+
+  // The three regions, and the hidden draw that resolves the middle one. See
+  // the "HE MIGHT SIGN HERE" block above: same seed on both sides of the
+  // wire, so the browser and the Server Action reach the same answer for the
+  // same offer, and neither of them can re-roll it.
+  const signBand = signBandFor(ctx, evaluation.interest);
+  const wouldSign = signBand === 'YES'
+    || (signBand === 'MAYBE' && acceptanceRoll(ctx, offer) < maybeChance(ctx, evaluation.interest));
+
+  // NOTE THE ABSENCE OF `wouldSign` IN THIS CONDITION. The reason line is
+  // rendered on screen, so it may only ever depend on things the user is
+  // allowed to know. Writing it only when the offer is going to be refused
+  // would have leaked the hidden draw straight onto the panel — the band
+  // would have said "he might" while the presence or absence of a sentence
+  // underneath quietly told you the answer. It is null only when he is a
+  // certainty, which is a thing the meter already says out loud.
+  if (!reason) {
+    if (signBand === 'MAYBE') {
+      reason = 'His agent will not say either way at this number. It might get done — and finding out costs a pip if it does not.';
+    } else if (signBand === 'NO') {
+      reason = evaluation.headline;
+    }
+  }
+
+  const signs = wouldSign && !blocked && !outbid;
+  const refused = !blocked && !signs;
 
   return {
     evaluation,
     year1CapHit,
     capHitSchedule: schedule,
     totalValue,
+    newMoneyValue,
+    contractYears,
     guaranteedMoney: c.guaranteed,
     deadMoneyIfCut: deadMoneyOnCut(priced, gate.capMode),
     strandedVoidMoney,
     blocked,
     outbid,
-    accepted: evaluation.accepted && !blocked && !outbid,
-    costsPatience: !blocked && !(evaluation.accepted && !outbid),
+    signBand,
+    accepted: signs,
+    costsPatience: refused,
     // A lowball is remembered whether or not somebody else is bidding.
-    patienceCost: !blocked && !(evaluation.accepted && !outbid) ? (evaluation.insulting ? 2 : 1) : 0,
+    patienceCost: refused ? (evaluation.insulting ? 2 : 1) : 0,
+    // What a refusal WOULD cost, whether or not this one is going to be
+    // refused. The button label prints this inside the band; printing the
+    // real cost there would leak the hidden draw onto the screen.
+    maxPatienceCost: blocked ? 0 : evaluation.insulting ? 2 : 1,
     reason,
   };
 }
@@ -666,6 +1034,17 @@ export function sessionFingerprint(s: NegotiationSession): string {
   return [
     s.ctx.playerId, s.ctx.personality, s.ctx.reservationApy, s.ctx.desiredYears,
     s.ctx.desiredGuarantee.toFixed(3), s.ctx.patience, s.ctx.resignWindow ?? '-',
+    // Everything the band and the term refusal are computed from. All four
+    // are stable facts about the man and the year — but they decide answers
+    // now, so a session where any of them moved is a session that moved.
+    s.ctx.mode, s.ctx.seasonYear, s.ctx.controlYears, s.ctx.willingYears,
+    s.ctx.intendedFinalAge, s.ctx.bandHalfWidth,
+    // The deal being extended is an INPUT to the price now — a restructure
+    // between opening the panel and pressing the button really does change
+    // what the offer produces, so it is a session that moved.
+    s.ctx.currentContract
+      ? `${s.ctx.currentContract.years}/${s.ctx.currentContract.yearsRemaining}/${s.ctx.currentContract.signingBonus}/${s.ctx.currentContract.baseSalaries}`
+      : '-',
     s.gate.capMode, s.gate.capSpace, s.gate.minSalary, s.gate.maxYears, s.gate.competingApy,
     // The suitor is named on screen and it moves his asking price, so a suitor
     // that changed under the user is a session that moved under the user.
@@ -676,6 +1055,45 @@ export function sessionFingerprint(s: NegotiationSession): string {
   // session the client is holding and the one the server resolves the instant
   // an offer is charged. Putting it in here would make every second offer
   // refuse itself as "the terms moved".
+}
+
+/**
+ * A DEAL THAT ACTUALLY EXISTS — read back off the contract row after it was
+ * written, never assembled from what the panel had staged.
+ *
+ * The app owner asked for the moment to land: *"once a contract is signed -
+ * free agent, re sign or extension - we need some sort of visual feedback that
+ * the signing is done"*. What makes that honest rather than decorative is
+ * where these numbers come from. The client's offer went through a clamp, a
+ * contract builder, a bonus split and — on an extension — an append onto an
+ * existing deal, and the server may have applied a structure the panel never
+ * saw. Confirming the STAGED figures would be the easiest lying metric in the
+ * game to ship and the hardest for anybody to notice, because it only differs
+ * in the cases nobody checks.
+ */
+export interface SignedDeal {
+  playerName: string;
+  position: string;
+  playerId: string;
+  teamAbbr: string;
+  teamId: string;
+  mode: NegotiationMode;
+  /** Length of the CONTRACT that now exists — on an extension, old years included. */
+  years: number;
+  /** Everything it is worth, off the stored base salaries and bonus. */
+  totalValue: number;
+  /** The years just added, where that differs. Equal to `totalValue` on a fresh deal. */
+  newMoneyValue: number;
+  /** APY he agreed to — new money on an extension. */
+  apy: number;
+  guaranteed: number;
+  /** This season's charge, off the row that was written. */
+  capHitThisYear: number;
+  /** Cap room before and after, both off teamCapSummary. The delta is the difference. */
+  capSpaceBefore: number;
+  capSpaceAfter: number;
+  /** The club you outbid, when you outbid one. Free agency only. */
+  beat: { teamName: string; apy: number } | null;
 }
 
 /** What a submitted offer did. Returned by both negotiation Server Actions. */
@@ -697,4 +1115,6 @@ export interface NegotiationOutcome {
   session: NegotiationSession;
   /** The server's read of the offer that was just submitted. */
   decision: OfferDecision;
+  /** Present only when `ok` — the deal as it was actually written. */
+  signed?: SignedDeal;
 }

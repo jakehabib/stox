@@ -64,7 +64,7 @@ function confidenceTier(confidence: number): Tier {
 }
 
 const POSITION_NOUN: Record<Position, string> = {
-  QB: 'quarterback', RB: 'running back', FB: 'fullback', WR: 'receiver', TE: 'tight end',
+  QB: 'quarterback', RB: 'running back', WR: 'receiver', TE: 'tight end',
   LT: 'left tackle', LG: 'left guard', C: 'center', RG: 'right guard', RT: 'right tackle',
   EDGE: 'edge rusher', DT: 'interior lineman', LB: 'linebacker', CB: 'cornerback', S: 'safety',
   K: 'kicker', P: 'punter',

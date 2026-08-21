@@ -32,7 +32,6 @@ export interface GeneratedPlayer {
 const BODY: Record<Position, { h: number; hSd: number; w: number; wSd: number }> = {
   QB:  { h: 75, hSd: 1.6, w: 220, wSd: 12 },
   RB:  { h: 70, hSd: 1.6, w: 214, wSd: 14 },
-  FB:  { h: 72, hSd: 1.3, w: 245, wSd: 12 },
   WR:  { h: 73, hSd: 2.1, w: 200, wSd: 15 },
   TE:  { h: 77, hSd: 1.4, w: 250, wSd: 13 },
   LT:  { h: 78, hSd: 1.3, w: 313, wSd: 14 },
@@ -54,7 +53,11 @@ const BODY: Record<Position, { h: number; hSd: number; w: number; wSd: number }>
  * many players of each position exist in the world relative to each other.
  */
 const POSITION_FREQUENCY: Record<Position, number> = {
-  QB: 5, RB: 7, FB: 1.5, WR: 13, TE: 6,
+  // The fullback's share went to receiver, not back to the pool. A roster
+  // built for 11 personnel starts three wideouts and needs enough of them to
+  // field three plus depth; carrying a blocking back it can never start was
+  // the old shape.
+  QB: 5, RB: 7, WR: 14.5, TE: 6,
   LT: 4, LG: 4, C: 4, RG: 4, RT: 4,
   EDGE: 9, DT: 9, LB: 10, CB: 11, S: 8,
   K: 2, P: 2,

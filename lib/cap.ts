@@ -1,7 +1,8 @@
 import { CAP, CONTRACT, MARKET, Position } from './tuning';
 import { CapMode } from './types';
 import { readJson } from './json';
-import { clamp } from './rng';
+import { retirementChance } from './progression';
+import { Rng, clamp } from './rng';
 
 export interface ContractLike {
   years: number;
@@ -21,11 +22,54 @@ export function capForYear(seasonYear: number, leagueStartYear: number): number 
   return Math.round(CAP.BASE_CAP * Math.pow(1 + CAP.CAP_GROWTH_PER_YEAR, elapsed));
 }
 
-/** Annual proration of a signing bonus (realistic mode only). Void years extend the divisor, up to the real-world 5-year cap. */
+/**
+ * How many SEASONS FROM SIGNING a bonus is charged over. The real rule: five,
+ * whatever the length of the deal (CAP.MAX_PRORATION_YEARS). Void years extend
+ * the divisor up to that same ceiling.
+ */
+export function prorationYears(c: ContractLike): number {
+  return Math.min(c.years + (c.voidYears ?? 0), CAP.MAX_PRORATION_YEARS);
+}
+
+/** Annual proration of a signing bonus (realistic mode only), for the years it is charged in. */
 export function proration(c: ContractLike): number {
-  const yrs = Math.min(c.years + (c.voidYears ?? 0), CAP.MAX_PRORATION_YEARS);
+  const yrs = prorationYears(c);
   return yrs > 0 ? Math.round(c.signingBonus / yrs) : 0;
 }
+
+/**
+ * Which season of the deal we are in, counting from signing. 0 is the year it
+ * was signed. This is the index `baseSalaries` is stored against and the one
+ * the proration window is measured in.
+ */
+function yearIndex(c: ContractLike): number {
+  return Math.max(0, c.years - c.yearsRemaining);
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE FIVE-YEAR PRORATION WINDOW, AND THE BUG THE 12-YEAR CEILING EXPOSED
+ * ---------------------------------------------------------------------------
+ * `proration()` divides the bonus by AT MOST five years, and every function
+ * below used to add that figure to every single year of the contract. While no
+ * deal could exceed five years those two statements were the same statement,
+ * so nothing surfaced it. They are not the same statement any more: the league
+ * ceiling is twelve years now, and a seven-year deal was charging its bonus
+ * seven times over — on the worked example, $58.8M of cap charges against a
+ * $42.0M bonus, and dead money to match.
+ *
+ * The real rule is the one this now implements: the bonus is charged for the
+ * first five seasons and years six onward are PURE BASE SALARY, which is also
+ * why a long deal gets cheap to escape near the end. Every figure below is
+ * measured in the same window so they cannot disagree with each other.
+ *
+ * Nothing changes for any contract that could exist before this: at five years
+ * or fewer the window covers the whole deal and every one of these returns
+ * exactly what it returned. What it also fixes, in passing, is a void-year deal
+ * whose real years plus void years exceeded five — 4+3 charged seven years of
+ * proration against a bonus that only ever amortised over five.
+ * ---------------------------------------------------------------------------
+ */
 
 /**
  * Cap hit for the CURRENT year of a contract, by mode (design doc section 8).
@@ -37,23 +81,26 @@ export function proration(c: ContractLike): number {
 export function capHit(c: ContractLike | null | undefined, mode: CapMode): number {
   if (!c || mode === 'OFF') return 0;
   const bases = readJson<number[]>(c.baseSalaries, []);
-  const yearIdx = Math.max(0, c.years - c.yearsRemaining);
+  const yearIdx = yearIndex(c);
   const base = bases[yearIdx] ?? bases[bases.length - 1] ?? CAP.MIN_SALARY;
 
   if (mode === 'SIMPLIFIED') {
     const total = bases.reduce((a, b) => a + b, 0) + c.signingBonus;
     return Math.round(total / Math.max(1, c.years));
   }
-  return base + proration(c);
+  return base + (yearIdx < prorationYears(c) ? proration(c) : 0);
 }
 
 /** Total contract value across all remaining years. */
 export function remainingValue(c: ContractLike, mode: CapMode): number {
   if (mode === 'OFF') return 0;
   const bases = readJson<number[]>(c.baseSalaries, []);
-  const startIdx = Math.max(0, c.years - c.yearsRemaining);
+  const startIdx = yearIndex(c);
   const remainingBase = bases.slice(startIdx).reduce((a, b) => a + b, 0);
-  return remainingBase + (mode === 'REALISTIC' ? proration(c) * c.yearsRemaining : 0);
+  // Only the bonus years still inside the five-year window are still to be
+  // charged; on a long deal the later years carry base salary and nothing else.
+  const bonusYearsLeft = Math.max(0, prorationYears(c) - startIdx);
+  return remainingBase + (mode === 'REALISTIC' ? proration(c) * bonusYearsLeft : 0);
 }
 
 /**
@@ -65,7 +112,10 @@ export function remainingValue(c: ContractLike, mode: CapMode): number {
  */
 export function deadMoneyOnCut(c: ContractLike | null | undefined, mode: CapMode): number {
   if (!c || mode !== 'REALISTIC') return 0;
-  return proration(c) * (c.yearsRemaining + (c.voidYears ?? 0));
+  // Everything not yet amortised accelerates onto this year's cap — no more
+  // than that, and no less. Void years are already inside `prorationYears`,
+  // which is what makes them accelerate the moment the real deal ends.
+  return proration(c) * Math.max(0, prorationYears(c) - yearIndex(c));
 }
 
 /**
@@ -83,15 +133,140 @@ export function deadMoneyOnCut(c: ContractLike | null | undefined, mode: CapMode
  * years glued onto the front of "the remaining schedule."
  */
 export function capHitSchedule(c: ContractLike, mode: CapMode): number[] {
-  const bases = readJson<number[]>(c.baseSalaries, []).slice(Math.max(0, c.years - c.yearsRemaining));
+  const startIdx = yearIndex(c);
+  const all = readJson<number[]>(c.baseSalaries, []);
+  // Exactly one row per remaining year, always. A well-formed contract has one
+  // base salary per year and this is just `slice`; a row that has lost an entry
+  // would otherwise render a schedule SHORTER than the "3 of 5 years remaining"
+  // printed above it, and a table disagreeing with the sentence over it is the
+  // bug class this codebase treats as a bug. Same fallback capHit() uses.
+  const bases: number[] = [];
+  for (let i = 0; i < Math.max(0, c.yearsRemaining); i++) {
+    bases.push(all[startIdx + i] ?? all[all.length - 1] ?? CAP.MIN_SALARY);
+  }
   if (mode === 'OFF') return bases.map(() => 0);
   if (mode === 'SIMPLIFIED') {
-    const total = bases.reduce((a, b) => a + b, 0) + c.signingBonus;
+    const total = all.reduce((a, b) => a + b, 0) + c.signingBonus;
     const flat = Math.round(total / Math.max(1, c.years));
     return bases.map(() => flat);
   }
   const p = proration(c);
-  return bases.map((b) => b + p);
+  const window = prorationYears(c);
+  return bases.map((b, i) => b + (startIdx + i < window ? p : 0));
+}
+
+/**
+ * ===========================================================================
+ * AN EXTENSION ADDS YEARS. IT DOES NOT REPLACE THE DEAL.
+ * ===========================================================================
+ * `extendContract` (lib/freeagency.ts) tears the old contract up and writes a
+ * fresh one — which is what a re-sign is, and it is what extensions used to do
+ * too. The app owner's ruling on that: *"it should add a year on top, as it
+ * does it real life"*. So this is the real shape:
+ *
+ *   A man with 3 years left signs a 4-year extension. He is under contract for
+ *   SEVEN years. The 3 existing years keep their base salaries exactly as they
+ *   were. The 4 new years are appended. A new signing bonus is paid now and
+ *   prorates from now, still capped at CAP.MAX_PRORATION_YEARS.
+ *
+ * WHAT "NEW MONEY" MEANS, because it is the number he negotiates and the one
+ * most likely to mislead. A "4 year, $120M extension" is $30M/yr on the NEW
+ * years; the APY across all seven years is a different and lower figure. Both
+ * come back from here — `newMoneyTotal` and the full schedule — because
+ * quoting either as the other is the lying-metric failure in its most natural
+ * habitat.
+ *
+ * THE ONE DOCUMENTED SIMPLIFICATION. Real accounting keeps the OLD bonus
+ * prorating on its own original schedule while the new one prorates
+ * separately; a contract row here has a single `signingBonus` field and a
+ * single proration, so the old bonus's unamortized remainder is carried into
+ * the combined bonus and re-prorated across what is now left. This is exactly
+ * what `restructureContract` above already does and for the same reason, it
+ * keeps the total dead money right (every unamortized dollar is still on the
+ * books and still accelerates on a cut), and its visible effect — this year's
+ * cap hit drops a little while the later years rise — is the real-world effect
+ * of extending anyway. What it does NOT do is let the old bonus vanish: after
+ * an extension the dead money is the sum of both bonuses, which is precisely
+ * why extending early is a commitment rather than a freebie.
+ * ===========================================================================
+ */
+export function buildExtension(opts: {
+  /** The deal as stored. Its remaining years keep their salaries untouched. */
+  current: ContractLike;
+  /** APY of the NEW years only — the number he actually negotiates. */
+  newMoneyApy: number;
+  /** How many years are being added on the end. */
+  addYears: number;
+  /** The league year this is signed in. */
+  signedYear: number;
+  escalation?: number;
+  bonusPct?: number;
+  guaranteedPct?: number;
+  voidYears?: number;
+}): {
+  years: number;
+  yearsRemaining: number;
+  signedYear: number;
+  baseSalaries: number[];
+  signingBonus: number;
+  guaranteed: number;
+  voidYears: number;
+  /** Total value of the years being ADDED, bonus included. What he agreed to. */
+  newMoneyTotal: number;
+  /** Total value of what he was already owed, carried bonus included. */
+  oldMoneyRemaining: number;
+  /** Index into baseSalaries where the extension starts. */
+  firstNewYearIndex: number;
+} {
+  const bases = readJson<number[]>(opts.current.baseSalaries, []);
+  const elapsed = Math.max(0, opts.current.years - opts.current.yearsRemaining);
+  // The years he is still owed, at the salaries he was already promised.
+  //
+  // Padded to the number of years he is actually owed. A well-formed contract
+  // has one base salary per year and this does nothing — but `capHit` already
+  // carries the same fallback for the same reason, and a row that has lost an
+  // entry must not quietly SHORTEN the deal here, which would hand the player
+  // fewer years than the ledger says he has.
+  const remainingBases = bases.slice(elapsed);
+  while (remainingBases.length < opts.current.yearsRemaining) {
+    remainingBases.push(remainingBases[remainingBases.length - 1] ?? bases[bases.length - 1] ?? CAP.MIN_SALARY);
+  }
+  // Bonus money already paid but not yet charged to a cap. It does not
+  // disappear because a new deal was signed on top of it.
+  const carriedBonus = Math.round(proration(opts.current) * opts.current.yearsRemaining);
+
+  const addYears = Math.max(1, Math.round(opts.addYears));
+  const fresh = buildContract({
+    apy: opts.newMoneyApy,
+    years: addYears,
+    signedYear: opts.signedYear,
+    escalation: opts.escalation,
+    bonusPct: opts.bonusPct,
+    guaranteedPct: opts.guaranteedPct,
+  });
+
+  const baseSalaries = [...remainingBases, ...fresh.baseSalaries];
+  // Rebased on the years that are actually left, exactly as restructureContract
+  // does — so `years - yearsRemaining` is 0 right now and capHit() reads
+  // baseSalaries[0] for the current season, then walks forward a year at a
+  // time as the ledger ages. Getting this wrong is silent and expensive.
+  const years = baseSalaries.length;
+
+  return {
+    years,
+    yearsRemaining: years,
+    signedYear: opts.signedYear,
+    baseSalaries,
+    signingBonus: carriedBonus + fresh.signingBonus,
+    // What is locked in GOING FORWARD: bonus money already paid plus whatever
+    // the new years guarantee. The old deal's guarantee figure described money
+    // some of which has already been paid out, so it is not carried whole.
+    guaranteed: carriedBonus + fresh.guaranteed,
+    voidYears: Math.max(0, opts.voidYears ?? 0),
+    newMoneyTotal: fresh.baseSalaries.reduce((a, b) => a + b, 0) + fresh.signingBonus,
+    oldMoneyRemaining: remainingBases.reduce((a, b) => a + b, 0) + carriedBonus,
+    firstNewYearIndex: remainingBases.length,
+  };
 }
 
 /**
@@ -217,23 +392,121 @@ export function suggestedYears(ovr: number, age: number): number {
 }
 
 /**
- * The LONGEST deal this age may be handed, at any rating, by any negotiator.
+ * ---------------------------------------------------------------------------
+ * HOW LONG A DEAL MAY BE, AND HOW LONG HE IS WILLING TO SIGN FOR
+ * ---------------------------------------------------------------------------
+ * These two used to be the same question and the answer was a ladder: 34 and
+ * over got one year, 32 got two, 30 got three, everyone else five. Blunt, and
+ * it said nothing about the man — a 34-year-old quarterback and a 34-year-old
+ * running back were handed the identical rule.
  *
- * The age gates in suggestedYears() are documented in CONTRACT (lib/tuning.ts)
- * as absolute — "a 34-year-old gets one year no matter how good he is, which
- * is what keeps an aging star from being handed a five-year deal the team can
- * never escape". They weren't: the AI re-sign wave adds a +1 term nudge for an
- * eager GM on top of suggestedYears() and clamps only against
- * CONTRACT.MAX_DEAL_YEARS, so a 34-year-old's mandatory 1 became 2 and a
- * 40-year-old's became 2 as well. Any code that nudges term has to clamp
- * against this instead, so the gate is enforced where it is decided rather
- * than trusted to every caller.
+ * The app owner asked for the ladder gone: *"We should remove the max ages for
+ * the contracts. Just set it to a 12 year max and if the player is old they
+ * can say 'the player doesn't want to play that long' but lets assume that's
+ * for 35-40year olds at random depending on the player"*. So there are two
+ * separate answers now:
+ *
+ *   THE RULEBOOK  — `maxYearsForAge`, flat 12 for everybody. It is a league
+ *                   rule and it knows nothing about the player.
+ *   THE PLAYER    — `willingnessHorizon`, how many more seasons THIS man will
+ *                   actually commit to, refused in his own voice by
+ *                   `decideOffer` rather than by the rulebook.
+ *
+ * WHY THE HORIZON IS DERIVED AND NOT INVENTED. There is already a retirement
+ * model — `retirementChance(age, trueOvr, position)` in lib/progression.ts,
+ * rolled every offseason in lib/season.ts. If the panel says he does not
+ * intend to play past 38 and the sim then has him playing at 41, that is a
+ * lying metric (README, design principle 6). So the horizon is that same
+ * function walked forward: accumulate the probability he is still playing at
+ * each future age and stop where it falls through a floor. Position comes
+ * along for free, because `retirementChance` is already position-adjusted —
+ * a 34-year-old quarterback genuinely outlasts a 34-year-old running back and
+ * nothing here had to be told so.
+ * ---------------------------------------------------------------------------
  */
-export function maxYearsForAge(age: number): number {
-  if (age >= CONTRACT.AGE_ONE_YEAR) return 1;
-  if (age >= CONTRACT.AGE_TWO_YEAR) return 2;
-  if (age >= CONTRACT.AGE_THREE_YEAR) return 3;
-  return CONTRACT.MAX_DEAL_YEARS;
+
+/**
+ * [TUNE] These belong in CONTRACT (lib/tuning.ts) and should move there the
+ * moment that file is free — they are parked here, beside the function that
+ * reads them, only because tuning.ts is being edited elsewhere.
+ */
+export const TERM = {
+  /** The league rule. No contract, from anybody, to anybody, may exceed this. */
+  MAX_CONTRACT_YEARS: 12,
+  /**
+   * Retirement rolls do not start until 32 (see retirementChance), so the
+   * walk-forward is anchored there rather than at his current age. That makes
+   * the horizon a property of the PLAYER — the last season he means to play —
+   * instead of a property of when you happen to ask him. A 41-year-old who is
+   * still going does not thereby acquire three more years of intent.
+   */
+  ANCHOR_AGE: 32,
+  /**
+   * Survival probability at which he stops committing seasons, drawn per
+   * player inside this band. The width is the "at random depending on the
+   * player" the owner asked for: two identical 36-year-olds land a year or
+   * two apart.
+   */
+  FLOOR_MIN: 0.22,
+  FLOOR_MAX: 0.48,
+  /** The band the owner named. Nobody refuses before 35; nobody commits past 40. */
+  MIN_FINAL_AGE: 35,
+  MAX_FINAL_AGE: 40,
+} as const;
+
+/**
+ * The LONGEST deal anyone may be handed, by rule. Flat — see the block above.
+ *
+ * The age ladder that used to live here has moved to the player himself
+ * (`willingnessHorizon`), where it can differ by man and position and be
+ * stated in his own voice before the user commits to a term, rather than
+ * appearing as a rulebook refusal after the fact.
+ *
+ * Kept as a function of age, and kept named this way, because the AI re-sign
+ * wave in lib/season.ts calls it as its term ceiling; it now clamps against
+ * the league rule, and its own `suggestedYears` base (which still has the age
+ * ladder in it) is what keeps AI deals short for old players.
+ */
+export function maxYearsForAge(_age?: number): number {
+  return TERM.MAX_CONTRACT_YEARS;
+}
+
+/**
+ * How many more seasons this player will actually put his name to, and the
+ * age he does not intend to play past.
+ *
+ * Walks `retirementChance` forward from ANCHOR_AGE accumulating survival
+ * probability, takes the last age where survival is still above a per-player
+ * floor, and clamps it into the 35-40 band. Seeded off the player id alone,
+ * so the same man gives the same answer in the browser, in the Server Action
+ * and in a script — this is called on both sides of the negotiation and the
+ * two may never disagree.
+ *
+ * `years` is inclusive of the season he is signing for: a 39-year-old who
+ * does not mean to play past 40 will sign for two.
+ */
+export function willingnessHorizon(opts: {
+  playerId: string;
+  age: number;
+  trueOvr: number;
+  position: string;
+}): { finalAge: number; years: number } {
+  const floor = new Rng(`willing-${opts.playerId}`).float(TERM.FLOOR_MIN, TERM.FLOOR_MAX);
+  const position = opts.position as Position;
+
+  let survival = 1;
+  let finalAge: number = TERM.ANCHOR_AGE;
+  for (let age = TERM.ANCHOR_AGE + 1; age <= TERM.MAX_FINAL_AGE + 8; age++) {
+    survival *= 1 - retirementChance(age, opts.trueOvr, position);
+    if (survival < floor) break;
+    finalAge = age;
+  }
+  finalAge = clamp(Math.round(finalAge), TERM.MIN_FINAL_AGE, TERM.MAX_FINAL_AGE);
+
+  return {
+    finalAge,
+    years: clamp(finalAge - opts.age + 1, 1, TERM.MAX_CONTRACT_YEARS),
+  };
 }
 
 /**

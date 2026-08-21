@@ -94,18 +94,20 @@ model League {
   // Full settings blob (see lib/settings.ts -> LeagueSettings). JSON string.
   settings String
 
-  teams         Team[]
-  players       Player[]
-  games         Game[]
-  picks         DraftPick[]
-  transactions  Transaction[]
-  draftState    DraftState?
-  tradeOffers   TradeOffer[]
-  seasonRecords TeamSeasonRecord[]
-  leagueRecords LeagueRecord[]
-  tradeRecords  TradeRecord[]
-  dynasty       DynastyProfile?
-  negotiations  NegotiationTalks[]
+  teams          Team[]
+  players        Player[]
+  games          Game[]
+  picks          DraftPick[]
+  transactions   Transaction[]
+  draftState     DraftState?
+  tradeOffers    TradeOffer[]
+  seasonRecords  TeamSeasonRecord[]
+  leagueRecords  LeagueRecord[]
+  playerSeasons  PlayerSeason[]
+  powerSnapshots PowerRankingSnapshot[]
+  tradeRecords   TradeRecord[]
+  dynasty        DynastyProfile?
+  negotiations   NegotiationTalks[]
 
   // The home-page list filters on one of these two every time, and the claim
   // is `WHERE ownerKey = $1 AND userId IS NULL`.
@@ -176,16 +178,18 @@ model Team {
   players         Player[]
   staff           Staff[]
   scouts          Scout[]
-  homeGames       Game[]             @relation("HomeTeam")
-  awayGames       Game[]             @relation("AwayTeam")
-  ownedPicks      DraftPick[]        @relation("PickOwner")
-  originalPicks   DraftPick[]        @relation("PickOrigin")
+  homeGames       Game[]                 @relation("HomeTeam")
+  awayGames       Game[]                 @relation("AwayTeam")
+  ownedPicks      DraftPick[]            @relation("PickOwner")
+  originalPicks   DraftPick[]            @relation("PickOrigin")
   reports         ScoutingReport[]
   depthChart      DepthChartSlot[]
   tradeOffersFrom TradeOffer[]
   seasonRecords   TeamSeasonRecord[]
+  playerSeasons   PlayerSeason[]
   shortlist       ShortlistEntry[]
   negotiations    NegotiationTalks[]
+  powerSnapshots  PowerRankingSnapshot[]
 
   @@index([leagueId])
 }
@@ -289,6 +293,7 @@ model Player {
   draftPick     DraftPick?
   shortlistedBy ShortlistEntry[]
   negotiations  NegotiationTalks[]
+  seasons       PlayerSeason[]
 
   @@index([leagueId])
   @@index([teamId])
@@ -557,6 +562,69 @@ model TeamSeasonRecord {
 
   @@unique([teamId, year])
   @@index([leagueId, year])
+}
+
+// One player's production in one season for ONE club — the row behind the
+// year-by-year stat table on the player page (see docs/player-seasons.md).
+//
+// Keyed on (player, year, TEAM) rather than (player, year) on purpose: a
+// player traded mid-season gets one row per club, because "which club did he
+// produce for" is the question a year-by-year table exists to answer, and one
+// row averaged across two jerseys answers it wrongly while looking
+// authoritative. The display re-combines them into a "2TM" summary line above
+// the pair, the way every real football reference does.
+//
+// Written once a year by rollSeasonStatsIntoCareer() in lib/season.ts, from
+// played box scores rather than from Player.seasonStats — the box scores are
+// the only place the club-he-played-for-that-year exists at all. Player.
+// seasonStats and Player.careerStats are merged blobs with no season and no
+// team on them, which is why this table had to exist. See lib/playerSeasons.ts
+// for what is and isn't knowable, and why nothing here is ever invented.
+model PlayerSeason {
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  playerId String
+  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  seasonYear Int
+
+  // The club he played for THAT year — the entire point of the row. Nullable
+  // only so a deleted Team can't take the row with it; teamAbbr is
+  // denormalized alongside so the crest and the label survive that, the same
+  // reason LeagueRecord and TradeRecord denormalize theirs.
+  teamId   String?
+  team     Team?   @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  teamAbbr String
+
+  // His age that season. Nullable, and null is a real answer rather than a
+  // missing one — see ageInSeason() in lib/playerSeasons.ts. A dash is honest
+  // where the arithmetic can't be trusted; a fabricated 24 is not.
+  age Int?
+
+  gp Int @default(0)
+
+  // Where his FIRST game for this club fell in the season, as a sortable
+  // position (playoff weeks restart at 1, so they are offset past the regular
+  // season). Only ever matters for a player traded mid-year: without it the
+  // two rows of a split season come back in whatever order Postgres feels
+  // like, and the table would say he played for the new club first. Ordering
+  // by insertion or by id would have worked by accident of how cuids are
+  // generated; this works on purpose. Defaulted rather than nullable so the
+  // sort key is never NULL.
+  firstSeen Int @default(0)
+
+  // JSON string, SeasonStats (lib/types.ts) — the same shape and the same keys
+  // the box score wrote.
+  stats String @default("{}")
+
+  // The query this table exists to serve is "every season for one player,
+  // oldest first", which this unique index serves as a prefix scan. It is also
+  // the idempotency key: re-running a rollover cannot double a season.
+  @@unique([playerId, seasonYear, teamAbbr])
+  // For the per-league sweep — which years already have rows, and the
+  // delete-and-rewrite of a single year.
+  @@index([leagueId, seasonYear])
 }
 
 // Single-season and career statistical highs, checked/updated once per
@@ -895,4 +963,48 @@ model DynastyRank {
   /// The board's read: everything for a sport, best first.
   @@index([sport, xp])
   @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Weekly power rankings (see lib/powerRankings.ts and docs/power-rankings.md).
+//
+// This table exists for ONE reason: movement cannot be recomputed. A team's
+// rating depends on the roster as it is right now, so a club that signed a
+// free agent on Tuesday would retroactively rewrite what it was ranked on
+// Sunday. "Up 4 from last week" is only honest if last week was written down
+// last week — which is what this is.
+// ---------------------------------------------------------------------------
+
+model PowerRankingSnapshot {
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  teamId   String
+  team     Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  seasonYear Int
+  // The week these rankings were published FOR — i.e. entering this week.
+  // The postseason resets League.week to 1 for four rounds, so everything from
+  // the playoffs on maps to one terminal week (seasonLength + 1): the final
+  // regular-season ranking, which stops moving because nothing behind it moves.
+  // Offseason phases are never snapshotted — they reuse week numbers across
+  // five phases and every record is 0-0 anyway.
+  week       Int
+  rank       Int // 1-32, the ordering that was actually displayed
+  powerIndex Float // the published index, league average 50
+  rating     Int // buildLeagueRatings().overall at the time
+  wins       Int
+  losses     Int
+  ties       Int
+  netPerGame Float
+
+  createdAt DateTime @default(now())
+
+  // One row per club per league-week, which is what makes the write
+  // idempotent: ensurePowerSnapshot() uses createMany({ skipDuplicates: true }),
+  // so two concurrent renders cannot produce two versions of the same week and
+  // a week already on record is never rewritten. The whole point of a snapshot
+  // is that it says what we thought THEN.
+  @@unique([leagueId, seasonYear, week, teamId])
+  @@index([leagueId, seasonYear, week])
 }

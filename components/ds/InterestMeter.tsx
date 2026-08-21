@@ -4,11 +4,15 @@ import { useEffect, useRef, useState } from 'react';
 import type { Verdict } from '@/lib/negotiation';
 
 const VERDICT_STYLE: Record<Verdict, { label: string; text: string; bar: string }> = {
-  ACCEPT:      { label: 'Will sign',   text: 'text-accent', bar: 'bg-accent' },
-  CLOSE:       { label: 'Close',       text: 'text-gold',   bar: 'bg-gold' },
-  CONSIDERING: { label: 'Considering', text: 'text-warn',   bar: 'bg-warn' },
-  COLD:        { label: 'Cold',        text: 'text-muted',  bar: 'bg-muted' },
-  INSULTED:    { label: 'Insulted',    text: 'text-bad',    bar: 'bg-bad' },
+  ACCEPT:      { label: 'Will sign',   text: 'text-accent',  bar: 'bg-accent' },
+  // Inside the band. Deliberately its own colour rather than a shade of
+  // "Will sign": the difference between "he signs this" and "he might" is the
+  // whole of the mechanic, and two greens would have buried it.
+  MAYBE:       { label: 'Might sign',  text: 'text-accent2', bar: 'bg-accent2' },
+  CLOSE:       { label: 'Close',       text: 'text-gold',    bar: 'bg-gold' },
+  CONSIDERING: { label: 'Considering', text: 'text-warn',    bar: 'bg-warn' },
+  COLD:        { label: 'Cold',        text: 'text-muted',   bar: 'bg-muted' },
+  INSULTED:    { label: 'Insulted',    text: 'text-bad',     bar: 'bg-bad' },
 };
 
 /** CONSIDERING, CLOSE and ACCEPT, in the order they are crossed. */
@@ -32,10 +36,20 @@ const THRESHOLDS = [45, 68, 82];
  * duration tokens collapse to 1ms so it simply does not happen. Nothing here
  * gates input; there is no input to gate.
  */
-export function InterestMeter({ interest, verdict, headline }: {
+export function InterestMeter({ interest, verdict, headline, maybeBand }: {
   interest: number;
   verdict: Verdict;
   headline: string;
+  /**
+   * The stretch of the track where he MIGHT sign, in interest points. Drawn
+   * as a hatched region rather than left invisible for the same reason the
+   * threshold marks are drawn: the player's number stays hidden, but the
+   * RULES do not get to be. You are allowed to see that there is a gamble
+   * there and roughly how wide it is — which, since the width comes off how
+   * well he is scouted, is itself a readable statement about what your
+   * scouting department has bought you.
+   */
+  maybeBand?: { lo: number; hi: number } | null;
 }) {
   const style = VERDICT_STYLE[verdict];
   const [flare, setFlare] = useState<number | null>(null);
@@ -59,6 +73,16 @@ export function InterestMeter({ interest, verdict, headline }: {
       </div>
 
       <div className="relative h-2.5 mt-1.5 rounded-full bg-raised overflow-hidden">
+        {maybeBand && (
+          <div
+            className="absolute inset-y-0 z-0 border-x border-accent2/50 bg-accent2/15"
+            style={{
+              left: `${Math.max(0, maybeBand.lo)}%`,
+              width: `${Math.max(0, Math.min(100, maybeBand.hi) - Math.max(0, maybeBand.lo))}%`,
+            }}
+            title="He might sign anywhere in here — and he might not. Submitting inside it spends patience either way."
+          />
+        )}
         {THRESHOLDS.map((t) => (
           <div
             key={t}

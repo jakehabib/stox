@@ -55,7 +55,7 @@ function productionLine(position: string, s: SeasonStats): string | null {
   switch (position) {
     case 'QB':
       return `${(s.passYds ?? 0).toLocaleString()} YDS · ${s.passTd ?? 0} TD · ${s.int ?? 0} INT`;
-    case 'RB': case 'FB':
+    case 'RB':
       return `${(s.rushYds ?? 0).toLocaleString()} YDS · ${s.rushTd ?? 0} TD · ${s.rushAtt ?? 0} ATT`;
     case 'WR': case 'TE':
       return `${s.rec ?? 0} REC · ${(s.recYds ?? 0).toLocaleString()} YDS · ${s.recTd ?? 0} TD`;

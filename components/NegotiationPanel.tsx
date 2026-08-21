@@ -3,12 +3,13 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   decideOffer, sessionFingerprint, PERSONALITY_BLURB, PERSONALITY_LABEL,
-  DEFAULT_STRUCTURE,
-  type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer,
+  DEFAULT_STRUCTURE, ACCEPT_INTEREST, clampOffer,
+  type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer, type Verdict,
 } from '@/lib/negotiation';
 import { formatMoney } from '@/lib/cap';
 import { InterestMeter } from './ds/InterestMeter';
 import { ActionButton } from './ds/ActionButton';
+import { SigningConfirmation } from './ds/SigningConfirmation';
 
 /**
  * The negotiation minigame — the one surface in this game the app owner asked
@@ -17,12 +18,15 @@ import { ActionButton } from './ds/ActionButton';
  * interest meter might work"*, and then *"the salary should just be a slider
  * too"*.
  *
- * Every control is a slider and the meter re-reads on every drag with no
- * server round trip. That is only possible because `decideOffer` is pure and
- * the session — including every random draw and the hidden reservation price
- * — was resolved server-side and handed down whole. A version that posted
- * each change to the server would lag a request behind the user's thumb and
- * the entire feel would be gone.
+ * Every control is a slider AND a number field. The slider is what makes the
+ * meter feel alive — it re-reads on every drag with no server round trip —
+ * but a slider that steps in $100K cannot express $12.35M, and the owner
+ * asked for that too: *"on the contracts, allow us to type in the numbers in
+ * case the sliders aren't granular enough"*. Both controls write the same
+ * state, so a typed number and a dragged one are the same offer by
+ * construction; there is no second path to the meter and no second path to
+ * the server. Typed values are clamped with `clampOffer`, which is the same
+ * function the Server Action clamps with.
  *
  * THE SAME FUNCTION DECIDES. `decideOffer` is what draws this meter and it is
  * what the Server Action runs on submit, against a session it re-resolves
@@ -37,26 +41,26 @@ import { ActionButton } from './ds/ActionButton';
  * formally submitted offer he rejects costs one, and a genuine lowball costs
  * two. Dragging sliders is free; *submitting* is not.
  *
+ * AND NOW THE NUMBER CANNOT BE FOUND EXACTLY EITHER. There is a band around
+ * the signing threshold where he MIGHT sign — see lib/negotiation.ts, "HE
+ * MIGHT SIGN HERE" — because a threshold you can binary-search to the dollar
+ * is a calculator rather than a negotiation. This panel never renders
+ * `decision.accepted` inside that band: not in the button, not in the reason
+ * line, not by the presence or absence of anything. The hidden draw is real
+ * and the server acts on it, so showing it here would be showing the user the
+ * answer to the gamble they are being asked to take.
+ *
  * PATIENCE IS THE SERVER'S. This component displays it and never decides it.
  * `patienceSpent` is seeded from the session the server resolved and replaced
  * by whatever the server hands back on each submit; there is no local counter
- * and nothing is sent up. Before that, the count was passed to the Server
- * Action from here — so a reload sent zero, the pips came back full, and the
- * loss condition (with it, the entire cost of a lowball) could be cleared with
- * F5. It is stored per team/player/league year now; see the NegotiationTalks
- * model.
- *
- * Which is why the patience pips DRAIN rather than flipping colour between
- * renders. The cost of pressing the button is the mechanic this whole panel
- * is built around, and a dot quietly changing colour on the next paint was
- * the weakest possible statement of it. The fill empties over --dur-reveal;
- * under reduced motion it empties instantly, and the pip is just as empty
- * either way. Nothing is added to the submit path — the drain starts once the
- * server has already answered.
+ * and nothing is sent up. It is stored per team/player/league year; see the
+ * NegotiationTalks model. That is also why LEAVING the table refunds nothing —
+ * the Cancel control below closes a panel, it does not undo a negotiation, and
+ * it is worded so nobody can mistake the two.
  */
 export function NegotiationPanel({
   initialSession, structure = DEFAULT_STRUCTURE, structureSlot, banner,
-  onOffer, onSigned, disabled, disabledReason, title = 'Contract Talks',
+  onOffer, onSigned, onCancel, onReset, disabled, disabledReason, title = 'Contract Talks',
 }: {
   /** Resolved server-side. Replaced by whatever the server hands back on every submit. */
   initialSession: NegotiationSession;
@@ -71,6 +75,17 @@ export function NegotiationPanel({
     offer: Offer, structure: DealStructure, fingerprint: string,
   ) => Promise<NegotiationOutcome>;
   onSigned?: () => void;
+  /**
+   * Leave the table. The screen closes the panel; NOTHING about the
+   * negotiation is undone — see the footer copy. Omit it and no Cancel
+   * control is drawn.
+   */
+  onCancel?: () => void;
+  /**
+   * Put the deal shape back where it opened. The sliders in this panel reset
+   * themselves; this is how the screen resets the structure it owns.
+   */
+  onReset?: () => void;
   disabled?: boolean;
   disabledReason?: string;
   title?: string;
@@ -85,10 +100,14 @@ export function NegotiationPanel({
   // which is the rubber stamp this panel replaced, wearing a slider. Ninety
   // per cent is a real opening bid — respectable, usually short, and it makes
   // the first drag a decision instead of a formality.
-  const [apy, setApy] = useState(() =>
-    clampStep(Math.max(gate.minSalary, Math.min(ctx.marketApy * 0.9, gate.maxSalary)), gate.minSalary, gate.maxSalary),
-  );
-  const [years, setYears] = useState(() => Math.min(ctx.desiredYears, gate.maxYears));
+  const openingApy = () =>
+    clampStep(Math.max(gate.minSalary, Math.min(ctx.marketApy * 0.9, gate.maxSalary)), gate.minSalary, gate.maxSalary);
+  // He will not commit past his own horizon, so the panel does not open past
+  // it either. The limit is stated under the control either way.
+  const openingYears = () => Math.min(ctx.desiredYears, gate.maxYears, ctx.willingYears);
+
+  const [apy, setApy] = useState(openingApy);
+  const [years, setYears] = useState(openingYears);
   const [guaranteePct, setGuaranteePct] = useState(0.5);
 
   // Seeded from the SERVER's count, not from zero. This is the whole fix for
@@ -105,13 +124,28 @@ export function NegotiationPanel({
   const clearStaleResult = () => setResult((r) => (r && !r.ok && !r.lostTo && !r.walkedAway ? null : r));
   const [history, setHistory] = useState<{ apy: number; years: number; outcome: string }[]>([]);
   const [result, setResult] = useState<NegotiationOutcome | null>(null);
+  // When the server's answer arrived, purely so the confirmation can report
+  // how long it took to paint. Nothing waits on it.
+  const [answeredAt, setAnsweredAt] = useState<number | undefined>(undefined);
 
-  const offer: Offer = { apy, years, guaranteePct };
+  /**
+   * THE OFFER, forced into the legal range before anything looks at it —
+   * including the meter. Not belt-and-braces over the controls: the session
+   * is REPLACED by whatever the server hands back on every refusal, and a
+   * fresh session can carry a smaller ceiling (cap room moved, a rival moved)
+   * than the one the sliders were set against. Clamping here, with the same
+   * function the Server Action clamps with, is what stops the panel deciding
+   * on one offer while the server decides on another.
+   */
+  const offer: Offer = useMemo(
+    () => clampOffer({ apy, years, guaranteePct }, gate),
+    [apy, years, guaranteePct, gate],
+  );
   // useMemo purely to avoid recomputing on unrelated re-renders; the call is
   // cheap enough that correctness never depends on it.
   const decision = useMemo(
     () => decideOffer(ctx, offer, gate, structure),
-    [ctx, gate, apy, years, guaranteePct, structure],
+    [ctx, gate, offer, structure],
   );
   const ev = decision.evaluation;
 
@@ -140,12 +174,21 @@ export function NegotiationPanel({
 
   const submit = async () => {
     const res = await onOffer(offer, structure, sessionFingerprint(session));
+    setAnsweredAt(performance.now());
     setResult(res);
     setSession(res.session);
     setPatienceSpent(res.patienceSpent);
-    if (res.ok) { onSigned?.(); return 'Signed'; }
+    // NOTE WHAT IS NOT HERE: `onSigned()`. On every screen that is a
+    // `router.refresh()`, and on the re-sign list it also collapses the row —
+    // which unmounts this component, taking the confirmation of the signing
+    // with it in the same frame. The refresh is deferred to the moment the
+    // user dismisses the confirmation, which is the only way the record of an
+    // event can outlive the event. Nothing is stale in the meantime that the
+    // confirmation does not itself state, and it states it from the contract
+    // row rather than from anything staged here.
+    if (res.ok) return 'Signed';
     setHistory((h) => [...h, {
-      apy, years,
+      apy: offer.apy, years: offer.years,
       outcome: res.lostTo ? `lost to ${res.lostTo.teamName}` : res.decision.evaluation.verdict.toLowerCase(),
     }]);
     // A refusal is not an achievement and must not be dressed as one — the
@@ -153,8 +196,67 @@ export function NegotiationPanel({
     return false as const;
   };
 
+  /**
+   * Put the terms back where they opened. Sliders and typed fields alike —
+   * they are the same state — plus whatever deal shape the screen owns.
+   *
+   * It resets TERMS and says so. It does not, and must not be read to, undo
+   * anything he has already heard: patience spent stays spent, and the
+   * sentence under the buttons states that in plain words. A control that
+   * implied otherwise would be the page-reload exploit wearing a friendlier
+   * label.
+   */
+  const resetTerms = () => {
+    clearStaleResult();
+    setApy(openingApy());
+    setYears(openingYears());
+    setGuaranteePct(0.5);
+    onReset?.();
+  };
+
+  // AN EXTENSION APPENDS. The controls therefore mean something different on
+  // that screen and are labelled differently: the salary is the NEW money, the
+  // term is how many years are being ADDED, and the contract that results is
+  // longer than either. Saying "years: 4" over a deal that will run seven is
+  // the easiest lying metric in this flow to ship.
+  const extending = ctx.mode === 'EXTENSION' && ctx.controlYears > 0;
+  const totalTerm = decision.contractYears;
+
   const capOn = gate.capMode !== 'OFF';
   const spaceAfter = gate.capSpace - decision.year1CapHit;
+  const signedDeal = result?.ok ? result.signed : undefined;
+  const bandLo = ACCEPT_INTEREST - ctx.bandHalfWidth;
+  const bandHi = ACCEPT_INTEREST + ctx.bandHalfWidth;
+
+  // WHAT THE METER IS ALLOWED TO SAY. Inside the band the raw verdict would
+  // read "Will sign" for anything at 82 or over, which is precisely the
+  // certainty the band exists to remove — and, half the time, a promise the
+  // server is about to break.
+  const shownVerdict: Verdict = talksDead
+    ? 'COLD'
+    : decision.signBand === 'YES' ? 'ACCEPT'
+    : decision.signBand === 'MAYBE' ? 'MAYBE'
+    : ev.verdict;
+
+  const shownHeadline = gone && result?.lostTo
+    ? `He signed with the ${result.lostTo.teamName}.`
+    : walkedAway ? 'His agent is no longer taking your calls.'
+    : decision.signBand === 'MAYBE' ? 'He might sign here. His agent is not saying.'
+    : ev.headline;
+
+  // The term he will not go past, stated beside the control that sets it
+  // rather than sprung on somebody who has already chosen one.
+  // On an extension the control adds years to a deal he already has, so what
+  // he has left to give is his horizon MINUS the years already on the books —
+  // comparing his total horizon against the add-on ceiling would state the
+  // limit wrongly on exactly the screen where it binds soonest.
+  const yearsHeCanStillAdd = extending ? Math.max(0, ctx.willingYears - ctx.controlYears) : ctx.willingYears;
+  const termCapped = yearsHeCanStillAdd < gate.maxYears;
+  const willingLine = ctx.willingYears <= 1
+    ? `At ${ctx.age} he will only go year to year — he does not intend to play past ${ctx.intendedFinalAge}.`
+    : extending
+      ? `He does not intend to play past ${ctx.intendedFinalAge}. With ${ctx.controlYears} years already on his deal, ${yearsHeCanStillAdd} more is all he will add — at any price.`
+      : `He does not intend to play past ${ctx.intendedFinalAge}, so ${ctx.willingYears} years is the longest deal he will sign — at any price.`;
 
   return (
     <div className="panel overflow-hidden">
@@ -182,30 +284,44 @@ export function NegotiationPanel({
         <p className="text-xs text-muted">{PERSONALITY_BLURB[ctx.personality]}</p>
       </div>
 
+      {/* IT IS SIGNED. Everything that was a decision is now a fact, so the
+          controls go and the record stays — see SigningConfirmation. */}
+      {signedDeal ? (
+        <div className="px-4 py-4">
+          <SigningConfirmation
+            deal={signedDeal}
+            answeredAt={answeredAt}
+            onDismiss={() => onSigned?.()}
+          />
+        </div>
+      ) : (
+      <>
       {banner && <div className="px-4 pt-3 space-y-2">{banner}</div>}
 
       <div className="px-4 py-4 space-y-4">
         <InterestMeter
           interest={talksDead ? 0 : ev.interest}
-          verdict={talksDead ? 'COLD' : ev.verdict}
-          headline={
-            gone && result?.lostTo ? `He signed with the ${result.lostTo.teamName}.`
-              : walkedAway ? 'His agent is no longer taking your calls.'
-              : ev.headline
-          }
+          verdict={shownVerdict}
+          headline={shownHeadline}
+          maybeBand={talksDead ? null : { lo: bandLo, hi: bandHi }}
         />
 
-        <div className="space-y-3.5">
-          <Slider
-            label="Salary"
-            value={`${formatMoney(apy)}/yr`}
-            hint={`Market estimate ${formatMoney(ctx.marketApy)}/yr`}
+        <div className="space-y-4">
+          <Control
+            label={extending ? 'New money' : 'Salary'}
+            display={`${formatMoney(offer.apy)}/yr`}
+            hint={
+              extending
+                ? `On the ${offer.years} new year${offer.years === 1 ? '' : 's'} — market estimate ${formatMoney(ctx.marketApy)}/yr`
+                : `Market estimate ${formatMoney(ctx.marketApy)}/yr`
+            }
             min={gate.minSalary}
             max={gate.maxSalary}
             step={100_000}
-            raw={apy}
+            value={offer.apy}
             onChange={(v) => { clearStaleResult(); setApy(v); }}
             disabled={over}
+            field={MILLIONS_FIELD}
             warn={decision.blocked === 'CAP' ? `Over your room by ${formatMoney(decision.year1CapHit - gate.capSpace)}` : undefined}
           />
           {/* The one preset worth keeping from the old offer form: the number
@@ -221,28 +337,41 @@ export function NegotiationPanel({
               Beat {gate.competingTeam ? gate.competingTeam.split(' ').pop() : 'their offer'} — {formatMoney(Math.round((gate.competingApy * 1.03) / 100_000) * 100_000)}/yr
             </button>
           )}
-          <Slider
-            label="Years"
-            value={`${years} year${years === 1 ? '' : 's'}`}
-            hint={`Total ${formatMoney(decision.totalValue)}`}
+          <Control
+            label={extending ? 'Years added' : 'Years'}
+            display={extending
+              ? `+${offer.years} → ${totalTerm} yrs`
+              : `${offer.years} year${offer.years === 1 ? '' : 's'}`}
+            hint={
+              extending
+                ? `${formatMoney(decision.newMoneyValue)} of new money on top of the ${ctx.controlYears} years he is already owed — ${totalTerm} years in all`
+                : `Total ${formatMoney(decision.totalValue)}`
+            }
             min={1}
             max={gate.maxYears}
             step={1}
-            raw={years}
+            value={offer.years}
             onChange={(v) => { clearStaleResult(); setYears(v); }}
             disabled={over || gate.maxYears <= 1}
-            warn={gate.maxYears <= 1 ? `At ${ctx.age} nobody may be given more than one year` : undefined}
+            field={INTEGER_FIELD}
+            warn={decision.blocked === 'WILLING' ? `He will not sign for ${offer.years}` : undefined}
           />
-          <Slider
+          {termCapped && (
+            <p className={`text-xs -mt-2.5 ${decision.blocked === 'WILLING' ? 'text-bad' : 'text-muted'}`}>
+              {willingLine}
+            </p>
+          )}
+          <Control
             label="Guaranteed"
-            value={`${Math.round(guaranteePct * 100)}%`}
+            display={`${Math.round(offer.guaranteePct * 100)}%`}
             hint={`${formatMoney(decision.guaranteedMoney)} locked in`}
             min={0}
             max={100}
             step={5}
-            raw={Math.round(guaranteePct * 100)}
+            value={Math.round(offer.guaranteePct * 100)}
             onChange={(v) => { clearStaleResult(); setGuaranteePct(v / 100); }}
             disabled={over}
+            field={PERCENT_FIELD}
             warn={capOn && decision.deadMoneyIfCut > 0 ? `${formatMoney(decision.deadMoneyIfCut)} dead if you cut him` : undefined}
           />
         </div>
@@ -264,7 +393,16 @@ export function NegotiationPanel({
             so the cap number the panel refuses on is the cap number on
             screen. */}
         <div className="panel p-3 space-y-1.5 text-sm">
-          <div className="flex justify-between"><span className="text-muted">Total value</span><span className="font-mono">{formatMoney(decision.totalValue)}</span></div>
+          {extending && (
+            <div className="flex justify-between">
+              <span className="text-muted">New money — {offer.years} yr{offer.years === 1 ? '' : 's'}, what he is agreeing to</span>
+              <span className="stat-value text-stat-sm">{formatMoney(decision.newMoneyValue)}</span>
+            </div>
+          )}
+          <div className="flex justify-between">
+            <span className="text-muted">{extending ? `Full contract — ${totalTerm} yrs, old years included` : 'Total value'}</span>
+            <span className="font-mono">{formatMoney(decision.totalValue)}</span>
+          </div>
           <div className="flex justify-between"><span className="text-muted">Guaranteed</span><span className="font-mono">{formatMoney(decision.guaranteedMoney)}</span></div>
           {capOn && (
             <>
@@ -274,19 +412,44 @@ export function NegotiationPanel({
                 <span className={`stat-value text-stat-sm ${spaceAfter < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(spaceAfter)}</span>
               </div>
               <div>
-                <div className="text-xs text-muted mb-1">Cap hit by year</div>
+                <div className="text-xs text-muted mb-1">
+                  {extending ? 'Cap hit by year — the whole contract, old years and new' : 'Cap hit by year'}
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {decision.capHitSchedule.map((hit, i) => (
-                    <div key={i} className={`pill ${i === 0 && decision.blocked === 'CAP' ? 'border-bad/40 text-bad' : 'border-line text-chalk'}`}>
+                    <div
+                      key={i}
+                      className={`pill ${
+                        i === 0 && decision.blocked === 'CAP' ? 'border-bad/40 text-bad'
+                          : extending && i >= ctx.controlYears ? 'border-accent2/50 text-accent2'
+                          : 'border-line text-chalk'
+                      }`}
+                      title={extending ? (i >= ctx.controlYears ? 'A year you are adding' : 'A year he was already owed') : undefined}
+                    >
                       Yr{i + 1}: {formatMoney(hit)}
                     </div>
                   ))}
-                  {decision.strandedVoidMoney > 0 && (
-                    <div className="pill border-warn/40 text-warn" title="Bonus proration pushed past the end of the deal by void years — charged as dead money the season it expires.">
-                      Void: {formatMoney(decision.strandedVoidMoney)}
-                    </div>
-                  )}
                 </div>
+                {extending && (
+                  <p className="text-[11px] text-muted mt-1">
+                    The first {ctx.controlYears} are the years he was already owed, at the salaries he was
+                    already promised; the highlighted ones are what you are adding.
+                  </p>
+                )}
+                {/* NOT a pill in the row above. It used to sit alongside
+                    "Yr1…Yr4" reading "Void: $5.16M", which parses as a fifth
+                    year of the contract — the one misreading that costs
+                    somebody a cap sheet. It is dead money landing after the
+                    deal, and it is drawn as its own line saying exactly
+                    that. */}
+                {decision.strandedVoidMoney > 0 && (
+                  <div className="mt-2 flex items-baseline justify-between gap-3 rounded-md border border-warn/40 bg-warn/10 px-2.5 py-1.5">
+                    <span className="text-xs text-warn">
+                      After the deal ends — void-year dead money, no season attached
+                    </span>
+                    <span className="stat-value text-stat-sm text-warn">{formatMoney(decision.strandedVoidMoney)}</span>
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -311,7 +474,10 @@ export function NegotiationPanel({
           </p>
         )}
         {result && <p className={`text-sm ${result.ok ? 'text-accent' : result.lostTo ? 'text-bad' : 'text-accent2'}`}>{result.message}</p>}
-        {!result && decision.reason && !decision.accepted && (
+        {/* Deliberately keyed off the BAND and never off `decision.accepted`.
+            The reason line is null only when he is a certainty, so its
+            presence says nothing the meter has not already said. */}
+        {!result && decision.reason && decision.signBand !== 'YES' && (
           <p className={`text-xs ${decision.blocked || decision.outbid ? 'text-bad' : 'text-muted'}`}>{decision.reason}</p>
         )}
         {disabled && disabledReason && <p className="text-sm text-muted">{disabledReason}</p>}
@@ -324,16 +490,47 @@ export function NegotiationPanel({
               : gone ? 'He signed elsewhere'
               : walkedAway ? 'Talks are over'
               : decision.blocked === 'CAP' ? 'Not enough cap room'
+              : decision.blocked === 'WILLING' ? `He will not sign for ${offer.years} years`
               : decision.blocked ? 'Cannot offer this'
-              : decision.accepted ? 'Offer this deal — he signs'
-              : decision.outbid ? `Offer anyway — ${gate.competingTeam ?? 'a rival'} is higher, costs ${decision.patienceCost} patience`
-              : `Offer this deal — costs ${decision.patienceCost} patience`
+              : decision.signBand === 'YES' ? 'Offer this deal — he signs'
+              : decision.outbid ? `Offer anyway — ${gate.competingTeam ?? 'a rival'} is higher, costs ${decision.maxPatienceCost} patience`
+              // Inside the band the price is stated as what a REFUSAL costs,
+              // not as what this offer costs. The real figure is 0 or 1
+              // according to the hidden draw, and printing it would put the
+              // answer on the button.
+              : decision.signBand === 'MAYBE' ? `Offer this deal — he might take it, ${decision.maxPatienceCost} patience if he does not`
+              : `Offer this deal — costs ${decision.maxPatienceCost} patience`
           }
           workingLabel="On the phone…"
           doneLabel="Signed"
           onAction={submit}
         />
+
+        {(onCancel || onReset !== undefined) && (
+          <div className="border-t border-line/50 pt-3 space-y-2">
+            <div className="flex flex-wrap gap-2">
+              {!over && (
+                <button type="button" onClick={resetTerms} className="btn-secondary text-sm">
+                  Reset terms
+                </button>
+              )}
+              {onCancel && (
+                <button type="button" onClick={onCancel} className="btn-ghost text-sm">
+                  Leave the table
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-muted">
+              <span className="text-chalk">Reset terms</span> puts the sliders back where they opened.{' '}
+              <span className="text-chalk">Leave the table</span> closes talks and you can come back to him.
+              Neither undoes an offer: patience you have spent is spent, he remembers what he has already
+              been offered, and the same money will not get a different answer out of him.
+            </p>
+          </div>
+        )}
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -342,29 +539,142 @@ function clampStep(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.round(v / 100_000) * 100_000));
 }
 
-function Slider({ label, value, hint, min, max, step, raw, onChange, disabled, warn }: {
-  label: string; value: string; hint?: string;
-  min: number; max: number; step: number; raw: number;
+/**
+ * How a typed string becomes a number, per control.
+ *
+ * `parse` returns null for anything it cannot read — empty, a lone minus
+ * sign, letters — and null means "leave the offer alone", so garbage in the
+ * box never becomes garbage in the state. Anything it CAN read is then
+ * clamped into the control's own range before it is committed, which is the
+ * same range the slider can reach and the same one `clampOffer` enforces on
+ * the way into the Server Action. There is no value a keyboard can produce
+ * that the meter is not describing.
+ */
+interface NumberField {
+  prefix?: string;
+  suffix?: string;
+  /** Width of the box, in ch, so a salary field is not the size of a percentage. */
+  width: string;
+  inputMode: 'numeric' | 'decimal';
+  format: (v: number) => string;
+  parse: (text: string) => number | null;
+}
+
+/**
+ * Salary, typed in MILLIONS — which is how anybody discussing a contract says
+ * it and, crucially, is unambiguous: the box is prefixed "$" and suffixed "M",
+ * so "12.35" can only mean $12.35M. Typing dollars into a field labelled M was
+ * the alternative and it is a trap for exactly the number the owner asked to
+ * be able to enter. A "k" suffix is accepted for the minimum-salary end of the
+ * range. Rounded to the nearest $1,000, which three decimals can represent
+ * exactly, so the box always reads back what it committed.
+ */
+const MILLIONS_FIELD: NumberField = {
+  prefix: '$', suffix: 'M', width: '6ch', inputMode: 'decimal',
+  format: (v) => {
+    const s = (v / 1_000_000).toFixed(3);
+    return s.includes('.') ? s.replace(/0+$/, '').replace(/\.$/, '') : s;
+  },
+  parse: (text) => {
+    const cleaned = text.replace(/[$,\s]/g, '');
+    const m = /^(\d*\.?\d*)([mMkK]?)$/.exec(cleaned);
+    if (!m || m[1] === '' || m[1] === '.') return null;
+    const n = Number(m[1]);
+    if (!Number.isFinite(n)) return null;
+    const dollars = m[2].toLowerCase() === 'k' ? n * 1_000 : n * 1_000_000;
+    return Math.round(dollars / 1_000) * 1_000;
+  },
+};
+
+const INTEGER_FIELD: NumberField = {
+  width: '3ch', inputMode: 'numeric',
+  format: (v) => String(v),
+  parse: (text) => {
+    const cleaned = text.replace(/\s/g, '');
+    if (!/^\d+$/.test(cleaned)) return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  },
+};
+
+const PERCENT_FIELD: NumberField = { ...INTEGER_FIELD, suffix: '%', width: '3ch' };
+
+/**
+ * One term of the deal: a slider to feel it and a box to say it exactly.
+ *
+ * Both write the same piece of state — there is no separate "typed offer" —
+ * so a number reached by dragging and the same number reached by typing are
+ * the same object by the time anything looks at it. That is not a tidiness
+ * argument: if typing produced a different verdict from dragging to the same
+ * figure, the meter would be lying about one of them.
+ */
+function Control({ label, display, hint, min, max, step, value, onChange, disabled, warn, field }: {
+  label: string; display: string; hint?: string;
+  min: number; max: number; step: number; value: number;
   onChange: (v: number) => void; disabled?: boolean; warn?: string;
+  field: NumberField;
 }) {
   return (
     <div>
       <div className="flex items-baseline justify-between gap-3">
         <span className="label-sm">{label}</span>
-        <span className="stat-value text-stat-sm">{value}</span>
+        <span className="stat-value text-stat-md">{display}</span>
       </div>
       <input
         type="range"
         className="slider mt-2"
-        min={min} max={max} step={step} value={raw}
+        min={min} max={max} step={step} value={value}
         disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
         aria-label={label}
       />
-      <div className="flex items-baseline justify-between gap-3 mt-1">
-        <span className="text-[11px] text-muted">{hint}</span>
-        {warn && <span className="text-[11px] text-bad">{warn}</span>}
+      <div className="flex items-center justify-between gap-3 mt-2 flex-wrap">
+        <NumberEntry
+          label={label} field={field} value={value} min={min} max={max}
+          disabled={disabled} onCommit={onChange}
+        />
+        <div className="text-right">
+          {hint && <div className="text-xs text-muted">{hint}</div>}
+          {warn && <div className="text-xs text-bad">{warn}</div>}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function NumberEntry({ label, field, value, min, max, disabled, onCommit }: {
+  label: string; field: NumberField; value: number; min: number; max: number;
+  disabled?: boolean; onCommit: (v: number) => void;
+}) {
+  // What the user is in the middle of typing, which is NOT the offer. The
+  // offer only ever moves to a parsed, clamped number; the draft exists so a
+  // half-typed "1" on the way to "12.35" is not fought by the formatter or
+  // snapped up to the league minimum under the cursor. Dropped on blur, when
+  // the box goes back to showing the committed figure.
+  const [draft, setDraft] = useState<string | null>(null);
+
+  return (
+    <div className={`inline-flex items-center gap-1 rounded-md border border-line bg-raised px-2 py-1 ${disabled ? 'opacity-40' : 'focus-within:border-accent2/60'}`}>
+      {field.prefix && <span className="text-muted text-sm">{field.prefix}</span>}
+      <input
+        type="text"
+        inputMode={field.inputMode}
+        className="bg-transparent text-chalk text-sm font-mono outline-none tabular-nums"
+        style={{ width: field.width }}
+        value={draft ?? field.format(value)}
+        disabled={disabled}
+        aria-label={`${label} — type an exact value`}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          const parsed = field.parse(e.target.value);
+          if (parsed === null) return;
+          onCommit(Math.min(max, Math.max(min, parsed)));
+        }}
+        onBlur={() => setDraft(null)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { setDraft(null); e.currentTarget.blur(); } }}
+      />
+      {field.suffix && <span className="text-muted text-sm">{field.suffix}</span>}
     </div>
   );
 }

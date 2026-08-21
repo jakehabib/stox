@@ -8,8 +8,8 @@ import { buildScoutedView } from './scouting';
 import { loadScoutMods } from './dynasty';
 import {
   buildNegotiationContext, contractShapeFor, decideOffer, sessionFingerprint,
-  DEFAULT_STRUCTURE, RESIGN_LEVERAGE,
-  type DealStructure, type NegotiationGate, type NegotiationOutcome,
+  DEFAULT_STRUCTURE, RESIGN_LEVERAGE, extensionLeverage, clampOffer,
+  type DealStructure, type NegotiationGate, type NegotiationMode, type NegotiationOutcome,
   type NegotiationSession, type Offer, type ResignWindow, type Suitor,
 } from './negotiation';
 import { maxOffer, parseGmProfile, teamNeeds, RosterPlayer } from './ai/gm';
@@ -264,6 +264,93 @@ export async function extendContract(opts: {
       },
     });
   });
+}
+
+/**
+ * Sign an EXTENSION — years appended to the deal he is already on.
+ *
+ * Distinct from `extendContract` above, which replaces a contract outright:
+ * that is what a re-sign is and what the AI's own re-sign wave does. This is
+ * the real-football move the app owner asked for — *"it should add a year on
+ * top, as it does it real life"* — so the years he is already owed survive at
+ * the salaries he was already promised, the new years go on the end, and a new
+ * signing bonus is paid now. All the arithmetic is `buildExtension`; this
+ * function is the database half.
+ *
+ * The cap check is the same one `extendContract` runs and for the same reason:
+ * the OLD deal's hit is credited back before the new one is measured, because
+ * the old hit is not charged twice. What differs is that the new hit here is
+ * the appended contract's year-1 number, which is exactly what `decideOffer`
+ * showed the user on the panel — the gate and the meter read the same figure.
+ */
+export async function signExtension(opts: {
+  leagueId: string;
+  playerId: string;
+  /** APY of the NEW years only. */
+  newMoneyApy: number;
+  addYears: number;
+  seasonYear: number;
+  capMode: LeagueSettings['capMode'];
+  week: number;
+  escalation?: number;
+  voidYears?: number;
+  bonusPct?: number;
+  guaranteedPct?: number;
+}) {
+  const { playerId, seasonYear, capMode, week } = opts;
+  const { capHit, buildExtension } = await import('./cap');
+
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
+  if (!player.teamId) throw new Error('Player is not on a roster.');
+  if (!player.contract) throw new Error('He has no contract to extend.');
+  const teamId = player.teamId;
+
+  const oldHit = capHit(player.contract, capMode);
+  const next = buildExtension({
+    current: player.contract,
+    newMoneyApy: opts.newMoneyApy,
+    addYears: opts.addYears,
+    signedYear: seasonYear,
+    escalation: opts.escalation,
+    bonusPct: opts.bonusPct,
+    guaranteedPct: opts.guaranteedPct,
+    voidYears: opts.voidYears,
+  });
+  const newHit = capHit({ ...next, baseSalaries: writeJson(next.baseSalaries) }, capMode);
+  await assertCapRoom({
+    action: 'Extension', seasonYear, capMode,
+    charges: [{ teamId, delta: newHit, creditBack: oldHit }],
+  });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.contract.update({
+      where: { playerId },
+      data: {
+        years: next.years,
+        yearsRemaining: next.yearsRemaining,
+        signedYear: next.signedYear,
+        baseSalaries: writeJson(next.baseSalaries),
+        signingBonus: next.signingBonus,
+        guaranteed: next.guaranteed,
+        voidYears: next.voidYears,
+        // An extended deal is not a rookie deal any more, whatever it started
+        // as — the fifth-year option and the rookie-scale rules stop applying
+        // the moment new money is added on top.
+        isRookieDeal: false,
+      },
+    });
+    // Same rule as everywhere else: putting his name on a deal ends the talks.
+    await tx.negotiationTalks.deleteMany({ where: { playerId } });
+    await tx.transaction.create({
+      data: {
+        leagueId: opts.leagueId, seasonYear, week, type: 'SIGN', teamId,
+        headline: `Extended ${player.firstName} ${player.lastName}`,
+        detail: `+${opts.addYears} yr${opts.addYears === 1 ? '' : 's'} of new money at ~$${(opts.newMoneyApy / 1_000_000).toFixed(1)}M/yr — under contract through ${seasonYear + next.years - 1}`,
+      },
+    });
+  });
+
+  return { newHit, contract: next };
 }
 
 /**
@@ -801,10 +888,19 @@ export async function resolveNegotiationSession(opts: {
   teamId: string;
   seasonYear: number;
   settings: LeagueSettings;
-  /** True when this is your own expiring player, not an outside free agent. */
+  /** True when this is your own player, not an outside free agent. */
   incumbent: boolean;
+  /**
+   * THE THIRD SCREEN. An extension is a negotiation with a man who is still
+   * under contract with real years left — nobody may bid on him, and those
+   * years are leverage a re-sign does not give you. Defaults to the old
+   * two-way reading of `incumbent`, so every existing call site behaves
+   * exactly as it did.
+   */
+  mode?: NegotiationMode;
 }): Promise<NegotiationSession> {
   const { leagueId, playerId, teamId, seasonYear, settings, incumbent } = opts;
+  const mode: NegotiationMode = opts.mode ?? (incumbent ? 'RESIGN' : 'FREE_AGENT');
   const capMode = settings.capMode;
 
   const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
@@ -860,12 +956,21 @@ export async function resolveNegotiationSession(opts: {
   // patience, and it never touches `gate.competingApy`, because you cannot be
   // outbid today by a team that cannot sign him today. Claiming otherwise
   // would be exactly the lying metric the README forbids.
-  const resignWindow: ResignWindow | null = incumbent
-    ? ((player.contract?.yearsRemaining ?? 0) <= 0 ? 'FINAL_CALL' : 'WALK_YEAR')
+  const controlYears = player.contract?.yearsRemaining ?? 0;
+  const resignWindow: ResignWindow | null = mode === 'RESIGN'
+    ? (controlYears <= 0 ? 'FINAL_CALL' : 'WALK_YEAR')
     : null;
   const suitor = await leadingCompetingBid(leagueId, playerId, teamId, seasonYear, capMode);
   const rawCompetition = suitor ? clamp(suitor.apy / Math.max(1, trueMarketApy), 0.3, 1) : 0;
-  const competition = resignWindow ? rawCompetition * RESIGN_LEVERAGE[resignWindow] : rawCompetition;
+  // How much of that rival's interest actually reaches this table. Nobody may
+  // sign a man who is under contract, so on both incumbent screens it is
+  // leverage on his ASKING PRICE and never a bid — and it is weakest of all
+  // in an extension, where you still hold him for years.
+  const competition = resignWindow
+    ? rawCompetition * RESIGN_LEVERAGE[resignWindow]
+    : mode === 'EXTENSION'
+      ? rawCompetition * extensionLeverage(controlYears)
+      : rawCompetition;
   /** Bidding against you RIGHT NOW. Only ever true on the open market. */
   const competing = incumbent ? null : suitor;
 
@@ -886,6 +991,16 @@ export async function resolveNegotiationSession(opts: {
     yearsWithTeam: incumbent && player.contract ? Math.max(0, seasonYear - player.contract.signedYear) : 0,
     competition,
     resignWindow,
+    mode,
+    seasonYear,
+    controlYears,
+    // Only an extension prices against the existing deal — everywhere else
+    // the offer IS the whole contract and this stays null.
+    currentContract: mode === 'EXTENSION' ? player.contract : null,
+    // The same confidence figure that decides how wide his rating range is
+    // drawn decides how wide the "he might sign" band is. Scouting pays at
+    // the table, and the fog is one fog rather than two.
+    scoutConfidence: view.confidence,
     // Seeded on the matchup and the league year — NOT the clock. Re-opening
     // the panel, refreshing the page or submitting an offer all rebuild the
     // identical man with the identical asking price; only the season rolling
@@ -902,7 +1017,15 @@ export async function resolveNegotiationSession(opts: {
     ? Number.MAX_SAFE_INTEGER
     : (await teamCapSummary(teamId, seasonYear, capMode)).capSpace + oldHit;
 
-  const maxYears = maxYearsForAge(player.age);
+  // The LEAGUE's ceiling is flat now (12, see maxYearsForAge) and the age
+  // ladder that used to be here belongs to the player — `ctx.willingYears`,
+  // which refuses in his own voice. On an extension the control sets how many
+  // years are ADDED, so what is left of the ceiling is what the ceiling minus
+  // his existing years allows.
+  const leagueMaxYears = maxYearsForAge(player.age);
+  const maxYears = mode === 'EXTENSION'
+    ? Math.max(1, leagueMaxYears - controlYears)
+    : leagueMaxYears;
   const ceilingFloor = Math.max(CAP.MIN_SALARY * 2, Math.round(marketApy * 2.5));
   const gate: NegotiationGate = {
     capMode,
@@ -992,15 +1115,24 @@ export async function negotiateOffer(opts: {
   week: number;
   settings: LeagueSettings;
   incumbent: boolean;
+  /** Which screen. Defaults to the old two-way reading of `incumbent`. */
+  mode?: NegotiationMode;
   offer: Offer;
   structure?: DealStructure;
   /** Fingerprint of the session the user was actually looking at. */
   fingerprint?: string;
 }): Promise<NegotiationOutcome> {
   const { leagueId, playerId, teamId, seasonYear, week, settings, incumbent } = opts;
+  const mode: NegotiationMode = opts.mode ?? (incumbent ? 'RESIGN' : 'FREE_AGENT');
   const structure = opts.structure ?? DEFAULT_STRUCTURE;
-  const session = await resolveNegotiationSession({ leagueId, playerId, teamId, seasonYear, settings, incumbent });
-  const decision = decideOffer(session.ctx, opts.offer, session.gate, structure);
+  const session = await resolveNegotiationSession({ leagueId, playerId, teamId, seasonYear, settings, incumbent, mode });
+  // THE OFFER IS CLAMPED BEFORE IT IS JUDGED, and it is clamped by the same
+  // pure function the panel's typed fields clamp with, against the same gate.
+  // A number field can carry things a slider cannot — empty, negative, 1e9 —
+  // and the two sides have to agree about what such a thing MEANS, not merely
+  // both refuse it.
+  const offer = clampOffer(opts.offer, session.gate);
+  const decision = decideOffer(session.ctx, offer, session.gate, structure);
   // Straight off the row `resolveNegotiationSession` just read. Clamped only
   // because his patience can legitimately have SHRUNK since the pips were
   // burned (rival interest moves it), and a count above the ceiling should
@@ -1027,13 +1159,30 @@ export async function negotiateOffer(opts: {
 
   // --- He would sign it -----------------------------------------------------
   if (decision.accepted) {
-    const shape = contractShapeFor(opts.offer);
+    const shape = contractShapeFor(offer);
+    // Measured BEFORE the write so the confirmation can state the change and
+    // not merely the new number. Both halves come from teamCapSummary, which
+    // is the same figure the cap page prints.
+    const capBefore = settings.capMode === 'OFF'
+      ? 0
+      : (await teamCapSummary(teamId, seasonYear, settings.capMode)).capSpace;
     try {
-      if (incumbent) {
-        await extendContract({
-          leagueId, playerId, apy: opts.offer.apy, years: opts.offer.years, seasonYear,
+      if (mode === 'EXTENSION') {
+        // APPENDED, not replaced. See buildExtension in lib/cap.ts and the
+        // owner's ruling quoted there.
+        await signExtension({
+          leagueId, playerId, newMoneyApy: offer.apy, addYears: offer.years, seasonYear,
           capMode: settings.capMode, week, escalation: structure.escalation, voidYears: structure.voidYears,
-          bonusPct: shape.bonusPct, guaranteedPct: shape.guaranteedPct, reSign: true,
+          bonusPct: shape.bonusPct, guaranteedPct: shape.guaranteedPct,
+        });
+      } else if (incumbent) {
+        await extendContract({
+          leagueId, playerId, apy: offer.apy, years: offer.years, seasonYear,
+          capMode: settings.capMode, week, escalation: structure.escalation, voidYears: structure.voidYears,
+          // An EXTENSION is not a re-sign and must not report as one on the
+          // wire: he was never going to be a free agent, and "Re-signed" over
+          // a man with three years left is a small lie in the news feed.
+          bonusPct: shape.bonusPct, guaranteedPct: shape.guaranteedPct, reSign: mode === 'RESIGN',
         });
       } else {
         // Still goes through the competition path: between resolving the
@@ -1041,7 +1190,7 @@ export async function negotiateOffer(opts: {
         // player leaves with them. That is the drama of an open market and it
         // is not something the user's click may override.
         await signFreeAgentWithCompetition({
-          leagueId, playerId, teamId, apy: opts.offer.apy, years: opts.offer.years, seasonYear,
+          leagueId, playerId, teamId, apy: offer.apy, years: offer.years, seasonYear,
           capMode: settings.capMode, week, escalation: structure.escalation, voidYears: structure.voidYears,
           bonusPct: shape.bonusPct, guaranteedPct: shape.guaranteedPct,
         });
@@ -1051,12 +1200,50 @@ export async function negotiateOffer(opts: {
       // outcomes, not bugs — they must never escape a Server Action uncaught.
       return { ...base, ok: false, message: err instanceof Error ? err.message : 'The deal fell through.' };
     }
+    // READ BACK WHAT LANDED. Not what was offered, not what the panel drew —
+    // the contract row that now exists, priced with the same functions the cap
+    // page prices it with. See SignedDeal.
+    const written = await prisma.player.findUniqueOrThrow({
+      where: { id: playerId },
+      include: { contract: true, team: true },
+    });
+    const capAfter = settings.capMode === 'OFF'
+      ? 0
+      : (await teamCapSummary(teamId, seasonYear, settings.capMode)).capSpace;
+    const writtenBases = written.contract ? readJson<number[]>(written.contract.baseSalaries, []) : [];
+    const signed = written.contract && written.team
+      ? {
+          playerName: session.ctx.playerName,
+          position: written.position,
+          playerId,
+          teamAbbr: written.team.abbr,
+          teamId: written.team.id,
+          mode,
+          years: written.contract.years,
+          totalValue: writtenBases.reduce((a, b) => a + b, 0) + written.contract.signingBonus,
+          newMoneyValue: decision.newMoneyValue,
+          apy: offer.apy,
+          guaranteed: written.contract.guaranteed,
+          capHitThisYear: capHit(written.contract, settings.capMode),
+          capSpaceBefore: capBefore,
+          capSpaceAfter: capAfter,
+          // You only beat somebody if somebody was actually bidding and you
+          // went past them. Both figures are off the gate the meter used.
+          beat: session.gate.competingApy > 0 && offer.apy > session.gate.competingApy && session.gate.competingTeam
+            ? { teamName: session.gate.competingTeam, apy: session.gate.competingApy }
+            : null,
+        }
+      : undefined;
+
     return {
       ...base,
       ok: true,
-      message: incumbent
-        ? `${session.ctx.playerName} is staying — ${opts.offer.years} year${opts.offer.years === 1 ? '' : 's'} at ${formatMoney(opts.offer.apy)}/yr.`
-        : `${session.ctx.playerName} signs — ${opts.offer.years} year${opts.offer.years === 1 ? '' : 's'} at ${formatMoney(opts.offer.apy)}/yr.`,
+      signed,
+      message: mode === 'EXTENSION'
+        ? `${session.ctx.playerName} is extended — his old deal is torn up and replaced by ${offer.years} year${offer.years === 1 ? '' : 's'} at ${formatMoney(offer.apy)}/yr.`
+        : incumbent
+          ? `${session.ctx.playerName} is staying — ${offer.years} year${offer.years === 1 ? '' : 's'} at ${formatMoney(offer.apy)}/yr.`
+          : `${session.ctx.playerName} signs — ${offer.years} year${offer.years === 1 ? '' : 's'} at ${formatMoney(offer.apy)}/yr.`,
     };
   }
 
