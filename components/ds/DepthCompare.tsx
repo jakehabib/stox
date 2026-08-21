@@ -284,7 +284,7 @@ export function DepthCompare({ position, depth, candidate }: {
             {v.fogged ? <> — not even at the top of his range</> : null}. He slots in at{' '}
             <span className="font-semibold">{label(v.bestIndex)}</span>
             {v.fogged && v.worstIndex !== v.bestIndex ? <> to <span className="font-semibold">{label(v.worstIndex)}</span></> : null}
-            , behind {v.starterCount === 1 ? 'your starter' : `all ${v.starterCount} of your starters`}
+            , behind {v.starterCount === 1 ? 'your starter' : v.starterCount === 2 ? 'both of your starters' : `all ${v.starterCount} of your starters`}
             {v.threshold !== null ? <>; he would need <span className="stat-value">{v.threshold}</span> to get on the field</> : null}. Depth, not a starter.
           </>
         )}
@@ -303,7 +303,11 @@ export function DepthCompare({ position, depth, candidate }: {
           const inHisRange = d !== null && v.fogged && i >= v.bestIndex && i < v.worstIndex;
 
           return (
-            <div key={d ? d.playerId : '__fa_tail'}>
+            /* px-1 pays back the rows' own -mx-1 bleed. Without it this
+               wrapper's box is 8px narrower than the row inside it and the
+               panel reports a sideways overflow — the shape of bug the app
+               owner has caught on this app before. */
+            <div key={d ? d.playerId : '__fa_tail'} className="px-1">
               {/* Where the lineup ends — the same marker the depth chart's own
                   position card draws. At WR, three rows sit above it. */}
               {showBench && (
@@ -315,7 +319,13 @@ export function DepthCompare({ position, depth, candidate }: {
 
               {showCandidate && (
                 <div className="flex items-center gap-2.5 px-2 py-1.5 -mx-1 rounded-lg border-l-2 border-dashed border-accent bg-accent/10 ring-1 ring-accent/30">
+                  {/* The arrow marks this as a WOULD-BE slot. Without it his
+                      "#4" sits directly above an incumbent's real "#4" and the
+                      two read as a contradiction — the incumbents keep the
+                      labels they hold today, because a fogged man's arrival
+                      does not tell you where they end up. */}
                   <span className="label-sm w-16 shrink-0 text-accent">
+                    →{' '}
                     {v.outcome === 'NONE'
                       ? '—'
                       : v.bestIndex === v.worstIndex
