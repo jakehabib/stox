@@ -22,7 +22,7 @@ export interface CapAlertMove {
  * block quote, so every surface tells one story.
  */
 export function CapAlertBanner({
-  leagueId, shortfall, capUsed, capTotal, deadMoney, moves, blocksAdvance,
+  leagueId, shortfall, capUsed, capTotal, deadMoney, moves, blocksAdvance, complianceDue,
 }: {
   leagueId: string;
   shortfall: number;
@@ -32,6 +32,12 @@ export function CapAlertBanner({
   moves: CapAlertMove[];
   /** True when the compliance gate will refuse to advance the week. */
   blocksAdvance: boolean;
+  /**
+   * False during the offseason roll, when every team's books are
+   * temporarily inflated and expiring deals haven't come off yet
+   * (see capComplianceDueNow in lib/season.ts).
+   */
+  complianceDue: boolean;
 }) {
   return (
     <div className="border-b border-bad/40 bg-bad/10">
@@ -47,9 +53,11 @@ export function CapAlertBanner({
         </div>
 
         <div className="text-xs text-muted flex-1 min-w-[12rem]">
-          {blocksAdvance
-            ? 'The week will not advance until you are compliant.'
-            : 'No cut or restructure clears this on its own — a trade that sends salary out is the only route left, so the week is still allowed to advance.'}
+          {!complianceDue
+            ? 'Expiring contracts come off your books when free agency opens. You have to be under the ceiling by then — the new league year will not start while you are over.'
+            : blocksAdvance
+              ? 'The week will not advance until you are compliant.'
+              : 'No cut or restructure clears this on its own — a trade that sends salary out is the only route left, so the week is still allowed to advance.'}
         </div>
 
         {moves.length > 0 && (

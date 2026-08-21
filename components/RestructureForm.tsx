@@ -30,8 +30,14 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const router = useRouter();
 
+  // The current season, derived from the deal itself: yearsRemaining ticks
+  // down one per league year, so signedYear + years-elapsed IS this year.
+  // (The component deliberately takes no seasonYear prop — every call site
+  // already passes `contract` and nothing else needs changing.)
+  const nowYear = contract.signedYear + yearIdx;
+
   const preview = useMemo(() => {
-    const next = computeRestructure(contract, convert, { addVoidYears, nowYear: contract.signedYear });
+    const next = computeRestructure(contract, convert, { addVoidYears, nowYear });
     const nextShaped = { ...next, baseSalaries: JSON.stringify(next.baseSalaries) };
     const oldHit = (bases[yearIdx] ?? 0) + proration(contract);
     const newHit = capHit(nextShaped, 'REALISTIC');
@@ -100,7 +106,7 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
               const worse = hit > was;
               return (
                 <div key={i} className="flex-1 min-w-0 text-center">
-                  <div className="label-sm !text-[10px]">{contract.signedYear + i}</div>
+                  <div className="label-sm !text-[10px]">{nowYear + i}</div>
                   <div className={`stat-value text-stat-sm ${worse ? 'text-bad' : 'text-accent'}`}>{formatMoney(hit)}</div>
                   <div className="text-[10px] text-muted font-mono truncate">was {formatMoney(was)}</div>
                 </div>

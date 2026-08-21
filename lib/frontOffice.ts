@@ -124,15 +124,18 @@ export async function buildFrontOfficeBrief(
   // advancement block read, so the brief never contradicts either of them.
   if (capMode !== 'OFF') {
     const { capComplianceReport } = await import('./capEnforcement');
+    const { capComplianceDueNow } = await import('./season');
     const report = await capComplianceReport(teamId, seasonYear, capMode);
     if (!report.compliant) {
       const best = report.path[0] ?? report.relief.find((r) => r.kind === 'CUT');
-      const blocks = capMode === 'REALISTIC' && report.fixable;
+      const { phase } = await prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { phase: true } });
+      const blocks = capMode === 'REALISTIC' && report.fixable && capComplianceDueNow(phase);
       items.push({
         category: 'Cap',
         headline: `You're over the cap by ${formatMoney(report.shortfall)}`,
         detail: [
           blocks ? 'The week will not advance until you\'re compliant.' : null,
+          !capComplianceDueNow(phase) ? 'Expiring contracts come off the books when free agency opens — be under the ceiling by then.' : null,
           best ? `Cutting ${best.name} would clear ${formatMoney(best.frees)}.` : 'No easy cuts — a trade that sends salary out may be the only way back.',
         ].filter(Boolean).join(' '),
         action: 'Open Cap',

@@ -77,6 +77,16 @@ other — `lib/invariants.ts` reports violations by ID.
 - **INV-14** — `capHit()` for every active player's contract is `>= 0` under
   every cap mode. (This is exactly the class of bug a bad restructure preset
   produced earlier — a $3.6M offer read back as a $360M cap hit.)
+- **INV-19** *(warning)* — When `capMode` is not `OFF`, no team's committed
+  cap (active salary + dead money) exceeds that season's ceiling. Every
+  acquisition path — signing, extension, franchise tag, restructure, trade,
+  rookie deal — is gated by `assertCapRoom()` in `lib/capEnforcement.ts`, so
+  a team over the ceiling means a path slipped the gate.
+  Warning rather than error because one legal shape reaches it without any
+  rule being broken: dead money already booked from cuts and trades can
+  exceed what a roster is able to shed. That is the same case the
+  advancement compliance block treats as unfixable and lets through, rather
+  than trapping the user forever.
 
 ## Games
 
@@ -191,3 +201,16 @@ seasons deep each, landing at **0 violations**.
    fixed — `FANTASY_DRAFT` is an opt-in alternate league-start mode
    (`RANDOM_ROSTERS` is the default), so it hasn't been exercised by the
    `sim:health` harness, which always starts leagues with `RANDOM_ROSTERS`.
+3. **The salary cap never actually grows, so contracts outrun it (INV-19).**
+   `CAP.CAP_GROWTH_PER_YEAR` is 7%/yr and `capForYear(seasonYear,
+   leagueStartYear)` implements it correctly — but its only real caller,
+   `teamCapSummary` (`lib/cap-summary.ts`), passes the league's *current*
+   `seasonYear` as `leagueStartYear`, so `elapsed` is always 0 and the
+   ceiling is pinned at `CAP.BASE_CAP` ($255.0M) forever. Meanwhile
+   `buildContract` escalates base salaries ~12% per year, so every roster's
+   committed cap climbs against a frozen ceiling and teams drift over it a
+   few seasons in — which is what INV-19 reports in a multi-season
+   `sim:health` run. Not fixed here because `League` has no start-year column
+   to read: the schema needs a `startYear Int` (defaulted from the row's
+   creation-time `seasonYear`) before `teamCapSummary` can pass the right
+   argument, and that is a migration rather than a code change.

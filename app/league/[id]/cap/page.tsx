@@ -14,6 +14,7 @@ import { MetricTiles } from '@/components/ds/MetricTiles';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { buildCapHealth, rankContractValue, classifyContractValue, type CapHealth, type SurplusRow } from '@/lib/analytics';
 import { capComplianceReport } from '@/lib/capEnforcement';
+import { capComplianceDueNow } from '@/lib/season';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'cap' | 'base' | 'years' | 'savings';
 
@@ -241,11 +242,13 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
           </div>
 
           <p className="text-sm text-muted">
-            {settings.capMode === 'REALISTIC' && compliance.fixable
-              ? 'The week will not advance until you are back under the ceiling. Any combination of these clears it — cuts and restructures below, or a trade that sends salary out.'
-              : compliance.fixable
-                ? 'Clear the shortfall before adding any more salary — signings, extensions, tags and trades are all blocked while you are over.'
-                : 'Cutting every player who frees cap space still would not clear this — most of your commitment is dead money that cannot be released. A trade that sends salary out is the only route, so the week is still allowed to advance.'}
+            {!capComplianceDueNow(league.phase)
+              ? 'Every team\'s books run heavy through the offseason roll — expiring contracts only come off when free agency opens. You have to be under the ceiling by then; the new league year will not start while you are over.'
+              : settings.capMode === 'REALISTIC' && compliance.fixable
+                ? 'The week will not advance until you are back under the ceiling. Any combination of these clears it — cuts and restructures below, or a trade that sends salary out.'
+                : compliance.fixable
+                  ? 'Clear the shortfall before adding any more salary — signings, extensions, tags and trades are all blocked while you are over.'
+                  : 'Cutting every player who frees cap space still would not clear this — most of your commitment is dead money that cannot be released. A trade that sends salary out is the only route, so the week is still allowed to advance.'}
           </p>
 
           {compliance.path.length > 0 && (

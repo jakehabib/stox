@@ -1,6 +1,6 @@
 import { prisma } from './db';
 import { readJson } from './json';
-import { capHit } from './cap';
+import { capHit, capForYear, formatMoney } from './cap';
 import { parseSettings } from './settings';
 import { PHASE_LABELS } from './season';
 import { SeasonStats } from './types';
@@ -34,13 +34,14 @@ function violation(id: string, severity: 'error' | 'warning', message: string, i
 
 /** Full snapshot check — everything checkable from one point-in-time read of a league. */
 export async function checkInvariants(leagueId: string): Promise<Violation[]> {
-  const [league, players, contracts, picks, games, draftState] = await Promise.all([
+  const [league, players, contracts, picks, games, draftState, teams] = await Promise.all([
     prisma.league.findUniqueOrThrow({ where: { id: leagueId } }),
     prisma.player.findMany({ where: { leagueId } }),
     prisma.contract.findMany({ where: { player: { leagueId } } }),
     prisma.draftPick.findMany({ where: { leagueId } }),
     prisma.game.findMany({ where: { leagueId, played: true } }),
     prisma.draftState.findUnique({ where: { leagueId } }),
+    prisma.team.findMany({ where: { leagueId }, select: { id: true, abbr: true } }),
   ]);
   const settings = parseSettings(league.settings);
   const contractByPlayerId = new Map(contracts.map((c) => [c.playerId, c]));
@@ -129,6 +130,37 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
     }
   }
   push(violation('INV-14', 'error', 'capHit() returned a negative number for a contract', negativeCapHits));
+
+  // --- INV-19: nobody is over the salary cap ---
+  // With every acquisition path gated by assertCapRoom (lib/capEnforcement.ts),
+  // no team should ever be sitting over the ceiling. Warning rather than error
+  // because one legal shape still gets there without any rule being broken:
+  // dead money already booked from cuts and trades can exceed what a roster
+  // is able to shed, which is why the advancement block has its own
+  // `fixable` escape hatch rather than trapping the user forever.
+  //
+  // Computed in memory from rows already fetched above (plus one capCharge
+  // read) rather than calling teamCapSummary per team — this runs after
+  // every single sim step, and 32 teams x 2 queries each would dominate it.
+  if (settings.capMode !== 'OFF') {
+    const deadRows = await prisma.capCharge.findMany({
+      where: { teamId: { in: teams.map((t) => t.id) }, year: league.seasonYear },
+    });
+    const spendByTeam = new Map<string, number>(teams.map((t) => [t.id, 0]));
+    for (const p of players) {
+      if (p.status !== 'ACTIVE' || !p.teamId || !spendByTeam.has(p.teamId)) continue;
+      const c = contractByPlayerId.get(p.id);
+      if (c) spendByTeam.set(p.teamId, spendByTeam.get(p.teamId)! + capHit(c as ContractLike, settings.capMode));
+    }
+    for (const d of deadRows) {
+      if (spendByTeam.has(d.teamId)) spendByTeam.set(d.teamId, spendByTeam.get(d.teamId)! + d.amount);
+    }
+    const ceiling = capForYear(league.seasonYear, league.seasonYear);
+    const overCap = teams
+      .filter((t) => (spendByTeam.get(t.id) ?? 0) > ceiling)
+      .map((t) => `${t.abbr} ${formatMoney(ceiling - (spendByTeam.get(t.id) ?? 0))}`);
+    push(violation('INV-19', 'warning', 'A team is over the salary cap', overCap));
+  }
 
   // --- INV-15: completed games have sane scores + a real box score ---
   push(violation('INV-15', 'error', 'Completed game has a negative score or an empty/unparseable box score',

@@ -49,13 +49,44 @@ import { replenishLeagueScoutingBudgets } from './scoutingEconomy';
  */
 export async function advanceWeek(leagueId: string): Promise<AdvanceResult> {
   const before = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  const blocked = await capComplianceBlock(leagueId, parseSettings(before.settings));
+  const blocked = await capComplianceBlock(leagueId, parseSettings(before.settings), before.phase);
   if (blocked) return blocked; // time does not move while the user is over the cap
 
   const result = await advanceWeekStep(leagueId);
   const after = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   await replenishLeagueScoutingBudgets(leagueId, after, parseSettings(after.settings));
   return result;
+}
+
+/**
+ * Phases where a team is legitimately over the cap through no fault of its
+ * own, so compliance is NOT demanded yet.
+ *
+ * The books are mid-roll here: agePlayersAndContracts() has already stepped
+ * every deal onto its next (escalating) base-salary year and booked void-year
+ * charges, but releaseUnresignedExpiringContracts() — which drops every
+ * expiring contract off the ledger — doesn't run until the END of RESIGN.
+ * A sim-health trace across four seasons shows this window is exactly where
+ * teams go negative and where they come back on their own: over-cap teams
+ * appear at OFFSEASON wk4 and clear the moment FREE_AGENCY opens, every year,
+ * league-wide.
+ *
+ * Blocking there would fire on almost everyone every single offseason for a
+ * condition that resolves itself one step later — a rule that reads as a bug.
+ * Compliance is instead demanded from the new league year onward, which in
+ * this phase machine begins at FREE_AGENCY (the same boundary lib/trade.ts
+ * uses to reopen trading).
+ */
+const CAP_ROLLOVER_PHASES = new Set(['OFFSEASON', 'RESIGN']);
+
+/**
+ * Is salary-cap compliance actually due right now? False through the
+ * offseason roll (see CAP_ROLLOVER_PHASES). Exported so the standing
+ * over-cap banner promises the same thing the advance gate enforces
+ * instead of threatening a block that won't happen.
+ */
+export function capComplianceDueNow(phase: string): boolean {
+  return !CAP_ROLLOVER_PHASES.has(phase);
 }
 
 /**
@@ -90,9 +121,11 @@ export interface AdvanceResult {
  *     anything still leaves the team over (dead money alone can exceed the
  *     ceiling), blocking would be a permanent soft-lock, so the week
  *     advances and the standing over-cap warning carries it instead.
+ *   - Not during OFFSEASON/RESIGN — see CAP_ROLLOVER_PHASES.
  */
-async function capComplianceBlock(leagueId: string, settings: LeagueSettings): Promise<AdvanceResult | null> {
+async function capComplianceBlock(leagueId: string, settings: LeagueSettings, phase: string): Promise<AdvanceResult | null> {
   if (settings.capMode !== 'REALISTIC') return null;
+  if (CAP_ROLLOVER_PHASES.has(phase)) return null;
   const userTeam = await prisma.team.findFirst({ where: { leagueId, isUser: true }, select: { id: true } });
   if (!userTeam) return null;
 

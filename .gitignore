@@ -10,3 +10,11 @@ dist/
 next-env.d.ts
 prisma/dev.db
 prisma/dev.db-journal
+
+# Throwaway verification scripts and scratch dirs used during development.
+# These are written, run once against the dev database, and deleted; ignoring
+# them keeps a working tree readable while several workstreams are in flight.
+scripts/_tmp_*.ts
+scripts/_pt_tmp_*/
+.scratch_agent/
+.pt-legacy-tmp/

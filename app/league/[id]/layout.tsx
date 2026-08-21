@@ -3,11 +3,11 @@ import { notFound } from 'next/navigation';
 import { getLeagueContext } from '@/lib/league-data';
 import { AdvanceWeekButton } from '@/components/AdvanceWeekButton';
 import { formatMoney } from '@/lib/cap';
-import { teamCapSummary } from '@/lib/cap-summary';
 import { TeamLogo } from '@/components/TeamLogo';
 import { LeagueNav } from '@/components/LeagueNav';
 import { LeagueWireTicker } from '@/components/ds/LeagueWireTicker';
 import { CapAlertBanner } from '@/components/ds/CapAlertBanner';
+import { capComplianceDueNow } from '@/lib/season';
 import { capComplianceReport } from '@/lib/capEnforcement';
 import { transactionCategory } from '@/lib/newsCategory';
 import { prisma } from '@/lib/db';
@@ -27,8 +27,11 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // figure nor the compliance banner has anything true to say — both are
   // skipped rather than rendering a number the rest of the UI disowns.
   // (teamCapSummary's capSpace is +Infinity in that mode; see its doc.)
-  const [cap, compliance, tickerTx] = await Promise.all([
-    ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : teamCapSummary(userTeam.id, league.seasonYear, ctx.settings.capMode),
+  // One report covers both the header figure and the compliance banner —
+  // capComplianceReport wraps teamCapSummary and short-circuits the extra
+  // roster scan when the team is compliant, so this is no more work than
+  // the plain summary this used to call, and never two of them.
+  const [compliance, tickerTx] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : capComplianceReport(userTeam.id, league.seasonYear, ctx.settings.capMode),
     prisma.transaction.findMany({
       where: { leagueId: league.id, type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'INJURY', 'DRAFT', 'FIRE', 'CHAMPION', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] } },
@@ -73,10 +76,10 @@ export default async function LeagueLayout({ children, params }: { children: Rea
                 <div className="text-xs text-muted leading-tight">{userTeam.wins}-{userTeam.losses}{userTeam.ties ? `-${userTeam.ties}` : ''} · {userTeam.conference} {userTeam.division}</div>
               </div>
             </div>
-            {cap && (
+            {compliance && (
               <div className="stat-tile hidden lg:block text-right">
                 <div className="label-sm">Cap Space</div>
-                <div className={`text-sm font-mono font-semibold ${cap.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(cap.capSpace)}</div>
+                <div className={`text-sm font-mono font-semibold ${compliance.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(compliance.capSpace)}</div>
               </div>
             )}
             <div className="stat-tile text-right">
@@ -94,7 +97,8 @@ export default async function LeagueLayout({ children, params }: { children: Rea
             capUsed={compliance.capUsed}
             capTotal={compliance.capTotal}
             deadMoney={compliance.deadMoney}
-            blocksAdvance={ctx.settings.capMode === 'REALISTIC' && compliance.fixable}
+            complianceDue={capComplianceDueNow(league.phase)}
+            blocksAdvance={ctx.settings.capMode === 'REALISTIC' && compliance.fixable && capComplianceDueNow(league.phase)}
             moves={compliance.relief.slice(0, 2).map((r) => ({
               playerId: r.playerId, name: r.name, position: r.position, frees: r.frees, kind: r.kind,
             }))}

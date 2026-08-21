@@ -5,14 +5,26 @@ import { prisma } from '@/lib/db';
 import { draftPlayer, runAiPicksUntilUser, draftOneAiPick } from '@/lib/draft';
 import { Rng } from '@/lib/rng';
 
+/**
+ * Make the user's pick. The rookie contract is real cap money, so this can
+ * be refused by the salary cap (see draftPlayer in lib/draft.ts) — a
+ * foreseeable, user-recoverable outcome that must come back as a message
+ * rather than an uncaught throw, which in Next blanks the draft screen
+ * instead of saying what happened.
+ */
 export async function draftPlayerAction(leagueId: string, playerId: string, teamId: string) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  await draftPlayer({ leagueId, playerId, teamId, seasonYear: league.seasonYear });
+  try {
+    await draftPlayer({ leagueId, playerId, teamId, seasonYear: league.seasonYear });
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'That pick could not be made.' };
+  }
 
   const rng = new Rng(`draft-${leagueId}-${Date.now()}`);
   await runAiPicksUntilUser(leagueId, teamId, rng, league.seasonYear);
 
   revalidatePath(`/league/${leagueId}`, 'layout');
+  return { ok: true, message: 'Pick is in.' };
 }
 
 /**
