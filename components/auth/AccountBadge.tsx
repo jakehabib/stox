@@ -15,6 +15,11 @@ import { currentViewer } from '@/lib/owner';
  *
  * `compact` drops the label text for the league header, which is already
  * carrying a club crest, a cap figure and a phase tile.
+ *
+ * It also carries the LEADERBOARD link (non-compact only), because that page is
+ * the one destination outside a league that a signed-out visitor is meant to
+ * find. Putting it here rather than in each header means the front door, the
+ * auth pages and the account page all get it from one place.
  */
 export async function AccountBadge({ compact = false }: { compact?: boolean }) {
   const viewer = await currentViewer();
@@ -22,6 +27,7 @@ export async function AccountBadge({ compact = false }: { compact?: boolean }) {
   if (!viewer.userId || !viewer.username) {
     return (
       <div className="flex items-center gap-1">
+        {!compact && <LeaderboardLink />}
         <Link href="/sign-in" className="btn-ghost text-xs">Sign in</Link>
         <Link href="/sign-up" className="btn-secondary text-xs">Sign up</Link>
       </div>
@@ -32,19 +38,25 @@ export async function AccountBadge({ compact = false }: { compact?: boolean }) {
 
   return (
     <div className="flex items-center gap-2">
-      <div
-        className="w-8 h-8 rounded-full bg-accent2/15 border border-accent2/30 flex items-center justify-center text-accent2 font-display font-bold shrink-0"
-        aria-hidden
+      {!compact && <LeaderboardLink />}
+      <Link
+        href="/account"
+        title={`${viewer.username} — account settings`}
+        className="w-8 h-8 rounded-full bg-accent2/15 border border-accent2/30 flex items-center justify-center text-accent2 font-display font-bold shrink-0 hover:bg-accent2/25"
       >
         {monogram}
-      </div>
+      </Link>
+      {/* The name is the way in to /account — the only route to the
+          leaderboard toggle and, more importantly, to the self-service
+          password change. A settings page nobody can find is a settings page
+          that does not exist. */}
       {!compact && (
-        <div className="min-w-0 hidden sm:block">
+        <Link href="/account" className="min-w-0 hidden sm:block group">
           <div className="label-sm leading-tight">Signed in</div>
-          <div className="font-display font-bold uppercase tracking-wide leading-tight truncate max-w-[10rem]">
+          <div className="font-display font-bold uppercase tracking-wide leading-tight truncate max-w-[10rem] group-hover:text-accent2">
             {viewer.username}
           </div>
-        </div>
+        </Link>
       )}
       {/* A plain form posting a Server Action — no client component needed, and
           sign-out therefore works with JavaScript disabled. */}
@@ -54,5 +66,14 @@ export async function AccountBadge({ compact = false }: { compact?: boolean }) {
         </button>
       </form>
     </div>
+  );
+}
+
+/** The public board, one hop from anywhere the badge appears. */
+function LeaderboardLink() {
+  return (
+    <Link href="/leaderboard" className="btn-ghost text-xs whitespace-nowrap">
+      Leaderboard
+    </Link>
   );
 }

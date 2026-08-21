@@ -5,6 +5,8 @@ import { AuthForm } from '@/components/auth/AuthForm';
 import { signUpAction } from '@/app/actions/auth';
 import { currentViewer } from '@/lib/owner';
 import { countClaimableLeagues } from '@/lib/auth';
+import { CrestRibbon } from '@/components/ds/FranchiseWall';
+import { TEAM_SEEDS } from '@/lib/gen/names';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +32,11 @@ export default async function SignUpPage({
   // entire pitch and a vague version of it is not persuasive.
   const claimable = await countClaimableLeagues(viewer.ownerKey);
 
+  // Same allowlist shape as safeNext() in app/actions/auth.ts: a `next` off
+  // the query string is attacker-controlled, and this one becomes an href.
+  const rawNext = searchParams.next ?? '/';
+  const guestHref = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/';
+
   return (
     <div className="space-y-6">
       <div className="relative overflow-hidden rounded-lg border border-line bg-card/40 px-6 py-8">
@@ -54,9 +61,18 @@ export default async function SignUpPage({
         <AuthForm mode="signup" action={signUpAction} next={searchParams.next ?? '/'} />
       </div>
 
+      <CrestRibbon seeds={TEAM_SEEDS.slice(16, 23)} />
+
+      {/* The escape hatch, and it points back at whatever the player was
+          doing rather than always at the home page. Somebody who reached this
+          screen from team select wants to go back to team select, not to the
+          front door — sending them to `/` is what makes an optional account
+          feel like a detour they lost their place in. */}
       <p className="text-xs text-muted text-center leading-relaxed">
         You don&apos;t have to sign up to play.{' '}
-        <Link href="/" className="text-accent2 hover:underline">Go straight to the game</Link>{' '}
+        <Link href={guestHref} className="text-accent2 hover:underline">
+          {guestHref === '/new' ? 'Go straight to picking a franchise' : 'Go straight to the game'}
+        </Link>{' '}
         — saves stay on this browser until you make an account.
       </p>
     </div>

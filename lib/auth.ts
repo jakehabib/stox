@@ -361,6 +361,92 @@ export async function authenticate(rawUsername: string, password: string): Promi
 }
 
 // ---------------------------------------------------------------------------
+// Changing a password
+// ---------------------------------------------------------------------------
+
+/**
+ * SELF-SERVICE PASSWORD CHANGE — the gap the accounts build shipped with.
+ *
+ * Recovery here is `scripts/resetPassword.ts`: an operator sets a password and
+ * tells the person what it is. That is the honest promise for an app with no
+ * email on file, but it left a tester holding a password somebody else chose,
+ * knows, and very likely typed into a chat window — with no way to change it.
+ * This is that way.
+ *
+ * WHAT IT ENFORCES, all server-side, because a Server Action is a public POST
+ * endpoint and the form is not the only thing that can call it:
+ *
+ *   1. THE CURRENT PASSWORD, verified against the stored hash. A live session
+ *      cookie is not sufficient authority to change the credential that
+ *      outlives it — otherwise a borrowed laptop is a permanently stolen
+ *      account. This is the one check that makes the rest matter.
+ *   2. THE SAME POLICY sign-up uses, via validatePassword() in lib/password.ts.
+ *      One function, so the floor cannot drift between the two forms.
+ *   3. RATE LIMITING on the same AuthAttempt ledger sign-in uses, keyed on the
+ *      account. Without it this endpoint is an oracle for guessing the current
+ *      password of whoever's session you have — quieter than the login form
+ *      and, until now, unmetered.
+ *
+ * WHAT IT DOES NOT DO: tell a caller whether the account has a password at
+ * all. An OAuth-only user (passwordHash null) gets the same refusal as a wrong
+ * password, because verifyPassword() returns false for a null hash.
+ *
+ * SESSIONS. Every session for the user is destroyed — including the one making
+ * the request — and then a fresh one is issued to THIS browser. So: every
+ * other device is signed out, and the person who just changed their password
+ * is not. That is the behaviour people expect from a password change, and the
+ * alternative (leave the other sessions alive) means a change made *because*
+ * somebody else has your password does not actually lock them out, which is
+ * the only reason most people ever change one.
+ */
+export type PasswordChangeOutcome = { ok: true } | { ok: false; error: string };
+
+/** Failures before the account's change endpoint stops answering. */
+const CHANGE_MAX_PER_USER = 8;
+
+export async function changePassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<PasswordChangeOutcome> {
+  const scope = `chg:${userId}`;
+  if ((await countAttempts(scope, 'CHANGE', SIGNIN_WINDOW_MS)) >= CHANGE_MAX_PER_USER) {
+    return { ok: false, error: 'Too many attempts. Wait fifteen minutes and try again.' };
+  }
+
+  const problem = validatePassword(newPassword);
+  if (problem) return { ok: false, error: problem };
+
+  // Checked before the ~200ms verify so an obvious mistake answers instantly,
+  // and checked at all because a "change" that changes nothing quietly signs
+  // out every other device for no reason.
+  if (newPassword === currentPassword) {
+    return { ok: false, error: 'That is already your password. Pick a different one.' };
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+  // The session pointed at a user that no longer exists. Refuse rather than
+  // throw: the caller is holding a dead session and the honest next step is to
+  // sign in again, not a 500.
+  if (!user) return { ok: false, error: 'Wrong current password.' };
+
+  if (!(await verifyPassword(currentPassword, user.passwordHash))) {
+    await recordAttempt(scope, 'CHANGE', false);
+    return { ok: false, error: 'Wrong current password.' };
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+
+  // Order matters. The hash is written FIRST, so if the session sweep fails
+  // the new password is nonetheless in force; the reverse order would sign
+  // everyone out and leave the old password working.
+  await destroyAllSessionsForUser(userId);
+  await clearAttempts(scope, 'CHANGE');
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 // The claim
 // ---------------------------------------------------------------------------
 

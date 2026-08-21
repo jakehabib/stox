@@ -444,7 +444,13 @@ export interface DynastyXpBreakdown {
   losses: number;
 }
 
-const AWARD_TYPES = ['AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'];
+/**
+ * Exported so lib/leaderboard.ts counts the SAME awards this file does. The
+ * board recomputes XP in a batch rather than per league, and a second copy of
+ * this list is exactly how a leaderboard number and a Dynasty screen number
+ * start disagreeing about the same franchise.
+ */
+export const AWARD_TYPES = ['AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'];
 
 interface XpInputs {
   /** One row per completed season the user was GM for. */

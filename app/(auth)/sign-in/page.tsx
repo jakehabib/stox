@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation';
 import { AuthForm } from '@/components/auth/AuthForm';
 import { signInAction } from '@/app/actions/auth';
 import { currentViewer } from '@/lib/owner';
+import { CrestRibbon } from '@/components/ds/FranchiseWall';
+import { TEAM_SEEDS } from '@/lib/gen/names';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +45,17 @@ export default async function SignInPage({
       <div className="panel p-6">
         <AuthForm mode="signin" action={signInAction} next={searchParams.next ?? '/'} />
       </div>
+
+      {/* Continuity, not decoration for its own sake: these are the same
+          crests the landing page and the picker draw, so signing in reads as
+          a step inside the game rather than a detour out of it. */}
+      <CrestRibbon seeds={TEAM_SEEDS.slice(0, 7)} />
+
+      <p className="text-xs text-muted text-center leading-relaxed">
+        No account and just want to play?{' '}
+        <Link href="/new" className="text-accent2 hover:underline">Start a dynasty as a guest</Link>{' '}
+        — it works exactly the same, the save just lives in this browser.
+      </p>
 
       <p className="text-xs text-muted text-center leading-relaxed">
         Forgotten your password? There is no reset — we never asked for an email address.

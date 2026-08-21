@@ -62,7 +62,12 @@ export async function createLeagueAction(formData: FormData) {
   // immediately rather than waiting for the next claim.
   await prisma.league.update({ where: { id: leagueId }, data: { ownerKey, userId: viewer.userId } });
 
-  redirect(`/league/${leagueId}`);
+  // Into the handover screen, not straight onto the dashboard. app/start/[id]
+  // is the first moment a real team rating exists — it reads the league that
+  // was just written with buildLeagueRatings — so it is where the club is
+  // introduced with its actual overall, its actual league rank and its actual
+  // division rivals. The dashboard is one click further on.
+  redirect(`/start/${leagueId}`);
 }
 
 export async function deleteLeagueAction(leagueId: string) {

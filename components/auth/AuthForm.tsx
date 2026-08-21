@@ -126,7 +126,22 @@ export function AuthForm({
         </div>
       )}
 
-      <button type="submit" className="btn-primary w-full" disabled={pending}>
+      {/* Pending is raised from the click, not from inside `submit`. React as
+          bundled by Next 14 runs a form action inside a transition and
+          deprioritises state set there — verified on the league-create form,
+          where the working state never got a commit at all. Same shape here,
+          same fix. The button stays enabled because disabling it from its own
+          click handler can cancel the submission it was meant to start; the
+          duplicate-submit risk is covered server-side, where a taken username
+          comes back as an error rather than a second account. */}
+      <button
+        type="submit"
+        className="btn-primary w-full"
+        aria-busy={pending}
+        onClick={(e) => {
+          if (e.currentTarget.form?.checkValidity() !== false) setPending(true);
+        }}
+      >
         {pending && <span className="spinner-ring" aria-hidden />}
         <span>{pending ? (signup ? 'Creating account…' : 'Signing in…') : signup ? 'Create account' : 'Sign in'}</span>
       </button>

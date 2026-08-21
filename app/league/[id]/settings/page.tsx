@@ -1,6 +1,8 @@
+import Link from 'next/link';
 import { getLeagueContext } from '@/lib/league-data';
 import { updateSettingsAction } from '@/app/actions/league';
 import { Tooltip } from '@/components/Tooltip';
+import { leagueFileName } from '@/lib/leagueFile';
 
 export default async function SettingsPage({ params }: { params: { id: string } }) {
   const { league, settings } = await getLeagueContext(params.id);
@@ -125,6 +127,26 @@ export default async function SettingsPage({ params }: { params: { id: string } 
 
         <button type="submit" className="btn-primary">Save Settings</button>
       </form>
+
+      {/* Sharing. Outside the settings <form> on purpose — it is a download and
+          an outbound link, not a setting, and nesting it would make Save
+          responsible for it. See docs/custom-leagues.md. */}
+      <div className="panel p-4 space-y-3">
+        <h2 className="label-sm">Share This League</h2>
+        <p className="text-sm text-muted">
+          Export the 32 franchises and every player on them as a single league file. Send it to anyone and they
+          can import it and play the same league — same teams, same names, same rosters. It is a starting point,
+          not a save game: the file carries teams, players and contracts, not your schedule, standings, scouting
+          book or league history.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <a href={`/api/league/export/${league.id}`} download className="btn-secondary">
+            Export League File ↓
+          </a>
+          <span className="text-xs text-muted">{leagueFileName(league.name)}</span>
+          <Link href="/import" className="btn-ghost text-sm">Import a league file →</Link>
+        </div>
+      </div>
     </div>
   );
 }

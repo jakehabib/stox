@@ -12,24 +12,92 @@ import { observe } from '../scouting';
 import { writeJson } from '../json';
 import { AttrMap } from '../ratings';
 
+/** A contract an imported file asked for, instead of a market-rate one. */
+export interface PlannedContract {
+  apy: number;
+  years: number;
+  yearsRemaining: number;
+}
+
+/** The team identity fields a plan may replace TEAM_SEEDS with. */
+export interface PlannedTeam {
+  city: string;
+  nickname: string;
+  abbr: string;
+  conference: string;
+  division: string;
+}
+
+/**
+ * Everything an imported league file contributes to generation, already
+ * validated and gap-filled by lib/leagueFile.ts.
+ *
+ * This exists so IMPORT AND CREATION ARE THE SAME CODE PATH. The alternative
+ * — a parallel `createLeagueFromFile` that also writes teams, staff, scouts,
+ * contracts, picks, a schedule, depth charts, history and a scouting book —
+ * is a second 300-line procedure that starts identical and drifts, and every
+ * fix to one of them silently misses the other. An imported league is built by
+ * this function, so it is playable for exactly the same reasons a generated
+ * one is.
+ */
+export interface LeagueImportPlan {
+  teams: PlannedTeam[];
+  /** abbr -> the full roster for that team. */
+  rosters: Map<string, GeneratedPlayer[]>;
+  freeAgents: GeneratedPlayer[];
+  /** plannedContractKey(player) -> the deal the file asked for. */
+  contracts: Map<string, PlannedContract>;
+  /** Pre-seeded with every imported name, so fill-ins never collide. */
+  names: NameRegistry;
+}
+
+/**
+ * Contracts are matched back to players by name after the bulk insert, because
+ * `createMany` does not return ids. Names are unique league-wide by
+ * construction (NameRegistry on the generated side, explicit de-duplication on
+ * the imported side), which is what makes this exact rather than approximate.
+ */
+export const plannedContractKey = (firstName: string, lastName: string) =>
+  `${firstName} ${lastName}`.toLowerCase();
+
 /**
  * Creates a complete, playable league from nothing:
  * 32 fictional franchises, staff, scouts, rosters (or a fantasy-draft pool),
  * contracts, a free agent pool, three years of draft picks, a full schedule,
  * depth charts, and the user's initial scouting book.
+ *
+ * Pass `plan` to build the league from an imported league file instead of from
+ * TEAM_SEEDS and the generators — see LeagueImportPlan above.
  */
 export async function createLeague(opts: {
   name: string;
   userTeamAbbr: string;
   settings?: Partial<LeagueSettings>;
   seed?: string;
+  plan?: LeagueImportPlan;
+  /**
+   * Called with the league id the instant the League row exists, before any of
+   * the ~5,300 dependent rows are written.
+   *
+   * This function is NOT transactional (documented in docs/deployment.md), so
+   * a failure part way through leaves a half-written league that shows up on
+   * the home page and breaks when opened. A caller that wants to clean up
+   * after itself needs the id of the thing to clean up, and until now there
+   * was no way to learn it except by succeeding. The import route uses this to
+   * delete what it started; see app/api/league/import/route.ts.
+   */
+  onLeagueCreated?: (leagueId: string) => void;
 }): Promise<string> {
   const settings: LeagueSettings = { ...DEFAULT_SETTINGS, ...opts.settings };
   const seed = opts.seed || settings.simSeed || `${Date.now()}`;
   const rng = new Rng(seed);
   const seasonYear = new Date().getFullYear();
 
-  const fantasy = settings.leagueStart === 'FANTASY_DRAFT';
+  // An imported plan always arrives with full rosters (lib/leagueFile.ts fills
+  // any team the file left empty), so a fantasy draft over the top of it would
+  // be drafting players who already have teams. Import is always a
+  // randomized-rosters start; the import UI says so.
+  const fantasy = settings.leagueStart === 'FANTASY_DRAFT' && !opts.plan;
 
   const league = await prisma.league.create({
     data: {
@@ -43,9 +111,13 @@ export async function createLeague(opts: {
       settings: serializeSettings({ ...settings, simSeed: seed }),
     },
   });
+  // Hand the id over before anything else is written, so a caller can clean up
+  // a partial league if any step below throws.
+  opts.onLeagueCreated?.(league.id);
 
   // --- Teams ----------------------------------------------------------------
-  const teamRows = TEAM_SEEDS.map((t) => ({
+  const teamSeeds = opts.plan?.teams ?? TEAM_SEEDS;
+  const teamRows = teamSeeds.map((t) => ({
     leagueId: league.id,
     city: t.city,
     nickname: t.nickname,
@@ -126,9 +198,21 @@ export async function createLeague(opts: {
 
   // One ledger for the whole league, so no two players anywhere in it share
   // a name — not across rosters, not between a roster and the free agents.
-  const names = new NameRegistry();
+  // An imported plan brings its own, already holding every name in the file.
+  const names = opts.plan?.names ?? new NameRegistry();
 
-  if (fantasy) {
+  if (opts.plan) {
+    // Imported: the plan has already decided every roster and the free agent
+    // pool, generating whatever the file left out. Nothing is rolled here.
+    for (const team of teams) {
+      for (const p of opts.plan.rosters.get(team.abbr) ?? []) {
+        registerPlayer(p, { teamId: team.id, status: 'ACTIVE' }, true);
+      }
+    }
+    for (const p of opts.plan.freeAgents) {
+      registerPlayer(p, { status: 'FREE_AGENT', teamId: null }, false);
+    }
+  } else if (fantasy) {
     // Fantasy draft: everyone starts empty and one giant pool is drafted.
     // Pool = enough players for every team to fill a roster, plus slack.
     const poolSize = LEAGUE.TEAM_COUNT * LEAGUE.ROSTER_MAX + 120;
@@ -175,10 +259,21 @@ export async function createLeague(opts: {
     // team's total exceeds a safe threshold, scale that team's contracts
     // down uniformly to fit — a below-market "hometown discount" league-wide,
     // rather than a promise this scaling should never need to trigger.
+    //
+    // An imported file may name its own price for a player, and when it does
+    // that number is used INSTEAD of the market rate — but it still goes
+    // through the same team-level scaling below. A file is free to say a
+    // quarterback is worth $80M; it is not free to hand a team a payroll no
+    // salary cap in the game can accommodate, because the result is a league
+    // that refuses to advance out of preseason on day one. Which of the two
+    // an author gets is stated in docs/custom-leagues.md.
+    const planned = opts.plan?.contracts;
     const nominalByTeam = new Map<string, number>();
     const nominalByPlayer = new Map<string, number>();
     for (const p of rostered) {
-      const apy = marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential });
+      const override = planned?.get(plannedContractKey(p.firstName, p.lastName));
+      const apy = override?.apy
+        ?? marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential });
       nominalByPlayer.set(p.id, apy);
       nominalByTeam.set(p.teamId!, (nominalByTeam.get(p.teamId!) ?? 0) + apy);
     }
@@ -199,13 +294,20 @@ export async function createLeague(opts: {
       // set the FLAG without ever granting the LENGTH, so ROOKIE_DEAL_YEARS
       // was never applied at generation and the youngest 40% of the league
       // contributed no long contracts at all.
-      const isRookieDeal = p.experience <= CAP.ROOKIE_EXPERIENCE_MAX;
-      const years = isRookieDeal ? CAP.ROOKIE_DEAL_YEARS : suggestedYears(p.trueOvr, p.age);
+      const override = planned?.get(plannedContractKey(p.firstName, p.lastName));
+      // A deal written by hand is never relabelled as a rookie contract — the
+      // author gave it a length and a remaining term, and isRookieDeal would
+      // otherwise overwrite both.
+      const isRookieDeal = !override && p.experience <= CAP.ROOKIE_EXPERIENCE_MAX;
+      const years = override?.years ?? (isRookieDeal ? CAP.ROOKIE_DEAL_YEARS : suggestedYears(p.trueOvr, p.age));
       // Stagger how far into each deal we are so contracts expire on a curve.
-      // A rookie's stagger isn't random — it's his experience.
-      const elapsed = isRookieDeal
-        ? Math.min(p.experience, years - 1)
-        : rng.int(0, Math.max(0, years - 1));
+      // A rookie's stagger isn't random — it's his experience. An imported
+      // deal's stagger is whatever the file said is left to run.
+      const elapsed = override
+        ? Math.max(0, Math.min(override.years - override.yearsRemaining, years - 1))
+        : isRookieDeal
+          ? Math.min(p.experience, years - 1)
+          : rng.int(0, Math.max(0, years - 1));
       // Flat escalation + a smaller bonus share: these contracts are being
       // dropped straight into a random mid-deal year, not signed fresh, so a
       // backloaded structure would land players in their single most

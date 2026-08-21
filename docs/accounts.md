@@ -179,11 +179,26 @@ can type an address they do not own can take over the account it is attached to
 blocked tester on the afternoon the beta goes out. The column exists; the form
 does not use it.
 
-**Therefore there is no self-service password reset**, and the sign-up form says
+**Therefore there is no self-service password RESET**, and the sign-up form says
 so, in the form, above the button — not in a footnote. If a tester forgets their
 password, the operator resets it with `npx tsx scripts/resetPassword.ts` against
 the production database. That is the whole recovery story today and it is
 written down rather than implied.
+
+**There is, however, a self-service password CHANGE**, at `/account`. The two
+are different problems and only one of them needs an email: a reset is for
+somebody who cannot prove who they are, a change is for somebody who can — they
+type the current password. It exists because the operator reset above leaves a
+tester holding a credential that somebody else chose, knows, and very likely
+typed into a chat window, with no way to replace it. `changePassword()` in
+`lib/auth.ts` verifies the current password (a live session cookie is *not*
+sufficient authority to replace the credential that outlives it), applies the
+same `validatePassword` policy sign-up uses, rate-limits on the same
+`AuthAttempt` ledger, and then destroys **every** session on the account —
+including the caller's, which `app/actions/account.ts` immediately replaces with
+a fresh one for the browser that did the work. So a change made *because*
+somebody else has your password actually ejects them, and does not log you out
+of the tab you are standing in.
 
 **Signing out does not clear `dgm_owner`.** Rotating it would orphan any save
 that had not been claimed yet. It stays, and it stays harmless, because a

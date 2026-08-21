@@ -3,7 +3,16 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-interface Item { href: string; label: string }
+interface Item {
+  href: string;
+  label: string;
+  /**
+   * An href that is NOT relative to /league/<id>. The nav is otherwise a
+   * league-scoped bar, but the public leaderboard is a global page a player
+   * should be able to reach from inside a save without going home first.
+   */
+  absolute?: boolean;
+}
 interface Category { key: string; label: string; items: Item[] }
 
 // Every real destination from the old flat 15-item bar, grouped into the
@@ -46,7 +55,14 @@ const CATEGORIES: Category[] = [
   // tree — was invisible to someone who had never clicked GM Career, and it
   // was reported as missing entirely.
   { key: 'gm', label: 'GM Career', items: [{ href: '/gm', label: 'GM Career' }] },
-  { key: 'dynasty', label: 'Dynasty', items: [{ href: '/dynasty', label: 'Dynasty' }] },
+  // The public board sits under Dynasty because that is the screen whose
+  // number it publishes. Absolute, because it is not a page of this league.
+  {
+    key: 'dynasty', label: 'Dynasty', items: [
+      { href: '/dynasty', label: 'Dynasty' },
+      { href: '/leaderboard', label: 'Leaderboard', absolute: true },
+    ],
+  },
   { key: 'system', label: 'System', items: [{ href: '/settings', label: 'Settings' }] },
 ];
 
@@ -54,11 +70,15 @@ export function LeagueNav({ leagueId }: { leagueId: string }) {
   const pathname = usePathname();
   const base = `/league/${leagueId}`;
 
-  const isActive = (href: string) => (href === '' ? pathname === base : pathname.startsWith(`${base}${href}`));
+  const hrefFor = (item: Item) => (item.absolute ? item.href : `${base}${item.href}`);
+  // An absolute item is never "active" from inside a league — you are on a
+  // league page, so highlighting it would claim you are somewhere you are not.
+  const isActive = (item: Item) =>
+    item.absolute ? false : item.href === '' ? pathname === base : pathname.startsWith(`${base}${item.href}`);
   // Some real routes (e.g. a player detail page) live outside every nav
   // category on purpose — leave the whole nav unhighlighted rather than
   // guessing a parent, same as the old flat bar did for those routes.
-  const activeCategory = CATEGORIES.find((c) => c.items.some((i) => isActive(i.href)));
+  const activeCategory = CATEGORIES.find((c) => c.items.some((i) => isActive(i)));
 
   return (
     <div>
@@ -68,7 +88,7 @@ export function LeagueNav({ leagueId }: { leagueId: string }) {
           return (
             <Link
               key={cat.key}
-              href={`${base}${cat.items[0].href}`}
+              href={hrefFor(cat.items[0])}
               className={`${active ? 'nav-link-active' : 'nav-link'} whitespace-nowrap font-semibold`}
             >
               {cat.label}
@@ -79,8 +99,8 @@ export function LeagueNav({ leagueId }: { leagueId: string }) {
       {activeCategory && activeCategory.items.length > 1 && (
         <nav className="max-w-7xl mx-auto px-6 pb-2 flex gap-1 overflow-x-auto overflow-y-hidden border-t border-line/60 pt-1.5 mt-0.5">
           {activeCategory.items.map((item) => {
-            const href = `${base}${item.href}`;
-            const active = isActive(item.href);
+            const href = hrefFor(item);
+            const active = isActive(item);
             return (
               <Link
                 key={item.href}

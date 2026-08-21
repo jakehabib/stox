@@ -748,10 +748,22 @@ model User {
   /// truthful answer is how a login path grows a bug.
   passwordHash String?
 
+  /// PUBLIC LEADERBOARD CONSENT. Default false, and the default is the whole
+  /// point: a beta tester who signs up to keep their saves has not agreed to
+  /// have their username and their franchise's record published on a page
+  /// anyone can read. Opting in is one toggle on /account; opting out deletes
+  /// every DynastyRank row this account has, rather than merely hiding them.
+  ///
+  /// Defaulted rather than nullable so the column is a boolean everywhere and
+  /// `migrate deploy` can add it to a table with live rows — an existing
+  /// account lands on false, which is the answer nobody has to be asked for.
+  leaderboardOptIn Boolean @default(false)
+
   createdAt DateTime @default(now())
 
   sessions Session[]
   leagues  League[]
+  ranks    DynastyRank[]
 }
 
 /// Server-side sessions. The cookie carries a random 32-byte token; this table
@@ -799,4 +811,75 @@ model AuthAttempt {
 
   @@index([scope, kind, at])
   @@index([at])
+}
+
+// ---------------------------------------------------------------------------
+// Public leaderboard (see lib/leaderboard.ts)
+// ---------------------------------------------------------------------------
+
+// One row per FRANCHISE that is eligible to appear on the public board.
+//
+// WHY A TABLE AT ALL, when Dynasty XP is famously derived and never stored.
+// Because a board has to ORDER BY something across every save in the database
+// at once, and re-deriving XP per league is a handful of queries per league.
+// This table is a MATERIALISATION, not a second source of truth: every row is
+// rewritten from `computeDynastyXp` by refreshFootballRanks() in the same
+// request that renders the board, and any row whose save has been deleted,
+// unclaimed, or opted out is deleted rather than left to go stale.
+//
+// WHY THERE IS NO `level` COLUMN, and this is the load-bearing decision:
+// a stored level is a number that can disagree with `levelFromXp`, and this
+// project has shipped exactly that bug more than once. So the level is never
+// stored — it is computed from `xp` at render time by the same function the
+// Dynasty screen calls. Ordering by xp and ordering by level are the same
+// ordering (the curve is monotonic), so nothing is lost.
+//
+// WHY IT IS NOT KEYED ON League. The owner wants football, baseball and
+// basketball feeding one board. `sport` is the discriminator and `saveKey` is
+// deliberately a plain String rather than a foreign key to League, so a second
+// game can insert its own rows without this schema knowing anything about its
+// save table. What the sports SHARE is `User` — identity lives on the account,
+// so adding a sport is new rows, never a migration of the identity model.
+// The cost of the missing foreign key is that orphan cleanup is the refresh
+// sweep's job rather than the database's; that sweep is tested.
+model DynastyRank {
+  id String @id @default(cuid())
+
+  /// Which game produced this row. "FOOTBALL" today. Never hardcoded in the
+  /// board query — the sport tabs are derived from the sports actually present.
+  sport String
+
+  /// The save's id in that sport's own id space. For FOOTBALL this is League.id.
+  saveKey String
+
+  /// The account this franchise belongs to. Cascade: deleting an account must
+  /// take its public rows with it, unlike League.userId which deliberately
+  /// leaves the save behind.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The XP total `computeDynastyXp` returned. The ONLY ranking input.
+  xp Int @default(0)
+
+  /// The denominator, shown on every row. A level with no seasons beside it is
+  /// a number without a unit — see the honesty note on the board itself.
+  seasons       Int @default(0)
+  wins          Int @default(0)
+  losses        Int @default(0)
+  championships Int @default(0)
+
+  /// Enough identity to render the franchise the way the rest of the app does:
+  /// a crest, a city and a nickname. `crestSeed` is whatever that sport's logo
+  /// generator takes (Team.id here).
+  teamName  String
+  teamAbbr  String
+  crestSeed String
+
+  updatedAt DateTime @updatedAt
+
+  /// One row per save. The upsert in refreshFootballRanks() targets this.
+  @@unique([sport, saveKey])
+  /// The board's read: everything for a sport, best first.
+  @@index([sport, xp])
+  @@index([userId])
 }
