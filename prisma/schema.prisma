@@ -28,6 +28,13 @@ model League {
   createdAt  DateTime @default(now())
 
   seasonYear Int    @default(2025)
+  // The season this league was FOUNDED in — the base year capForYear() grows
+  // the salary cap from. Nullable ONLY so `prisma db push` can add it to an
+  // existing database without a force-reset (adding it as required hard-fails
+  // against existing rows, even with --accept-data-loss). Never read it
+  // directly: lib/leagueYear.ts's resolveStartYear() derives and persists a
+  // value for any save created before this column existed.
+  startYear  Int?
   week       Int    @default(1)     // 1..REGULAR_SEASON_WEEKS during the season
   // Phase machine (see lib/season.ts): PRESEASON | REGULAR | PLAYOFFS | OFFSEASON
   // | RESIGN | FREE_AGENCY | DRAFT | FANTASY_DRAFT

@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db';
-import { Rng } from './rng';
-import { LEAGUE, Position, PROGRESSION, SCOUTING, GENERATION } from './tuning';
+import { Rng, clamp } from './rng';
+import { CAP, CONTRACT, LEAGUE, Position, PROGRESSION, RESIGN, ROSTER_TARGETS, SCOUTING, GENERATION } from './tuning';
 import { parseSettings, LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { simulateGame, SimTeamInput } from './sim/engine';
@@ -881,9 +881,7 @@ async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: 
 /**
  * Decide re-sign outcomes for one team's pending players — both the
  * truly-expired (0-years-remaining) and the walk-year (1-remaining, this is
- * their contract's last season) ones — using the same need/profile-driven
- * logic the rest of the AI GM uses, just applied to "keep your own guy"
- * instead of "sign someone else's." Shared between the AI-only offseason
+ * their contract's last season) ones. Shared between the AI-only offseason
  * wave and the user-facing "Let the AI pick" delegate button on the re-sign
  * page, so both cover every decision the re-sign page actually shows, not
  * just the subset that's already hit free agency's doorstep.
@@ -892,6 +890,24 @@ async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: 
  * "released" — nothing happens, since he's still under contract for this
  * season. Only an un-kept ALREADY-expired player actually walks; `released`
  * only ever counts those.
+ *
+ * The shape of the pass, and why (measured against live saves — the old
+ * version kept 1.5-3.2 players per AI team per year, which is why AI rosters
+ * shrank every single offseason until they sat 20 bodies under the minimum):
+ *
+ *   1. ONE cap summary per team, then a running local budget. It used to be
+ *      one per pending player, computed BEFORE the test that threw ~83% of
+ *      them away.
+ *   2. Candidates in value order (would-actually-walk first, then by market
+ *      value). The roster query has no orderBy, so "roster order" was random.
+ *   3. Needs computed on the roster MINUS the expiring class, so a departing
+ *      starter registers as the hole he is.
+ *   4. No willingness die roll. Willingness now sets the offer's price and
+ *      term, and how far down the roster a GM is willing to go — a rebuilding
+ *      team lowballs and lets fringe players walk, a win-now team overpays.
+ *   5. The keep test is a depth comparison, not a need score: keep him if
+ *      he's a genuine starter, or if the players who'd replace him are worse,
+ *      or if the roster is still short of a legal minimum.
  */
 export async function resignDecisionsForTeam(
   leagueId: string,
@@ -902,7 +918,7 @@ export async function resignDecisionsForTeam(
   rng: Rng,
 ) {
   const { parseGmProfile, teamNeeds } = await import('./ai/gm');
-  const { marketValue, suggestedYears } = await import('./cap');
+  const { marketValue, suggestedYears, buildContract, capHit } = await import('./cap');
   const { extendContract } = await import('./freeagency');
   const { teamCapSummary } = await import('./cap-summary');
 
@@ -911,33 +927,126 @@ export async function resignDecisionsForTeam(
   const pending = roster.filter((p) => p.contract && p.contract.yearsRemaining <= 1);
   if (pending.length === 0) return { kept: 0, released: 0 };
 
-  const needs = teamNeeds(roster.map((p) => ({ id: p.id, position: p.position, trueOvr: p.trueOvr, age: p.age, potential: p.potential })));
+  const pendingIds = new Set(pending.map((p) => p.id));
+  // Needs are computed on the roster MINUS the expiring class. Computed over
+  // the FULL roster (as it used to be), a team about to lose its starting
+  // corner reads need[CB] as ~0 precisely BECAUSE that corner is still on the
+  // books — need was structurally anti-correlated with the decision it fed.
+  const core = roster.filter((p) => !pendingIds.has(p.id));
+  const needs = teamNeeds(core.map((p) => ({ id: p.id, position: p.position, trueOvr: p.trueOvr, age: p.age, potential: p.potential })));
   const profile = parseGmProfile(team.gmProfile, rng);
+
+  // ONE cap read for the whole team, then a running local budget. This used
+  // to be a teamCapSummary() (4 queries) per PENDING PLAYER, ahead of a test
+  // that discarded ~83% of them — ~4,200 round trips per league-wide wave for
+  // ~50 signings. extendContract's own assertCapRoom() is still the authority
+  // on whether a deal actually fits; `capSpace` here is only a budget.
+  const summary = await teamCapSummary(teamId, seasonYear, capMode);
+  let capSpace = summary.capSpace;
+
+  // Who the team already has at each position, best first, not counting
+  // anyone who is himself expiring — i.e. the depth that would actually
+  // replace this player if he walked.
+  const depthByPos = new Map<string, number[]>();
+  for (const p of core) {
+    const list = depthByPos.get(p.position) ?? [];
+    list.push(p.trueOvr);
+    depthByPos.set(p.position, list);
+  }
+  for (const list of depthByPos.values()) list.sort((a, b) => b - a);
+
+  // How many players are guaranteed to still be here after RESIGN: everyone
+  // under contract past this year, plus the walk-year players (who have a
+  // season left either way). Every re-signed expiring player adds one.
+  let projected = core.length + pending.filter((p) => p.contract!.yearsRemaining === 1).length;
+
+  // Value order, not roster order — the roster query has no orderBy, so the
+  // old loop spent the cap in whatever sequence Postgres happened to return
+  // (measured 51.5% inverted, i.e. indistinguishable from random). Players
+  // who would actually WALK come before walk-year players, who are a luxury.
+  const priced = pending
+    .map((p) => ({
+      p,
+      market: marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential }),
+      expired: p.contract!.yearsRemaining === 0,
+    }))
+    .sort((a, b) => Number(b.expired) - Number(a.expired) || b.market - a.market || b.p.trueOvr - a.p.trueOvr);
+
   let kept = 0;
   let released = 0;
 
-  for (const p of pending) {
-    const alreadyExpired = p.contract!.yearsRemaining === 0;
-    const summary = await teamCapSummary(team.id, seasonYear, capMode);
-    // [TUNE] Keep him if he's still good enough to matter and the team
-    // has real room; better players and needier positions get priority.
-    const worthKeeping = p.trueOvr >= 62 && (p.trueOvr >= 74 || (needs[p.position] ?? 0) > 0.3);
-    const willingness = 0.35 + profile.winNow * 0.3 + (needs[p.position] ?? 0) * 0.35;
-    if (!worthKeeping || !rng.bool(willingness)) {
-      if (alreadyExpired) released++;
+  for (const { p, market, expired } of priced) {
+    const need = needs[p.position] ?? 0;
+    // Same expression as before, but it is no longer a veto. It decides how
+    // hard this front office competes: what it offers, for how long, and how
+    // low down the roster it is willing to go.
+    const willingness = clamp(0.35 + profile.winNow * 0.3 + need * 0.35, 0, 1);
+
+    const depth = depthByPos.get(p.position) ?? [];
+    const ideal = ROSTER_TARGETS[p.position as Position]?.ideal ?? 2;
+    // The man who'd take the last roster spot the position spec wants. If
+    // the team can't even fill that many bodies without him, it's a hole.
+    const replacement = depth[ideal - 1] ?? 0;
+    const bar = RESIGN.FLOOR_OVR + (1 - willingness) * RESIGN.REBUILD_BAR_SPAN;
+    const shortOfMinimum = projected < LEAGUE.ROSTER_MIN;
+
+    const worthKeeping = p.trueOvr >= bar && (
+      p.trueOvr >= RESIGN.PREMIUM_OVR
+      || p.trueOvr + RESIGN.INCUMBENT_EDGE >= replacement
+      || shortOfMinimum
+    );
+    // A player with a year still to run isn't going anywhere — extending him
+    // early is a luxury that competes for the same dollars as the players who
+    // would actually walk, so it takes both a star and an eager GM.
+    const worthExtendingEarly = expired
+      || (p.trueOvr >= RESIGN.PREMIUM_OVR && willingness >= RESIGN.EARLY_EXTENSION_WILLINGNESS);
+
+    if (!worthKeeping || !worthExtendingEarly) {
+      if (expired) released++;
       continue;
     }
 
-    const apy = Math.round(marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential }) * (0.95 + rng.float(0, 0.15)));
-    const years = suggestedYears(p.trueOvr, p.age);
-    const usable = summary.capSpace - 3_000_000;
-    if (usable < apy) {
-      if (alreadyExpired) released++;
+    // Willingness as price and term. A win-now GM pays over market and adds a
+    // year; a rebuilding one lowballs and shortens — and then finds himself
+    // with room left for somebody else.
+    const priceMult = RESIGN.OFFER_FLOOR_MULT + willingness * RESIGN.OFFER_WILLINGNESS_SPAN;
+    const apy = Math.max(CAP.MIN_SALARY, Math.round(market * priceMult * (1 + rng.float(-RESIGN.OFFER_NOISE, RESIGN.OFFER_NOISE))));
+    const termNudge = willingness >= RESIGN.LENGTH_BONUS_ABOVE ? 1 : willingness <= RESIGN.LENGTH_PENALTY_BELOW ? -1 : 0;
+    const years = clamp(suggestedYears(p.trueOvr, p.age) + termNudge, 1, CONTRACT.MAX_DEAL_YEARS);
+
+    // Budget against the DELTA, not the gross: the old deal is torn up the
+    // instant the new one is signed, which is exactly what extendContract's
+    // assertCapRoom credits back.
+    const oldHit = capHit(p.contract, capMode);
+    const preview = buildContract({ apy, years, signedYear: seasonYear });
+    const newHit = capHit({ ...preview, baseSalaries: writeJson(preview.baseSalaries) }, capMode);
+    // Hold back money for free agency and the draft class, plus the league
+    // minimum for every roster slot still short of a legal roster.
+    const openSlots = Math.max(0, LEAGUE.ROSTER_MIN - projected);
+    const reserve = capMode === 'OFF' ? 0 : RESIGN.CAP_RESERVE + openSlots * CAP.MIN_SALARY;
+    if (newHit - oldHit > capSpace - reserve) {
+      if (expired) released++;
       continue;
     }
-    const ok = await extendContract({ leagueId, playerId: p.id, apy, years, seasonYear, capMode, week }).then(() => true).catch(() => false);
-    if (ok) kept++;
-    else if (alreadyExpired) released++;
+
+    const ok = await extendContract({ leagueId, playerId: p.id, apy, years, seasonYear, capMode, week, reSign: true })
+      .then(() => true)
+      .catch(() => false);
+    if (ok) {
+      kept++;
+      capSpace -= newHit - oldHit;
+      if (expired) {
+        projected++;
+        // He is no longer the hole he was — later players at his position are
+        // now measured against him.
+        const list = depthByPos.get(p.position) ?? [];
+        list.push(p.trueOvr);
+        list.sort((a, b) => b - a);
+        depthByPos.set(p.position, list);
+      }
+    } else if (expired) {
+      released++;
+    }
   }
   return { kept, released };
 }

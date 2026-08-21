@@ -1,4 +1,4 @@
-import { CAP, MARKET, Position } from './tuning';
+import { CAP, CONTRACT, MARKET, Position } from './tuning';
 import { CapMode } from './types';
 import { readJson } from './json';
 import { clamp } from './rng';
@@ -126,6 +126,28 @@ export function restructureContract(
   };
 }
 
+/**
+ * Which league year a cap charge booked RIGHT NOW belongs to.
+ *
+ * The offseason phase machine bumps League.seasonYear at its RESET_STANDINGS
+ * step (OFFSEASON week 2), and agePlayersAndContracts() then hard-deletes
+ * every CapCharge from a year before the new one. So dead money booked during
+ * OFFSEASON weeks 1-2 was filed under the season that was ending, sat in a
+ * window where cap compliance is deliberately not enforced (see
+ * CAP_ROLLOVER_PHASES in lib/season.ts), and was deleted two steps later
+ * without ever being charged to anyone. Cutting a player cost full price in
+ * PRESEASON week 1 and exactly nothing in OFFSEASON week 1 — a timing trick,
+ * not a decision, and invisible in the UI.
+ *
+ * Real football has the same boundary and answers it the same way: a player
+ * released after the season ends but before the new league year opens counts
+ * against the NEW year. So do we.
+ */
+export function capChargeYear(opts: { phase: string; week: number; seasonYear: number }): number {
+  const beforeYearRoll = opts.phase === 'OFFSEASON' && opts.week <= CAP.OFFSEASON_YEAR_ROLL_WEEK;
+  return beforeYearRoll ? opts.seasonYear + 1 : opts.seasonYear;
+}
+
 /** Net cap saved by cutting: this year's hit minus the dead money incurred. */
 export function capSavingsOnCut(c: ContractLike | null | undefined, mode: CapMode): number {
   if (!c || mode === 'OFF') return 0;
@@ -165,14 +187,23 @@ export function marketValue(opts: {
   return Math.max(CAP.MIN_SALARY, Math.round((base * posMult * ageMult) / 100_000) * 100_000);
 }
 
-/** Reasonable contract length for a player's age/quality. [TUNE] */
+/**
+ * Reasonable contract length for a player's age/quality. Constants live in
+ * CONTRACT (lib/tuning.ts) — see there for the calibration.
+ *
+ * This used to bottom out at `return 2` for anyone under 66 OVR, which is
+ * the modal roster player, so roughly half of every generated league sat on
+ * two-year deals and hit free agency on the same cycle forever. Age gates
+ * still come first and still shorten hard: quality buys term only for a
+ * player young enough to still be worth it at the end of the deal.
+ */
 export function suggestedYears(ovr: number, age: number): number {
-  if (age >= 33) return 1;
-  if (age >= 31) return 2;
-  if (ovr >= 82 && age <= 28) return 5;
-  if (ovr >= 74) return 4;
-  if (ovr >= 66) return 3;
-  return 2;
+  if (age >= CONTRACT.AGE_ONE_YEAR) return 1;
+  if (age >= CONTRACT.AGE_TWO_YEAR) return 2;
+  if (age >= CONTRACT.AGE_THREE_YEAR) return 3;
+  if (ovr >= CONTRACT.MAX_DEAL_OVR && age <= CONTRACT.MAX_DEAL_MAX_AGE) return CONTRACT.MAX_DEAL_YEARS;
+  if (ovr >= CONTRACT.STANDARD_OVR) return CONTRACT.STANDARD_YEARS;
+  return CONTRACT.FRINGE_YEARS;
 }
 
 /**

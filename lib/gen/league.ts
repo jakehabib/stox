@@ -34,6 +34,9 @@ export async function createLeague(opts: {
     data: {
       name: opts.name,
       seasonYear,
+      // The base year the salary cap grows from for the life of this league.
+      // See lib/leagueYear.ts — older saves derive it instead.
+      startYear: seasonYear,
       week: 1,
       phase: fantasy ? 'FANTASY_DRAFT' : 'PRESEASON',
       settings: serializeSettings({ ...settings, simSeed: seed }),
@@ -188,9 +191,20 @@ export async function createLeague(opts: {
     const contractRows = rostered.map((p) => {
       const scale = scaleByTeam.get(p.teamId!) ?? 1;
       const apy = Math.max(CAP.MIN_SALARY, Math.round((nominalByPlayer.get(p.id)! * scale) / 100_000) * 100_000);
-      const years = suggestedYears(p.trueOvr, p.age);
+      // Young players are on real rookie deals, not veteran deals: full
+      // CAP.ROOKIE_DEAL_YEARS term, and they are exactly as many years into
+      // it as they have years of experience. This used to be
+      // `isRookieDeal: p.experience <= 3 && rng.bool(0.5)` — a coin flip that
+      // set the FLAG without ever granting the LENGTH, so ROOKIE_DEAL_YEARS
+      // was never applied at generation and the youngest 40% of the league
+      // contributed no long contracts at all.
+      const isRookieDeal = p.experience <= CAP.ROOKIE_EXPERIENCE_MAX;
+      const years = isRookieDeal ? CAP.ROOKIE_DEAL_YEARS : suggestedYears(p.trueOvr, p.age);
       // Stagger how far into each deal we are so contracts expire on a curve.
-      const elapsed = rng.int(0, Math.max(0, years - 1));
+      // A rookie's stagger isn't random — it's his experience.
+      const elapsed = isRookieDeal
+        ? Math.min(p.experience, years - 1)
+        : rng.int(0, Math.max(0, years - 1));
       // Flat escalation + a smaller bonus share: these contracts are being
       // dropped straight into a random mid-deal year, not signed fresh, so a
       // backloaded structure would land players in their single most
@@ -206,7 +220,7 @@ export async function createLeague(opts: {
         baseSalaries: writeJson(c.baseSalaries),
         signingBonus: c.signingBonus,
         guaranteed: c.guaranteed,
-        isRookieDeal: p.experience <= 3 && rng.bool(0.5),
+        isRookieDeal,
       };
     });
     for (let i = 0; i < contractRows.length; i += CHUNK) {

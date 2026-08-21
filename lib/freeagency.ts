@@ -136,6 +136,16 @@ export async function extendContract(opts: {
   escalation?: number; // <1 front-loaded, >1 back-loaded
   voidYears?: number;
   bonusPct?: number;
+  /**
+   * True when this is a team keeping its OWN expiring player rather than
+   * tearing up a deal with years left on it. Writes a RESIGN transaction
+   * instead of a SIGN one — both the news-wire type filter
+   * (app/league/[id]/layout.tsx) and lib/newsCategory.ts already handle
+   * RESIGN, but until now nothing in the codebase ever produced one, so
+   * "kept his own guy" and "extended a player under contract" were
+   * indistinguishable on the wire.
+   */
+  reSign?: boolean;
 }) {
   const { playerId, apy, years, seasonYear, capMode, week } = opts;
   const { capHit } = await import('./cap');
@@ -172,9 +182,14 @@ export async function extendContract(opts: {
     });
     await tx.transaction.create({
       data: {
-        leagueId: opts.leagueId, seasonYear, week, type: 'SIGN', teamId,
-        headline: `Extended ${player.firstName} ${player.lastName}`,
-        detail: `${years}-yr extension, ~$${(apy / 1_000_000).toFixed(1)}M/yr`,
+        leagueId: opts.leagueId, seasonYear, week,
+        type: opts.reSign ? 'RESIGN' : 'SIGN', teamId,
+        headline: opts.reSign
+          ? `Re-signed ${player.firstName} ${player.lastName}`
+          : `Extended ${player.firstName} ${player.lastName}`,
+        detail: opts.reSign
+          ? `${years}-yr deal, ~$${(apy / 1_000_000).toFixed(1)}M/yr`
+          : `${years}-yr extension, ~$${(apy / 1_000_000).toFixed(1)}M/yr`,
       },
     });
   });
@@ -341,14 +356,25 @@ export async function cutPlayer(opts: {
 }) {
   const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId }, include: { contract: true } });
   if (!player.teamId) throw new Error('Player is not on a roster.');
+  // Read the phase here rather than making every caller pass it: which league
+  // year the dead money lands in depends on where in the offseason roll the
+  // cut happens (see capChargeYear), and getting that wrong made cuts free.
+  const league = await prisma.league.findUniqueOrThrow({
+    where: { id: opts.leagueId }, select: { phase: true, week: true, seasonYear: true },
+  });
 
   await prisma.$transaction(async (tx) => {
     if (player.contract && opts.capMode === 'REALISTIC') {
-      const { deadMoneyOnCut } = await import('./cap');
+      const { deadMoneyOnCut, capChargeYear } = await import('./cap');
       const dead = deadMoneyOnCut(player.contract, opts.capMode);
       if (dead > 0) {
         await tx.capCharge.create({
-          data: { teamId: player.teamId!, year: opts.seasonYear, amount: dead, label: `Dead money — ${player.firstName} ${player.lastName}` },
+          data: {
+            teamId: player.teamId!,
+            year: capChargeYear({ phase: league.phase, week: league.week, seasonYear: opts.seasonYear }),
+            amount: dead,
+            label: `Dead money — ${player.firstName} ${player.lastName}`,
+          },
         });
       }
     }

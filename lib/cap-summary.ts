@@ -2,6 +2,7 @@ import { prisma } from './db';
 import { CapMode } from './types';
 import { capForYear, capHit } from './cap';
 import { CAP } from './tuning';
+import { resolveStartYear } from './leagueYear';
 
 export interface CapSummary {
   capTotal: number;
@@ -27,7 +28,10 @@ export interface CapSummary {
 
 export async function teamCapSummary(teamId: string, seasonYear: number, mode: CapMode): Promise<CapSummary> {
   const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId }, select: { leagueId: true } });
-  const league = await prisma.league.findUniqueOrThrow({ where: { id: team.leagueId }, select: { seasonYear: true } });
+  const league = await prisma.league.findUniqueOrThrow({
+    where: { id: team.leagueId },
+    select: { id: true, seasonYear: true, startYear: true },
+  });
 
   const players = await prisma.player.findMany({
     where: { teamId, status: 'ACTIVE' },
@@ -35,7 +39,10 @@ export async function teamCapSummary(teamId: string, seasonYear: number, mode: C
   });
   const deadRows = await prisma.capCharge.findMany({ where: { teamId, year: seasonYear } });
 
-  const capTotal = mode === 'OFF' ? 0 : capForYear(seasonYear, league.seasonYear);
+  // The SECOND argument is the league's FOUNDING year, not the current one.
+  // Passing the current season here made `elapsed` zero every time, which
+  // pinned the ceiling at CAP.BASE_CAP for the life of every league.
+  const capTotal = mode === 'OFF' ? 0 : capForYear(seasonYear, await resolveStartYear(league));
   const activeSalary = players.reduce((sum, p) => sum + capHit(p.contract, mode), 0);
   const deadMoney = mode === 'OFF' ? 0 : deadRows.reduce((s, r) => s + r.amount, 0);
   const capUsed = activeSalary + deadMoney;

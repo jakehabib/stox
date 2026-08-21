@@ -4,6 +4,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { positionSortKey } from '@/lib/league-data';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { formatMoney, capHit, deadMoneyOnCut, capSavingsOnCut, capHitSchedule, capForYear, marketValue } from '@/lib/cap';
+import { resolveStartYear } from '@/lib/leagueYear';
 import { Tooltip } from '@/components/Tooltip';
 import { POSITION_GROUPS, positionGroup } from '@/lib/positionGroups';
 import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
@@ -97,7 +98,6 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
   // --- Advanced-view data -----------------------------------------------
   let allocationBars: { label: string; value: number; displayValue: string; color: string }[] = [];
   let outlookSeries: { label: string; color: string; points: { x: string; y: number }[] }[] = [];
-  let outlookBaseline: { y: number; label: string } | undefined;
   let valuePoints: { id: string; x: number; y: number; label: string; color: string; detail?: string }[] = [];
   let vsLeagueBars: { label: string; value: number; displayValue: string; color: string }[] = [];
   let health: CapHealth | null = null;
@@ -147,12 +147,22 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       const schedule = capHitSchedule(p.contract, settings.capMode);
       for (let i = 0; i < OUTLOOK_YEARS; i++) totals[i] += schedule[i] ?? 0;
     }
-    outlookSeries = [{
-      label: 'Committed Cap',
-      color: '#3987e5',
-      points: totals.map((v, i) => ({ x: String(league.seasonYear + i), y: v })),
-    }];
-    outlookBaseline = { y: summary.capTotal, label: `${league.seasonYear} cap limit` };
+    // The ceiling RISES 7%/yr (CAP.CAP_GROWTH_PER_YEAR), so a single flat
+    // baseline at this year's limit understated future headroom by tens of
+    // millions. Draw the real ceiling for each year instead.
+    const startYear = await resolveStartYear(league);
+    outlookSeries = [
+      {
+        label: 'Committed Cap',
+        color: '#3987e5',
+        points: totals.map((v, i) => ({ x: String(league.seasonYear + i), y: v })),
+      },
+      {
+        label: 'Cap Limit',
+        color: '#93939c',
+        points: totals.map((_, i) => ({ x: String(league.seasonYear + i), y: capForYear(league.seasonYear + i, startYear) })),
+      },
+    ];
 
     const surplusRows: SurplusRow[] = rows
       .filter(({ p }) => p.contract)
@@ -184,6 +194,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       })),
       capUsed: summary.capUsed,
       capTotal: summary.capTotal,
+      nextYearCapTotal: capForYear(league.seasonYear + 1, startYear),
       deadMoney: summary.deadMoney,
     });
 
@@ -332,7 +343,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
               value: `${Math.round(health.nextYearCommittedShare * 100)}%`,
               detail: `${health.playersUnderContractNextYear} players signed beyond this season`,
               color: health.nextYearCommittedShare > 0.8 ? 'text-warn' : undefined,
-              tip: "Cap dollars already owed next season as a share of this year's cap, from contracts on the books today. High means next offseason is largely pre-spent before free agency even opens.",
+              tip: "Cap dollars already owed next season as a share of NEXT year's cap (the ceiling rises every season), from contracts on the books today. High means next offseason is largely pre-spent before free agency even opens.",
             },
             {
               label: 'League Spend Rank',
@@ -376,10 +387,10 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
           <div className="panel p-4">
             <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
               Multi-Year Cap Outlook
-              <Tooltip text="Total cap already committed in each future year from contracts on the books today (dead money and new signings aren't included — this is just what you'd owe if the roster froze exactly as it is). The dashed line is this year's cap limit for reference; future caps will actually be higher as the league cap grows." />
+              <Tooltip text="Total cap already committed in each future year from contracts on the books today (dead money and new signings aren't included — this is just what you'd owe if the roster froze exactly as it is). The grey line is the salary cap ceiling in each of those years, which rises every season." />
             </h2>
             <p className="text-xs text-muted mb-3">Already-committed cap dollars, {league.seasonYear}–{league.seasonYear + 3}.</p>
-            <LineChart series={outlookSeries} baseline={outlookBaseline} formatY="money" />
+            <LineChart series={outlookSeries} formatY="money" />
           </div>
 
           <div className="panel p-4">

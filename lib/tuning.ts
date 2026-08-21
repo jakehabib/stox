@@ -267,8 +267,97 @@ export const CAP = {
   ROOKIE_SCALE_R1_PICK1: 9_500_000,   // total APY at pick 1.1 [TUNE]
   ROOKIE_SCALE_R7_LAST: 1_050_000,    // APY at the last pick
   ROOKIE_DEAL_YEARS: 4,
+  /**
+   * [TUNE] Years of NFL experience that still counts as "on a rookie deal".
+   * League generation uses it to put every young player on a real
+   * ROOKIE_DEAL_YEARS contract — it used to flag isRookieDeal on a coin flip
+   * without ever granting the length, so ROOKIE_DEAL_YEARS was never applied
+   * at generation and young players contributed no long contracts at all.
+   */
+  ROOKIE_EXPERIENCE_MAX: 3,
+  /**
+   * [TUNE] The OFFSEASON week whose step rolls League.seasonYear forward
+   * (RESET_STANDINGS, see OFFSEASON_STEPS in lib/season.ts). Cap charges
+   * booked at or before it belong to the NEXT league year — see
+   * capChargeYear() in lib/cap.ts. Keep in step with OFFSEASON_STEPS.
+   */
+  OFFSEASON_YEAR_ROLL_WEEK: 2,
   /** How far a team may exceed the cap before signings are blocked. */
   HARD_CAP_TOLERANCE: 0,
+};
+
+/**
+ * [TUNE] Contract length ladder — the numbers behind suggestedYears() in
+ * lib/cap.ts. Length is what decides how much of a roster reaches free
+ * agency each year: expiry rate is 1 / mean contract length, so a league of
+ * two-year deals turns half its rosters over annually and no dynasty ever
+ * compounds. Calibrated over 32 generated rosters to land at roughly 27%
+ * of players (and ~4 nominal starters per team) expiring per season, which
+ * is close to the real-NFL rate of 25-27%.
+ *
+ * Age gates come FIRST and are absolute: a 34-year-old gets one year no
+ * matter how good he is, which is what keeps an aging star from being
+ * handed a five-year deal the team can never escape.
+ */
+export const CONTRACT = {
+  AGE_ONE_YEAR: 34,     // at/above this age: 1-year deals only
+  AGE_TWO_YEAR: 32,
+  AGE_THREE_YEAR: 30,
+  /** Prime-age stars — the only players who get the maximum term. */
+  MAX_DEAL_OVR: 80,
+  MAX_DEAL_MAX_AGE: 28,
+  MAX_DEAL_YEARS: 5,
+  /** Everyone else who is a real roster player. */
+  STANDARD_OVR: 60,
+  STANDARD_YEARS: 4,
+  /** Fringe/camp-body depth — short deals, high churn at the bottom. */
+  FRINGE_YEARS: 3,
+};
+
+/**
+ * [TUNE] The AI's annual keep-or-let-walk pass over its own expiring
+ * players — see resignDecisionsForTeam() in lib/season.ts.
+ *
+ * The old version gated on `trueOvr >= 62 && (trueOvr >= 74 || need > 0.3)`
+ * and then rolled a ~55% die. Measured over live saves, the need clause
+ * alone rejected 37% of every expiring class outright (need is computed on a
+ * roster that still contains the expiring player, so a team about to lose
+ * its starting corner reads need[CB] as zero), and only 17% of the class
+ * ever reached a price check. Willingness now sets the PRICE and TERM a team
+ * offers instead of whether it looks at a player at all.
+ */
+export const RESIGN = {
+  /** Nobody below this rating is worth a contract at any price. */
+  FLOOR_OVR: 58,
+  /** At/above this rating a player is kept regardless of depth behind him. */
+  PREMIUM_OVR: 74,
+  /**
+   * How much higher the keep bar sits for a fully rebuilding GM than for a
+   * fully win-now one. This is what "how hard a team competes" means for a
+   * fringe player: it is a philosophy, not a coin flip.
+   */
+  REBUILD_BAR_SPAN: 8,
+  /** A sitting incumbent gets this much benefit of the doubt vs. the next man up. */
+  INCUMBENT_EDGE: 2,
+  /** Offer = market x (FLOOR + willingness x SPAN), then +/- NOISE. */
+  OFFER_FLOOR_MULT: 0.95,
+  OFFER_WILLINGNESS_SPAN: 0.22,
+  OFFER_NOISE: 0.05,
+  /** Willingness above/below these nudges the term one year up/down. */
+  LENGTH_BONUS_ABOVE: 0.7,
+  LENGTH_PENALTY_BELOW: 0.35,
+  /**
+   * Cap room held back from the re-sign wave so the team can still bid in
+   * free agency and sign its draft class. On top of this, MIN_SALARY is
+   * reserved for every roster slot still short of LEAGUE.ROSTER_MIN.
+   */
+  CAP_RESERVE: 10_000_000,
+  /**
+   * A player with a year still to run is only extended EARLY if he's this
+   * good and the GM is this eager — otherwise the money belongs to the
+   * players who would actually walk.
+   */
+  EARLY_EXTENSION_WILLINGNESS: 0.6,
 };
 
 /** [TUNE] Market value curve: $ APY a player of a given overall commands. */
@@ -283,7 +372,7 @@ export const MARKET = {
    */
   PIVOT: 70,
   /** Growth rate ABOVE pivot — kept gentle so stars stay bounded. */
-  STEEPNESS: 0.05,
+  STEEPNESS: 0.058,
   /**
    * Decay rate BELOW pivot — steeper than STEEPNESS. A single symmetric
    * exponential can't compress the bottom of the roster toward minimum
@@ -292,8 +381,27 @@ export const MARKET = {
    * through the cap on its own, before a single above-average player is
    * even signed. Below pivot, value falls off faster instead.
    */
-  STEEPNESS_LOW: 0.097,
-  SCALE: 9_000_000,
+  STEEPNESS_LOW: 0.14,
+  /**
+   * The whole curve's dollar anchor. This is the ONE number that decides
+   * whether the salary cap is a real constraint: nothing else in
+   * marketValue() references CAP.BASE_CAP or any ceiling at all, so the
+   * market and the cap were free to drift apart — and they had. At the
+   * previous 9.0M/0.097/0.050 calibration a full 53-man roster priced at
+   * market cost ~124% of BASE_CAP, which no team can pay: lib/gen/league.ts
+   * hid that at league creation with a one-time uniform haircut to 0.88 of
+   * the cap, but every later signing path (the re-sign wave, the free agency
+   * frenzy, the user's own offers) pays full market, so rosters could only
+   * ever shrink back toward affordability.
+   *
+   * Recalibrated over 32 generated rosters so a full 53 at market lands near
+   * 92% of BASE_CAP: enough that a team can field a legal roster, tight
+   * enough that keeping everyone good is a real choice. The steeper
+   * STEEPNESS_LOW is what pays for it — bottom-of-roster depth collapses
+   * toward the league minimum (a 62 OVR LB now costs ~$1.9M rather than
+   * ~$3.4M) while a genuine star's price is nearly unchanged.
+   */
+  SCALE: 7_000_000,
   /** Positional value multipliers — the premium-position tax. */
   POSITION_MULT: {
     QB: 1.85, RB: 0.62, FB: 0.35, WR: 1.15, TE: 0.85,

@@ -111,7 +111,7 @@ export interface CapHealth {
   rosterAvgAge: number;
   /** Dead money as a share of the total cap. */
   deadShare: number;
-  /** Cap dollars committed to next season as a share of this season's cap. */
+  /** Cap dollars committed to next season as a share of NEXT season's cap. */
   nextYearCommittedShare: number;
   /** Players under contract beyond this season. */
   playersUnderContractNextYear: number;
@@ -121,9 +121,17 @@ export function buildCapHealth(input: {
   rows: { age: number; hit: number; yearsRemaining: number; nextYearHit: number }[];
   capUsed: number;
   capTotal: number;
+  /**
+   * Next season's ceiling. The cap grows every year (CAP.CAP_GROWTH_PER_YEAR),
+   * so measuring next year's commitments against THIS year's ceiling
+   * overstates the squeeze by the growth rate. Optional so a caller that
+   * genuinely only has the current figure still gets the old behaviour.
+   */
+  nextYearCapTotal?: number;
   deadMoney: number;
 }): CapHealth {
   const { rows, capUsed, capTotal, deadMoney } = input;
+  const nextYearCap = input.nextYearCapTotal ?? capTotal;
   const hits = rows.map((r) => r.hit).sort((a, b) => b - a);
   const topFive = hits.slice(0, 5).reduce((s, v) => s + v, 0);
   const totalHit = hits.reduce((s, v) => s + v, 0);
@@ -137,7 +145,7 @@ export function buildCapHealth(input: {
     capWeightedAge: dollarWeighted,
     rosterAvgAge: rows.length > 0 ? rows.reduce((s, r) => s + r.age, 0) / rows.length : 0,
     deadShare: capTotal > 0 ? deadMoney / capTotal : 0,
-    nextYearCommittedShare: capTotal > 0 ? nextYear / capTotal : 0,
+    nextYearCommittedShare: nextYearCap > 0 ? nextYear / nextYearCap : 0,
     playersUnderContractNextYear: rows.filter((r) => r.yearsRemaining > 1).length,
   };
 }
