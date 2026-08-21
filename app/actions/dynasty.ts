@@ -32,6 +32,26 @@ export interface DynastyActionResult {
  * error the user sees — and would make this whole file untestable from a
  * script. Only the out-of-request case is swallowed; anything else rethrows.
  */
+type ProfileWrite = Partial<{ skills: string; fullScoutYear: number; fullScoutUsed: number; insiderYear: number; insiderUsed: number }>;
+
+/**
+ * Every Dynasty write goes through an upsert keyed on leagueId. Keying on the
+ * row's own id would break the one case loadDynastyProfile is designed to
+ * survive — a context where the row could not be created and an in-memory
+ * default (with no id) was handed back.
+ */
+function profileUpsert(leagueId: string, data: ProfileWrite) {
+  return prisma.dynastyProfile.upsert({
+    where: { leagueId },
+    create: { ownerKind: 'LEAGUE', ownerKey: leagueId, leagueId, ...data },
+    update: data,
+  });
+}
+
+async function writeProfile(leagueId: string, data: ProfileWrite) {
+  await profileUpsert(leagueId, data);
+}
+
 function safeRevalidate(leagueId: string) {
   try {
     revalidatePath(`/league/${leagueId}`, 'layout');
@@ -71,7 +91,10 @@ export async function purchaseSkillAction(leagueId: string, skillId: DynastySkil
     return { ok: false, message: 'That upgrade already went through — reload to see it.' };
   }
   const next = { ...fresh, [skillId]: current + 1 };
-  await prisma.dynastyProfile.update({ where: { id: profile.id }, data: { skills: serializeSkills(next) } });
+  // Upsert by leagueId, not by profile.id: loadDynastyProfile falls back to an
+  // in-memory default when it could not create a row, and that default has no
+  // id to update.
+  await writeProfile(leagueId, { skills: serializeSkills(next) });
 
   safeRevalidate(leagueId);
   return { ok: true, message: `${def.name} upgraded to rank ${current + 1}.` };
@@ -164,10 +187,7 @@ export async function fullScoutAction(leagueId: string, teamId: string, playerId
       create: { playerId, teamId, scoutedOvr: 0, ovrLow: 0, ovrHigh: 99, ...payload },
       update: payload,
     }),
-    prisma.dynastyProfile.update({
-      where: { id: profile.id },
-      data: { fullScoutYear: league.seasonYear, fullScoutUsed: usedThisYear + 1 },
-    }),
+    profileUpsert(leagueId, { fullScoutYear: league.seasonYear, fullScoutUsed: usedThisYear + 1 }),
   ]);
 
   safeRevalidate(leagueId);
@@ -395,10 +415,7 @@ export async function insiderReadAction(
   const usedThisYear = profile.insiderYear === league.seasonYear ? profile.insiderUsed : 0;
   if (usedThisYear >= DYNASTY.INSIDER_USES_PER_SEASON) return { ok: false, message: 'No Insider calls left this season.' };
 
-  await prisma.dynastyProfile.update({
-    where: { id: profile.id },
-    data: { insiderYear: league.seasonYear, insiderUsed: usedThisYear + 1 },
-  });
+  await writeProfile(leagueId, { insiderYear: league.seasonYear, insiderUsed: usedThisYear + 1 });
   safeRevalidate(leagueId);
 
   const remaining = DYNASTY.INSIDER_USES_PER_SEASON - (usedThisYear + 1);

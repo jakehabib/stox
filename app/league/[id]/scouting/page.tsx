@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { buildScoutedView } from '@/lib/scouting';
+import { loadScoutMods } from '@/lib/dynasty';
 import { syncScoutingBudget, scoutCost, periodKey, weeklyScoutingBudget } from '@/lib/scoutingEconomy';
 import { SCOUT_TIERS, SCOUT_ECONOMY, LEAGUE, PROGRESSION, type ScoutTierKey } from '@/lib/tuning';
 import { readJson } from '@/lib/json';
@@ -34,6 +35,8 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
   const team = userTeam!;
 
   const budget = await syncScoutingBudget(team.id, league, settings);
+  // Scouting-branch skill ranks narrow every band this page renders.
+  const scoutMods = await loadScoutMods(league.id);
   const period = periodKey(league);
 
   const [prospects, freeAgents, roster, scouts] = await Promise.all([
@@ -109,6 +112,7 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
     settings,
     isOwnRoster,
     isUserView: true,
+    dynasty: scoutMods,
   });
 
   // Triage view of the class: the prospects you know least about, biggest

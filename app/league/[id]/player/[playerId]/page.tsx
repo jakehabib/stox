@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
+import { loadScoutMods } from '@/lib/dynasty';
 import { ratingColor, playerLabel } from '@/lib/ratings';
 import { rankProspectCombine, ordinal, CombineMeasurable } from '@/lib/combineRank';
 import { formatMoney, capHit, remainingValue, marketValue, deadMoneyOnCut } from '@/lib/cap';
@@ -14,6 +15,7 @@ import { sortStatEntries, statLabel } from '@/lib/statLabels';
 import { CutButton } from '@/components/CutButton';
 import { ContractActions } from '@/components/ContractActions';
 import { ScoutButton } from '@/components/ScoutButton';
+import { FullScoutButton } from '@/components/FullScoutButton';
 import { SignOfferForm } from '@/components/SignOfferForm';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
@@ -65,9 +67,12 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
     : null;
 
   const isOwnRoster = player.teamId === userTeam?.id;
+  // Scouting-branch skills narrow the bands this view reports. Without this the
+  // GM buys a rank and sees no change on the one screen the rank is about.
+  const scoutMods = await loadScoutMods(league.id);
   const view = buildScoutedView({
     position: player.position as any, trueAttrs: readJson(player.trueAttrs, {}), trueOvr: player.trueOvr, potential: player.potential,
-    report, settings, isOwnRoster, isUserView: true,
+    report, settings, isOwnRoster, isUserView: true, dynasty: scoutMods,
   });
 
   const seasonStats = readJson<Record<string, number>>(player.seasonStats, {});
@@ -380,10 +385,15 @@ export default async function PlayerPage({ params }: { params: { id: string; pla
             <p className="text-xs text-muted mt-1 max-w-lg">{view.notes}</p>
           </div>
           {userTeam && (
-            <ScoutButton
-              leagueId={league.id} teamId={userTeam.id} playerId={player.id}
-              alreadyScoutedThisWeek={report?.lastWeek === league.seasonYear * 100 + league.week}
-            />
+            <div className="flex items-center gap-2 shrink-0">
+              <ScoutButton
+                leagueId={league.id} teamId={userTeam.id} playerId={player.id}
+                alreadyScoutedThisWeek={report?.lastWeek === league.seasonYear * 100 + league.week}
+              />
+              {/* The full-reveal charge belongs beside the incremental look, so
+                  the two prices are compared at the moment the choice is made. */}
+              <FullScoutButton leagueId={league.id} teamId={userTeam.id} playerId={player.id} compact />
+            </div>
           )}
         </div>
       )}

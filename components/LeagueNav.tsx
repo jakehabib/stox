@@ -40,7 +40,12 @@ const CATEGORIES: Category[] = [
       { href: '/history', label: 'History' },
     ],
   },
-  { key: 'gm', label: 'GM Career', items: [{ href: '/gm', label: 'GM Career' }] },
+  {
+    key: 'gm', label: 'GM Career', items: [
+      { href: '/gm', label: 'GM Career' },
+      { href: '/dynasty', label: 'Dynasty' },
+    ],
+  },
   { key: 'system', label: 'System', items: [{ href: '/settings', label: 'Settings' }] },
 ];
 
