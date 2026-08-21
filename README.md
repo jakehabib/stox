@@ -893,4 +893,55 @@ ever force-pushed over, so every state below still exists in git history).
     classes — still zero. Same seed still yields the same names.
   - Note: this only affects newly generated players. Existing saves keep
     the duplicate names they already have.
+- **2026-08-21 — Scouting focus is now a real economy (`54a316f`).**
+  Focus points were effectively infinite, so no scouting decision cost
+  anything and triage — the actual skill of the job — never happened.
+  - **Finite grants.** Focus arrives per period (a week in season, or
+    the whole pre-draft window as one lump at roughly 6× a weekly
+    stipend), sized off your scout staff — 92–122/week for a typical
+    team. **Carryover caps at half the incoming grant**, so banking a
+    week to afford a Deep Dive is a real play but hoarding is
+    impossible: the balance plateaus at 1.5× grant, and a 780-point
+    pre-draft balance collapses to 156 at the new league year.
+  - **Four tiered actions** replace the single Scout button, each
+    closing a *fraction of remaining* uncertainty rather than adding
+    flat confidence — Area Look (5), Full Evaluation (18, locks two
+    attributes), Deep Dive (45, tightens potential on its own track,
+    can surface the dev trait), Development Focus (30, on your own
+    player). Repeat passes cost +60% and reveal 18% less each time: the
+    sixth Deep Dive on one man costs 180 and buys 1 point of confidence.
+  - **The scarcity was measured, not asserted.** One Area Look on all
+    400 prospects costs 59% of an entire league year. A full-class Deep
+    Dive costs 5.3× everything you will ever earn. A realistic pre-draft
+    cycle (deep dive the top 5, evaluate the next 15, look at the rest)
+    runs out after 45 of 400 prospects, with exactly one at high
+    confidence.
+  - **The fog invariant holds** — potential is still always a range.
+    That required an explicit ceiling on how much of a player can ever
+    be locked; without it, enough Deep Dives collapsed the displayed OVR
+    to a single certain number.
+  - **New Scouting Department page** puts one pool against three
+    competing lanes: the draft class, the free-agent market, and your
+    own players' development. Every cost and the remaining balance are
+    visible before the click.
+  - Existing saves are safe: new columns are additive with defaults, and
+    a league that has never seen the system opens with a full allowance
+    rather than zero.
+  - **Alongside it, two layout fixes.** The dashboard's right rail
+    carried two short widgets against a left column three times its
+    height — the League Wire moves full-width below, and the rail gains
+    an Injury Report (the header said "54 (3 inj)" and named nobody) and
+    Season Leaders. The depth chart was stretching its two-deep QB card
+    to match the seven-deep WR card beside it and running half empty;
+    column flow packs them, the "Unmanned"/"No Backup" tiles now name
+    the positions instead of just counting them, and a new "Out Of
+    Order" tile catches an 83 sitting behind two 69s (which happens on
+    its own, because a new signing appends to the bottom of his group).
+  - **Scope warning for rollback:** this is a whole-tree checkpoint, not
+    a single-topic commit. Two workstreams were mid-flight and their
+    partial work is included — salary-cap enforcement and combine
+    percentile ranking. Both are functional but unfinished; their own
+    entries follow. It was committed whole deliberately so the hash is a
+    checkpoint that actually builds (tsc clean, all 16 league routes
+    200). Reverting past it loses the scouting economy too.
 
