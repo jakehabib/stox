@@ -174,6 +174,14 @@ function openingLine(tier: Tier, noun: string, view: ScoutedPlayerView, rng: Rng
       `Limited viewing on this ${noun} so far; the tools flash but the tape is thin.`,
       `Barely scouted — anything said about this ${noun} right now is closer to a guess than a grade.`,
       `Not enough exposure yet to say much with real confidence about this ${noun}.`,
+      `We have laid eyes on this ${noun} twice. That is not an evaluation, it is an impression.`,
+      `Thin file on this ${noun}. What is in it looks fine; there is just not much of it.`,
+      `Our book on this ${noun} is close to empty and we would not pretend otherwise.`,
+      `Early days with this ${noun} — we know the measurables and very little of the player.`,
+      `One live look at this ${noun} and a stack of second-hand notes. Treat accordingly.`,
+      `Nobody in the building has spent real time on this ${noun} yet.`,
+      `Preliminary only. This ${noun} has not had a proper cross-check.`,
+      `We can describe this ${noun}. We cannot yet tell you whether he can play.`,
     ]);
   }
 
@@ -205,6 +213,14 @@ function bareTraitLine(a: ScoutedAttr, rng: Rng): string {
     `The one thing with any real sample behind it — ${phrase} — checks out fine; everything else is projection.`,
     `Early testing gives us a read on ${phrase} at least; the rest of the profile is still a blank page.`,
     `${cap(phrase)} is about the only grade worth repeating out loud at this stage.`,
+    `We have ${phrase} on file and precious little else.`,
+    `${cap(phrase)} is the one box we can tick honestly right now.`,
+    `Everything we would put our name to comes back to ${phrase}.`,
+    `Outside of ${phrase}, we are guessing and we would say so in the room.`,
+    `${cap(phrase)} is measurable; the football questions are all still open.`,
+    `One data point worth the paper — ${phrase} — against a lot of blank space.`,
+    `If you asked us to defend one grade today it would be ${phrase}.`,
+    `${cap(phrase)} reads clean. Beyond that we would be selling you a hunch.`,
   ]);
 }
 
@@ -216,6 +232,13 @@ function standoutLine(a: ScoutedAttr, rng: Rng): string {
     `The standout tool is ${phrase} — ${desc}${hedge}.`,
     `What jumps off the tape is ${phrase}: ${desc}${hedge}.`,
     `${cap(phrase)} is the carrying trait here — ${desc}${hedge}.`,
+    `He wins with ${phrase}; ${desc}${hedge}.`,
+    `${cap(phrase)} is what gets him drafted and what keeps him employed — ${desc}${hedge}.`,
+    `Start with ${phrase}: ${desc}${hedge}.`,
+    `The calling card is ${phrase} — ${desc}${hedge}.`,
+    `Everything good on this tape runs through ${phrase}, and ${desc}${hedge}.`,
+    `${cap(phrase)} separates him — ${desc}${hedge}.`,
+    `If he sticks it will be on ${phrase}: ${desc}${hedge}.`,
   ]);
 }
 
@@ -227,6 +250,13 @@ function weaknessLine(a: ScoutedAttr, rng: Rng): string {
     `On the other side, ${phrase} is ${desc}${hedge}.`,
     `The soft spot is ${phrase} — ${desc}${hedge}.`,
     `Where it comes apart a bit is ${phrase}, ${desc}${hedge}.`,
+    `The obvious question is ${phrase}: ${desc}${hedge}.`,
+    `You have to live with ${phrase} — ${desc}${hedge}.`,
+    `${cap(phrase)} is the part that will get him benched, ${desc}${hedge}.`,
+    `He gives it back with ${phrase}; ${desc}${hedge}.`,
+    `The hole in the profile is ${phrase} — ${desc}${hedge}.`,
+    `What a coordinator will scheme around is ${phrase}, ${desc}${hedge}.`,
+    `${cap(phrase)} is well behind the rest of it — ${desc}${hedge}.`,
   ]);
 }
 
@@ -235,6 +265,12 @@ function roundedLine(rng: Rng): string {
     'A well-rounded profile without one obvious carrying tool or one obvious hole.',
     'No standout trait and no glaring weakness — steady across the board.',
     "Nothing separates itself either way; it's an even profile top to bottom.",
+    'Even across the board. He will not lose you a game and he will not win you one on his own.',
+    'The grades sit on top of each other — a professional, unspectacular profile.',
+    'No tool to build a package around, and nothing you have to hide either.',
+    'Balanced to the point of being hard to write about, which is its own kind of compliment.',
+    'You would struggle to name his best trait, and equally struggle to name his worst.',
+    'A flat profile — competent everywhere, exceptional nowhere.',
   ]);
 }
 
@@ -244,6 +280,11 @@ function arcLine(age: number, experience: number, isDraftee: boolean | undefined
       `He's never taken an NFL snap — this is projection from tape, testing, and interviews, not results.`,
       `Zero pro reps to lean on yet; the read here is closer to a hypothesis than a conclusion.`,
       `Pure projection at this stage — the NFL game will show us things college tape can't.`,
+      `Everything here is forecast. He has not been hit by a professional yet.`,
+      `No pro sample at all, so every number in this file is an argument rather than a fact.`,
+      `The jump from his level to this one has broken better prospects. We are guessing, carefully.`,
+      `Untested against pro speed, which is the only test that has ever mattered.`,
+      `Draft grades are predictions. This one is no different and we would hold it loosely.`,
     ]);
   }
   if (age <= 23) {
@@ -256,6 +297,12 @@ function arcLine(age: number, experience: number, isDraftee: boolean | undefined
     return rng.pick([
       `${age} years old and right in the window where most players make their biggest jump.`,
       `Squarely in the heart of a normal development curve at ${age}.`,
+      `At ${age} he is in the years where the good ones separate themselves.`,
+      `${age} — old enough to be trusted, young enough to still be climbing.`,
+      `He is ${age}. Whatever he becomes, he is becoming it now.`,
+      `Prime years. At ${age} there should be no more excuses about experience.`,
+      `${age} years old, past the learning curve and into the part that counts.`,
+      `Right in the meat of a career at ${age}; this is close to what you are buying.`,
     ]);
   }
   if (age <= 31) {
@@ -318,8 +365,13 @@ export function generateScoutingReport(input: ScoutingProseInput): string {
     // Barely scouted: no strengths/weaknesses breakdown to offer, just
     // whichever single grade actually has a sample behind it, plus the arc.
     const pool = relevantAttrs(position, view.attrs);
-    const tightest = [...pool].sort((a, b) => bandWidth(a) - bandWidth(b))[0];
-    sentences.push(bareTraitLine(tightest, rng));
+    // Draw from the three best-known traits rather than always naming the
+    // single tightest. The fog tends to reveal the same measurable first, so
+    // "the tightest band" was the same attribute for most of the league and
+    // every barely-scouted report opened by discussing speed. Any of the
+    // three is honest — they are all genuinely the best-known grades on file.
+    const known = [...pool].sort((a, b) => bandWidth(a) - bandWidth(b)).slice(0, 3);
+    sentences.push(bareTraitLine(rng.pick(known), rng));
     sentences.push(arcLine(age, experience, isDraftee, rng));
     return sentences.join(' ');
   }
