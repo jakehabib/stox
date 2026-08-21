@@ -70,7 +70,7 @@ setsid nohup npx next dev -p 3001 > /tmp/nextdev.log 2>&1 < /dev/null &
 | Types | `rm -f tsconfig.tsbuildinfo && npx tsc --noEmit` | 0 errors |
 | Production build | `npm run build` *(dev server down!)* | exit 0, ~30 routes |
 | Sim invariants | `npm run sim:health` | 0 errors; INV-19/INV-20 warnings are pre-existing |
-| Contract meter vs server | `npx tsx scripts/checkNegotiationAgreement.ts` | ~974,000 comparisons, **0 disagreements** |
+| Contract meter vs server | `npx tsx scripts/checkNegotiationAgreement.ts` | ~961,000 comparisons, **0 disagreements** |
 | Trade valuation | `npx tsx scripts/benchmarkTradeValue.ts` | scenario suite passes |
 | Every screen loads | see §4 | all 200, no console errors |
 
