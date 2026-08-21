@@ -66,8 +66,10 @@ export function SpendVsRatingPanel({ rows, capEnabled }: { rows: UnitSpendRow[];
           <table className="w-full border-separate border-spacing-0 text-xs">
             <thead>
               <tr>
+                {/* Two columns are both headed "vs Lg" — one for money, one for
+                    rating — so the key is the position, not the label. */}
                 {['Unit', 'Cap', 'Share', 'vs Lg', 'Rate', 'Rank', 'vs Lg', 'Age'].map((c, i) => (
-                  <th key={c} className={`label-sm text-[9.5px] px-1.5 pb-1.5 border-b border-line ${i ? 'text-right' : 'text-left'}`}>{c}</th>
+                  <th key={i} className={`label-sm text-[9.5px] px-1.5 pb-1.5 border-b border-line ${i ? 'text-right' : 'text-left'}`}>{c}</th>
                 ))}
               </tr>
             </thead>

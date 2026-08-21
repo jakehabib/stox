@@ -1195,6 +1195,13 @@ async function persistHistory(args: {
 
   // One UPDATE ... FROM (VALUES ...) per chunk rather than 1,200 awaited
   // round trips — same bulk-write pattern lib/season.ts uses for stat rollup.
+  //
+  // It writes careerStats and nothing else, deliberately. careerStats is the
+  // REGULAR-SEASON bucket now, and a seeded career has no box scores behind
+  // it, so there is no postseason share to derive — inventing one would be
+  // fabricating a split, and careerPlayoffStats stays empty instead. The
+  // player card says so out loud on the Playoffs view rather than showing a
+  // silently short career. See docs/player-seasons.md §6.
   const careerEntries = [...veteranCareers.entries()].map(([id, stats]) => [id, writeJson(stats)] as [string, string]);
   await chunked(careerEntries, 400, async (batch) => {
     const values = Prisma.join(batch.map(([id, v]) => Prisma.sql`(${id}::text, ${v}::text)`));

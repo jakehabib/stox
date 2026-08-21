@@ -20,6 +20,7 @@ by another agent's data migration while the rest of this was built.
 |---|---|---|
 | `Player.seasonStats` | The season in progress, merged | No team on it. Cleared every year. |
 | `Player.careerStats` | Everything before this year, merged | No season on it, no team on it. |
+| `Player.playoffStats` / `careerPlayoffStats` | The same pair for postseason games | Added later — see §6. |
 | `TeamSeasonRecord` | Per-club, per-year W/L | Team-level. Says nothing about a player. |
 | `LeagueRecord` | Single-season and career highs | One row per category, holder only. |
 
@@ -274,3 +275,112 @@ one player with a `LIKE` on the box-score text. That returns only the ~17
 games a year he actually appeared in and measures at 9–21 ms on a four-season
 save. It stays after the table lands, because a save that hasn't advanced
 since the migration should show a correct table rather than an empty one.
+
+---
+
+## 6. Regular season and postseason are two buckets
+
+> Owner's ask: *"playoff stats and regular season stats were being counted in
+> the same bucket... We should have a toggle so you can switch between the two
+> because they are different."*
+
+### The bug
+
+`simulateAndSaveGame` gated only the **standings** on `kind === 'REGULAR'`.
+The stat write had no gate at all, so postseason production accumulated into
+`Player.seasonStats` alongside the regular season, rolled into
+`Player.careerStats` at the offseason, and was replayed into `PlayerSeason.stats`
+by `buildSeasonLines`. `gp` was combined too, so a 17-game regular season plus a
+playoff run reported 18.
+
+Measured on `RD DRIFT BEFORE-B` (`cmt3h2ar20000biuvvdcpgt3s`), season 2034:
+
+| Player | Regular | Playoff | Row said |
+|---|---|---|---|
+| Osiris Braddock (QB) | 3,722 pass yds, 16 G | 266, 1 G | 3,988, 17 G |
+| Micah Vandermark (RB) | 2,418 rush yds, 17 G | 251, 1 G | 2,669, 18 G |
+| Quill Hidalgo (QB) | 4,294 pass yds, 14 G | 245, 1 G | 4,539, 15 G |
+
+It is worse than cosmetic. Only twelve of thirty-two clubs get the extra games,
+so league leaders systematically rewarded reaching the postseason rather than
+playing well, and career totals inherited it.
+
+### The shape
+
+Two columns beside each existing one, rather than a `kind` discriminator on a
+new row or a nested JSON object:
+
+| Table | Regular season | Postseason |
+|---|---|---|
+| `Player` | `seasonStats`, `careerStats` | `playoffStats`, `careerPlayoffStats` |
+| `PlayerSeason` | `stats`, `gp` | `playoffStats`, `playoffGp` |
+
+The existing columns **narrow** to mean regular season only — they are not
+renamed. That is what makes the change safe: every reader in the codebase that
+was implicitly asking for regular-season numbers (awards, league records,
+All-Star selection, development checkpoints, storylines, the roster production
+line) keeps reading the same column and silently becomes correct, with no call
+site left to forget. A `kind` column on `PlayerSeason` would have doubled the
+row count and turned every existing read into a filter that could be omitted;
+a nested object would have broken `mergeStats`, which is the one function that
+sums stat lines everywhere.
+
+`PlayerSeason.playoffGp` mirrors `playoffStats.gp` for the same reason `gp`
+mirrors `stats.gp`: it is a sortable, indexable column and the table already
+had the precedent.
+
+### Backfill
+
+`Game.kind` has always been stored and nothing deletes a `Game`, so every
+historical playoff line is recoverable. `scripts/backfillPlayoffStats.ts`:
+
+1. Replays `PlayerSeason` from box scores for every completed year
+   (`syncPlayerSeasons(..., { rebuild: true })`).
+2. Subtracts the playoff share of the **rolled-over** years out of
+   `careerStats` into `careerPlayoffStats`. Subtraction, not a rebuild, so a
+   seeded pre-league career (§4) survives untouched on the regular-season side.
+3. Does the same to `seasonStats`/`playoffStats` for a save sitting *inside*
+   its playoffs, where the live accumulator is already polluted.
+
+Measured: 42 leagues touched, 91,448 `PlayerSeason` rows rebuilt, 17,998
+careers split, 1,738 live accumulators split, 973 stale live-year rows dropped.
+The script is idempotent — a second run reports 0 splits.
+
+Verification that it restores the *pristine* pre-playoff state: `DC USER`
+(`cmt3gxh4u0000hdiyi8z87s2t`) is a save inside its playoffs with stored
+All-Star transactions. Re-running `selectAllStars()` against its polluted
+`seasonStats` produced a roster differing from the stored one in six places.
+After the backfill it recomputes byte-identical.
+
+### What cannot be split, and is not
+
+A career seeded at league creation has no box scores at all, so it has no
+derivable postseason share. It stays **wholly on the regular-season side** as
+the existing "Before &lt;year&gt;" row, and the postseason view says so in
+words rather than inventing a fraction of it
+(`CareerTable.hasPreLeagueCareer`).
+
+### The toggle
+
+`?split=playoffs` on the stats page and the player page — a URL param, so a
+reload and a shared link keep it, matching how free agency carries its sort and
+position filters. Regular season is the default **by absence**: the regular
+href carries no param at all. `components/ds/StatScopeToggle.tsx` owns the
+param name and the parse.
+
+An empty postseason is a real state and reads as one — "No postseason games" —
+never a table of zeroes and never a blank panel.
+
+The stats page's Advanced view is hidden in the postseason split: Pythagorean
+expectation, strength of schedule and the scoring trend are all built from
+`Team.wins`/`pointsFor` and the regular-season schedule, which by design count
+regular-season games only. Team records in the postseason table are derived
+from the bracket's own `Game` rows instead of borrowed from the standings.
+
+### All-Star timing
+
+`lib/allStars.ts` runs at the end of the regular season. That used to be
+load-bearing for correctness *because* of this bug. It no longer is — the
+totals it reads are regular season whenever it runs — but the timing stays,
+because January is when the real thing is named. The comment now says it is a
+choice rather than a workaround.

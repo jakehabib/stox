@@ -26,6 +26,10 @@ const CATEGORIES: Category[] = [
       { href: '/depth-chart', label: 'Depth Chart' },
       { href: '/resign', label: 'Re-sign' },
       { href: '/cap', label: 'Cap' },
+      // Read-only derivations over what the save already produced — it sits
+      // under Team because every panel on it is about this club's roster,
+      // money and results, and after Cap because it reads the cap sheet.
+      { href: '/analytics', label: 'Analytics' },
     ],
   },
   {

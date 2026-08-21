@@ -203,6 +203,10 @@ export default async function RosterPage({ params, searchParams }: { params: { i
 
     for (const { p, view, hit } of groupRows) {
       const isStarter = starterIdByPosition.get(p.position) === p.id;
+      // Regular season only — seasonStats is the regular-season bucket (see
+      // Player.seasonStats in the schema). A roster line is a "what has he
+      // done for me lately", and folding in a January run would make two
+      // players with identical seasons read differently.
       const production = productionLine(p.position, readJson<SeasonStats>(p.seasonStats, {}));
       bodyRows.push(
         <tr key={p.id} style={isStarter ? { background: `${teamColor}0d` } : undefined}>
