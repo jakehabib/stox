@@ -183,6 +183,48 @@ npm run build         # production build (generates the client, syncs the
   `scripts/simHealth.ts` — the invariant-checking harness (see
   `GAME_INVARIANTS.md`)
 
+## Design principles (standing, not up for re-litigation)
+
+These came from the app owner directly and they override any local design
+argument — including a well-reasoned one. If a change conflicts with
+something here, the principle wins and the change is wrong.
+
+1. **It must feel like a game, not a spreadsheet.** *"we dont want this to
+   just feel like text — the avatars and graphics add SO much to the feel of
+   the game."* and *"it needs to be and feel alive."* Information density is
+   not the goal. A screen that is nothing but figures has failed, however
+   efficiently it packs them.
+
+2. **Avatars, team logos and colour are identity, not ornament.** They are
+   what make a name read as a *player* rather than a row key, and a
+   three-letter abbreviation read as a *franchise*. Never remove them to save
+   vertical space. If a row needs to be taller to carry an identity, the row
+   gets taller.
+
+3. **Rating colour is meaningful above ~80.** *"i also love the rating
+   colors. They should be meaningful after ~OVR 80 IMO."* Below that band,
+   stay neutral — a 62 and a 74 are both "a guy" and painting them is noise.
+   From ~80 up, real distinguishable steps so an 81, an 88 and a 94 are
+   apart at a glance, climbing toward elite.
+
+4. **Colour is never the only channel.** Every coloured rating step also
+   carries a glyph, and adjacent steps must survive a colourblind-separation
+   check (`scripts/validate_palette.js` from the `dataviz` skill) — run it,
+   don't eyeball it. This one does *not* bend to preference: it is the reason
+   the earlier rainbow ramp was replaced rather than merely restyled.
+
+5. **A column with the same value on every row carries no information.** This
+   is the one part of the density argument that was right. The "Active" pill
+   on 27 of 28 roster rows and "Unevaluated" on 300 of 300 draft rows are
+   noise; the avatar beside them is not. Cutting the former is not licence to
+   cut the latter.
+
+6. **No lying metrics.** A number shown to the player must be the number the
+   system actually used. This has been a recurring bug class here (a ledger
+   reading "Trades 0" beside a tile reading "Trades Made 7"), so it is
+   written down: if you display a rank, it must be the rank of the grade you
+   displayed.
+
 ## Known simplifications (documented, not bugs)
 
 - AI teams don't carry their own `ScoutingReport` rows — they evaluate free
@@ -1198,3 +1240,31 @@ ever force-pushed over, so every state below still exists in git history).
   credential, so it cannot survive a cleared browser or move between
   devices. If saves need to follow a person rather than a browser, that is
   a real sign-in and a separate change.
+- **2026-08-21 — Reversed the density pass; avatars and graphics restored
+  (`044cc45`, more to follow).** The visual refinement pass read "refine" as
+  *densify* — strip ornament until only figures remain — and stripped player
+  avatars or team logos from **thirteen files**, including halving the player
+  page's hero avatar from 128px to 64px and replacing a team crest in the
+  news feed with a blank grey disc. The app owner's reaction, and the reason
+  this is now a standing principle above: *"we dont want this to just feel
+  like text. the avatars and graphics add SO much to the feel of the game"*
+  and *"it needs to be and feel alive."*
+  What was kept from that pass, because it was correctness rather than
+  taste: the single monotonic rating ramp replacing the old rainbow (colour
+  had been carrying meaning alone, and the rainbow implied an ordering it
+  did not have), tabular figures so digits align in columns, and the removal
+  of two constant columns. What was reversed: everything else. Avatars are
+  back at their original sizes; the ~30px row target is abandoned; the
+  player page and `PlayerHero` are treated as near-final and take the ramp
+  fix and tabular figures only.
+  The pass then flips from subtracting to adding — team crests and team
+  colour on screens that currently show only an abbreviation, real trophy
+  and ring marks instead of text labels for championships and awards, and
+  small inline shapes (five-game form, cap allocation, positional depth)
+  where a bare number is doing a picture's job. All built from what is
+  already in the repo (`TeamLogo`, `PlayerAvatar`, `generateTeamLogoParams`,
+  `positionBadgeClass`, `--team-accent`, `ds/icons.tsx`), seeded and
+  deterministic, no external assets.
+  Rating colour is being re-tuned in the same pass: neutral below ~80, three
+  distinguishable steps above it, glyphs retained, and the steps validated
+  against a colourblind-separation check rather than eyeballed.
