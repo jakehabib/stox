@@ -522,3 +522,59 @@ ever force-pushed over, so every state below still exists in git history).
     history team selector, or the settings form action. Verified all
     five routes plus the Stats Advanced view via Playwright with zero
     console errors.
+- **2026-08-21 — Design review fixes + real analytics in the Advanced
+  views.** Checkpoint before this change: `5d9fdb2`. A full read-through
+  of the app as a player would see it turned up several real problems,
+  and the Advanced views were asked to become "a nerd's paradise":
+  - **Fixed: two need tiers rendered the same color.** `needSeverity()`
+    in `lib/ai/gm.ts` returned `text-warn` for *both* "High" and
+    "Moderate", so the Dashboard's Roster Needs bars showed two
+    genuinely different severities as visually identical. Moderate now
+    gets its own color. This function is display-only — it returns a
+    label and a Tailwind class and never feeds an AI decision (the raw
+    0..1 score does that), so no game behavior changed; a comment on it
+    now says so.
+  - **Fixed: Re-sign page.** Every row repeated the same full sentence
+    ("final year, expires after this season") — replaced with a compact
+    Walk Year / Expired pill, so the row carries the same information
+    without the wall of duplicated text. Positions colorized, OVR uses
+    `.stat-value`, rows moved to `.panel`, and the cap-space strip now
+    shows cap space as a real figure plus how many contracts are
+    actually awaiting a decision.
+  - **Fixed: long city names wrapped to two lines** in the Dashboard
+    standings table ("New Orleans" broke mid-name).
+  - **Fixed: the ticker duplicated the Dashboard's League Wire.** Both
+    were showing the same stat-leader trivia. The ticker now carries
+    only real breaking events (trades, signings, injuries, draft picks,
+    firings, awards, championships) and excludes the NEWS/DEV_MILESTONE
+    trivia the Wire already covers. Injuries outnumber every other
+    event type by an order of magnitude, so a plain "most recent 14"
+    was a wall of identical injury lines — it now round-robins across
+    categories so the strip reads like a real wire.
+  - **New: `lib/analytics.ts`** — display-only derivations, documented
+    as never feeding the sim or the AI:
+    - **Pythagorean expectation** with the football-tuned 2.37 exponent
+      (not baseball's 2), plus a **luck** figure (actual wins minus
+      expected). Verified: equal points-for/against returns exactly
+      .500, dominant/terrible cases are symmetric, and across a real
+      32-team league the luck column sums to −0.6 (≈0, as it must) with
+      total expected wins landing on the correct 256 for a 16-game
+      slate.
+    - **Strength of schedule** — opponents' combined win rate. Verified
+      the league mean is exactly .500 (mathematically required, since
+      every game contributes to both sides) with a realistic .424–.584
+      spread.
+    - **Cap health** — top-5 concentration, cap-*weighted* age (how old
+      the money is, versus the plain roster average), share committed
+      to next season, dead-money share.
+    - **Contract value ranking** — surplus (market value minus cap hit)
+      as ranked bargain/overpay lists.
+  - **Stats → Advanced** now opens with Pythagorean W-L, luck, point
+    differential, and SOS with league rank, followed by a full league
+    luck table sorted by who's been winning the close ones. Every tile
+    carries a tooltip explaining how to read it.
+  - **Cap → Advanced** now opens with cap-health tiles (each flagging
+    amber past a meaningful threshold) and best/worst contract-value
+    lists linking straight to the player, above the existing charts.
+    League spend rank verified against a direct positional computation
+    on real data (28th of 32, $172.8M–$227.8M spread — exact match).

@@ -10,6 +10,8 @@ import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
 import { LineChart } from '@/components/charts/LineChart';
 import { ScatterChart } from '@/components/charts/ScatterChart';
 import { positionBadgeClass } from '@/components/ds/positionColor';
+import { MetricTiles } from '@/components/ds/MetricTiles';
+import { buildPythagoreanTable, strengthOfSchedule, type PythagoreanRow } from '@/lib/analytics';
 
 interface LeaderCol { key: keyof SeasonStats; label: string; format?: (n: number) => string }
 interface LeaderCategory { title: string; primary: LeaderCol; extra: LeaderCol[] }
@@ -113,6 +115,10 @@ export default async function StatsPage({ params, searchParams }: { params: { id
   let quadrantPoints: { id: string; x: number; y: number; label: string; color: string; detail?: string }[] = [];
   let quadrantAvgs: { x?: number; y?: number } = {};
   let weeklyTrend: { label: string; color: string; points: { x: string; y: number }[] }[] = [];
+  let pythagorean: PythagoreanRow[] = [];
+  let myPythag: PythagoreanRow | undefined;
+  let mySos = { sos: 0, opponents: 0 };
+  let sosRank = 0;
 
   const myPlayers = userTeam ? withStats.filter(({ p }) => p.teamId === userTeam.id) : [];
 
@@ -138,14 +144,29 @@ export default async function StatsPage({ params, searchParams }: { params: { id
       detail: t.id === userTeam?.id ? 'Your team' : undefined,
     }));
 
+    pythagorean = buildPythagoreanTable(teams, userTeam?.id);
+    myPythag = pythagorean.find((r) => r.isUser);
+
+    // Strength of schedule needs every played game in the league, not just
+    // the user's — each team's SOS is computed the same way so the rank means
+    // something.
+    const allGames = await prisma.game.findMany({
+      where: { leagueId: league.id, kind: 'REGULAR', played: true },
+      select: { homeTeamId: true, awayTeamId: true, played: true, week: true, homeScore: true, awayScore: true },
+      orderBy: { week: 'asc' },
+    });
+    const recordById = new Map(teams.map((t) => [t.id, { wins: t.wins, losses: t.losses, ties: t.ties }]));
     if (userTeam) {
-      const games = await prisma.game.findMany({
-        where: { leagueId: league.id, kind: 'REGULAR', played: true, OR: [{ homeTeamId: userTeam.id }, { awayTeamId: userTeam.id }] },
-        orderBy: { week: 'asc' },
-      });
+      mySos = strengthOfSchedule(userTeam.id, allGames, recordById);
+      const allSos = teams
+        .map((t) => ({ id: t.id, sos: strengthOfSchedule(t.id, allGames, recordById).sos }))
+        .sort((a, b) => b.sos - a.sos);
+      sosRank = allSos.findIndex((s) => s.id === userTeam.id) + 1;
+
+      const myGames = allGames.filter((g) => g.homeTeamId === userTeam.id || g.awayTeamId === userTeam.id);
       weeklyTrend = [
-        { label: 'Points For', color: '#3987e5', points: games.map((g) => ({ x: `Wk ${g.week}`, y: g.homeTeamId === userTeam.id ? g.homeScore : g.awayScore })) },
-        { label: 'Points Against', color: '#e66767', points: games.map((g) => ({ x: `Wk ${g.week}`, y: g.homeTeamId === userTeam.id ? g.awayScore : g.homeScore })) },
+        { label: 'Points For', color: '#3987e5', points: myGames.map((g) => ({ x: `Wk ${g.week}`, y: g.homeTeamId === userTeam.id ? g.homeScore : g.awayScore })) },
+        { label: 'Points Against', color: '#e66767', points: myGames.map((g) => ({ x: `Wk ${g.week}`, y: g.homeTeamId === userTeam.id ? g.awayScore : g.homeScore })) },
       ];
     }
   }
@@ -175,6 +196,79 @@ export default async function StatsPage({ params, searchParams }: { params: { id
         <div className="panel p-4 text-sm text-muted">No stats recorded yet this season — check back after Week 1.</div>
       ) : (
         <>
+          {advanced && myPythag && (
+            <MetricTiles
+              metrics={[
+                {
+                  label: 'Pythagorean W-L',
+                  value: `${myPythag.expectedWins.toFixed(1)}-${(myPythag.wins + myPythag.losses + myPythag.ties - myPythag.expectedWins).toFixed(1)}`,
+                  detail: `actual ${myPythag.wins}-${myPythag.losses}${myPythag.ties ? `-${myPythag.ties}` : ''}`,
+                  tip: "The record your point differential says you should have, using the football-tuned Pythagorean exponent (2.37). It ignores how the wins actually fell — a team far above it has been winning the close ones.",
+                },
+                {
+                  label: 'Luck',
+                  value: `${myPythag.luck >= 0 ? '+' : ''}${myPythag.luck.toFixed(1)}`,
+                  detail: myPythag.luck >= 0 ? 'wins above what the scoring earned' : 'wins below what the scoring earned',
+                  color: myPythag.luck >= 1 ? 'text-warn' : myPythag.luck <= -1 ? 'text-accent2' : undefined,
+                  tip: "Actual wins minus Pythagorean wins. Positive means you're outperforming your point differential — historically that regresses. Negative means you've been better than the record looks.",
+                },
+                {
+                  label: 'Point Differential',
+                  value: `${myPythag.pointsFor - myPythag.pointsAgainst >= 0 ? '+' : ''}${myPythag.pointsFor - myPythag.pointsAgainst}`,
+                  detail: `${myPythag.pointsFor} scored · ${myPythag.pointsAgainst} allowed`,
+                  color: myPythag.pointsFor - myPythag.pointsAgainst >= 0 ? 'text-accent' : 'text-bad',
+                  tip: 'Total points scored minus allowed. The single best one-number summary of team quality — it predicts future record better than the record itself does.',
+                },
+                {
+                  label: 'Strength of Schedule',
+                  value: mySos.opponents > 0 ? mySos.sos.toFixed(3).slice(1) : '—',
+                  detail: sosRank > 0 ? `#${sosRank} hardest · ${mySos.opponents} games` : 'no games played',
+                  tip: "Combined win rate of every opponent you've actually played. #1 is the hardest schedule in the league. Useful for reading whether a record was earned against real competition.",
+                },
+              ]}
+            />
+          )}
+
+          {advanced && pythagorean.length > 0 && (
+            <div className="panel overflow-hidden">
+              <div className="px-4 py-3 border-b border-line/70">
+                <div className="label-sm">Luck Table — Actual vs. Expected</div>
+                <div className="text-xs text-muted mt-0.5">
+                  Every team sorted by how far their record sits above or below what their scoring earned. Top of the list has been winning
+                  close games; the bottom has been losing them.
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="table-clean">
+                  <thead>
+                    <tr><th>Team</th><th>Actual</th><th>Expected</th><th>Luck</th><th>PF</th><th>PA</th><th>Diff</th></tr>
+                  </thead>
+                  <tbody>
+                    {pythagorean.map((r) => {
+                      const diff = r.pointsFor - r.pointsAgainst;
+                      return (
+                        <tr key={r.teamId} className={r.isUser ? 'bg-raised/60' : ''}>
+                          <td>
+                            <span className="flex items-center gap-2">
+                              <TeamLogo seed={r.teamId} abbr={r.abbr} size={20} className="shrink-0" />
+                              <span className={`whitespace-nowrap ${r.isUser ? 'font-semibold' : ''}`}>{r.name}</span>
+                            </span>
+                          </td>
+                          <td className="stat-value text-stat-sm">{r.wins}-{r.losses}{r.ties ? `-${r.ties}` : ''}</td>
+                          <td className="font-mono text-muted">{r.expectedWins.toFixed(1)}-{(r.wins + r.losses + r.ties - r.expectedWins).toFixed(1)}</td>
+                          <td className={`stat-value text-stat-sm ${r.luck >= 0 ? 'text-warn' : 'text-accent2'}`}>{r.luck >= 0 ? '+' : ''}{r.luck.toFixed(1)}</td>
+                          <td className="font-mono text-muted">{r.pointsFor}</td>
+                          <td className="font-mono text-muted">{r.pointsAgainst}</td>
+                          <td className={`font-mono ${diff >= 0 ? 'text-accent' : 'text-bad'}`}>{diff >= 0 ? '+' : ''}{diff}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {advanced && (
             <div className="grid lg:grid-cols-2 gap-5">
               <div className="panel p-4">

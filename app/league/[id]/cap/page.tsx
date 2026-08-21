@@ -10,8 +10,10 @@ import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
 import { LineChart } from '@/components/charts/LineChart';
 import { ScatterChart } from '@/components/charts/ScatterChart';
 import { positionBadgeClass } from '@/components/ds/positionColor';
+import { MetricTiles } from '@/components/ds/MetricTiles';
 import { TeamLogo } from '@/components/TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { buildCapHealth, rankContractValue, type CapHealth, type SurplusRow } from '@/lib/analytics';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'cap' | 'base' | 'years' | 'savings';
 
@@ -97,6 +99,9 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
   let outlookBaseline: { y: number; label: string } | undefined;
   let valuePoints: { id: string; x: number; y: number; label: string; color: string; detail?: string }[] = [];
   let vsLeagueBars: { label: string; value: number; displayValue: string; color: string }[] = [];
+  let health: CapHealth | null = null;
+  let contractValue: { bargains: SurplusRow[]; overpays: SurplusRow[] } = { bargains: [], overpays: [] };
+  let leagueCapUsedRank = 0;
 
   if (advanced) {
     // League-average spend per position group, so "too much at one spot" has
@@ -148,18 +153,45 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
     }];
     outlookBaseline = { y: summary.capTotal, label: `${league.seasonYear} cap limit` };
 
-    valuePoints = rows
+    const surplusRows: SurplusRow[] = rows
       .filter(({ p }) => p.contract)
       .map(({ p, hit }) => {
         const expected = marketValue({ ovr: p.trueOvr, position: p.position as any, age: p.age, potential: p.potential });
-        const surplus = expected - hit; // positive = good value (underpaying for the rating)
         return {
-          id: p.id, x: p.trueOvr, y: hit,
-          label: `${p.firstName} ${p.lastName}`,
-          color: surplus >= 0 ? '#3987e5' : '#e66767',
-          detail: surplus >= 0 ? `${formatMoney(surplus)}/yr under market value` : `${formatMoney(-surplus)}/yr over market value`,
+          playerId: p.id, name: `${p.firstName} ${p.lastName}`, position: p.position,
+          age: p.age, ovr: p.trueOvr, hit, marketValue: expected,
+          surplus: expected - hit, // positive = paying under what the rating is worth
         };
       });
+    contractValue = rankContractValue(surplusRows);
+    valuePoints = surplusRows.map((r) => ({
+      id: r.playerId, x: r.ovr, y: r.hit, label: r.name,
+      color: r.surplus >= 0 ? '#3987e5' : '#e66767',
+      detail: r.surplus >= 0 ? `${formatMoney(r.surplus)}/yr under market value` : `${formatMoney(-r.surplus)}/yr over market value`,
+    }));
+
+    health = buildCapHealth({
+      rows: rows.map(({ p, hit }) => ({
+        age: p.age,
+        hit,
+        yearsRemaining: p.contract?.yearsRemaining ?? 0,
+        nextYearHit: p.contract ? (capHitSchedule(p.contract, settings.capMode)[1] ?? 0) : 0,
+      })),
+      capUsed: summary.capUsed,
+      capTotal: summary.capTotal,
+      deadMoney: summary.deadMoney,
+    });
+
+    // Where this team's committed spend sits against the rest of the league —
+    // a raw cap number means nothing without knowing if 32 other teams are
+    // spending more or less.
+    const spendByTeam = new Map<string, number>();
+    for (const p of leaguePlayers) {
+      if (!p.teamId) continue;
+      spendByTeam.set(p.teamId, (spendByTeam.get(p.teamId) ?? 0) + capHit(p.contract, settings.capMode));
+    }
+    const spends = Array.from(spendByTeam.values()).sort((a, b) => b - a);
+    leagueCapUsedRank = spends.findIndex((v) => v <= (spendByTeam.get(team.id) ?? 0)) + 1;
   }
 
   return (
@@ -215,6 +247,58 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
           </div>
         </div>
       </div>
+
+      {advanced && health && (
+        <MetricTiles
+          metrics={[
+            {
+              label: 'Top-5 Concentration',
+              value: `${Math.round(health.topFiveShare * 100)}%`,
+              detail: 'of committed cap in 5 contracts',
+              color: health.topFiveShare > 0.45 ? 'text-warn' : undefined,
+              tip: "Share of your committed cap tied up in your five biggest contracts. Above roughly 45% is a top-heavy roster — a few stars carrying a thin supporting cast, which is a real strategy but leaves little room to absorb an injury or a bad contract.",
+            },
+            {
+              label: 'Cap-Weighted Age',
+              value: health.capWeightedAge.toFixed(1),
+              detail: `roster average is ${health.rosterAvgAge.toFixed(1)}`,
+              color: health.capWeightedAge > health.rosterAvgAge + 2 ? 'text-warn' : undefined,
+              tip: "Average age weighted by cap dollars — how old the money is, not how old the roster is. Well above the plain roster average means your spending is concentrated in older players, so the cap sheet will age out faster than the depth chart suggests.",
+            },
+            {
+              label: 'Committed Next Year',
+              value: `${Math.round(health.nextYearCommittedShare * 100)}%`,
+              detail: `${health.playersUnderContractNextYear} players signed beyond this season`,
+              color: health.nextYearCommittedShare > 0.8 ? 'text-warn' : undefined,
+              tip: "Cap dollars already owed next season as a share of this year's cap, from contracts on the books today. High means next offseason is largely pre-spent before free agency even opens.",
+            },
+            {
+              label: 'League Spend Rank',
+              value: leagueCapUsedRank > 0 ? `#${leagueCapUsedRank}` : '—',
+              detail: `${formatMoney(summary.capUsed)} committed · dead money ${Math.round(health.deadShare * 100)}% of cap`,
+              tip: 'Where your committed spend ranks against all other teams — #1 is the biggest spender in the league. A raw cap number is meaningless without knowing what everyone else is doing.',
+            },
+          ]}
+        />
+      )}
+
+      {advanced && (contractValue.bargains.length > 0 || contractValue.overpays.length > 0) && (
+        <div className="grid lg:grid-cols-2 gap-5">
+          <ContractValueList
+            title="Best Value Contracts"
+            hint="Paying furthest under what the rating is worth."
+            rows={contractValue.bargains}
+            leagueId={league.id}
+            positive
+          />
+          <ContractValueList
+            title="Worst Value Contracts"
+            hint="Paying furthest over. Not always a mistake — a young player's second deal often lands here."
+            rows={contractValue.overpays}
+            leagueId={league.id}
+          />
+        </div>
+      )}
 
       {advanced && (
         <div className="grid lg:grid-cols-2 gap-5">
@@ -311,6 +395,34 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ContractValueList({ title, hint, rows, leagueId, positive }: {
+  title: string; hint: string; rows: SurplusRow[]; leagueId: string; positive?: boolean;
+}) {
+  return (
+    <div className="panel overflow-hidden">
+      <div className="px-4 py-3 border-b border-line/70">
+        <div className="label-sm">{title}</div>
+        <div className="text-xs text-muted mt-0.5">{hint}</div>
+      </div>
+      <div className="divide-y divide-line/60">
+        {rows.map((r) => (
+          <div key={r.playerId} className="px-4 py-2.5 flex items-center gap-3">
+            <span className={`font-semibold text-xs w-10 shrink-0 ${positionBadgeClass(r.position)}`}>{r.position}</span>
+            <Link href={`/league/${leagueId}/player/${r.playerId}`} className="flex-1 min-w-0 hover:text-accent2">
+              <div className="font-medium text-sm truncate">{r.name}</div>
+              <div className="text-xs text-muted">{r.ovr} OVR · age {r.age} · {formatMoney(r.hit)} vs {formatMoney(r.marketValue)} market</div>
+            </Link>
+            <span className={`stat-value text-stat-sm shrink-0 ${positive ? 'text-accent' : 'text-bad'}`}>
+              {positive ? '+' : '−'}{formatMoney(Math.abs(r.surplus))}
+            </span>
+          </div>
+        ))}
+        {rows.length === 0 && <div className="px-4 py-3 text-sm text-muted">Nothing qualifies yet.</div>}
+      </div>
     </div>
   );
 }

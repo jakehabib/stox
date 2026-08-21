@@ -21,8 +21,8 @@ export function StandingsTable({ label, rows }: { label: string; rows: Row[] }) 
                 <td className="text-muted w-6">{i + 1}</td>
                 <td>
                   <span className="flex items-center gap-2">
-                    <TeamLogo seed={r.teamId} abbr={r.abbr} size={20} />
-                    <span className={r.isUser ? 'font-semibold' : ''}>{r.city}</span>
+                    <TeamLogo seed={r.teamId} abbr={r.abbr} size={20} className="shrink-0" />
+                    <span className={`whitespace-nowrap ${r.isUser ? 'font-semibold' : ''}`}>{r.city}</span>
                   </span>
                 </td>
                 <td className="font-mono text-right">{r.wins}-{r.losses}{r.ties ? `-${r.ties}` : ''}</td>

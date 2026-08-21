@@ -17,11 +17,37 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   if (!ctx || !ctx.userTeam) notFound();
   const { league, userTeam, phaseLabel } = ctx;
 
+  // Ticker carries breaking news only — real events that happened around the
+  // league. Deliberately excludes NEWS/DEV_MILESTONE stat-leader trivia:
+  // it isn't breaking, and the Dashboard's League Wire already shows it, so
+  // including it made the two read as duplicates of each other.
   const [cap, tickerTx] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : teamCapSummary(userTeam.id, league.seasonYear, ctx.settings.capMode),
-    prisma.transaction.findMany({ where: { leagueId: league.id }, orderBy: { createdAt: 'desc' }, take: 14 }),
+    prisma.transaction.findMany({
+      where: { leagueId: league.id, type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'INJURY', 'DRAFT', 'FIRE', 'CHAMPION', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] } },
+      orderBy: { createdAt: 'desc' },
+      take: 120,
+    }),
   ]);
-  const tickerItems = tickerTx.map((t) => ({ category: transactionCategory(t.type, t.headline), headline: t.headline }));
+  // Injuries outnumber every other event type by an order of magnitude, so a
+  // straight "most recent 14" is a wall of identical injury lines. Round-robin
+  // across categories instead — recency still orders within each category.
+  const byCategory = new Map<string, typeof tickerTx>();
+  for (const t of tickerTx) {
+    const cat = transactionCategory(t.type, t.headline);
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat)!.push(t);
+  }
+  const tickerItems: { category: ReturnType<typeof transactionCategory>; headline: string }[] = [];
+  for (let round = 0; tickerItems.length < 14; round++) {
+    let added = false;
+    for (const [cat, rows] of byCategory) {
+      if (round >= rows.length || tickerItems.length >= 14) continue;
+      tickerItems.push({ category: cat as ReturnType<typeof transactionCategory>, headline: rows[round].headline });
+      added = true;
+    }
+    if (!added) break;
+  }
 
   return (
     <div className="min-h-screen">

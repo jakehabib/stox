@@ -6,6 +6,7 @@ import { ExtendContractForm } from './ExtendContractForm';
 import { PlayerAvatar } from './PlayerAvatar';
 import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
+import { positionBadgeClass } from './ds/positionColor';
 import { CapMode } from '@/lib/types';
 import { cutPlayerAction, applyFranchiseTagAction } from '@/app/actions/roster';
 
@@ -43,17 +44,22 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   };
 
   return (
-    <div className="card overflow-hidden">
+    <div className="panel overflow-hidden">
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-raised transition-colors">
         <PlayerAvatar seed={playerId} age={age} size={30} />
         <div className="flex-1 min-w-0">
-          <div className="font-medium truncate">{name}</div>
-          <div className="text-xs text-muted">
-            {position} · Age {age} · Current ~{formatMoney(currentApy)}/yr
-            {!isTrulyExpiring && <span className="text-warn"> · final year, expires after this season</span>}
+          <div className="font-semibold truncate">{name}</div>
+          <div className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap">
+            <span className={`font-semibold ${positionBadgeClass(position)}`}>{position}</span>
+            <span className="text-muted">Age {age}</span>
+            <span className="text-muted">·</span>
+            <span className="text-muted">~{formatMoney(currentApy)}/yr</span>
+            {isTrulyExpiring
+              ? <span className="pill border-bad/40 text-bad text-[10px]">Expired</span>
+              : <span className="pill border-warn/40 text-warn text-[10px]">Walk Year</span>}
           </div>
         </div>
-        <span className={`font-mono font-semibold ${ratingColor(ovr)}`}>{ovr}</span>
+        <span className={`stat-value text-stat-sm ${ratingColor(ovr)}`}>{ovr}</span>
         <span className="pill border-line text-muted">{open ? 'Close' : 'Negotiate'}</span>
       </button>
       {open && (

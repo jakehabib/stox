@@ -85,10 +85,13 @@ export function teamNeeds(players: RosterPlayer[]): Record<string, number> {
  * nobody asked ("44% of what?"); a GM wants "how urgent is this," not a
  * fraction. [TUNE] thresholds chosen against teamNeeds' own scale.
  */
+// Display-only: the label and Tailwind class a need renders with. Never
+// feeds an AI decision — the raw 0..1 score does that. Each tier gets its
+// own color; two tiers sharing one made the distinction invisible.
 export function needSeverity(score: number): { label: string; className: string } {
   if (score >= 0.6) return { label: 'Urgent', className: 'text-bad' };
   if (score >= 0.35) return { label: 'High', className: 'text-warn' };
-  if (score >= 0.15) return { label: 'Moderate', className: 'text-warn' };
+  if (score >= 0.15) return { label: 'Moderate', className: 'text-accent2' };
   return { label: 'Notable', className: 'text-muted' };
 }
 

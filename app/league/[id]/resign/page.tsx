@@ -28,9 +28,9 @@ export default async function ResignPage({ params }: { params: { id: string } })
     : true;
 
   return (
-    <div className="space-y-5 max-w-3xl">
+    <div className="space-y-5 max-w-4xl">
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
+        <div className="max-w-2xl">
           <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">Re-sign Window</h1>
           <p className="text-muted text-sm mt-1">
             Players whose deals are up or about to be. Extend anyone you want to keep — whoever's still undecided once the
@@ -41,14 +41,20 @@ export default async function ResignPage({ params }: { params: { id: string } })
       </div>
 
       {summary && (
-        <div className="card card-pad flex items-center justify-between text-sm">
-          <span className="text-muted">Current cap space</span>
-          <span className={`font-mono font-semibold ${summary.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(summary.capSpace)}</span>
+        <div className="panel p-4 flex items-center justify-between gap-4">
+          <div>
+            <div className="label-sm">Cap Space</div>
+            <div className={`stat-value text-stat-md leading-none mt-1 ${summary.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(summary.capSpace)}</div>
+          </div>
+          <div className="text-sm text-muted text-right">
+            {expiring.length} contract{expiring.length === 1 ? '' : 's'} to decide on
+            {trulyExpiringCount > 0 && <span className="text-bad"> · {trulyExpiringCount} already expired</span>}
+          </div>
         </div>
       )}
 
       {expiring.length === 0 ? (
-        <div className="card card-pad text-sm text-muted">Nobody's contract is expiring soon — nothing to do here. Advance whenever you're ready.</div>
+        <div className="panel p-4 text-sm text-muted">Nobody's contract is expiring soon — nothing to do here. Advance whenever you're ready.</div>
       ) : (
         <div className="space-y-2">
           {expiring.map((p) => (
