@@ -1,6 +1,7 @@
 import { Rng } from '../rng';
 import { BoxScore, BoxLine } from '../types';
 import { LeagueSettings } from '../settings';
+import { RivalryProfile, rivalryRecapLine } from '../rivalry';
 
 /**
  * Recap text generation. Template-driven — it reads the box score it was
@@ -15,7 +16,13 @@ import { LeagueSettings } from '../settings';
 const BLOWOUT_MARGIN = 21;   // [TUNE]
 const COMFORTABLE_MARGIN = 11;
 
-export function generateRecap(box: BoxScore, settings: LeagueSettings, rng: Rng): string {
+/**
+ * `rivalry`, if passed, MUST be computed BEFORE this game was recorded (the
+ * head-to-head state entering it) — see lib/rivalry.ts's rivalryRecapLine
+ * for why. Optional and defaulted so every existing caller keeps compiling
+ * unchanged until it's wired up.
+ */
+export function generateRecap(box: BoxScore, settings: LeagueSettings, rng: Rng, rivalry?: RivalryProfile | null): string {
   const homeWon = box.finalHome > box.finalAway;
   const tie = box.finalHome === box.finalAway;
   const winner = homeWon ? box.homeTeam : box.awayTeam;
@@ -65,6 +72,12 @@ export function generateRecap(box: BoxScore, settings: LeagueSettings, rng: Rng)
         `The ${loser.name} had their chances. The ${winner.name} had one more, and won it ${wScore}-${lScore}.`,
       ]),
     );
+  }
+
+  // --- Rivalry context ---------------------------------------------------
+  if (rivalry && !tie) {
+    const line = rivalryRecapLine(rivalry, { winnerTeamId: winner.id, winnerName: winner.name, loserName: loser.name }, rng);
+    if (line) sentences.push(line);
   }
 
   // --- Cause -----------------------------------------------------------------

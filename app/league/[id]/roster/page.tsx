@@ -67,15 +67,6 @@ function productionLine(position: string, s: SeasonStats): string | null {
   }
 }
 
-const COLUMNS: { key: SortKey; label: string }[] = [
-  { key: 'pos', label: 'Pos' },
-  { key: 'ovr', label: 'OVR' },
-  { key: 'age', label: 'Age' },
-  { key: 'potential', label: 'Pot.' },
-  { key: 'cap', label: 'Cap Hit' },
-  { key: 'years', label: 'Years Left' },
-];
-
 export default async function RosterPage({ params, searchParams }: { params: { id: string }; searchParams: { sort?: string; dir?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;

@@ -63,6 +63,13 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
         <path d="M44 64 L44 86 Q60 94 76 86 L76 64 Z" fill={shadow} />
         <path d="M44 64 L44 74 Q60 84 76 74 L76 64 Z" fill={deep} opacity={0.55} />
 
+        {/* Long hair is drawn BEHIND the head, not over it. Painted on top it
+            fell across the cheeks and framed the face, which read unmistakably
+            feminine regardless of how heavy the jaw underneath was. Behind the
+            skull only the part wider than the head shows, which is how hair out
+            the back of a helmet actually looks. */}
+        {p.hairStyle === 'long' && <LongHairBack color={p.hairColor} />}
+
         {/* --- Ears ------------------------------------------------------- */}
         <ellipse cx={28} cy={52} rx={5.5} ry={8.5} fill={p.skinTone} stroke={deep} strokeWidth={0.8} />
         <ellipse cx={92} cy={52} rx={5.5} ry={8.5} fill={p.skinTone} stroke={deep} strokeWidth={0.8} />
@@ -71,8 +78,7 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
         <HeadShape shape={p.faceShape} skinTone={p.skinTone} stroke={deep} />
         {/* Jaw/cheek shading — the single thing that stops it reading flat. */}
         <HeadShade shape={p.faceShape} color={shadow} />
-
-        {p.hairStyle === 'long' && <LongHairBack color={p.hairColor} />}
+        <JawLine shape={p.faceShape} color={deep} />
         <FacialHairShape style={p.facialHair} color={p.hairColor} />
         <MouthShape style={p.mouthStyle} />
         <NoseShape style={p.noseStyle} shadow={shadow} deep={deep} />
@@ -96,10 +102,23 @@ export function PlayerAvatar({ seed, age = 26, size = 56, teamColor = '#3a4356',
  * the fullest cheeks but still squares off at the chin instead of coming
  * to a point.
  */
+/**
+ * Jaw width is doing most of the work here. An earlier pass leaned on facial
+ * hair to read male, which left the clean-shaven seeds — and every long-hair
+ * one — reading feminine. These outlines keep the chin nearly as wide as the
+ * cheekbones (~34-38 of the 58-unit skull width rather than tapering to ~28),
+ * so the face reads male on its own and hair/beard only add to it.
+ */
 function HeadShape({ shape, skinTone, stroke }: { shape: FaceShape; skinTone: string; stroke: string }) {
-  if (shape === 'square') return <path d="M31 40 Q31 20 60 20 Q89 20 89 40 L89 56 Q89 77 74 82 L46 82 Q31 77 31 56 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
-  if (shape === 'oval') return <path d="M33 44 Q31 19 60 19 Q89 19 87 44 Q88 62 78 72 L72 80 Q60 83 48 80 L42 72 Q32 62 33 44 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
-  return <path d="M31 46 Q31 21 60 21 Q89 21 89 46 Q89 71 72 79 L48 79 Q31 71 31 46 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
+  if (shape === 'square') return <path d="M30 40 Q30 20 60 20 Q90 20 90 40 L90 58 Q90 79 79 84 L41 84 Q30 79 30 58 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
+  if (shape === 'oval') return <path d="M32 44 Q31 19 60 19 Q89 19 88 44 Q88 64 79 75 L74 82 Q60 84 46 82 L41 75 Q32 64 32 44 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
+  return <path d="M30 46 Q30 21 60 21 Q90 21 90 46 Q90 74 77 81 L43 81 Q30 74 30 46 Z" fill={skinTone} stroke={stroke} strokeWidth={0.8} />;
+}
+
+/** Chin/jaw break — a hard edge under the mouth reads as bone rather than cheek. */
+function JawLine({ shape, color }: { shape: FaceShape; color: string }) {
+  const y = shape === 'square' ? 78 : shape === 'oval' ? 77 : 76;
+  return <path d={`M45 ${y - 4} Q60 ${y + 3} 75 ${y - 4}`} stroke={color} strokeWidth={1.4} fill="none" opacity={0.28} strokeLinecap="round" />;
 }
 
 /** Cheekbone + jaw shadow, shaped to the head so it never spills outside it. */
@@ -213,13 +232,21 @@ function HairTop({ style, color }: { style: HairStyle; color: string }) {
   }
 }
 
+/**
+ * Long hair falls behind the head and outside the jawline rather than down
+ * over the cheeks. Hair that hugs the face is the single strongest feminine
+ * cue in a simple portrait, and plenty of real players wear long hair out the
+ * back of a helmet — this reads as that instead of as curtains.
+ */
+/**
+ * Deliberately stops above the jawline. Hair that reaches the shoulders reads
+ * as curtains framing the face — the one silhouette that stayed feminine
+ * through several passes at heavier jaws, forced facial hair and behind-the-head
+ * layering. Kept as a bulk mass tucked behind the skull (a tied-back look)
+ * so the style survives in the pool without that failure mode.
+ */
 function LongHairBack({ color }: { color: string }) {
-  return (
-    <>
-      <path d="M22 50 Q17 88 27 106 L37 102 Q29 78 29 50 Z" fill={color} />
-      <path d="M98 50 Q103 88 93 106 L83 102 Q91 78 91 50 Z" fill={color} />
-    </>
-  );
+  return <path d="M27 36 Q19 56 23 72 L37 70 Q31 54 34 36 Q60 24 86 36 Q89 54 83 70 L97 72 Q101 56 93 36 Q60 20 27 36 Z" fill={color} />;
 }
 
 /** Soft shadow band standing in for a protruding brow — bone structure the

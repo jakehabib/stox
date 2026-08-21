@@ -1,4 +1,5 @@
 import { BoxScore, BoxLine } from './types';
+import { RivalryProfile, rivalryHeadlineFragment } from './rivalry';
 
 /**
  * League news generation from things the sim already computed. Nothing here
@@ -42,8 +43,13 @@ function describe(l: BoxLine): string {
   return 'has a big game';
 }
 
-/** Up to 2 headline performances from one game's box score, most notable first. */
-export function gameHeadlines(box: BoxScore, homeTeamId: string, awayTeamId: string): NewsItem[] {
+/**
+ * Up to 2 headline performances from one game's box score, most notable
+ * first. `rivalry`, if passed, MUST be the pre-game head-to-head state (see
+ * lib/rivalry.ts's rivalryRecapLine) — optional and defaulted so every
+ * existing caller keeps compiling unchanged until it's wired up.
+ */
+export function gameHeadlines(box: BoxScore, homeTeamId: string, awayTeamId: string, rivalry?: RivalryProfile | null): NewsItem[] {
   const lines = [
     ...box.lines.home.map((l) => ({ l, teamId: homeTeamId, teamAbbr: box.homeTeam.abbr })),
     ...box.lines.away.map((l) => ({ l, teamId: awayTeamId, teamAbbr: box.awayTeam.abbr })),
@@ -52,10 +58,20 @@ export function gameHeadlines(box: BoxScore, homeTeamId: string, awayTeamId: str
   // Rank by how far each line clears its threshold, roughly.
   lines.sort((a, b) => statScore(b.l) - statScore(a.l));
 
+  const homeWon = box.finalHome > box.finalAway;
+  const tie = box.finalHome === box.finalAway;
+  const rivalryDetail = !tie && rivalry
+    ? rivalryHeadlineFragment(rivalry, {
+        winnerTeamId: homeWon ? homeTeamId : awayTeamId,
+        winnerAbbr: homeWon ? box.homeTeam.abbr : box.awayTeam.abbr,
+        loserAbbr: homeWon ? box.awayTeam.abbr : box.homeTeam.abbr,
+      })
+    : null;
+
   return lines.slice(0, 2).map(({ l, teamId, teamAbbr }) => ({
     teamId,
     headline: `${l.name} (${teamAbbr}) ${describe(l)}`,
-    detail: `${box.awayTeam.abbr} @ ${box.homeTeam.abbr}, Week result.`,
+    detail: rivalryDetail ?? `${box.awayTeam.abbr} @ ${box.homeTeam.abbr}, Week result.`,
   }));
 }
 

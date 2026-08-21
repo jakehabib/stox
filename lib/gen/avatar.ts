@@ -77,13 +77,22 @@ export function generateAvatarParams(seed: string, age = 26): AvatarParams {
   // norm — bare-faced stays possible but stubble-or-heavier is the default
   // even for the youngest guys, and climbs hard with age from there.
   const facialHairChance = age < 24 ? 0.55 : age < 29 ? 0.72 : age < 34 ? 0.85 : 0.9;
-  const facialHair: FacialHair = rng.bool(facialHairChance)
+  const hairStyle = rng.weighted<HairStyle>(HAIR_STYLE_WEIGHTS);
+
+  // Shoulder-length hair on an otherwise clean-shaven, soft-featured face was
+  // the one combination that still read feminine no matter how heavy the jaw
+  // underneath got — and it's also just not how the look actually shows up on
+  // a roster, where flowing hair almost always comes with a beard. Correlating
+  // the two kills the androgynous outlier without removing long hair from the
+  // pool, which would cost real variety.
+  const flowingHair = hairStyle === 'long' || hairStyle === 'ponytail';
+  const facialHair: FacialHair = flowingHair || rng.bool(facialHairChance)
     ? rng.weighted<FacialHairPick>(FACIAL_HAIR_WEIGHTS)
     : 'none';
 
   return {
     skinTone: rng.pick(SKIN_TONES),
-    hairStyle: rng.weighted<HairStyle>(HAIR_STYLE_WEIGHTS),
+    hairStyle,
     hairColor,
     faceShape: rng.weighted<FaceShape>(FACE_SHAPE_WEIGHTS),
     eyeStyle: rng.weighted<EyeStyle>(EYE_STYLE_WEIGHTS),

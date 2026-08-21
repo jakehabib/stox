@@ -747,3 +747,51 @@ ever force-pushed over, so every state below still exists in git history).
     so there is no job-security or owner-pressure mechanic at all.
   Ranked recommendations, with rough sizing and whether foundations
   already exist, are in the doc's prioritised table.
+- **2026-08-21 — Portraits, roster regroup, contract-value tolerance, CPU
+  re-sign fix.** Checkpoint before this batch: `c2e5974`.
+  - **Portraits read male now.** The previous pass leaned on facial hair
+    to signal it, so every clean-shaven seed still read feminine. Fixed
+    at the source instead: jaws widened so the chin stays near
+    cheekbone width (~38 of the 58-unit skull) rather than tapering to a
+    point, a jaw-break line, a brow ridge, smaller/lower-set eyes, a
+    thicker neck and broader pads. The stubborn case was long hair —
+    it was being painted *over* the cheeks because `LongHairBack`
+    rendered after the head, which framed the face unmistakably
+    feminine no matter how heavy the jaw beneath it was. It now draws
+    behind the skull and stops above the jawline, and long/ponytail
+    styles force facial hair (which is how the look actually appears on
+    a roster). **Honest status: 3 of 4 sampled faces read clearly male;
+    a light-haired clean-featured seed is still borderline.** Reordering
+    the RNG draw changed every existing player's face — faces aren't
+    stored, so no migration, but they will look different in old saves.
+  - **Roster grouped into a squad**, not a flat 39-row list: offence /
+    defence / special-teams banners over position-group sections, each
+    header carrying headcount, average OVR and total cap, plus a "thin"
+    flag that triggers on real lack of backup depth rather than a flat
+    threshold (so a normal 2-QB room or the lone kicker isn't falsely
+    flagged). Starters get a team-colour accent and a tag, derived from
+    the Depth Chart's own rank-0 convention so the two pages agree.
+    Sorting still works and reorders *within* groups; the Pos header
+    specifically flips which end of the squad leads, so it still does
+    something visible.
+  - **Contract value got a tolerance band.** $15K over market on a $30M
+    deal was being flagged red as an overpay, which is noise. A
+    deviation now has to clear **both** 12% of the player's own market
+    value **and** a $1M floor before it counts as material — percentage
+    alone would flag a $1M punter for being 100% over, and a flat floor
+    alone would flag a rounding error on a $30M quarterback. Three-way
+    bargain / market / overpay replaces the binary everywhere, with
+    market-rate shown in neutral ink rather than forced green or red.
+  - **CPU re-sign: found the real bug.** AI teams re-signing their own
+    players already worked (verified by driving a saved league through a
+    full offseason — 93 extensions across 29 teams). The actual defect
+    was that `resignDecisionsForTeam` only looked at contracts already
+    at zero years, while the Re-sign page and its own button copy
+    promise to handle everything listed, which includes walk-year
+    players. Broadened to `<= 1` and fixed the kept/released accounting
+    so an un-extended walk-year player isn't miscounted as released.
+  - **New `lib/scoutingProse.ts`** — prose-voiced scouting reports whose
+    hedging is driven by the *displayed band width* per attribute rather
+    than one aggregate confidence number, so it can never state more
+    precision than the fog actually allows. Not yet wired into the
+    player card.
