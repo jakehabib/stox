@@ -1268,3 +1268,12 @@ ever force-pushed over, so every state below still exists in git history).
   Rating colour is being re-tuned in the same pass: neutral below ~80, three
   distinguishable steps above it, glyphs retained, and the steps validated
   against a colourblind-separation check rather than eyeballed.
+- **2026-08-21 — Two latent layout bugs fixed (`30d7102`).** Surfaced by the
+  reverted visual pass but not part of it — both predate it and would still
+  be broken without it. `.table-clean th` set `text-left` at specificity
+  (0,1,1), so every `text-right` header utility (0,1,0) in the app silently
+  lost to it: the standings table, the GM season log and the Dynasty XP
+  ledger were all rendering left-aligned headers over right-aligned figures.
+  And `PageMasthead` hardcoded a five-column fact strip, stranding the Depth
+  Chart's sixth fact alone on a second row. Verified in a browser, not by
+  reading the CSS.
