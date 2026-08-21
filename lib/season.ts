@@ -22,6 +22,7 @@ import { NameRegistry } from './gen/names';
 import { classStrengthSummary } from './gen/prospectProfile';
 import { checkAndUpdateRecords, recordBreakHeadline } from './records';
 import { reseedDraftOrder, startRookieDraft } from './draft';
+import { ensureSeasonSchedule } from './scheduleSeason';
 import { autoDepthChartAll } from './gen/league';
 import { observe } from './scouting';
 import { replenishLeagueScoutingBudgets } from './scoutingEconomy';
@@ -163,8 +164,24 @@ async function advanceWeekStep(leagueId: string) {
       // this step (or that initial seed) never doubles it up.
       const alreadySeeded = await prisma.player.count({ where: { leagueId, isDraftee: true, draftYear: league.seasonYear } });
       if (alreadySeeded === 0) await addDraftClass(leagueId, league.seasonYear, rng);
+
+      // Build this year's schedule if it doesn't exist yet. buildSchedule()
+      // used to be called from exactly one place — createLeague() — and
+      // nothing in the offseason pipeline ever made another one, so every
+      // season after the first played no football at all: weeks advanced,
+      // the toast read "0 games played", and nothing told the user anything
+      // was wrong. Preseason is the right gate because it is the last phase
+      // before REGULAR on every path into a new league year, and
+      // ensureSeasonSchedule is idempotent so running it here on a
+      // freshly-created league (which already has one) is a no-op.
+      const scheduled = await ensureSeasonSchedule(leagueId, league.seasonYear, rng, settings.seasonLength);
+
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'REGULAR', week: 1 } });
-      return { summary: 'Preseason complete. Week 1 is set — next year\'s draft class is on the board.' };
+      return {
+        summary: scheduled > 0
+          ? `Preseason complete. The ${league.seasonYear} schedule is out — ${scheduled} games across ${settings.seasonLength} weeks. Week 1 is set, and next year's draft class is on the board.`
+          : 'Preseason complete. Week 1 is set — next year\'s draft class is on the board.',
+      };
     }
 
     case 'REGULAR':
@@ -326,7 +343,16 @@ export async function simulateAndSaveGame(leagueId: string, gameId: string, sett
       },
     });
 
-    await updateStandings(tx as any, game.homeTeamId, game.awayTeamId, result.homeScore, result.awayScore);
+    // Regular season only. This used to run for every game including the
+    // postseason, so a champion's four playoff wins were added straight into
+    // team.wins — and TeamSeasonRecord is built from team.wins, which is how
+    // a 17-game season produced "2026 Champions (19-1)", 20-game division
+    // tables, and a title-winning team displayed third in its own division.
+    // Playoff results are already carried by the Game rows themselves and by
+    // TeamSeasonRecord.playoffResult; nothing needs them in the standings.
+    if (game.kind === 'REGULAR') {
+      await updateStandings(tx as any, game.homeTeamId, game.awayTeamId, result.homeScore, result.awayScore);
+    }
 
     // Every per-player effect below used to be one awaited UPDATE per row —
     // for a 53-man-ish box score that's a hundred-plus sequential round
