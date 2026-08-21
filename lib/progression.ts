@@ -40,9 +40,23 @@ export function progressPlayer(
 
   for (const key of keys) {
     const current = out[key] ?? 50;
-    // Room shrinks as the attribute approaches the player's ceiling.
+    // Room shrinks as the attribute approaches the player's ceiling, goes to
+    // zero AT the ceiling, and turns into a pull back down above it.
+    //
+    // This used to floor the factor at 0.1, which meant a growing player kept
+    // a POSITIVE expected gain no matter how far past his ceiling he already
+    // was — `potential` (documented in the schema as "0..99 ceiling") capped
+    // nothing at all. On its own the drift is small; combined with the roll's
+    // own per-attribute noise and with rosters that keep whoever drifted UP
+    // and release whoever drifted down, it is a ratchet with no counterweight,
+    // and it was the main engine behind measured league-wide rating inflation
+    // (mean ACTIVE trueOvr 65 -> 81 across 13 simulated seasons, with 27% of
+    // active players sitting at or above their own stated ceiling). Removing
+    // the floor makes potential a real attractor: noise still moves a player
+    // either way, but overshooting it now pulls him back instead of paying him
+    // a bonus for having overshot.
     const roomFactor = clamp((potential - current) / 30, -1, 1.2);
-    const delta = rng.normal(mean * (mean >= 0 ? Math.max(0.1, roomFactor) : 1), noiseSd);
+    const delta = rng.normal(mean * (mean >= 0 ? roomFactor : 1), noiseSd);
     out[key] = clamp(Math.round(current + delta), 20, 99);
   }
 

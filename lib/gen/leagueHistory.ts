@@ -83,6 +83,17 @@ export const HISTORY = {
   ERA_DRIFT_SD: 0.21,
   ERA_DRIFT_PULL: 0.07,
   /**
+   * Parity. A reverse-order draft and a hard cap are the two things that stop
+   * a real league producing a ten-title club in twenty-four years, and this
+   * generator has neither — so the effect is modelled directly: winning it all
+   * costs a franchise a little of its standing next year, and the clubs
+   * picking at the top of the draft get a little of it back. Without this the
+   * era drift alone still left seeds where one club won ten of twenty-four.
+   */
+  TITLE_REGRESSION: 0.3,
+  BOTTOM_FEEDER_BOOST: 0.12,
+  BOTTOM_FEEDER_COUNT: 6,
+  /**
    * Quality -> win percentage steepness. Deliberately gentle: at 0.63 the
    * generator produced a franchise that went 61-278 across twenty straight
    * seasons and another that won nine titles, which is not history, it's a
@@ -120,8 +131,8 @@ export const SEASON_RECORD_BAND: Record<RecordCategory, { lo: number; hi: number
   passTd:  { lo: 58,   hi: 63 },
   rushYds: { lo: 2850, hi: 3050 },
   recYds:  { lo: 1860, hi: 1980 },
-  tackles: { lo: 100,  hi: 106 },
-  sacks:   { lo: 14,   hi: 16 },
+  tackles: { lo: 103,  hi: 108 },
+  sacks:   { lo: 13,   hi: 15 },
   defInt:  { lo: 10,   hi: 12 },
 };
 
@@ -271,6 +282,14 @@ export async function generateLeagueHistory(opts: {
   names: NameRegistry;
 }): Promise<HistorySummary> {
   const { leagueId, seasonYear, teams, rng, names } = opts;
+  // Postgres makes no promise about the order findMany hands rows back in, and
+  // createLeague reads the roster back without an orderBy — so consuming it in
+  // arrival order made every draw below depend on the storage engine's mood
+  // rather than the seed. Names are unique league-wide (NameRegistry), so this
+  // is a total order, and it is the same one for any two leagues built from
+  // the same seed.
+  const roster = [...opts.roster].sort((a, b) =>
+    a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName));
   const seasonLength = opts.seasonLength || LEAGUE.REGULAR_SEASON_WEEKS;
   const nSeasons = rng.int(HISTORY.MIN_SEASONS, HISTORY.MAX_SEASONS);
   const years: number[] = [];
@@ -282,7 +301,7 @@ export async function generateLeagueHistory(opts: {
   for (const s of seasons) for (const r of s.rows) rowsByTeamYear.set(`${r.teamId}:${s.year}`, r);
 
   // --- 2. The cast ---------------------------------------------------------
-  const stars = buildStars(rng, names, teams, opts.roster, years, seasonYear);
+  const stars = buildStars(rng, names, teams, roster, years, seasonYear);
 
   // --- 3. Their seasons ----------------------------------------------------
   for (const p of stars) {
@@ -300,6 +319,7 @@ export async function generateLeagueHistory(opts: {
   const abbrOf = (teamId: string) => teams.find((t) => t.id === teamId)?.abbr ?? '';
   calibrateCareers(rng, stars);
   const seasonRecords = calibrateSeasonRecords(rng, stars, abbrOf);
+  trimCareersIntoBand(stars, seasonRecords);
   for (const p of stars) p.career = sumCareer(p);
 
   // --- 5. Awards, computed from the final numbers with the live formulas ----
@@ -313,7 +333,7 @@ export async function generateLeagueHistory(opts: {
   const records: RecordRow[] = [...seasonRecords, ...careerRecords];
 
   // --- 6. Career lines for every other veteran on a roster ------------------
-  const veteranCareers = buildVeteranCareers(rng, opts.roster, seasonYear, seasonLength);
+  const veteranCareers = buildVeteranCareers(rng, roster, seasonYear, seasonLength);
   for (const p of stars) {
     if (p.living) veteranCareers.set(p.recordId, p.career);
   }
@@ -374,7 +394,20 @@ function buildSeasons(rng: Rng, teams: HistoryTeam[], years: number[], G: number
       means[i] += HISTORY.ERA_DRIFT_PULL * (anchor[i] - means[i]) + rng.normal(0, HISTORY.ERA_DRIFT_SD);
       form[i] = means[i] + HISTORY.PERSISTENCE * (form[i] - means[i]) + rng.normal(0, HISTORY.ERA_NOISE_SD);
     }
-    out.push(buildOneSeason(rng, teams, year, G, form));
+    const season = buildOneSeason(rng, teams, year, G, form);
+    out.push(season);
+
+    // Parity feedback — see HISTORY.TITLE_REGRESSION.
+    const byWins = season.rows.map((r, i) => ({ i, w: r.regWins })).sort((a, b) => a.w - b.w);
+    for (let k = 0; k < HISTORY.BOTTOM_FEEDER_COUNT && k < byWins.length; k++) {
+      means[byWins[k].i] += HISTORY.BOTTOM_FEEDER_BOOST;
+      form[byWins[k].i] += HISTORY.BOTTOM_FEEDER_BOOST;
+    }
+    const champIdx = teams.findIndex((t) => t.id === season.championId);
+    if (champIdx >= 0) {
+      means[champIdx] -= HISTORY.TITLE_REGRESSION;
+      form[champIdx] -= HISTORY.TITLE_REGRESSION;
+    }
   }
   return out;
 }
@@ -856,6 +889,34 @@ function redriveDerived(rng: Rng, p: HistPlayer) {
   }
 }
 
+/**
+ * Final pass, once the single-season records are locked in. Two things push a
+ * career total off the band it was scaled onto: rounding a fifteen-season run
+ * of single-digit interception totals, and the season-record promotion adding
+ * its own delta to that man's career. Both are trimmed out of his ordinary
+ * years — never the record season itself, which would undo the record that was
+ * just set.
+ */
+function trimCareersIntoBand(stars: HistPlayer[], seasonRecords: RecordRow[]) {
+  const untouchable = new Set(seasonRecords.map((r) => `${r.playerName}:${r.category}:${r.seasonYear}`));
+  for (const cat of RECORD_CATEGORIES) {
+    const totalOf = (p: HistPlayer) => p.seasons.reduce((a, s) => a + (s.line[cat] ?? 0), 0);
+    const leader = stars.reduce<HistPlayer | null>((best, p) => (!best || totalOf(p) > totalOf(best) ? p : best), null);
+    if (!leader) continue;
+    const band = CAREER_RECORD_BAND[cat];
+    let total = totalOf(leader);
+    let guard = 0;
+    while (total > band.hi && guard++ < 500) {
+      const target = [...leader.seasons]
+        .filter((s) => (s.line[cat] ?? 0) > 0 && !untouchable.has(`${name(leader)}:${cat}:${s.year}`))
+        .sort((a, b) => (b.line[cat] ?? 0) - (a.line[cat] ?? 0))[0];
+      if (!target) break;
+      target.line[cat] = (target.line[cat] ?? 0) - 1;
+      total--;
+    }
+  }
+}
+
 function collectCareerRecords(stars: HistPlayer[], seasonYear: number, abbrOf: (teamId: string) => string): RecordRow[] {
   const out: RecordRow[] = [];
   for (const cat of RECORD_CATEGORIES) {
@@ -966,8 +1027,12 @@ function ensureRecordHoldersAppear(
 
   // Two holders wanting the same year's trophy would otherwise evict each
   // other — the second write dropped the first straight back out of the
-  // history it was being added to.
-  const claimed = new Set<string>();
+  // history it was being added to. Slots already held by a record holder are
+  // off-limits for the same reason: overwriting one erases the only mention
+  // that man had.
+  const claimed = new Set<string>(
+    awards.filter((a) => holders.has(a.name)).map((a) => `${a.year}:${a.type}`),
+  );
   for (const p of stars) {
     const n = name(p);
     if (!holders.has(n) || named.has(n) || p.seasons.length === 0) continue;
