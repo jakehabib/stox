@@ -22,7 +22,10 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
   // has no TeamSeasonRecord row yet) and the ledger of moves they've made.
   const MOVE_TYPES = ['SIGN', 'CUT', 'DRAFT', 'TAG'];
   const [seasonRecords, ownMoves, moveCounts, tradeRows] = await Promise.all([
-    prisma.teamSeasonRecord.findMany({ where: { teamId: team.id }, orderBy: { year: 'desc' } }),
+    // Bounded on the hire year, exactly as lib/gmCareer.ts bounds the same
+    // table. Unbounded, a first-year GM's "1 season" header sat above nine
+    // rows of seeded franchise history he had nothing to do with.
+    prisma.teamSeasonRecord.findMany({ where: { teamId: team.id, year: { gte: s.firstYear } }, orderBy: { year: 'desc' } }),
     prisma.transaction.findMany({
       where: { leagueId: league.id, teamId: team.id, type: { in: MOVE_TYPES } },
       orderBy: [{ seasonYear: 'desc' }, { createdAt: 'desc' }],
@@ -47,6 +50,10 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
   const moves = [...ownMoves, ...myTrades]
     .sort((a, b) => b.seasonYear - a.seasonYear || b.createdAt.getTime() - a.createdAt.getTime())
     .slice(0, 14);
+
+  // The header beside this table reads `s.tenureYears`, which is
+  // seasons-on-file plus the one in progress. Row count has to match it.
+  const currentSeasonLogged = seasonRecords.some((r) => r.year === league.seasonYear);
 
   const games = s.wins + s.losses + s.ties;
   const winPct = games > 0 ? s.wins / (s.wins + s.losses || 1) : 0;
@@ -160,7 +167,11 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
               <tbody>
                 {/* The season in progress has no TeamSeasonRecord row until it
                     ends, so it's synthesised here — otherwise a first-year GM
-                    sees an empty table while sitting on a 7-2 start. */}
+                    sees an empty table while sitting on a 7-2 start. Once the
+                    year does wrap it has a real row, and this must stand down
+                    or the log shows the season twice and outruns the header
+                    count beside it. */}
+                {!currentSeasonLogged && (
                 <tr className="bg-accent/[0.06]">
                   <td className="font-mono">{league.seasonYear}</td>
                   <td className="font-mono text-right">{team.wins}</td>
@@ -170,6 +181,7 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
                   <td className="font-mono text-muted text-right">{team.pointsAgnst}</td>
                   <td className="text-accent text-xs">In progress</td>
                 </tr>
+                )}
                 {seasonRecords.map((r) => (
                   <tr key={r.id} className={r.playoffResult === 'CHAMPION' ? 'bg-gold/5' : ''}>
                     <td className="font-mono">{r.year}</td>
