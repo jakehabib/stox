@@ -300,9 +300,18 @@ export async function assertCanCreateLeague(viewer: Viewer): Promise<void> {
   // could reset the counter by clearing a cookie they are no longer using for
   // anything, and the cap would mean nothing to exactly the people it applies
   // to. Signed out, the cookie is all there is.
+  //
+  // The `__no_owner__` fallback is not decoration. Both callers mint a key
+  // before calling this, so a null ownerKey should be unreachable — but if one
+  // ever stopped, `{ userId: null, ownerKey: null }` would match every legacy
+  // save in the database instead of none of them, and in a database holding
+  // more legacy rows than the per-owner cap that is not a loose limit, it is
+  // "nobody may create a league" with no obvious cause. Match nothing.
   const mineWhere = viewer.userId != null
     ? { userId: viewer.userId }
-    : { userId: null, ownerKey: viewer.ownerKey };
+    : viewer.ownerKey != null
+      ? { userId: null, ownerKey: viewer.ownerKey }
+      : { id: '__no_owner__' };
 
   const [mine, everyone] = await Promise.all([
     prisma.league.count({ where: mineWhere }),
