@@ -15,6 +15,8 @@ import { positionBadgeClass } from '@/components/ds/positionColor';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { RosterGroupHeader } from '@/components/ds/RosterGroupHeader';
 import { teamCapSummary } from '@/lib/cap-summary';
+import { buildRosterShape } from '@/lib/rosterShape';
+import { RosterShapePanel } from '@/components/ds/RosterShapePanel';
 
 type SortKey = 'pos' | 'ovr' | 'age' | 'potential' | 'cap' | 'years';
 
@@ -98,6 +100,17 @@ export default async function RosterPage({ params, searchParams }: { params: { i
     const incumbent = players.filter((x) => x.position === p.position).reduce((best, x) => (x.trueOvr > best.trueOvr ? x : best));
     starterIdByPosition.set(p.position, incumbent.id);
   }
+
+  // What kind of team this is, not just who's on it — starter rating at each
+  // unit against the league's average starter there. Computed after the
+  // starter map above so "aging starters" means the men who actually play.
+  const shape = await buildRosterShape(
+    league.id,
+    team.id,
+    players.map((p) => ({ position: p.position, trueOvr: p.trueOvr, age: p.age, contract: p.contract })),
+    new Set(starterIdByPosition.values()),
+    players.map((p) => ({ id: p.id, age: p.age })),
+  );
 
   const sortKey: SortKey = (['pos', 'ovr', 'age', 'potential', 'cap', 'years'] as SortKey[]).includes(searchParams.sort as SortKey)
     ? (searchParams.sort as SortKey) : 'pos';
@@ -249,6 +262,8 @@ export default async function RosterPage({ params, searchParams }: { params: { i
           }] : []),
         ]}
       />
+
+      <RosterShapePanel shape={shape} />
 
       <div className="panel overflow-hidden">
         <div className="overflow-x-auto">
