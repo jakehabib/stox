@@ -218,7 +218,7 @@ function profileUpsert(leagueId: string, data: { workoutYear: number; workoutUse
  */
 export async function runWorkout(leagueId: string, teamId: string, playerId: string): Promise<WorkoutResult> {
   const [league, player, team] = await Promise.all([
-    prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { seasonYear: true, phase: true, settings: true } }),
+    prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { seasonYear: true, phase: true } }),
     prisma.player.findUnique({
       where: { id: playerId },
       select: {
