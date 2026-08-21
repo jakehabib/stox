@@ -10,6 +10,7 @@ import { SimPlayer, SimStaff } from './sim/units';
 import { retirementChance, bumpForMilestone } from './progression';
 import { AttrMap } from './ratings';
 import { applyInSeasonProgression } from './development';
+import { proration } from './cap';
 import { runAiFreeAgencyWave } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
 import { mergeStats } from './stats';
@@ -66,7 +67,7 @@ export async function advanceWeek(leagueId: string) {
     case 'RESIGN': {
       // Whoever the user (or an AI team) didn't extend by now walks.
       const releasedBefore = await prisma.contract.count({ where: { yearsRemaining: 0, player: { leagueId, status: 'ACTIVE' } } });
-      await releaseUnresignedExpiringContracts(leagueId);
+      await releaseUnresignedExpiringContracts(leagueId, league.seasonYear);
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'FREE_AGENCY', week: 1 } });
       return { summary: releasedBefore > 0 ? `${releasedBefore} unsigned player(s) hit free agency. Free agency is open.` : 'Free agency is open.' };
     }
@@ -727,10 +728,39 @@ async function agePlayersAndContracts(leagueId: string) {
   await prisma.capCharge.deleteMany({ where: { year: { lt: league.seasonYear }, teamId: { in: (await prisma.team.findMany({ where: { leagueId }, select: { id: true } })).map((t) => t.id) } } });
 }
 
-/** Free agents that walk: anyone still sitting at 0 years remaining once RESIGN is over — the user (or AI) had their chance to extend and didn't. */
-async function releaseUnresignedExpiringContracts(leagueId: string) {
-  const expired = await prisma.contract.findMany({ where: { yearsRemaining: 0, player: { leagueId, status: 'ACTIVE' } } });
+/**
+ * Free agents that walk: anyone still sitting at 0 years remaining once
+ * RESIGN is over — the user (or AI) had their chance to extend and didn't.
+ *
+ * Void years settle here. They're cap-only trailing years: they widen the
+ * proration divisor to shrink the hit during the real years, which strands
+ * part of the signing bonus that was never charged to anyone. In real
+ * football that stranded proration accelerates onto the cap the moment the
+ * real deal ends — void years are borrowing against the future, and this is
+ * where the bill arrives. Without this the slider was free money, since a
+ * cap charge was only ever raised by cutting a player early.
+ */
+async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: number) {
+  const expired = await prisma.contract.findMany({
+    where: { yearsRemaining: 0, player: { leagueId, status: 'ACTIVE' } },
+    include: { player: true },
+  });
   for (const c of expired) {
+    // Charged so far = proration × the real years actually played. Anything
+    // left of the bonus is what the void years pushed past the deal's end.
+    const stranded = c.voidYears > 0
+      ? Math.max(0, c.signingBonus - proration(c) * c.years)
+      : 0;
+    if (stranded > 0 && c.teamId) {
+      await prisma.capCharge.create({
+        data: {
+          teamId: c.teamId,
+          year: seasonYear,
+          amount: stranded,
+          label: `Void years — ${c.player.firstName} ${c.player.lastName}`,
+        },
+      });
+    }
     await prisma.contract.delete({ where: { id: c.id } });
     await prisma.player.update({ where: { id: c.playerId }, data: { status: 'FREE_AGENT', teamId: null } });
   }

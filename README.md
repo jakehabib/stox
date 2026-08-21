@@ -592,3 +592,26 @@ ever force-pushed over, so every state below still exists in git history).
   the meta line in the smallest text on the row. The create-league form
   itself is unchanged in fields, order, defaults, or its server action
   — only its container styling and an anchor target from the hero CTA.
+- **2026-08-21 — Fixed: void years were free cap space.** Checkpoint
+  before this change: `3867d4e`. **This is a game-balance change, not a
+  visual one** — it makes the void-years slider a real tradeoff, and it
+  affects existing saves. Void years widen the signing-bonus proration
+  divisor, which lowers the cap hit during the real contract years and
+  strands the rest of the bonus past the deal's end. In real football
+  that stranded proration accelerates onto the cap the moment the deal
+  expires — void years are borrowing against the future. The game never
+  charged it: `releaseUnresignedExpiringContracts` deleted the contract
+  outright, and the *only* `capCharge.create` in the codebase was in
+  `cutPlayer`. So maxing the slider and letting the deal run to term
+  cost nothing, and the only way to ever pay was cutting the player
+  early — backwards. Expiry now raises a "Void years — <player>" cap
+  charge for the uncharged remainder. The math itself was already
+  correct and is unchanged (proration divides by `years + voidYears`,
+  capped at the real-world 5-year maximum; a 4-year deal with +3 void
+  years correctly prorates over 5, not 7). Verified across five
+  contract shapes that the stranded figure is exact and that
+  charged-during-deal + stranded equals the full signing bonus to the
+  dollar in every case. Known remaining gap, deliberately left alone
+  for now: a **trade** still doesn't accelerate bonus onto the team
+  giving the player up (`lib/trade.ts` just reassigns `contract.teamId`),
+  so dumping a bonus-heavy contract is still a way to escape it.
