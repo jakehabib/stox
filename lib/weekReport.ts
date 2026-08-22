@@ -9,6 +9,7 @@ import { computeClinchStatus, clinchScenarioTag, StandingsTeam } from './clinchS
 import { generateTeamLogoParams } from './gen/teamLogo';
 import { buildLeagueRatings, estimateGameWinChance, TeamRating } from './teamRating';
 import { rankWire } from './wireRank';
+import { projectedDraftOrder } from './draft';
 import { statScore } from './news';
 import { generateStorylines } from './storyline';
 import { careerColumns, formatColumn, isDerived } from './statLabels';
@@ -982,11 +983,35 @@ export async function buildTrophyMoment(leagueId: string, seasonYear: number, ro
   // reseedDraftOrder runs later in the offseason, so on the night the season
   // ends there is usually nothing true to say here yet.
   let nextPick: string | null = null;
+  /*
+   * THE SLOT ON A FUTURE PICK IS NOT A DRAFT POSITION.
+   *
+   * This read DraftPick.slot and printed it as "You pick 7th in the 2028
+   * draft", guarded only by `slot > 0`. But future picks are created with
+   * `slot: i + 1` — the team's index in the creation loop — so that guard is
+   * always true and the number was a placeholder wearing an ordinal.
+   * reseedDraftOrder does not replace it until FREE_AGENCY week 4, months of
+   * game time after this sentence is written.
+   *
+   * The season has just ended and the standings columns are still populated
+   * (RESET_STANDINGS has not run yet), so the real answer is available right
+   * here: projectedDraftOrder ranks the clubs by the record they just posted.
+   * Whether a pick was traded is honoured too — we look up the slot of the
+   * club whose record sets it, which is `originalTeamId`.
+   */
   const pick = await prisma.draftPick.findFirst({
     where: { leagueId, year: seasonYear + 1, round: 1, ownerTeamId: userTeam.id },
-    select: { slot: true },
+    select: { originalTeamId: true },
   });
-  if (pick && pick.slot > 0) nextPick = `You pick ${ordinal(pick.slot)} in the ${seasonYear + 1} draft.`;
+  if (pick) {
+    const order = await projectedDraftOrder(leagueId);
+    const slot = order.get(pick.originalTeamId);
+    if (slot) {
+      nextPick = pick.originalTeamId === userTeam.id
+        ? `You pick ${ordinal(slot)} in the ${seasonYear + 1} draft.`
+        : `You hold the ${ordinal(slot)} pick in the ${seasonYear + 1} draft.`;
+    }
+  }
 
   return {
     kind: wonTheFinal ? 'CHAMPION' : 'SEASON_OVER',

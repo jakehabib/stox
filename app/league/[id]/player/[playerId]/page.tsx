@@ -477,6 +477,19 @@ export default async function PlayerPage({
                 <span>{player.status === 'FREE_AGENT' ? (player.isDraftee ? 'Draft Prospect' : 'Free Agent') : player.status}</span>
               )}
               <span className={`pill text-[10px] border-current ${label.className}`}>{label.label}</span>
+              {/* HIS CARD NEVER SAID HE WAS HURT.
+                  A quarterback out two weeks with a fractured hand showed the
+                  STARTER pill and his depth slot with nothing to indicate he
+                  could not play — while the dashboard, the roster page and the
+                  depth chart all knew. The row was already fetched (`include`
+                  pulls it); nothing rendered it. Availability is the first
+                  thing a GM checks about a player, so it sits in the hero with
+                  the rest of his identity rather than in a panel below. */}
+              {player.injuryWeeks > 0 && (
+                <span className="pill text-[10px] border-bad/50 text-bad bg-bad/10">
+                  {player.injuryType ?? 'Injured'} · out {player.injuryWeeks} wk{player.injuryWeeks === 1 ? '' : 's'}
+                </span>
+              )}
             </div>
 
             {/* Split name — given name reads as a kicker over the surname, which

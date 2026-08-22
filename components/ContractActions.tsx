@@ -96,12 +96,17 @@ export function ContractActions({ leagueId, playerId, ovr, position, age, contra
           <Link href={`/league/${leagueId}/resign`} className="btn-primary w-full sm:w-auto">
             Re-sign
           </Link>
+          {/* The football situation, not the taxonomy. This used to explain
+              that "keeping him is a re-sign rather than an extension", which
+              tells the user about our own vocabulary rather than about his
+              player — the explainer voice the owner has objected to four
+              separate times. What is actually useful here is the clock. */}
           <p className="text-sm text-muted">
             {contract.yearsRemaining === 0
-              ? 'His contract has expired, so keeping him is a re-sign rather than an extension.'
-              : 'This is his final contract year, so keeping him is a re-sign rather than an extension.'}
-            {' '}Get to him early and he is more inclined to give you a hometown discount — the closer he
-            gets to the open market, the less of one he will take.
+              ? 'His deal is up. He can talk to anyone.'
+              : 'He is in the last year of his deal.'}
+            {' '}Get to him now and he will still take something like a hometown price. The closer he gets
+            to the open market, the less of one he will take.
           </p>
         </div>
       ) : (

@@ -106,7 +106,11 @@ export function FullScoutButton({ leagueId, teamId, playerId, compact }: {
           ? `All ${panel.max} used for ${panel.seasonYear}. They reset when the new league year starts.`
           : confirming
             ? 'Permanent. The charge is spent whether or not you like what the file says, and unused ones do not carry over.'
-            : 'Reveals this player’s true ratings and exact ceiling. Permanent, and it costs one of your evaluations for the year.'}
+            /* "Reveals this player's true ratings and exact ceiling" described
+               the data model. A scouting department does not talk about
+               revealing true ratings; it talks about putting people on a
+               player. Same information, told from inside the building. */
+            : 'Put the whole department on him and you will know exactly what he is and how high he goes. Costs one of this year’s evaluations.'}
       </p>
       {msg && <div className="text-xs text-muted">{msg}</div>}
     </div>
