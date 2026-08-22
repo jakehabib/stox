@@ -1021,6 +1021,45 @@ async function applyAwardDevelopmentBump(playerId: string) {
   });
 }
 
+/**
+ * ===========================================================================
+ * BUILDING THE NEXT ROUND EXACTLY ONCE
+ * ===========================================================================
+ * Both round builders below called `game.create` unconditionally. The games
+ * themselves are safe — simulateAndSaveGame claims each one — but BUILDING the
+ * bracket was not: two concurrent playoff advances each play the pending
+ * games, each then read the same set of completed rounds, and each create a
+ * full divisional round. The postseason comes out with two brackets in it.
+ *
+ * There is no week to compare-and-set here, because the playoff branch does
+ * not move `league.week` between rounds — it only moves it at the very end,
+ * into the offseason. So the mutex is the league row itself.
+ *
+ * `UPDATE league SET ... WHERE id = ?` takes an exclusive row lock in Postgres
+ * that is held until the transaction commits. A second advance arriving here
+ * BLOCKS on that update rather than racing past it, and by the time it gets
+ * through, the first has committed and its `count` sees the round already
+ * built. Writing a column to the value it already holds is deliberate: the
+ * write exists for the lock, not for the data.
+ *
+ * A unique index on (leagueId, seasonYear, kind, homeTeamId, awayTeamId)
+ * would be the stronger guarantee, and it is the wrong tool here: the
+ * migration would FAIL to apply against any live save that already carries a
+ * duplicated bracket from this very bug, which is precisely the population it
+ * would be protecting.
+ * ===========================================================================
+ */
+async function withRoundLock(leagueId: string, kind: string, seasonYear: number, build: (tx: Prisma.TransactionClient) => Promise<void>) {
+  await prisma.$transaction(async (tx) => {
+    const league = await tx.league.findUniqueOrThrow({ where: { id: leagueId }, select: { week: true } });
+    // The lock. Same value in, same value out.
+    await tx.league.update({ where: { id: leagueId }, data: { week: league.week } });
+    const already = await tx.game.count({ where: { leagueId, seasonYear, kind } });
+    if (already > 0) return;
+    await build(tx);
+  });
+}
+
 async function createNextPlayoffRound(leagueId: string, seasonYear: number, fromKind: string, toKind: string) {
   // THIS SEASON's winners. Unbounded, year two collected 2026's wild-card
   // winners alongside 2027's and built a divisional round out of both: a
@@ -1037,16 +1076,18 @@ async function createNextPlayoffRound(leagueId: string, seasonYear: number, from
     const byes = await prisma.team.findMany({ where: { leagueId, playoffSeed: { in: [1, 2] } } });
     winners.push(...byes.map((t) => ({ id: t.id, conference: t.conference, seed: t.playoffSeed! })));
   }
-  for (const conf of ['AFC', 'NFC'] as const) {
-    const confWinners = winners.filter((w) => w.conference === conf).sort((a, b) => a.seed - b.seed);
-    for (let i = 0; i < confWinners.length; i += 2) {
-      if (confWinners[i + 1]) {
-        await prisma.game.create({
-          data: { leagueId, seasonYear, week: 2, kind: toKind, homeTeamId: confWinners[i].id, awayTeamId: confWinners[i + 1].id },
-        });
+  await withRoundLock(leagueId, toKind, seasonYear, async (tx) => {
+    for (const conf of ['AFC', 'NFC'] as const) {
+      const confWinners = winners.filter((w) => w.conference === conf).sort((a, b) => a.seed - b.seed);
+      for (let i = 0; i < confWinners.length; i += 2) {
+        if (confWinners[i + 1]) {
+          await tx.game.create({
+            data: { leagueId, seasonYear, week: 2, kind: toKind, homeTeamId: confWinners[i].id, awayTeamId: confWinners[i + 1].id },
+          });
+        }
       }
     }
-  }
+  });
 }
 
 async function createFinal(leagueId: string, seasonYear: number) {
@@ -1056,8 +1097,10 @@ async function createFinal(leagueId: string, seasonYear: number) {
   const games = await prisma.game.findMany({ where: { leagueId, seasonYear, kind: 'CONFERENCE', played: true } });
   const winners = games.map((g) => (g.homeScore >= g.awayScore ? g.homeTeamId : g.awayTeamId));
   if (winners.length === 2) {
-    await prisma.game.create({
-      data: { leagueId, seasonYear, week: 4, kind: 'FINAL', homeTeamId: winners[0], awayTeamId: winners[1] },
+    await withRoundLock(leagueId, 'FINAL', seasonYear, async (tx) => {
+      await tx.game.create({
+        data: { leagueId, seasonYear, week: 4, kind: 'FINAL', homeTeamId: winners[0], awayTeamId: winners[1] },
+      });
     });
   }
 }
