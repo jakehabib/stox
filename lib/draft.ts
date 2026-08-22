@@ -1,12 +1,12 @@
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
 import { readJson, writeJson } from './json';
-import { buildContract, rookieScaleApy } from './cap';
+import { buildContract, rookieScaleApy, marketValue, suggestedYears, capHit } from './cap';
 import { parseGmProfile, playerValue, teamNeeds, RosterPlayer, defaultGmProfile } from './ai/gm';
-import { AI, CONSENSUS, LEAGUE, Position } from './tuning';
+import { AI, CAP, CONSENSUS, LEAGUE, Position } from './tuning';
 import { consensusBoardMap, CONSENSUS_EVAL, type ConsensusRead } from './consensus';
 import type { GmProfile } from './types';
-import { reconcileDepthChart } from './gen/league';
+import { reconcileDepthChart, rosterCapTarget } from './gen/league';
 import { runAiPositionConversions } from './ai/positionChange';
 
 /**
@@ -25,6 +25,10 @@ import { runAiPositionConversions } from './ai/positionChange';
  * whole rookie-pick path lives. A veteran in a fantasy draft is a different
  * problem and is still valued on the truth: he has years of tape, and the fog
  * this game models is a fog about twenty-two-year-olds.
+ *
+ * BOTH DRAFTS PUT THE MAN ON A CONTRACT, and they are not the same contract:
+ * a rookie signs the scale for the slot he went at, a fantasy pick signs a
+ * veteran deal at his own market price. See WHAT A FANTASY PICK IS PAID below.
  * ===========================================================================
  */
 
@@ -76,10 +80,22 @@ export async function draftPlayer(opts: {
 
   const isFantasy = pickInfo.state.kind === 'FANTASY';
 
+  // A fantasy pick signs a real veteran contract, and it is priced BEFORE the
+  // write for the same reason the rookie cap check below runs there: fitting
+  // the deal to the club's books reads the whole league (the club's payroll,
+  // the men still on the board) and none of that belongs inside the
+  // transaction that moves one player. See WHAT A FANTASY PICK IS PAID.
+  const fantasyDeal = isFantasy
+    ? await priceFantasyPick({
+        leagueId: opts.leagueId, teamId: opts.teamId, playerId: opts.playerId,
+        seasonYear: opts.seasonYear, state: pickInfo.state,
+      })
+    : null;
+
   /**
-   * A rookie deal is real cap money and was the one acquisition path with no
-   * check at all. It's also the one transaction a team can't decline, so the
-   * two sides are handled differently WITHOUT giving either an exemption:
+   * A rookie deal is real cap money, and this path used to hand it out with no
+   * cap check at all. It's also the one transaction a team can't decline, so
+   * the two sides are handled differently WITHOUT giving either an exemption:
    *   - the user is blocked, with the same specific CapViolationError every
    *     other move throws, and has to clear room before picking;
    *   - an AI team clears its own room first (autoClearCapRoom releases the
@@ -96,7 +112,6 @@ export async function draftPlayer(opts: {
     const capMode = parseSettings(leagueRow.settings).capMode;
     if (capMode !== 'OFF') {
       const { assertCapRoom, autoClearCapRoom } = await import('./capEnforcement');
-      const { capHit } = await import('./cap');
       const { teamCapSummary } = await import('./cap-summary');
       const overall = (pickInfo.pick.round - 1) * LEAGUE.TEAM_COUNT + pickInfo.pick.slot;
       const rookie = buildContract({
@@ -175,12 +190,30 @@ export async function draftPlayer(opts: {
           playerId: opts.playerId,
           headline: `Round ${pick.round}, Pick ${pick.slot}: ${player.firstName} ${player.lastName} (${player.position})` },
       });
-    } else if (isFantasy) {
+    } else if (fantasyDeal) {
+      // `fantasyDeal` is non-null exactly when this is a fantasy pick, so the
+      // deal that was priced and the deal that gets written are one decision —
+      // there is no arrangement of these two flags that records the pick and
+      // forgets the contract, which is the shape the old bug had.
       const player = await tx.player.findUniqueOrThrow({ where: { id: opts.playerId } });
+      const c = fantasyDeal.contract;
+      // The same defensive clear the rookie branch does. Nothing in the
+      // league-start pool is under contract, but "he is on the deal he just
+      // signed and no other" is the invariant, not "the pool happens to be
+      // clean".
+      await tx.contract.deleteMany({ where: { playerId: opts.playerId } });
+      await tx.contract.create({
+        data: {
+          playerId: opts.playerId, teamId: opts.teamId, years: c.years, yearsRemaining: c.years,
+          signedYear: c.signedYear, baseSalaries: writeJson(c.baseSalaries),
+          signingBonus: c.signingBonus, guaranteed: c.guaranteed, isRookieDeal: false,
+        },
+      });
       await tx.transaction.create({
         data: { leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: 0, type: 'DRAFT', teamId: opts.teamId,
           playerId: opts.playerId,
-          headline: `Fantasy draft: ${player.firstName} ${player.lastName} (${player.position})` },
+          headline: `Fantasy draft, pick ${pickInfo.state.pickIndex + 1}: ${player.firstName} ${player.lastName} (${player.position})`,
+          detail: `${c.years}-yr deal, ~$${(fantasyDeal.apy / 1_000_000).toFixed(1)}M/yr` },
       });
     }
 
@@ -197,6 +230,187 @@ export async function draftPlayer(opts: {
    * order on every single pick they made.
    */
   await reconcileDepthChart(opts.teamId);
+}
+
+/**
+ * ===========================================================================
+ * WHAT A FANTASY PICK IS PAID  [TUNE]
+ * ===========================================================================
+ * A fantasy draft REDISTRIBUTES THE LEAGUE'S VETERANS. Every man in that pool
+ * is a finished football player with an age and a market — a 29-year-old 91
+ * is not a prospect and the rookie scale has nothing to say about him — so he
+ * signs the deal a veteran signs: `marketValue` for the money, the
+ * `suggestedYears` ladder for the term. Those are the same two functions
+ * lib/gen/league.ts prices a randomized league's 1,700 contracts with, which
+ * is deliberate. Two ways of pricing a roster is how the cap page and the
+ * trade block end up disagreeing about what a player costs.
+ *
+ * THIS BRANCH USED TO WRITE NO CONTRACT AT ALL — a DRAFT transaction and
+ * nothing else. Measured across the whole dev database, the only 32 clubs
+ * carrying nobody on a contract were the 32 clubs of one fantasy league, each
+ * with 53 players at 0.0% of a $255M cap. The salary cap is half of this game
+ * and it was inert for one of the two ways the README says to start a league:
+ * no cap space, no cap-constrained trade, no meaningful extension, and a free
+ * agency where every club could outbid everyone forever.
+ *
+ * HOW A WHOLE ROSTER FITS UNDER THE CEILING. lib/gen/league.ts has already
+ * solved this for a randomized league: price every man at market, then scale
+ * the club's contracts down uniformly until the payroll hits the share of the
+ * cap its GM profile is built to spend (`rosterCapTarget`, exported from there
+ * so both paths read one band). It can do that in one pass because it knows
+ * the whole roster at once. A draft does not — the roster arrives one man at a
+ * time — so the same scale is recomputed at every pick from what the club has
+ * already committed and what the men it still has picks for are worth:
+ *
+ *     scale = (target - committed) / (this man + what my remaining picks cost)
+ *
+ * capped at 1, because like the generator this only ever scales DOWN: a club
+ * with room to spare pays market and does not invent a raise to hit a number.
+ * The estimate of "what my remaining picks cost" is the board itself — the
+ * undrafted pool sorted by market value, sampled every TEAM_COUNT names down,
+ * which is the slice a club actually gets in a snake. It is an estimate and it
+ * does not have to be a good one: it is re-derived at the club's next pick
+ * against what it really spent, so an early over- or under-shoot is corrected
+ * by the rest of the draft rather than compounding.
+ *
+ * NOTHING IS REMEMBERED BETWEEN PICKS. Every input is read from the database
+ * at the pick — the club's payroll, its remaining turns in the stored snake,
+ * the men still on the board — so a draft resumed tomorrow in a fresh process,
+ * or run half by the user and half by the AI ticker, prices identically to one
+ * run start to finish in a single call.
+ *
+ * MEASURED (scripts/_fantasyE2E.ts), a full 32-club fantasy draft — 1,696
+ * picks, every one of them made by the AI — against a freshly generated
+ * randomized league, payroll as a share of the cap:
+ *
+ *                        min    p25    med    p75    max   over cap
+ *   randomized (fresh)   41%    63%    79%    83%    92%      0/32
+ *   fantasy draft        69%    77%    82%    87%    93%      0/32
+ *
+ * and it keeps the shape of a draft, because the curve it scales is the
+ * board's own: across three drafts the median year-one cap hit runs about
+ * $12M in round one, $5-6M in round eight, $2M in round forty and within a
+ * rounding step of the league minimum in the last rounds — an early pick costs
+ * a club roughly ten times what a late one does. Three seasons on, with the AI
+ * re-signing and shopping at full market the whole way, the same league sits
+ * at a 90% median with nobody over the ceiling and a clean invariant sheet.
+ *
+ * WHY EVERY DEAL IN A FANTASY LEAGUE LANDS AT ABOUT HALF OF MARKET, and why
+ * that is a fact about the POOL rather than about this function. The pool a
+ * fantasy draft hands out is far richer than the league it fills: 1,956 men at
+ * a median 77 OVR, where the same generator's 32 randomized rosters run a
+ * median 73 with a real camp-body tail. Priced at market the 1,696 men who get
+ * drafted are worth 167% of a 32-club salary cap; the 1,516 on randomized
+ * rosters are worth 99% of it. So the uniform scale above sits near 0.5 for
+ * every club, and a fantasy league's best quarterback signs for $23.8M where a
+ * randomized league's signs for $37.8M. That compression is the pool being a
+ * league and a half of talent, and the place to fix it is lib/gen/league.ts's
+ * fantasy branch — give the pool the roster shape `generateRoster` produces
+ * instead of 1,956 undifferentiated starters — NOT a second, cleverer pricing
+ * curve here. Bending this one to flatter the top of the board would put the
+ * two roster-pricing paths permanently out of step for a problem neither of
+ * them causes.
+ * ===========================================================================
+ */
+async function priceFantasyPick(opts: {
+  leagueId: string;
+  teamId: string;
+  playerId: string;
+  seasonYear: number;
+  state: { pickIndex: number; order: string };
+}) {
+  const player = await prisma.player.findUniqueOrThrow({
+    where: { id: opts.playerId },
+    select: { trueOvr: true, position: true, age: true, potential: true },
+  });
+  const nominal = marketValue({
+    ovr: player.trueOvr, position: player.position as Position, age: player.age, potential: player.potential,
+  });
+  // Age gates first, so a 33-year-old signs two years and a 35-year-old signs
+  // one however good he is — the same ladder every other veteran deal in the
+  // game is written on.
+  const years = suggestedYears(player.trueOvr, player.age);
+  // A fresh signing, not a contract dropped into a random mid-deal year, so
+  // this takes buildContract's defaults: an escalating base and a real signing
+  // bonus, exactly like a free-agent deal signed the same week.
+  const build = (apy: number) => buildContract({ apy, years, signedYear: opts.seasonYear });
+
+  const { parseSettings } = await import('./settings');
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: opts.leagueId } });
+  const capMode = parseSettings(league.settings).capMode;
+  // With the cap off there is no budget to fit and nothing to scale against:
+  // everyone signs for what he is worth, which is what "no salary cap" means.
+  if (capMode === 'OFF') return { contract: build(nominal), apy: nominal };
+
+  const { teamCapSummary } = await import('./cap-summary');
+  const summary = await teamCapSummary(opts.teamId, opts.seasonYear, capMode);
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: opts.teamId }, select: { gmProfile: true } });
+  const target = summary.capTotal * rosterCapTarget(parseGmProfile(team.gmProfile).winNow);
+
+  // How many turns this club has LEFT in the snake, counted off the stored
+  // order rather than off its roster size, so a club that is somehow short a
+  // man does not silently budget for picks it will never take.
+  const order = readJson<string[]>(opts.state.order, []);
+  let picksLeft = 0;
+  for (let i = opts.state.pickIndex + 1; i < order.length; i++) {
+    if (order[i] === opts.teamId) picksLeft += 1;
+  }
+
+  // The budget is kept in CAP HIT, not in APY, because the cap page, the trade
+  // gate and free agency all spend cap hits — and a fresh escalating deal
+  // charges about 89% of its APY in year one. Budgeting the APY instead would
+  // land all thirty-two clubs a tenth of a cap below where they were aimed.
+  const atMarket = build(nominal);
+  const hitAtMarket = capHit({ ...atMarket, baseSalaries: writeJson(atMarket.baseSalaries) }, capMode);
+  const hitPerApy = hitAtMarket / Math.max(1, nominal);
+
+  const remaining = await remainingBoardValue(opts.leagueId, picksLeft);
+  const budget = Math.max(0, target - summary.capUsed);
+  const scale = Math.min(1, budget / Math.max(1, hitPerApy * (nominal + remaining)));
+
+  let apy = Math.round((nominal * scale) / 100_000) * 100_000;
+  /*
+   * THE ONE HARD LINE, and it is a different thing from the target above. The
+   * target is what a club MEANS to spend and a club is allowed to miss it. The
+   * ceiling is the salary cap itself, and a draft nobody can decline must not
+   * be able to push a club through it: hold back the league minimum for every
+   * man this club still has to pick, and whatever is left is the most this one
+   * can be paid. Without it a club whose scale ran hot early would arrive at
+   * its last rounds with a roster it could not legally field.
+   */
+  const ceiling = (summary.capTotal - summary.capUsed - CAP.MIN_SALARY * picksLeft) / Math.max(0.01, hitPerApy);
+  apy = Math.max(CAP.MIN_SALARY, Math.min(apy, Math.round(ceiling / 100_000) * 100_000));
+  return { contract: build(apy), apy };
+}
+
+/**
+ * What the picks a club still holds are likely to cost it at market — the
+ * undrafted pool priced and sorted, sampled every TEAM_COUNT names down from
+ * the top, which is the slice one club takes out of a snake.
+ *
+ * Read fresh at every pick on purpose. It is the same query the board itself
+ * is, it shrinks by one name per pick, and caching it would be a second copy
+ * of "who is still available" for the one part of the draft that is allowed to
+ * be approximate anyway.
+ */
+async function remainingBoardValue(leagueId: string, picksLeft: number): Promise<number> {
+  if (picksLeft <= 0) return 0;
+  const pool = await prisma.player.findMany({
+    where: { leagueId, teamId: null, status: 'FREE_AGENT', isDraftee: true },
+    select: { trueOvr: true, position: true, age: true, potential: true },
+  });
+  if (pool.length === 0) return 0;
+  const values = pool
+    .map((p) => marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential }))
+    .sort((a, b) => b - a);
+  let total = 0;
+  for (let j = 1; j <= picksLeft; j++) {
+    // The man on the clock is still in this pool at index ~0, so the club's
+    // NEXT pick is a full round further down the board, and the one after that
+    // two rounds down.
+    total += values[Math.min(j * LEAGUE.TEAM_COUNT, values.length - 1)];
+  }
+  return total;
 }
 
 async function advancePick(tx: typeof prisma, leagueId: string, state: { pickIndex: number; round: number; order: string }, isFantasy: boolean, rounds: number) {

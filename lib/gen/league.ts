@@ -170,6 +170,38 @@ function topUpRoster(rng: Rng, roster: GeneratedPlayer[], teamStrength: number, 
 }
 
 /**
+ * [TUNE] WHAT A CLUB HAS COMMITTED DEPENDS ON WHAT IT IS TRYING TO DO — the
+ * share of the salary cap a club's books are built to sit at, from its GM
+ * profile's `winNow`.
+ *
+ * This was one flat 0.88 for all thirty-two, so every club's books were the
+ * same shape and cap room was pure noise — the rebuild/contend axis predicted
+ * nothing. In real football it is the strongest predictor there is: a club
+ * going for it has its money out and sits against the ceiling, and a club
+ * tearing down has shed its veterans and is carrying room it has not spent
+ * yet.
+ *
+ * 0.68 at a full teardown to 0.94 all-in — about $79M of room at one end and
+ * $15M at the other, against a $255M cap.
+ *
+ * It only ever scales DOWN, which is why this reads as "a rebuilder is
+ * cheaper" rather than "a contender is dearer": a club already under its
+ * target keeps the payroll its roster earns. Scaling a contender's salaries UP
+ * to hit a number would pay men above their own market value, and every screen
+ * in the game that compares the two would then be telling the truth about a
+ * contract the generator had invented.
+ *
+ * EXPORTED BECAUSE THERE ARE TWO WAYS TO FILL THIRTY-TWO ROSTERS FROM NOTHING
+ * and they must not disagree about what a club can afford. This one prices a
+ * randomized league in a single pass; lib/draft.ts prices a fantasy draft one
+ * pick at a time against the same target. Two copies of this band would be two
+ * different leagues wearing the same salary cap.
+ */
+export function rosterCapTarget(winNow: number): number {
+  return 0.68 + 0.26 * clamp(winNow, 0, 1);
+}
+
+/**
  * Creates a complete, playable league from nothing:
  * 32 fictional franchises, staff, scouts, rosters (or a fantasy-draft pool),
  * contracts, a free agent pool, three years of draft picks, a full schedule,
@@ -354,6 +386,20 @@ export async function createLeague(opts: {
     // agency with a market of ZERO and kept it at zero for every season of
     // its life: 130 players went undrafted and every one of them was
     // stranded behind isDraftee (see the FANTASY_DRAFT case in lib/season.ts).
+    //
+    // THIS POOL IS RICHER THAN THE LEAGUE IT FILLS, and it is the one thing
+    // about a fantasy start that still does not match a randomized one. These
+    // are undifferentiated `generatePlayer` draws — a median 77 OVR with no
+    // camp-body tail — where the 32 rosters built below run a median 73 and
+    // carry the depth a real 53-man roster carries. Priced at market, the
+    // 1,696 men who get drafted are worth 167% of a 32-club salary cap; the
+    // men on randomized rosters are worth 99% of it. Nothing breaks — every
+    // fantasy club still drafts to its own cap target (see WHAT A FANTASY PICK
+    // IS PAID in lib/draft.ts) — but it does so by signing the whole league at
+    // roughly half of market, so the best quarterback in a fantasy league is on
+    // $23.8M where the best in a randomized league is on $37.8M. The fix is
+    // here, giving the pool `generateRoster`'s shape plus a fringe tail, not a
+    // cleverer curve in the draft.
     const poolSize = LEAGUE.TEAM_COUNT * LEAGUE.ROSTER_MAX + FREE_AGENCY.POOL_FLOOR;
     for (let i = 0; i < poolSize; i++) {
       const p = generatePlayer(rng, { names });
@@ -428,31 +474,11 @@ export async function createLeague(opts: {
       nominalByPlayer.set(p.id, apy);
       nominalByTeam.set(p.teamId!, (nominalByTeam.get(p.teamId!) ?? 0) + apy);
     }
-    /*
-     * WHAT A CLUB HAS COMMITTED DEPENDS ON WHAT IT IS TRYING TO DO.
-     *
-     * This was one flat 0.88 for all thirty-two, so every club's books were
-     * the same shape and cap room was pure noise — the rebuild/contend axis
-     * predicted nothing. In real football it is the strongest predictor there
-     * is: a club going for it has its money out and sits against the ceiling,
-     * and a club tearing down has shed its veterans and is carrying room it
-     * has not spent yet.
-     *
-     * [TUNE] 0.68 at a full teardown to 0.94 all-in — about $79M of room at
-     * one end and $15M at the other, against a $255M cap.
-     *
-     * It only ever scales DOWN, which is why this reads as "a rebuilder is
-     * cheaper" rather than "a contender is dearer": a club already under its
-     * target keeps the payroll its roster earns. Scaling a contender's
-     * salaries UP to hit a number would pay men above their own market value,
-     * and every screen in the game that compares the two would then be
-     * telling the truth about a contract the generator had invented.
-     */
-    const capTargetFor = (winNow: number) => 0.68 + 0.26 * clamp(winNow, 0, 1);
+    // How much of the ceiling this club means to spend — see rosterCapTarget.
     const winNowByTeam = new Map(teams.map((t) => [t.id, parseGmProfile(t.gmProfile).winNow]));
     const scaleByTeam = new Map<string, number>();
     for (const [teamId, total] of nominalByTeam) {
-      const target = CAP.BASE_CAP * capTargetFor(winNowByTeam.get(teamId) ?? 0.5);
+      const target = CAP.BASE_CAP * rosterCapTarget(winNowByTeam.get(teamId) ?? 0.5);
       scaleByTeam.set(teamId, total > target ? target / total : 1);
     }
 
