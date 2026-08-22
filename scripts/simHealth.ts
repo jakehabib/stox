@@ -18,6 +18,7 @@
  */
 import { prisma } from '../lib/db';
 import { createLeague } from '../lib/gen/league';
+import type { LeagueStart } from '../lib/types';
 import { advanceWeek } from '../lib/season';
 import { runAiPicksUntilUser } from '../lib/draft';
 import { Rng } from '../lib/rng';
@@ -37,13 +38,34 @@ interface TaggedViolation extends Violation {
   phase: string;
 }
 
+/**
+ * WHICH KIND OF LEAGUE EACH RUN BUILDS.
+ *
+ * Every run used to be RANDOM_ROSTERS, which is half of what this game
+ * offers — and the half that was never exercised shipped a real bug: the
+ * fantasy branch of `draftPlayer` handed out 1,696 players and wrote not one
+ * contract. INV-04 already calls an ACTIVE player with no contract an ERROR,
+ * so the harness would have caught it on day one had it ever built such a
+ * league. It could not, so it did not.
+ *
+ * Every third league is a fantasy draft now. Not every other one: the
+ * randomized path is the one most saves use and most rules are written
+ * against, and it should stay the bulk of the sample. One in three is enough
+ * that any run of three or more leagues covers both start types, and a
+ * single-league run still gets the common case.
+ */
+function startTypeFor(idx: number): LeagueStart {
+  return idx % 3 === 2 ? 'FANTASY_DRAFT' : 'RANDOM_ROSTERS';
+}
+
 async function runOneLeague(idx: number): Promise<{ violations: TaggedViolation[]; seasonsCompleted: number; steps: number; stalled: boolean }> {
   const seed = `sim-health-${idx}-${LEAGUES}-${SEASONS}`;
+  const leagueStart = startTypeFor(idx);
   const leagueId = await createLeague({
     name: `SimHealth ${idx}`,
     userTeamAbbr: 'ZZZ', // deliberately invalid -> falls back to teams[0]; nobody drives this team by hand
     seed,
-    settings: { leagueStart: 'RANDOM_ROSTERS' },
+    settings: { leagueStart },
   });
 
   const violations: TaggedViolation[] = [];
@@ -100,7 +122,7 @@ async function main() {
   let anyStalled = false;
 
   for (let i = 0; i < LEAGUES; i++) {
-    process.stdout.write(`League ${i + 1}/${LEAGUES}... `);
+    process.stdout.write(`League ${i + 1}/${LEAGUES} (${startTypeFor(i) === 'FANTASY_DRAFT' ? 'fantasy' : 'randomized'})... `);
     const result = await runOneLeague(i);
     allViolations.push(...result.violations);
     if (result.stalled) anyStalled = true;
