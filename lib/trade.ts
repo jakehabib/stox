@@ -236,13 +236,34 @@ export async function evaluateTrade(opts: {
    */
   const capBlock = capSummary ? await aiCapShortfall(opts, capSummary.capSpace, capMode) : null;
   if (capBlock) {
-    const valueAlso = ratio < requiredRatio
-      ? ` The value is short too — we'd want about ${Math.round((requiredRatio / Math.max(ratio, 0.01) - 1) * 100)}% more coming back.`
-      : ` We like the deal otherwise.`;
+    /*
+     * THE TWO ASKS MUST NOT CONTRADICT EACH OTHER.
+     *
+     * This used to say "take a contract back the other way and we'll talk",
+     * and then, when the value was also short, "we'd want about N% more
+     * coming back". The app owner spotted that those are opposite
+     * instructions: taking a contract back means WE send another player, so
+     * it fixes our cap and simultaneously widens the value gap we just asked
+     * him to close. Following the advice literally makes the deal worse and
+     * demands yet more from him — his words, that it "requires more value
+     * from the player".
+     *
+     * The move that satisfies both at once is a DRAFT PICK, and it is the one
+     * thing the old copy never mentioned: a pick carries real value and lands
+     * nothing on anybody's cap (see tradeCapDeltas — picks contribute no
+     * salary). A cheap contract does the same job to a lesser degree. So when
+     * both constraints bite, that is what gets named; when only the cap bites,
+     * taking salary back is still exactly right and is still what we say.
+     */
+    const valueShort = ratio < requiredRatio;
+    const shortPct = Math.round((requiredRatio / Math.max(ratio, 0.01) - 1) * 100);
+    const ask = valueShort
+      ? ` The value is short too — about ${shortPct}% more our way. Picks are the clean way to do both at once: they carry value and nothing lands on our cap.`
+      : ` Take a contract back the other way, or send someone cheaper, and we'll talk — we like the deal otherwise.`;
     return {
       accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy, capBlock,
       counter: {
-        message: `We can't fit this on our cap — it adds ${formatMoney(capBlock.added)} against ${formatMoney(capBlock.available)} of room, ${formatMoney(capBlock.shortfall)} more than we have. Take a contract back the other way and we'll talk.${valueAlso}`,
+        message: `We can't fit this on our cap — it adds ${formatMoney(capBlock.added)} against ${formatMoney(capBlock.available)} of room, ${formatMoney(capBlock.shortfall)} more than we have.${ask}`,
       },
     };
   }
