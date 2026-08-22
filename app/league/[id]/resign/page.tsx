@@ -100,8 +100,11 @@ export default async function ResignPage({ params }: { params: { id: string } })
       age: slot.player.age,
       weightLb: slot.player.weightLb,
       heightIn: slot.player.heightIn,
-      capHit: capHit(slot.player.contract, settings.capMode),
-      yearsRemaining: slot.player.contract?.yearsRemaining ?? 0,
+      // Null, not zero, when there is no contract row: a man with no deal on
+      // file is a different thing from a man whose deal charges nothing, and
+      // the row says so instead of printing $0.0M at him.
+      capHit: slot.player.contract ? capHit(slot.player.contract, settings.capMode) : null,
+      yearsRemaining: slot.player.contract?.yearsRemaining ?? null,
       isSubject: false,
     };
     const list = depthByPosition.get(slot.position) ?? [];
@@ -118,8 +121,8 @@ export default async function ResignPage({ params }: { params: { id: string } })
         list.push({
           playerId, name: `${p.firstName} ${p.lastName}`, ovr: p.trueOvr, age: p.age,
           weightLb: p.weightLb, heightIn: p.heightIn,
-          capHit: capHit(p.contract, settings.capMode),
-          yearsRemaining: p.contract?.yearsRemaining ?? 0,
+          capHit: p.contract ? capHit(p.contract, settings.capMode) : null,
+          yearsRemaining: p.contract?.yearsRemaining ?? null,
           isSubject: true,
         });
       }

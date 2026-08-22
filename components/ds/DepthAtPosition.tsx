@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { formatMoney } from '@/lib/cap';
 import { ratingColor } from '@/lib/ratings';
 import { splitStarters, startersAt } from '@/lib/lineup';
@@ -13,12 +14,113 @@ export interface DepthEntry {
   age: number;
   weightLb?: number;
   heightIn?: number;
-  /** Cap hit this year, 0 when the cap is off. */
-  capHit: number;
-  /** Years left on his deal. 0 means his contract has expired too. */
-  yearsRemaining: number;
-  /** True when this row is the man being negotiated with. */
+  /**
+   * His cap hit this year, straight from `capHit()` — the page resolves it, so
+   * this is the club's figure and not a second opinion about it. 0 when the cap
+   * is off (the column is hidden then); null when there is no contract row at
+   * all, which is a different fact and is drawn differently.
+   */
+  capHit: number | null;
+  /** Years left on his deal. 0 means it has expired; null means there is no deal to expire. */
+  yearsRemaining: number | null;
+  /** True when this row is the man the surface is about. */
   isSubject: boolean;
+  /** His card, where the surface can navigate to it. Omitted where a row is not a link. */
+  href?: string;
+}
+
+/** What the position already costs you this year. Men with no deal charge nothing. */
+export function capCommitted(depth: DepthEntry[]): number {
+  return depth.reduce((n, d) => n + (d.capHit ?? 0), 0);
+}
+
+/**
+ * THE DEPTH ROWS. One renderer, because there used to be two.
+ *
+ * The player card carried its own copy of this list — rank, avatar, name,
+ * rating — so when the app owner asked that *"where it says 'your depth at X
+ * position' it should also show your current cap hits for those players"*,
+ * only the copy in this file grew a money column. He asked again, still
+ * looking at the card. The row is therefore in one place now and both surfaces
+ * draw it; what genuinely differs between them — the heading, the sentence
+ * over the list, whether a row navigates — is passed in or stays with the
+ * caller.
+ *
+ * The order is the depth chart's own, passed in by the page from
+ * `DepthChartSlot`, and `startersAt` (lib/lineup.ts) decides where the lineup
+ * ends. Neither is re-derived here: the order IS who plays, and three parts of
+ * this codebase once each carried their own answer about the eleven.
+ *
+ * Own roster, so no scouting fog: these are your players and the ratings are exact.
+ */
+export function DepthList({ position, depth, capOn, subjectNote }: {
+  position: string;
+  /** In depth-chart order. */
+  depth: DepthEntry[];
+  /** Cap off means the money is meaningless league-wide, so the column is not drawn at all. */
+  capOn: boolean;
+  /** What the highlighted man is on this surface — "this negotiation", "this player". */
+  subjectNote?: string;
+}) {
+  const starterCount = startersAt(position);
+
+  return (
+    <div className="space-y-1">
+      {depth.map((d, i) => {
+        const starts = i < starterCount;
+        const row = (
+          <>
+            <span className={`label-sm w-8 shrink-0 ${starts ? 'text-chalk' : ''}`}>{starts ? `ST${starterCount > 1 ? i + 1 : ''}` : `#${i + 1}`}</span>
+            <PlayerAvatar seed={d.playerId} age={d.age} size={24} weightLb={d.weightLb} heightIn={d.heightIn} position={position} />
+            <span className={`flex-1 truncate text-sm ${d.isSubject || starts ? 'font-semibold' : ''}`}>
+              {d.name}{d.isSubject && subjectNote ? ` — ${subjectNote}` : ''}
+            </span>
+            <span className="text-xs text-muted w-10 text-right">{d.age}yo</span>
+            {/* No contract row at all — an undrafted man, or a save whose
+                rosters were filled before contracts existed. A dash rather
+                than $0.0M and "expiring": both of those are statements about a
+                deal, and there is no deal here to make them about. */}
+            {capOn && (
+              <span className={`text-xs w-16 text-right font-mono ${d.capHit === null ? 'text-muted/50' : 'text-muted'}`}>
+                {d.capHit === null ? '—' : formatMoney(d.capHit)}
+              </span>
+            )}
+            <span className="text-xs w-16 text-right">
+              {d.yearsRemaining === null
+                ? <span className="text-muted/50">—</span>
+                : d.yearsRemaining <= 0
+                  ? <span className="text-bad">expiring</span>
+                  : <span className="text-muted">{d.yearsRemaining} yr{d.yearsRemaining === 1 ? '' : 's'}</span>}
+            </span>
+            <span className={`stat-value text-stat-sm w-8 text-right ${ratingColor(d.ovr)}`}>{d.ovr}</span>
+          </>
+        );
+        const rowClass = `flex items-center gap-2.5 px-2 py-1.5 -mx-1 rounded-lg border-l-2 ${
+          starts ? 'bg-chalk/[0.05] border-accent2/70' : 'border-transparent opacity-80'
+        } ${d.isSubject ? 'ring-1 ring-accent/40 bg-accent/10' : d.href ? 'hover:bg-raised' : ''}`;
+
+        return (
+          // px-1 compensates the row's -mx-1 bleed. Without it this wrapper's
+          // scrollWidth exceeds its clientWidth by 4px and the panel scrolls
+          // sideways inside the re-sign row.
+          <div key={d.playerId} className="px-1">
+            {/* Where the lineup ends. The ST/# labels alone made the reader
+                count, and at WR — three starters — counting is exactly what
+                they were getting wrong. */}
+            {i === starterCount && starterCount > 0 && (
+              <div className="flex items-center gap-2 pt-1.5 pb-1">
+                <span className="label-sm text-[10px]">Bench</span>
+                <span className="h-px flex-1 bg-line/70" />
+              </div>
+            )}
+            {d.href
+              ? <Link href={d.href} className={rowClass}>{row}</Link>
+              : <div className={rowClass}>{row}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /**
@@ -32,8 +134,8 @@ export interface DepthEntry {
  * without showing the half of it that decides.
  *
  * So this does not print a list, it answers the question: **who inherits the
- * job if he walks, and what would you be starting?** The list is the evidence
- * under that sentence.
+ * job if he walks, and what would you be starting?** The rows underneath —
+ * `DepthList`, shared with the player card — are the evidence.
  *
  * WHO COUNTS AS A STARTER IS NOT DECIDED HERE. `startersAt` and
  * `splitStarters` come from lib/lineup.ts, which is the single definition of
@@ -42,13 +144,6 @@ export interface DepthEntry {
  * Three receivers start and one tight end does, so "what's behind him" means
  * the fourth receiver in one case and the second tight end in the other, and
  * this component is told which rather than guessing.
- *
- * The order is the depth chart's own order, passed in by the page from
- * `DepthChartSlot` — the same rows the Depth Chart screen renders — so the two
- * screens cannot disagree about who plays ahead of whom.
- *
- * Own roster, so there is no scouting fog here: these are your players and the
- * ratings are exact.
  */
 export function DepthAtPosition({ position, depth, capOn }: {
   position: string;
@@ -74,10 +169,21 @@ export function DepthAtPosition({ position, depth, capOn }: {
         <div className="label-sm">
           Your depth at <span className={positionBadgeClass(position)}>{position}</span>
         </div>
-        <div className="text-xs text-muted">
-          {starterCount === 0
-            ? 'nobody starts here in the base lineup'
-            : `${starterCount} start${starterCount === 1 ? 's' : ''} at this position`}
+        <div className="text-xs text-muted flex items-center gap-2">
+          {/* What the position already costs you. Re-signing him is a money
+              decision as much as a depth one, and the total was a screen away. */}
+          {capOn && depth.length > 0 && (
+            <>
+              <span className="font-mono text-chalk">{formatMoney(capCommitted(depth))}</span>
+              <span>committed here</span>
+              <span className="text-line">·</span>
+            </>
+          )}
+          <span>
+            {starterCount === 0
+              ? 'nobody starts here in the base lineup'
+              : `${starterCount} start${starterCount === 1 ? 's' : ''} at this position`}
+          </span>
         </div>
       </div>
 
@@ -99,46 +205,7 @@ export function DepthAtPosition({ position, depth, capOn }: {
         )}
       </p>
 
-      <div className="space-y-1">
-        {depth.map((d, i) => {
-          const starts = i < starterCount;
-          return (
-            // px-1 compensates the row's -mx-1 bleed. Without it this wrapper's
-            // scrollWidth exceeds its clientWidth by 4px and the panel scrolls
-            // sideways inside the re-sign row.
-            <div key={d.playerId} className="px-1">
-              {/* Where the lineup ends. The ST/# labels alone made the reader
-                  count, and at WR — three starters — counting is exactly what
-                  they were getting wrong. */}
-              {i === starterCount && starterCount > 0 && (
-                <div className="flex items-center gap-2 pt-1.5 pb-1">
-                  <span className="label-sm text-[10px]">Bench</span>
-                  <span className="h-px flex-1 bg-line/70" />
-                </div>
-              )}
-            <div
-              className={`flex items-center gap-2.5 px-2 py-1.5 -mx-1 rounded-lg border-l-2 ${
-                starts ? 'bg-chalk/[0.05] border-accent2/70' : 'border-transparent opacity-80'
-              } ${d.isSubject ? 'ring-1 ring-accent/40 bg-accent/10' : ''}`}
-            >
-              <span className={`label-sm w-8 shrink-0 ${starts ? 'text-chalk' : ''}`}>{starts ? `ST${starterCount > 1 ? i + 1 : ''}` : `#${i + 1}`}</span>
-              <PlayerAvatar seed={d.playerId} age={d.age} size={24} weightLb={d.weightLb} heightIn={d.heightIn} position={position} />
-              <span className={`flex-1 truncate text-sm ${d.isSubject || starts ? 'font-semibold' : ''}`}>
-                {d.name}{d.isSubject ? ' — this negotiation' : ''}
-              </span>
-              <span className="text-xs text-muted w-10 text-right">{d.age}yo</span>
-              {capOn && <span className="text-xs text-muted w-16 text-right font-mono">{formatMoney(d.capHit)}</span>}
-              <span className="text-xs w-16 text-right">
-                {d.yearsRemaining <= 0
-                  ? <span className="text-bad">expiring</span>
-                  : <span className="text-muted">{d.yearsRemaining} yr{d.yearsRemaining === 1 ? '' : 's'}</span>}
-              </span>
-              <span className={`stat-value text-stat-sm w-8 text-right ${ratingColor(d.ovr)}`}>{d.ovr}</span>
-            </div>
-            </div>
-          );
-        })}
-      </div>
+      <DepthList position={position} depth={depth} capOn={capOn} subjectNote="this negotiation" />
     </div>
   );
 }

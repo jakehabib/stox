@@ -1,5 +1,3 @@
-import { Fragment } from 'react';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
@@ -47,8 +45,8 @@ import { CareerStatTable } from '@/components/ds/CareerStatTable';
 import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/ds/StatScopeToggle';
 import { ringYearsFor } from '@/lib/gen/leagueHistory';
 import { allStarYearsFor } from '@/lib/allStars';
-import { startersAt } from '@/lib/lineup';
 import { slotVerdict } from '@/components/ds/DepthCompare';
+import { DepthList, capCommitted, type DepthEntry } from '@/components/ds/DepthAtPosition';
 import { PositionChangeCard, PositionOption } from '@/components/PositionChangeCard';
 /**
  * Every season-award transaction type, and its full name. Imported, not
@@ -251,13 +249,39 @@ export default async function PlayerPage({
   // answering "do I need a replacement here" without leaving the card,
   // whether you're looking at your own player, a free agent, or a trade
   // target on another roster.
+  //
+  // Contracts come with them because "do I need a replacement" is a money
+  // question too: the app owner, twice, on this very panel — *"it also still
+  // doesnt show the salaries of the players in the 'your depth at position'
+  // ... sorry, the cap hit"*.
   const depthChart = userTeam
     ? await prisma.depthChartSlot.findMany({
         where: { teamId: userTeam.id, position: player.position },
         orderBy: { rank: 'asc' },
-        include: { player: true },
+        include: { player: { include: { contract: true } } },
       })
     : [];
+
+  /**
+   * The rows the panel draws, in the depth chart's own order. The money is
+   * `capHit()` — the same function the cap page, the trade board and this
+   * card's own contract face run — so the figure beside a man here is the
+   * figure the club is actually charged for him, not a second opinion about
+   * it. No contract row means no deal to quote, and null says so rather than
+   * printing $0.0M at a man nobody has signed.
+   */
+  const depthRows: DepthEntry[] = depthChart.map((slot) => ({
+    playerId: slot.playerId,
+    name: `${slot.player.firstName} ${slot.player.lastName}`,
+    ovr: slot.player.trueOvr,
+    age: slot.player.age,
+    weightLb: slot.player.weightLb,
+    heightIn: slot.player.heightIn,
+    capHit: slot.player.contract ? capHit(slot.player.contract, settings.capMode) : null,
+    yearsRemaining: slot.player.contract?.yearsRemaining ?? null,
+    isSubject: slot.playerId === player.id,
+    href: `/league/${league.id}/player/${slot.playerId}`,
+  }));
 
   /**
    * ===========================================================================
@@ -1108,49 +1132,38 @@ export default async function PlayerPage({
         />
       )}
 
-      <div className="grid sm:grid-cols-2 gap-6">
+      {/* Two up only from lg. The depth rows now carry a cap hit and a term
+          beside the rating, and in a half-width column at tablet size that
+          left about eight pixels for the man's name — every row truncated to
+          an initial. Below lg the two blocks stack at full width instead. */}
+      <div className="grid lg:grid-cols-2 gap-6">
         {userTeam && (
           <div className="section">
-            <SectionHeading title={`Your Depth at ${player.position}`} tip={tip('depthChart')} />
+            <SectionHeading
+              title={`Your Depth at ${player.position}`}
+              tip={tip('depthChart')}
+              action={settings.capMode !== 'OFF' && depthRows.length > 0 ? (
+                <div className="text-xs text-muted flex items-center gap-2">
+                  <span className="font-mono text-chalk">{formatMoney(capCommitted(depthRows))}</span>
+                  <span>committed here</span>
+                </div>
+              ) : undefined}
+            />
             <div className="panel p-4">
-              {depthChart.length === 0 ? (
+              {depthRows.length === 0 ? (
                 <p className="text-sm text-muted">Nobody rostered at {player.position} right now — a clear need.</p>
               ) : (
-                <div className="space-y-1">
-                  {/* `startersAt` is THE definition of who takes the field;
-                      nothing here gets its own. */}
-                  {depthChart.map((slot, i) => {
-                    const isThisPlayer = slot.playerId === player.id;
-                    const starterCount = startersAt(player.position);
-                    const starts = i < starterCount;
-                    return (
-                      // Keyed on the FRAGMENT, not only on the children inside
-                      // it: a bare <> in a map is an unkeyed list child, which
-                      // React warns about on every render of this panel.
-                      <Fragment key={slot.id}>
-                      {i === starterCount && starterCount > 0 && (
-                        <div className="flex items-center gap-2 pt-1.5 pb-1">
-                          <span className="label-sm text-[10px]">Bench</span>
-                          <span className="h-px flex-1 bg-line/70" />
-                        </div>
-                      )}
-                      <Link
-                        href={`/league/${league.id}/player/${slot.playerId}`}
-                        className={`flex items-center gap-3 px-2 py-1.5 -mx-2 rounded-lg text-sm border-l-2 ${
-                          starts ? 'bg-chalk/[0.05] border-accent2/70' : 'border-transparent opacity-80'
-                        } ${isThisPlayer ? 'ring-1 ring-accent/40 bg-accent/10' : 'hover:bg-raised'}`}
-                      >
-                        <span className={`label-sm w-8 shrink-0 ${starts ? 'text-chalk' : ''}`}>
-                          {starts ? `ST${starterCount > 1 ? i + 1 : ''}` : `#${i + 1}`}
-                        </span>
-                        <PlayerAvatar seed={slot.playerId} age={slot.player.age} size={22} weightLb={slot.player.weightLb} heightIn={slot.player.heightIn} position={slot.player.position} />
-                        <span className={`flex-1 truncate ${isThisPlayer || starts ? 'font-semibold' : ''}`}>{slot.player.firstName} {slot.player.lastName}{isThisPlayer ? ' (this player)' : ''}</span>
-                        <span className={`font-mono text-xs ${ratingColor(slot.player.trueOvr)}`}>{slot.player.trueOvr}</span>
-                      </Link>
-                      </Fragment>
-                    );
-                  })}
-                </div>
+                // The same rows the re-sign window draws, from the same
+                // component — this panel used to be a second hand-rolled copy
+                // of that list, which is how it went two builds without the
+                // cap hits the owner asked for. Cap off, and the money column
+                // is not drawn at all rather than filled with $0.0M.
+                <DepthList
+                  position={player.position}
+                  depth={depthRows}
+                  capOn={settings.capMode !== 'OFF'}
+                  subjectNote="this player"
+                />
               )}
             </div>
           </div>
