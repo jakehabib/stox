@@ -12,6 +12,15 @@ export interface NewsItem {
   headline: string;
   detail: string;
   teamId?: string;
+  /**
+   * The man the headline is about, when it is about one. A game headline is
+   * "Name (ABBR) threw for 412 and four", which is as player-shaped a row as a
+   * signing — see the doc on Transaction.playerId in prisma/schema.prisma. It
+   * used to reach the wire as a NAME inside a sentence and nothing else, so
+   * nothing downstream could link the biggest performance of a week back to
+   * the man who had it. The id is already on the box line it is written from.
+   */
+  playerId?: string;
 }
 
 /** [TUNE] Minimum stat lines to be considered a "headline" performance. */
@@ -70,6 +79,7 @@ export function gameHeadlines(box: BoxScore, homeTeamId: string, awayTeamId: str
 
   return lines.slice(0, 2).map(({ l, teamId, teamAbbr }) => ({
     teamId,
+    playerId: l.playerId,
     headline: `${l.name} (${teamAbbr}) ${describe(l)}`,
     detail: rivalryDetail ?? `${box.awayTeam.abbr} @ ${box.homeTeam.abbr}, Week result.`,
   }));

@@ -286,6 +286,20 @@ export interface HistorySummary {
 export interface AwardRow {
   year: number; type: string; name: string; position: string;
   teamAbbr: string; teamId: string; statLine: string;
+  /**
+   * The winner, when he is a man the database actually holds — see the doc on
+   * Transaction.playerId in prisma/schema.prisma. A seeded award is written in
+   * exactly the shape lib/season.ts writes a real one, and that shape carries
+   * the id, so a veteran on somebody's roster today is linkable from the
+   * trophy he won five years before the user was hired.
+   *
+   * Null for a LEGEND. Backstory players are names and stat lines, not Player
+   * rows (`HistPlayer.recordId` is a synthetic `hist:` key for them), and a
+   * foreign key pointed at a man who does not exist is not a link, it is a
+   * failed insert. Null here means "not known / not applicable", which is what
+   * the column's own doc says it means.
+   */
+  playerId: string | null;
 }
 
 export interface RecordRow {
@@ -1148,6 +1162,7 @@ function pickAwards(rng: Rng, stars: HistPlayer[], seasons: SeasonHistory[], tea
       out.push({
         year: season.year, type, name: name(w.p), position: w.p.position,
         teamAbbr: team.abbr, teamId: team.id, statLine: statLineFor(w.s.line, w.isDef),
+        playerId: w.p.living ? w.p.recordId : null,
       });
     }
   }
@@ -1197,6 +1212,7 @@ function ensureRecordHoldersAppear(
     const row: AwardRow = {
       year: target.year, type, name: n, position: p.position,
       teamAbbr: team.abbr, teamId: team.id, statLine: statLineFor(target.line, isDef),
+      playerId: p.living ? p.recordId : null,
     };
     if (idx >= 0) awards[idx] = row; else awards.push(row);
     named.add(n);
@@ -1523,6 +1539,8 @@ async function persistHistory(args: {
   for (const a of awards) {
     txRows.push({
       leagueId, seasonYear: a.year, week: 4, type: a.type, teamId: a.teamId,
+      // Null for a legend, on purpose — see AwardRow.playerId.
+      playerId: a.playerId,
       headline: `${a.name} (${a.position})`, detail: a.statLine,
     });
   }

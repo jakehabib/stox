@@ -148,7 +148,19 @@ export default async function NewsPage({ params, searchParams }: { params: { id:
                       : <div className={`${weight >= 2 ? 'w-8 h-8' : 'w-6 h-6'} rounded-full bg-raised shrink-0 mt-0.5`} />}
                     <div className="flex-1 min-w-0">
                       <div className={`label-sm ${TYPE_STYLE[item.type] ? TYPE_STYLE[item.type].split(' ')[1] : 'text-muted'}`}>{TYPE_LABELS[item.type] ?? item.type}</div>
-                      <div className={`font-display font-bold mt-0.5 ${weight >= 2 ? 'text-base' : 'text-sm'}`}>{item.headline}</div>
+                      {/* THE WIRE CAN OPEN THE MAN NOW. Every player-shaped row
+                          carries him (prisma/schema.prisma,
+                          Transaction.playerId) — a signing, a release, a draft
+                          pick, a trophy, a record — so a headline about one
+                          player is a link to that player rather than a
+                          sentence with his name in it. Rows that are not about
+                          one man, and rows written before the column was
+                          filled in, render exactly as they always did. */}
+                      <div className={`font-display font-bold mt-0.5 ${weight >= 2 ? 'text-base' : 'text-sm'}`}>
+                        {item.playerId
+                          ? <Link href={`/league/${league.id}/player/${item.playerId}`} className="hover:text-accent2">{item.headline}</Link>
+                          : item.headline}
+                      </div>
                       {item.detail && <div className="text-xs text-muted mt-0.5">{item.detail}</div>}
                     </div>
                   </div>

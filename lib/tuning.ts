@@ -152,10 +152,10 @@ export const FREE_AGENCY = {
   POOL_FLOOR: 260,
   /**
    * `fillTeamsToRosterMinimum` signs at CAP.MIN_SALARY for one year, and it
-   * was the ONE signing path in the game that ignored MARKET_FLOOR — so a
-   * short-handed club could buy the best free agent in football for the
-   * league minimum, and did: the 2027 market went 91 players to 15 in a
-   * single step, top man 85 OVR to 57, before the user ever saw the screen.
+   * is the ONE signing path in the game that never asks whether the man would
+   * accept — so a short-handed club could buy the best free agent in football
+   * for the league minimum, and did: the 2027 market went 91 players to 15 in
+   * a single step, top man 85 OVR to 57, before the user ever saw the screen.
    *
    * A minimum-salary one-year deal buys a camp body. This is the ceiling on
    * what such a deal may buy, as a multiple of CAP.MIN_SALARY — anyone

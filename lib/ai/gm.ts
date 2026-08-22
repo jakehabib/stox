@@ -960,9 +960,15 @@ export function philosophySummary(profile: GmProfile): PhilosophySummary {
  * number until somebody has been sitting unsigned: a club negotiating in
  * November is negotiating against what the man will take in November. Bidding
  * his April price would have the AI volunteer money nobody is asking for, and
- * — because the wave's own MARKET_FLOOR test is against the same ask — would
- * put the number the free-agency board shows the user out of step with the
- * number the AI actually pays.
+ * would put the number the free-agency board shows the user out of step with
+ * the number the AI actually pays.
+ *
+ * This is a BUDGET, not an acceptance test. What the man will actually take is
+ * `aiDealFor` in lib/freeagency.ts, which asks the same model the user's
+ * negotiation panel runs; this says only how far this front office is willing
+ * to go. The two used to be tangled — the wave compared a bid against its own
+ * `market * 0.85` — and untangling them is why a club can now bid its whole
+ * budget on a man and still be told he would not sign it.
  */
 export function maxOffer(
   p: RosterPlayer,

@@ -386,7 +386,7 @@ async function runPhaseStep(leagueId: string) {
       // the wave isn't the only path back and a team that had a bad re-sign
       // year doesn't spend the season 20 bodies light.
       await fillTeamsToRosterMinimum(leagueId, league.seasonYear, league.week, settings, rng);
-      const { signings, displaced } = await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings, rng);
+      const { signings, displaced } = await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings);
       const displacedNote = displaced > 0 ? ` ${displaced} veteran(s) released to make room.` : '';
       const nextWeek = league.week + 1;
       if (nextWeek > 4) {
@@ -714,16 +714,22 @@ export async function simulateAndSaveGame(leagueId: string, gameId: string, sett
     await bulkSetText(tx, 'injuryType', result.injuries.map((i): [string, string] => [i.playerId, i.type]));
     await bulkIncrementInt(tx, 'fatigue', Object.entries(result.fatigue));
 
-    const newsRows: { leagueId: string; seasonYear: number; week: number; type: string; teamId?: string; headline: string; detail: string }[] = [];
+    const newsRows: { leagueId: string; seasonYear: number; week: number; type: string; teamId?: string; playerId?: string; headline: string; detail: string }[] = [];
     if (result.injuries.length > 0) {
       newsRows.push({
+        // No `playerId`: this is the whole game's training room in one line,
+        // "3 injury report(s) from LAX @ SDG". It is about a match, not a man,
+        // and the per-player detail lives on the players' own rows.
         leagueId, seasonYear: game.seasonYear, week: game.week, type: 'INJURY',
         headline: `${result.injuries.length} injury report(s) from ${home.abbr} @ ${away.abbr}`,
         detail: result.boxScore.injuries.map((i) => `${i.name} (${i.weeks}w)`).join(', '),
       });
     }
     for (const item of gameHeadlines(result.boxScore, game.homeTeamId, game.awayTeamId)) {
-      newsRows.push({ leagueId, seasonYear: game.seasonYear, week: game.week, type: 'NEWS', teamId: item.teamId, headline: item.headline, detail: item.detail });
+      // A game headline names one player and describes his afternoon, so it
+      // carries him. `gameHeadlines` reads the id off the box line it is
+      // written from — it was always there, it was just never passed on.
+      newsRows.push({ leagueId, seasonYear: game.seasonYear, week: game.week, type: 'NEWS', teamId: item.teamId, playerId: item.playerId, headline: item.headline, detail: item.detail });
     }
     if (newsRows.length > 0) await tx.transaction.createMany({ data: newsRows });
 
@@ -1065,6 +1071,13 @@ async function recordSeasonAwards(leagueId: string, seasonYear: number, week: nu
     await prisma.transaction.create({
       data: {
         leagueId, seasonYear, week, type, teamId: winner.teamId,
+        // The man who won it. An award row is as player-shaped as a signing,
+        // and without this the trophy screen, his own page's honours list and
+        // the GM's career page all had to find him back by matching the
+        // headline as a string — see the doc on Transaction.playerId in
+        // prisma/schema.prisma. It is the same id `applyAwardDevelopmentBump`
+        // two lines down already has in its hand.
+        playerId: winner.playerId,
         headline: `${winner.name} (${winner.position})`,
         detail: winner.statLine,
       },
@@ -1402,7 +1415,12 @@ async function rollSeasonStatsIntoCareer(leagueId: string, seasonYear: number) {
   const breaks = await checkAndUpdateRecords(leagueId, seasonYear, recordInputs);
   for (const b of breaks) {
     await prisma.transaction.create({
-      data: { leagueId, seasonYear, week: 1, type: 'NEWS', teamId: null, headline: 'League Record', detail: recordBreakHeadline(b) },
+      // Typed NEWS and always has been (the wire scores it off the headline,
+      // see baseWeight in lib/wireRank.ts), but it is a row about ONE MAN
+      // setting a record, so it carries him like every other player-shaped
+      // row. `RecordBreak` has had his id on it since lib/records.ts was
+      // written; nothing was passing it on.
+      data: { leagueId, seasonYear, week: 1, type: 'NEWS', teamId: null, playerId: b.playerId, headline: 'League Record', detail: recordBreakHeadline(b) },
     });
   }
 }
@@ -1707,6 +1725,11 @@ async function trimRostersToLimit(
       const name = (p: (typeof roster)[number]) => `${p.firstName} ${p.lastName} (${p.position})`;
       await prisma.transaction.create({
         data: {
+          // NO `playerId`, and that is the honest answer rather than an
+          // oversight: this row is one club's whole cut-down day, a dozen men
+          // in a single sentence. Naming one of them as "the man this row is
+          // about" would be a worse claim than naming none. The individual
+          // releases the wire can link are the ones `cutPlayer` writes.
           leagueId, seasonYear, week: 1, type: 'CUT', teamId: team.id,
           headline: `Final cuts — ${cuts.length} released`,
           detail: `${cuts.map(name).join(', ')} waived to reach the ${limit}-man limit.`

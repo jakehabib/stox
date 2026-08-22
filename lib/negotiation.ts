@@ -334,6 +334,92 @@ const PERSONALITY_WEIGHTS: Record<Personality, { money: number; years: number; g
   PROVE_IT: { money: 0.62, years: 0.26, guarantee: 0.12 },
 };
 
+/**
+ * ===========================================================================
+ * WHAT THE ASK IS WORTH — THE ONE PRICE, ON BOTH SIDES OF THE TABLE
+ * ===========================================================================
+ * The free-agency board prints a number: "Asking $8.4M/yr" (askingPrice,
+ * lib/cap.ts). Until this pass that number was an INPUT to the model and
+ * nothing more — his reservation price was built off it and then pushed
+ * around by personality, rival interest and a seeded wobble, and nothing
+ * anywhere checked where it landed relative to the figure on screen. Measured
+ * on a fresh league, across sixty free agents: offering EXACTLY the advertised
+ * asking price signed 13 of 60 on the deal an AI club would write him, and 43
+ * of 60 even when handed his own preferred term and the guarantee he wanted.
+ * The median man wanted 1.04x the printed figure and the dearest wanted 1.44x.
+ *
+ * A board that quotes a price you cannot buy at is the lying-metric failure
+ * this codebase treats as a bug class (README, design principle 6), so the ask
+ * is now a number with a promise attached, and the promise is the strong one:
+ *
+ *   PAY THE ADVERTISED ASK, ON A DEAL HE HAS NO OTHER COMPLAINT ABOUT, AND HE
+ *   SIGNS. Every free agent, every personality, every draw.
+ *
+ * That is enforced rather than hoped for. `ASK_CLOSES_AT` below divides the
+ * reservation price so that the DEAREST man the draws can produce — the
+ * prove-it premium, or a ring-chaser looking at a rebuild, on the top of the
+ * wobble — reads exactly ACCEPT_INTEREST when handed the advertised figure.
+ * Everybody else is cheaper than that, and how much cheaper is hidden, which
+ * is the whole negotiation: the printed number is a price that WORKS, never a
+ * price that is MINIMAL. Nothing here hands over the reservation price, and
+ * the second design rule at the top of this file — the player's number is
+ * never shown — is untouched.
+ *
+ * SO WHERE IS THE HAGGLE? Below the ask, and it is real money now rather than
+ * a rounding error. A neutral free agent's certain yes lands around 0.87 of
+ * the printed figure and the bottom of his "he might sign" band around 0.82,
+ * so the whole stretch from about four fifths of the ask up to the ask itself
+ * is a genuine gamble — which is what an agent shading his client's number
+ * actually looks like, and it is where the AI's sealed-bid wave clears the
+ * market. THAT IS THE POINT OF DOING IT HERE RATHER THAN IN `decideOffer`: a
+ * "close enough" band bolted onto the acceptance test would be a second rule
+ * about the same question, and this file already carries the scar of having
+ * had two of those (see the note above `decideOffer`). Moving the ANCHOR
+ * instead leaves one acceptance model, with the band it always had, sitting
+ * where the number on screen says it should sit.
+ *
+ * AND IT IS THE SAME LINE THE AI USES. lib/freeagency.ts's wave used to throw
+ * bids out under a hard-coded `market * 0.85` — a second acceptance model,
+ * salary-only, with no personality, term, guarantee or band in it, which is
+ * exactly the four-line test this module was written to delete. It asks
+ * `leastAcceptableApy` now, which is this same curve read at the bottom of the
+ * same band. Measured after the change: the 0.85 that was there for a year is
+ * within a couple of points of where the model puts a neutral man's floor, so
+ * the constant was never a CPU discount — it was the band bottom, written down
+ * a second time, against a price that meant "what he asks" rather than "what
+ * he takes".
+ * ===========================================================================
+ */
+
+/** [TUNE] He thinks he is better than his tape. That costs money. */
+const PROVE_IT_PREMIUM = 0.10;
+/**
+ * [TUNE] Full swing of a ring-chaser's read on your club, best to worst — so
+ * half of it either way against a league-average roster.
+ */
+const WINNER_SWING = 0.20;
+/**
+ * [TUNE] What rival interest adds to his asking price, at full leverage. Only
+ * ever applied where the rival cannot be a bid at the table — see the note at
+ * the site in `buildNegotiationContext`.
+ */
+const COMPETITION_PREMIUM = 0.12;
+/** [TUNE] Seeded wobble, either way, so two 78-overall guards differ. */
+const PRICE_WOBBLE = 0.05;
+
+/**
+ * The dearest a FREE AGENT can come out of the draws above, as a share of his
+ * advertised ask: the largest single premium (a prove-it man, or a ring-chaser
+ * looking at the worst roster in the league — never both, they are different
+ * personalities), on the high end of the wobble. Competition is absent because
+ * it no longer moves an open-market price at all.
+ *
+ * Derived from the constants rather than typed in, so raising any of them
+ * raises the headroom with it and the promise above stays true instead of
+ * quietly becoming false.
+ */
+const ASK_HEADROOM = (1 + Math.max(PROVE_IT_PREMIUM, WINNER_SWING / 2)) * (1 + PRICE_WOBBLE);
+
 /** Years a player of this age is actually chasing. */
 function desiredYearsFor(age: number, personality: Personality): number {
   if (personality === 'PROVE_IT') return age >= 30 ? 1 : 2;
@@ -446,7 +532,7 @@ export function buildNegotiationContext(opts: {
     ? Math.min(CONTROL_DISCOUNT_CAP, Math.max(0, (opts.controlYears ?? 0) - 1) * CONTROL_DISCOUNT_PER_YEAR)
     : 0;
   // Ring-chasers discount a contender and charge a rebuild a premium.
-  const winnerAdjustment = personality === 'WINNER' ? (opts.teamStrength - 0.5) * 0.20 : 0;
+  const winnerAdjustment = personality === 'WINNER' ? (opts.teamStrength - 0.5) * WINNER_SWING : 0;
   // EVERY TERM ABOVE IS ABOUT THIS CLUB, and it is summed rather than applied
   // one at a time because the rival now has to be priced WITHOUT it — see
   // `clubDiscount` on the context and `rivalView` below. Subtracting them
@@ -455,16 +541,31 @@ export function buildNegotiationContext(opts: {
   const clubDiscount = loyaltyDiscount + controlDiscount + winnerAdjustment;
   multiplier -= clubDiscount;
   // He thinks he is better than his tape. That costs money.
-  if (personality === 'PROVE_IT') multiplier += 0.10;
-  // Mercenaries simply hold the line, and rival interest hardens everyone.
-  multiplier += opts.competition * 0.12;
+  if (personality === 'PROVE_IT') multiplier += PROVE_IT_PREMIUM;
+  // RIVAL INTEREST HARDENS HIM — BUT ONLY WHERE IT IS NOT ALREADY A BID.
+  //
+  // This used to be unconditional, and on the open market it was charged
+  // twice. A contested free agent already faces `gate.rival`: a whole package
+  // he SCORES on the same scale as yours (see THE CONTEST), which can and does
+  // take him off you. Adding a premium to his asking price on top of that made
+  // the same rival cost the user once in the price and again in the auction,
+  // and it is the single biggest reason the free-agency board could print a
+  // number that did not sign anybody — a man with three clubs calling wanted
+  // 12% over the figure on screen AND could still be outbid at it.
+  //
+  // On the two incumbent screens there is no rival at the table — nobody may
+  // sign a man who is under contract — so the price is the ONLY place a suitor
+  // can register, which is exactly what RESIGN_LEVERAGE and `extensionLeverage`
+  // scale (see resolveNegotiationSession). There it stays.
+  if (mode !== 'FREE_AGENT') multiplier += opts.competition * COMPETITION_PREMIUM;
 
   // Seeded wobble so two 78-overall guards don't want the identical deal.
-  multiplier *= 1 + opts.rng.float(-0.05, 0.05);
+  multiplier *= 1 + opts.rng.float(-PRICE_WOBBLE, PRICE_WOBBLE);
 
+  // ANCHORED TO THE NUMBER ON SCREEN. See WHAT THE ASK IS WORTH below.
   const reservationApy = Math.max(
     CAP.MIN_SALARY,
-    Math.round((opts.trueMarketApy ?? opts.marketApy) * multiplier),
+    Math.round((opts.trueMarketApy ?? opts.marketApy) * multiplier / ASK_CLOSES_AT),
   );
 
   // Patience: stars and contested free agents have less of it. This is the
@@ -711,10 +812,51 @@ export function loyaltyBand(discount: number): 'NONE' | 'SLIGHT' | 'REAL' | 'LAR
 const OVERSHOOT_CREDIT = 0.25;
 const OVERSHOOT_MAX = 1.2;
 
+/**
+ * [TUNE] How forgiving each axis is below its own ask, as the exponent of the
+ * shortfall curve. Money is the strict one; term and guarantee are looser
+ * because the price already carries most of both preferences.
+ *
+ * MONEY_TOLERANCE is named rather than typed inline because it is now read
+ * twice: here, to draw the curve, and by `askRatioForInterest` below, which
+ * INVERTS it. The reservation price is anchored off that inversion, so a
+ * change to this number moves what the advertised asking price buys — see
+ * WHAT THE ASK IS WORTH, above `buildNegotiationContext`.
+ */
+const MONEY_TOLERANCE = 0.35;
+const TERM_TOLERANCE = 0.55;
+const GUARANTEE_TOLERANCE = 0.7;
+
 function satisfaction(ratio: number, tolerance: number): number {
   if (ratio >= 1) return Math.min(OVERSHOOT_MAX, 1 + (ratio - 1) * OVERSHOOT_CREDIT);
   const exponent = 1 + 0.6 / tolerance;
   return Math.pow(Math.max(0, ratio), exponent);
+}
+
+/**
+ * The inverse of the money curve: the share of what he is asking that reads
+ * as exactly this much interest, on a deal he has no OTHER complaint about —
+ * his own term, the guarantee he wants. `satisfaction` with those two at 1.0
+ * leaves `interest = 100 * moneyScore`, so the whole meter reduces to the
+ * money axis and this is a closed form rather than a search.
+ *
+ * It exists because two things in this codebase have to agree about what a
+ * PRICE means, and they used to be written down separately:
+ *
+ *   - the reservation price, which is anchored so that the asking price the
+ *     free-agency board prints reads a certain yes (see WHAT THE ASK IS
+ *     WORTH); and
+ *   - the least he will sign for, which lib/freeagency.ts's sealed-bid wave
+ *     throws AI bids out under (`leastAcceptableApy`).
+ *
+ * Both are this function at a different interest level. Move ACCEPT_INTEREST
+ * or MONEY_TOLERANCE and both move together, which is the property that was
+ * missing when the wave carried its own hard-coded 0.85.
+ */
+export function askRatioForInterest(interest: number): number {
+  const target = Math.max(0, Math.min(100, interest)) / 100;
+  // 1 / exponent, where exponent = 1 + 0.6 / MONEY_TOLERANCE.
+  return Math.pow(target, MONEY_TOLERANCE / (MONEY_TOLERANCE + 0.6));
 }
 
 /**
@@ -812,7 +954,7 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   // sport. That refusal lives in `decideOffer` and is untouched.
   const askApy = ctx.reservationApy * termPremium(ctx, committedYears);
   const moneyRatio = offer.apy / askApy;
-  const moneyScore = satisfaction(moneyRatio, 0.35);
+  const moneyScore = satisfaction(moneyRatio, MONEY_TOLERANCE);
 
   // What is LEFT for the term component to say, once the price has absorbed
   // the preference: a little, so the slider still reads as meaningful, but
@@ -822,10 +964,10 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   const yearsRatio = committedYears / ctx.desiredYears;
   const yearsScore = Math.max(
     TERM_SCORE_FLOOR,
-    satisfaction(Math.min(yearsRatio, 1.15), 0.55),
+    satisfaction(Math.min(yearsRatio, 1.15), TERM_TOLERANCE),
   );
 
-  const guaranteeScore = satisfaction(offer.guaranteePct / ctx.desiredGuarantee, 0.7);
+  const guaranteeScore = satisfaction(offer.guaranteePct / ctx.desiredGuarantee, GUARANTEE_TOLERANCE);
 
   const raw = moneyScore * w.money + yearsScore * w.years + guaranteeScore * w.guarantee;
 
@@ -932,6 +1074,48 @@ export function minimumAcceptableApy(ctx: NegotiationContext, years: number, gua
   return Math.ceil(hi);
 }
 
+/**
+ * ===========================================================================
+ * THE LEAST HE WILL PUT HIS NAME TO
+ * ===========================================================================
+ * The bottom of the "he might sign" band, in dollars, for a given package.
+ * `minimumAcceptableApy` above is the TOP of the same band — the cheapest
+ * CERTAIN yes — and the two are the same curve read at two interest levels.
+ *
+ * This exists because lib/freeagency.ts needs it. The AI's sealed-bid wave has
+ * to answer "is this bid a real bid" a hundred times a week across thirty-one
+ * clubs, and it used to answer with `market * 0.85`: a salary-only ratio with
+ * no personality, no term, no guarantee and no band in it, sitting a file away
+ * from the model that decides the identical question for the user. Two
+ * evaluators is one more than a game may have — the note above `decideOffer`
+ * says so, and it was true of the wave the whole time it said it. So the wave
+ * asks this now, and the line an AI bid has to clear is the line the user's
+ * meter draws.
+ *
+ * NULL IS A REAL ANSWER and it means what it does everywhere else in this
+ * file: no salary closes this package. A deal under his guarantee floor is
+ * capped below the band (see UNDER_GUARANTEED_CAP), so a club offering it is
+ * not underbidding, it is offering a structure he has refused — and a caller
+ * that treated null as "free" would have the AI signing men on terms the
+ * user's own panel says are unsignable.
+ *
+ * Monotonic in salary, so bisection is sound, and pure in every input, so the
+ * figure a wave enforces is the figure a panel would have drawn.
+ * ===========================================================================
+ */
+export function leastAcceptableApy(ctx: NegotiationContext, years: number, guaranteePct: number): number | null {
+  const bandBottom = ACCEPT_INTEREST - ctx.bandHalfWidth;
+  const listens = (apy: number) => evaluateOffer(ctx, { apy, years, guaranteePct }).interest >= bandBottom;
+  let lo = 0;
+  let hi = ctx.reservationApy * 3;
+  if (!listens(hi)) return null;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (listens(mid)) hi = mid; else lo = mid;
+  }
+  return Math.ceil(hi);
+}
+
 // --- The band: where "will he sign?" stops having a clean answer ------------
 
 /**
@@ -1007,6 +1191,58 @@ export type SignBand = 'NO' | 'MAYBE' | 'YES' | 'LOSING' | 'BLOCKED';
  * what a negotiation is.
  */
 export const ACCEPT_INTEREST = 90;
+
+/**
+ * The divisor that makes the advertised asking price a price that signs him —
+ * see WHAT THE ASK IS WORTH, above `buildNegotiationContext`, for the whole
+ * argument. Two factors, and both have to be there:
+ *
+ *   ASK_HEADROOM      so the DEAREST draw still closes at the printed figure,
+ *                     rather than the median one.
+ *   the accept ratio  because meeting his reservation price exactly is not a
+ *                     certain yes — ACCEPT_INTEREST is 90, not 100, and the
+ *                     money curve says that is 96.2% of what he is asking.
+ *
+ * Declared down here, a long way from the constants it reads and the function
+ * that uses it, for one boring reason: it is initialised from ACCEPT_INTEREST
+ * and from MONEY_TOLERANCE, and a module-level const may not be built out of
+ * one that has not been reached yet. `buildNegotiationContext` only ever reads
+ * it when it is CALLED, by which time every declaration in the file has run.
+ */
+const ASK_CLOSES_AT = ASK_HEADROOM * askRatioForInterest(ACCEPT_INTEREST);
+
+/**
+ * [TUNE] What the salary control opens on, as a share of what a NEUTRAL free
+ * agent would certainly sign for.
+ *
+ * The rule has not changed — a shade under his number, so the first drag is a
+ * decision rather than a formality — but what "his number" MEANS has. It used
+ * to be nine tenths of the public market estimate, which was fine while the
+ * estimate sat somewhere above his real price and nothing checked where.
+ * Anchoring the reservation to the advertised ask put the estimate above every
+ * player's yes instead, and nine tenths of it became a certain YES for 62 of
+ * 140 free agents on a fresh league — the rubber stamp this panel exists to
+ * remove, wearing a slider. Measured at 0.90x the ask: 62 certain yes, 61 in
+ * the band, 17 short.
+ *
+ * So it opens at nine tenths of the ANCHORED price instead — the same nine
+ * tenths, applied to the number the model actually uses. Measured at the
+ * resulting 0.78x the ask: 0 certain yes, 31 in the band, 109 short. Not a
+ * lowball (nobody's agent is insulted by it; the insult line is well below),
+ * and never a free signing.
+ */
+const OPENING_BID_SHARE = 0.9;
+
+/**
+ * Where the salary control opens for this man. Public in every input: his
+ * advertised estimate and two constants. It may not be built out of
+ * `reservationApy` however convenient that would be — the slider's starting
+ * position is on screen, and a starting position derived from the hidden
+ * number would hand the hidden number over.
+ */
+export function openingBidApy(ctx: NegotiationContext): number {
+  return Math.round((ctx.marketApy * OPENING_BID_SHARE) / ASK_HEADROOM);
+}
 
 /**
  * [TUNE] How far below a certain yes the "he might sign" stretch reaches.

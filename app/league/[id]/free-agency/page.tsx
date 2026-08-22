@@ -110,6 +110,16 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   // his agent reserves at when you open talks (see resolveNegotiationSession)
   // — so it is the number this page sorts, budgets and prints, with the
   // opening price kept beside it to show how far he has come down.
+  //
+  // AND IT IS A NUMBER YOU CAN ACTUALLY BUY AT. That is enforced rather than
+  // hoped for: the reservation price behind the negotiation panel is anchored
+  // so that the dearest man the model can produce still signs at the figure
+  // this column prints, on a deal he has no other complaint about (see WHAT
+  // THE ASK IS WORTH in lib/negotiation.ts). It was not always so — measured
+  // before that change, offering exactly the number in this column closed 13
+  // of 60 free agents, which is the lying-metric failure the README's sixth
+  // design principle exists to catch, sitting on the busiest screen in the
+  // offseason.
   const topAsk = topAvailable && topView ? askingPrice({
     ovr: topView.scoutedOvr, position: topAvailable.position as any, age: topAvailable.age,
     weeksUnsigned: topAvailable.weeksUnsigned,
@@ -199,7 +209,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         teamAbbr={team.abbr}
         eyebrow="Free Agency"
         title={`${filteredAvailable} Available`}
-        subtitle="Open talks and his agent takes the call. Salary, term and guarantee are yours to set — the interest meter tells you how it is landing, and every offer he turns down costs you patience. Rival teams are bidding on the same players, so a fair offer isn't always the winning one. Nobody holds his spring number forever, either: the longer a man goes unsigned, the less he will take to sign now."
+        subtitle="Open talks and his agent takes the call. The asking price is a number that gets it done — offer it on the deal he is after and he signs — but most men will take something under it, and the interest meter is how you find out how much. Salary, term and guarantee are yours to set, and every offer he turns down costs you patience. Rival teams are bidding on the same players, so a fair offer isn't always the winning one. Nobody holds his spring number forever, either: the longer a man goes unsigned, the less he will take to sign now."
         facts={[
           ...(capSummary ? [{
             label: 'Cap Space',

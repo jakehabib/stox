@@ -112,12 +112,12 @@ import { prisma } from '../lib/db';
 import { createLeague } from '../lib/gen/league';
 import { parseSettings } from '../lib/settings';
 import {
-  resolveNegotiationSession, negotiateOffer, runAiFreeAgencyWave, setResignSetAside, MARKET_FLOOR,
-  AI_GUARANTEE_PCT,
+  resolveNegotiationSession, negotiateOffer, runAiFreeAgencyWave, setResignSetAside,
+  AI_GUARANTEE_PCT, aiDealFor, marketContextFor,
 } from '../lib/freeagency';
 import { advanceWeek } from '../lib/season';
 import {
-  decideOffer, minimumAcceptableApy, sessionFingerprint, clampOffer,
+  decideOffer, minimumAcceptableApy, leastAcceptableApy, sessionFingerprint, clampOffer,
   signBandFor, maybeChance, ACCEPT_INTEREST, guaranteeFloorFor, beatRival, bandHalfWidthFor,
   DEFAULT_STRUCTURE, type DealStructure, type NegotiationMode,
   type NegotiationSession, type Offer, type OfferDecision,
@@ -128,6 +128,7 @@ import { maxOffer, parseGmProfile, teamNeeds, type RosterPlayer } from '../lib/a
 import { FREE_AGENCY } from '../lib/tuning';
 import { parseSkills, signBandMultFor } from '../lib/dynasty';
 import { Rng } from '../lib/rng';
+import { readJson } from '../lib/json';
 
 let failures = 0;
 let comparisons = 0;
@@ -626,7 +627,22 @@ async function main() {
   // page load does. Nothing is passed between the two halves.
   console.log('\nPatience across a reload (client state discarded between offers):\n');
   {
-    const subject = freeAgents.slice(1, 4).find((p) => p.id !== poor.id)!;
+    // HE HAS TO SURVIVE THE FIRST LOWBALL, or this section tests the wrong
+    // rule. An insulting offer costs two pips; a man whose whole patience IS
+    // two walks out on it, the open market hands him to the leading rival, and
+    // `signFreeAgent` deletes his NegotiationTalks row — which is the
+    // documented behaviour (signing ends every negotiation about him) and not
+    // the exploit this section guards. Picked with the count in hand rather
+    // than by position on the board: this reported four failures against a
+    // model doing exactly what it says it does.
+    let subject = freeAgents.slice(1, 4).find((p) => p.id !== poor.id)!;
+    for (const candidate of freeAgents.slice(1)) {
+      if (candidate.id === poor.id) continue;
+      const probe = await resolveNegotiationSession({
+        leagueId, playerId: candidate.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      if (probe.ctx.patience > 2) { subject = candidate; break; }
+    }
     const key = { teamId_playerId_seasonYear: { teamId: team.id, playerId: subject.id, seasonYear: league.seasonYear } };
 
     // (a) OPENING TALKS IS FREE. A GM who opens forty negotiations and walks
@@ -703,7 +719,32 @@ async function main() {
     //     A different player, untouched so far, so there is patience left to
     //     burn before the closing offer — the point being that a row exists to
     //     be cleared.
-    const signSubject = freeAgents.find((f) => f.id !== subject.id && f.id !== poor.id && f.teamId === null)!;
+    // RE-READ THE MARKET, AND PICK A MAN THIS CLUB CAN ACTUALLY CLOSE.
+    //
+    // `freeAgents` is a snapshot taken before any of the sections above ran,
+    // and by now some of those men have been signed — by the user's own
+    // end-to-end offers, or by the rival who takes a player whose patience
+    // runs out. Picking off the stale list produced "he signed with Buffalo
+    // while you were deciding", which is the model telling the truth.
+    //
+    // Two conditions on top of "still available". His patience has to survive
+    // the minimum-salary refusal below (an insult costs two pips, so a man with
+    // exactly two walks out and is gone before the closing offer), and he has
+    // to be cheap enough that a deal at 1.4x his price fits the cap room this
+    // club has left after everything above — the cheapest man on the board is
+    // the safest subject, not the most interesting one.
+    const stillAvailable = await prisma.player.findMany({
+      where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false, id: { notIn: [subject.id, poor.id] } },
+      orderBy: [{ trueOvr: 'asc' }, { id: 'asc' }],
+      take: 25,
+    });
+    let signSubject = stillAvailable[0];
+    for (const candidate of stillAvailable) {
+      const probe = await resolveNegotiationSession({
+        leagueId, playerId: candidate.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      if (probe.ctx.patience > 2 && probe.ctx.reservationApy * 1.4 < probe.gate.capSpace) { signSubject = candidate; break; }
+    }
     const signKey = { teamId_playerId_seasonYear: { teamId: team.id, playerId: signSubject.id, seasonYear: league.seasonYear } };
     const openTalks = await resolveNegotiationSession({
       leagueId, playerId: signSubject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
@@ -820,7 +861,7 @@ async function main() {
       // would be lying about a contest it does not run. So the claim is tested
       // as stated: does the named club clear both bars the wave itself uses —
       // enough need to bid at all, and a bid big enough to be resolved rather
-      // than thrown out under the market floor?
+      // than thrown out under what the man will actually sign for?
       const targetWorst = (await prisma.player.findMany({
         where: { teamId: target.teamId, status: 'ACTIVE', position: target.position },
         orderBy: { trueOvr: 'asc' }, take: 1, select: { trueOvr: true },
@@ -828,16 +869,23 @@ async function main() {
       const qualifiesToBid = target.need >= 0.15
         || targetWorst === null
         || target.trueOvr - targetWorst.trueOvr >= FREE_AGENCY.MIN_UPGRADE_DELTA;
-      const clearsFloor = target.apy >= market * MARKET_FLOOR;
+      // THE SAME CALL THE WAVE MAKES. Not a share of his market value written
+      // down here a second time — that constant is exactly what this pass
+      // deleted (lib/freeagency.ts, WHAT A BID HAS TO CLEAR).
+      const targetFloor = aiDealFor(
+        { id: player.id, position: player.position, trueOvr: player.trueOvr, age: player.age, potential: player.potential, weeksUnsigned: player.weeksUnsigned },
+        league.seasonYear,
+      ).floor;
+      const clearsFloor = target.apy >= targetFloor;
       comparisons++;
       if (!qualifiesToBid) fail(`${target.lastName}: ${target.abbr} was named but its need would keep it out of the bidding entirely`);
       if (!clearsFloor) {
-        fail(`${target.lastName}: ${target.abbr} was named at ${formatMoney(target.apy)}/yr, under the ${formatMoney(Math.round(market * MARKET_FLOOR))} floor a bid has to clear to count`);
+        fail(`${target.lastName}: ${target.abbr} was named at ${formatMoney(target.apy)}/yr, under the ${formatMoney(targetFloor)} he will actually sign for`);
       }
 
       await prisma.contract.deleteMany({ where: { playerId: target.id } });
       await prisma.player.update({ where: { id: target.id }, data: { teamId: null, status: 'FREE_AGENT' } });
-      await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings, new Rng('suitor-reality'));
+      await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings);
       const landed = await prisma.player.findUniqueOrThrow({
         where: { id: target.id }, include: { team: true, contract: true },
       });
@@ -847,7 +895,7 @@ async function main() {
       }
       console.log(
         `\n  Market test: ${target.lastName} (${target.position}, ${target.trueOvr}ovr) was rumoured to ${target.abbr} at ${formatMoney(target.apy)}/yr ` +
-        `(need ${(target.need * 100).toFixed(0)}%, floor ${formatMoney(Math.round(market * MARKET_FLOOR))} — a qualifying bid).\n` +
+        `(need ${(target.need * 100).toFixed(0)}%, he signs at ${formatMoney(targetFloor)} — a qualifying bid).\n` +
         `  Released to free agency and ran the real AI wave -> ${landed.team ? `signed by ${landed.team.abbr}` : 'UNSIGNED'}` +
         `${landed.team && landed.team.abbr !== target.abbr ? ` (outbid; the rumour is a bid, not a promise)` : ''}.`,
       );
@@ -917,8 +965,22 @@ async function main() {
       // draws the decision's band, never `signBandFor`'s. So the two are
       // required to agree everywhere the contest is not being lost, and where
       // it IS, the decision is required to say so.
+      //
+      // BLOCKED IS THE OTHER STATED OVERRIDE, and this check used to miss it.
+      // `decideOffer` says so in as many words — "BLOCKED OUTRANKS BOTH" — for
+      // the same reason LOSING does: a deal the cap, the rulebook or his own
+      // willingness refuses is not a deal he can accept however much he likes
+      // it, and the panel draws the decision's band. Comparing a player's
+      // opinion against a band that also encodes the ledger's refusal was this
+      // file failing on the model behaving exactly as documented; it fired
+      // wherever the salary slider ran past the club's cap room, which is most
+      // sliders once the user's team has spent.
       const drawn = signBandFor(ctx, d.evaluation.interest);
-      if (d.signBand === 'LOSING') {
+      if (d.signBand === 'BLOCKED') {
+        if (!d.blocked) fail(`${subject.lastName}: band BLOCKED with nothing blocking it at ${formatMoney(apy)}`);
+        if (!d.reason) fail(`${subject.lastName}: band BLOCKED at ${formatMoney(apy)} with no reason stated`);
+        if (d.accepted) fail(`${subject.lastName}: a blocked offer was accepted at ${formatMoney(apy)}`);
+      } else if (d.signBand === 'LOSING') {
         if (!d.outbid) fail(`${subject.lastName}: band LOSING with nobody winning it at ${formatMoney(apy)}`);
         if (drawn === 'NO') fail(`${subject.lastName}: an offer he refuses outright reads LOSING at ${formatMoney(apy)} — his own refusal comes first`);
       } else if (drawn !== d.signBand) {
@@ -1223,9 +1285,12 @@ async function main() {
       // Every club NAMED has to clear both bars the wave resolves on, or the
       // rumour is about a bid that would have been thrown out.
       if (s.suitor) {
-        const market = marketValue({ ovr: p.trueOvr, position: p.position as any, age: p.age, potential: p.potential });
-        if (s.suitor.apy < market * MARKET_FLOOR) {
-          fail(`${p.lastName}: ${s.suitor.teamAbbr} named at ${formatMoney(s.suitor.apy)}, under the ${formatMoney(Math.round(market * MARKET_FLOOR))} floor the wave throws bids out below`);
+        const floor = aiDealFor(
+          { id: p.id, position: p.position, trueOvr: p.trueOvr, age: p.age, potential: p.potential, weeksUnsigned: p.weeksUnsigned },
+          league.seasonYear,
+        ).floor;
+        if (s.suitor.apy < floor) {
+          fail(`${p.lastName}: ${s.suitor.teamAbbr} named at ${formatMoney(s.suitor.apy)}, under the ${formatMoney(floor)} the wave throws bids out below`);
         }
         if (s.suitor.need < 0.15) {
           // Named on the upgrade case rather than on need — so the upgrade has
@@ -1257,7 +1322,7 @@ async function main() {
     // function the Advance button runs.
     const before = new Map<string, string | null>();
     for (const p of board) before.set(p.id, null);
-    await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings, new Rng('market-reality'));
+    await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings);
     const after = await prisma.player.findMany({
       where: { id: { in: board.map((p) => p.id) } },
       select: { id: true, teamId: true, team: { select: { abbr: true } } },
@@ -1423,12 +1488,20 @@ async function main() {
 
       // --- B. the package is the one the wave would actually write ---------
       comparisons++;
-      const honestYears = suggestedYears(p.trueOvr, p.age);
-      if (s.gate.rival.offer.years !== honestYears) {
-        fail(`${p.lastName}: rival quoted ${s.gate.rival.offer.years} years, the wave would sign him for ${honestYears}`);
+      // THE DEAL THE WAVE WOULD ACTUALLY WRITE, off the same function the
+      // wave writes it with. This used to be `suggestedYears` and the flat
+      // AI_GUARANTEE_PCT re-derived here; the guaranteed share is no longer
+      // flat, because a club has to lock in at least what the man will not go
+      // below or it is offering a structure he has refused (`aiDealFor`).
+      const honest = aiDealFor(
+        { id: p.id, position: p.position, trueOvr: p.trueOvr, age: p.age, potential: p.potential, weeksUnsigned: p.weeksUnsigned },
+        league.seasonYear,
+      );
+      if (s.gate.rival.offer.years !== honest.years) {
+        fail(`${p.lastName}: rival quoted ${s.gate.rival.offer.years} years, the wave would sign him for ${honest.years}`);
       }
-      if (s.gate.rival.offer.guaranteePct !== AI_GUARANTEE_PCT) {
-        fail(`${p.lastName}: rival quoted ${s.gate.rival.offer.guaranteePct} guaranteed, AI deals lock in ${AI_GUARANTEE_PCT}`);
+      if (s.gate.rival.offer.guaranteePct !== honest.guaranteePct) {
+        fail(`${p.lastName}: rival quoted ${s.gate.rival.offer.guaranteePct} guaranteed, the wave would lock in ${honest.guaranteePct}`);
       }
 
       // --- A. one answer, everywhere on the grid ---------------------------
@@ -1489,7 +1562,13 @@ async function main() {
           const after = decideOffer(ctx, moved, gate, DEFAULT_STRUCTURE);
           comparisons++;
           if (after.outbid) fail(`${p.lastName}: the ${label} chip does not win the contest`);
-          if (after.signBand !== 'YES') fail(`${p.lastName}: the ${label} chip wins the auction but he still will not sign (${after.signBand})`);
+          // A chip the CAP refuses is the ledger's answer, not the player's,
+          // and `beatRival` is not a cap planner — it answers "what beats
+          // them", which the panel then draws next to its own cap block. Only
+          // the player's own verdict is this check's business.
+          if (after.signBand !== 'YES' && after.signBand !== 'BLOCKED') {
+            fail(`${p.lastName}: the ${label} chip wins the auction but he still will not sign (${after.signBand})`);
+          }
         }
         beatCosts.push({
           name: p.lastName, rival: rivalScore, you: at.evaluation.interest,
@@ -1621,7 +1700,12 @@ async function main() {
           if (client.signBand === 'YES' && client.outbid) {
             fail(`${rung.ranks} rank(s) @ ${formatMoney(apy)}: "will sign" over a lost auction`);
           }
-          if (client.signBand !== 'LOSING' && client.signBand !== signBandFor(ctx, client.evaluation.interest)) {
+          // Same two stated overrides as section 8: LOSING is the contest and
+          // BLOCKED is the ledger, and neither is a drift between two copies of
+          // a rule. Everywhere else the drawn band is the decided band.
+          if (client.signBand === 'BLOCKED') {
+            if (!client.blocked) fail(`${rung.ranks} rank(s) @ ${formatMoney(apy)}: band BLOCKED with nothing blocking it`);
+          } else if (client.signBand !== 'LOSING' && client.signBand !== signBandFor(ctx, client.evaluation.interest)) {
             fail(`${rung.ranks} rank(s) @ ${formatMoney(apy)}: drawn band and decided band disagree`);
           }
           if (client.accepted && signBandFor(ctx, client.evaluation.interest) === 'NO') {
@@ -1646,6 +1730,116 @@ async function main() {
     // Put it back, so nothing after this section is negotiating with a
     // skill tree it did not ask for.
     await prisma.dynastyProfile.update({ where: { leagueId }, data: { skills: '{}' } });
+  }
+
+  // --- 17. ONE ACCEPTANCE MODEL, ON BOTH SIDES OF THE TABLE ----------------
+  //
+  // The block at the top of lib/freeagency.ts used to say acceptance lived in
+  // exactly one place while the file carried two: `decideOffer` for the user,
+  // and `market * MARKET_FLOOR` — a salary-only ratio, no personality, no
+  // term, no guarantee, no band — for all thirty-one AI clubs. So the same
+  // printed asking price meant two different things depending on who was
+  // buying, and the free-agency board advertised a number that signed almost
+  // nobody: measured before the fix, offering exactly the advertised price
+  // closed 13 of 60 free agents on the deal an AI club would write.
+  //
+  // Both halves of the fix are checkable, so both are checked here, and this
+  // is the section to run first if either ever regresses:
+  //
+  //   A. THE BOARD DOES NOT LIE. Pay the advertised asking price on a deal he
+  //      has no other complaint about — his own term, the guarantee he wants —
+  //      and the meter reads a certain yes. Every free agent, no exceptions:
+  //      the reservation price is anchored so the DEAREST draw closes at the
+  //      printed figure (lib/negotiation.ts, WHAT THE ASK IS WORTH), which
+  //      makes this an invariant rather than a statistic.
+  //   B. THE AI IS NOT ON A DIFFERENT MODEL. The line a bid has to clear is
+  //      strictly under the printed price (the haggle is real, and it is below
+  //      the ask rather than a discount off it), and every contract the real
+  //      sealed-bid wave writes — its salary, its term AND its guaranteed
+  //      share — is a deal the player's own model says he would take.
+  console.log('\nOne acceptance model (the board price, the user, and the wave):\n');
+  {
+    const board = await prisma.player.findMany({
+      where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+      orderBy: [{ trueOvr: 'desc' }, { id: 'asc' }],
+      take: 40,
+    });
+    let closes = 0;
+    let floorSum = 0;
+    let worstFloor = 0;
+    for (const p of board) {
+      const s = await resolveNegotiationSession({
+        leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      const { ctx, gate } = s;
+      const offer: Offer = {
+        apy: ctx.marketApy,
+        years: Math.min(ctx.desiredYears, gate.maxYears, ctx.willingYears),
+        guaranteePct: ctx.desiredGuarantee,
+      };
+      // The cap and the slider ceiling are taken off deliberately: this is a
+      // claim about the PLAYER, and a club with no room is a different
+      // sentence the panel already prints for itself.
+      const open = { ...gate, capMode: 'OFF' as const, capSpace: Number.MAX_SAFE_INTEGER, maxSalary: Math.max(gate.maxSalary, offer.apy) };
+      const d = decideOffer(ctx, offer, open, DEFAULT_STRUCTURE);
+      const drawn = signBandFor(ctx, d.evaluation.interest);
+      comparisons++;
+      if (drawn !== 'YES') {
+        fail(`${p.lastName}: the board advertises ${formatMoney(ctx.marketApy)}/yr and he reads ${drawn} at it (interest ${d.evaluation.interest}) — a price the user cannot buy at`);
+      } else closes++;
+
+      // AND THERE IS ROOM TO HAGGLE UNDER IT. Priced on the SAME deal the
+      // promise above is about — his own term, the guarantee he wants — because
+      // that is the only package the printed number claims anything about. A
+      // club offering him something else (the wave writes four years at 45%,
+      // whoever he is) can and should have to pay more for it, and the panel
+      // says which of the two is missing in his own voice.
+      //
+      // `<=` rather than `<` on purpose: at the bottom of the market both the
+      // ask and the floor clamp to the league minimum, and there is no haggle
+      // under a number no contract may go below.
+      const hisFloor = leastAcceptableApy(ctx, offer.years, offer.guaranteePct) ?? Number.POSITIVE_INFINITY;
+      comparisons++;
+      if (hisFloor > ctx.marketApy) {
+        fail(`${p.lastName}: he will not go under ${formatMoney(hisFloor)} on the deal he wants, for a man the board advertises at ${formatMoney(ctx.marketApy)}`);
+      }
+      const share = hisFloor / Math.max(1, ctx.marketApy);
+      floorSum += share;
+      worstFloor = Math.max(worstFloor, share);
+    }
+    console.log(`  ${closes} of ${board.length} sign at exactly the advertised asking price, on the deal they want.`);
+    console.log(`  The least he will take on that deal averages ${(100 * floorSum / board.length).toFixed(0)}% of the printed number (dearest ${(100 * worstFloor).toFixed(0)}%) — the haggle, and it lives below the ask rather than off it.`);
+
+    // AND THE WAVE WRITES WHAT IT PRICED. Snapshot first: signing zeroes his
+    // weeks on the wire, which is what his ask is discounted for, so the man
+    // has to be priced as he was when the bids were taken.
+    const beforeWave = new Map(board.map((p) => [p.id, p]));
+    await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings);
+    const landed = await prisma.player.findMany({
+      where: { id: { in: [...beforeWave.keys()] }, status: 'ACTIVE' },
+      include: { contract: true, team: true },
+    });
+    let checked = 0;
+    for (const p of landed) {
+      if (!p.contract) continue;
+      const was = beforeWave.get(p.id)!;
+      const bases = readJson<number[]>(p.contract.baseSalaries, []);
+      const apy = (bases.reduce((a, b) => a + b, 0) + p.contract.signingBonus) / Math.max(1, p.contract.years);
+      const ctx = marketContextFor(
+        { id: was.id, position: was.position, trueOvr: was.trueOvr, age: was.age, potential: was.potential, weeksUnsigned: was.weeksUnsigned },
+        league.seasonYear,
+      );
+      const guaranteedShare = p.contract.guaranteed / Math.max(1, bases.reduce((a, b) => a + b, 0) + p.contract.signingBonus);
+      const least = leastAcceptableApy(ctx, p.contract.years, guaranteedShare);
+      comparisons++;
+      checked++;
+      if (least === null) {
+        fail(`${p.lastName}: ${p.team?.abbr} signed him to ${Math.round(guaranteedShare * 100)}% guaranteed — under his floor, a deal no salary closes`);
+      } else if (apy < least) {
+        fail(`${p.lastName}: ${p.team?.abbr} signed him at ${formatMoney(Math.round(apy))}/yr on terms his own model prices at ${formatMoney(least)}`);
+      }
+    }
+    console.log(`  Ran the real wave: ${checked} contract(s) written, every one of them a deal the player's own model accepts.`);
   }
 
   console.log(`\n${comparisons.toLocaleString()} comparisons, ${failures} disagreement${failures === 1 ? '' : 's'}.`);

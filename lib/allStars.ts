@@ -429,13 +429,31 @@ export async function recordAllStars(
  * The years a player was selected, oldest first. Empty for most of a roster,
  * which is the point — an honour everyone has is not an honour.
  *
- * Matched by name for the same reason lib/awards.ts's are: Transaction has no
- * player relation, and lib/gen/names.ts's NameRegistry guarantees no two
- * players in a league ever share one.
+ * MATCHED BY ID. This used to say "matched by name, because Transaction has no
+ * player relation" — it has one (prisma/schema.prisma, Transaction.playerId,
+ * whose own doc is where the argument lives), and a name has never been an
+ * identity: two men can share one, and a rename or a change to the headline
+ * format breaks every reader at once.
+ *
+ * The name match survives as a FALLBACK, and only on rows whose `playerId` is
+ * null — rows written before the column was filled in. That is a read-time
+ * best effort over history the database genuinely does not know, not a guess
+ * written back into it: those rows stay null, and every row written from here
+ * on carries the man.
  */
-export async function allStarYearsFor(leagueId: string, firstName: string, lastName: string): Promise<number[]> {
+export async function allStarYearsFor(
+  leagueId: string,
+  player: { id: string; firstName: string; lastName: string },
+): Promise<number[]> {
   const rows = await prisma.transaction.findMany({
-    where: { leagueId, type: ALL_STAR_TYPE, headline: { startsWith: `${firstName} ${lastName} (` } },
+    where: {
+      leagueId,
+      type: ALL_STAR_TYPE,
+      OR: [
+        { playerId: player.id },
+        { playerId: null, headline: { startsWith: `${player.firstName} ${player.lastName} (` } },
+      ],
+    },
     select: { seasonYear: true },
     orderBy: { seasonYear: 'asc' },
   });
@@ -469,16 +487,22 @@ export async function allStarTallyForTeam(leagueId: string, teamId: string, sinc
   const rows = await prisma.transaction.findMany({
     where: { leagueId, teamId, type: ALL_STAR_TYPE, seasonYear: { gte: sinceYear } },
     orderBy: [{ seasonYear: 'desc' }, { headline: 'asc' }],
-    select: { seasonYear: true, headline: true, detail: true },
+    select: { seasonYear: true, headline: true, detail: true, playerId: true },
   });
 
   const entries = rows.map((r) => {
     const m = /^(.*) \(([^)]+)\)$/.exec(r.headline);
-    return { year: r.seasonYear, name: m?.[1] ?? r.headline, position: m?.[2] ?? '', statLine: r.detail };
+    return { year: r.seasonYear, name: m?.[1] ?? r.headline, position: m?.[2] ?? '', statLine: r.detail, playerId: r.playerId };
   });
 
   return {
-    players: new Set(entries.map((e) => e.name)).size,
+    // DISTINCT MEN, counted by id. "A five-time All-Star quarterback is one
+    // All-Star player" was being answered by de-duplicating the NAME parsed
+    // back out of the headline — so the count depended on a string format and
+    // on no two men in a league ever sharing a name. The id is on the row.
+    // Rows written before the column was filled in have none, and they fall
+    // back to the name they carry rather than collapsing into one another.
+    players: new Set(entries.map((e) => e.playerId ?? `name:${e.name}`)).size,
     selections: entries.length,
     entries,
   };

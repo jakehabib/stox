@@ -178,8 +178,8 @@ export const GLOSSARY = {
   },
   askingPrice: {
     term: 'Asking price',
-    definition: 'What an unsigned player will actually put his name to today. It starts at his market value and comes down the longer he goes without a club.',
-    why: 'Nobody sits out a season at his April number. A good player still on the wire when camp opens has already shaded his price, and by midseason he is signing for a fraction of it — which is where the bargains are, if you are the club that needs him.',
+    definition: 'What his agent wants, and a number that gets it done: offer this on the deal he is after — his kind of term, a fair share guaranteed — and he signs. It starts at his market value and comes down the longer he goes without a club.',
+    why: 'Nobody sits out a season at his April number. A good player still on the wire when camp opens has already shaded his price, and by midseason he is signing for a fraction of it — which is where the bargains are, if you are the club that needs him. Most men will take a little under the asking price too; finding out how much under is what the table is for.',
   },
   interestMeter: {
     term: 'Interest',
@@ -188,8 +188,8 @@ export const GLOSSARY = {
   },
   maybeBand: {
     term: 'Might sign',
-    definition: 'The stretch of the meter where he could go either way. Inside it an offer is a genuine gamble.',
-    why: 'The band is as wide as your uncertainty about the man — the better your scouts know him, the narrower it is, and the more of a coin flip it is otherwise.',
+    definition: 'The stretch of the meter where he could go either way. Inside it an offer is a genuine gamble — and it is where a man takes a little under his asking price.',
+    why: 'Every negotiator works with this much doubt. What narrows it is your front office: each rank in the Negotiation branch of the dynasty tree tightens the band, so a well-staffed room reads an agent better than a thin one.',
   },
   patience: {
     term: 'Patience',

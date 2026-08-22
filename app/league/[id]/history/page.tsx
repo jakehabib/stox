@@ -181,7 +181,24 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
                           </span>
                         ) : '—'}
                       </td>
-                      <td className="text-xs">{mvp ? <>{mvp.headline} <span className="text-muted">· {mvp.detail}</span></> : <span className="text-muted">—</span>}</td>
+                      {/* A LINK NOW, WHERE IT COULD ONLY EVER BE A NAME.
+                          Award rows carry the man (prisma/schema.prisma,
+                          Transaction.playerId), so the Championship MVP of any
+                          season the database still holds him for opens his
+                          page. Plain text when there is no id — a legend from
+                          the seeded backstory has no player row to open, and a
+                          save written before the column was filled in does not
+                          know which man it was. */}
+                      <td className="text-xs">
+                        {mvp ? (
+                          <>
+                            {mvp.playerId
+                              ? <a href={`/league/${league.id}/player/${mvp.playerId}`} className="hover:text-accent2">{mvp.headline}</a>
+                              : mvp.headline}
+                            {' '}<span className="text-muted">· {mvp.detail}</span>
+                          </>
+                        ) : <span className="text-muted">—</span>}
+                      </td>
                     </tr>
                   );
                 })}

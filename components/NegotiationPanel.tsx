@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   decideOffer, sessionFingerprint, PERSONALITY_BLURB, PERSONALITY_LABEL,
-  DEFAULT_STRUCTURE, ACCEPT_INTEREST, clampOffer, beatRival,
+  DEFAULT_STRUCTURE, ACCEPT_INTEREST, clampOffer, beatRival, openingBidApy,
   type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer, type Verdict,
 } from '@/lib/negotiation';
 import { formatMoney } from '@/lib/cap';
@@ -106,15 +106,19 @@ export function NegotiationPanel({
   // layout, and then the card is drawn here instead, as it always was.
   const moment = useSigningMoment();
 
-  // Opens a shade UNDER his public market estimate. Not at zero — a slider
-  // that starts at the bottom reads as "make a lowball" and the first thing
-  // anyone does is drag it up. But not at market either: opening exactly at
-  // the estimate signed a fair chunk of players on the very first click,
-  // which is the rubber stamp this panel replaced, wearing a slider. Ninety
-  // per cent is a real opening bid — respectable, usually short, and it makes
-  // the first drag a decision instead of a formality.
+  // Opens a shade UNDER what he would take. Not at zero — a slider that starts
+  // at the bottom reads as "make a lowball" and the first thing anyone does is
+  // drag it up. But not at a yes either: opening on a number that signs him
+  // is the rubber stamp this panel replaced, wearing a slider.
+  //
+  // The share lives in lib/negotiation.ts (`openingBidApy`) rather than here,
+  // because it is a fact about the model's pricing rather than about this
+  // component: the advertised estimate is now anchored so that paying it in
+  // full signs him, so nine tenths of the ESTIMATE is a yes for most of the
+  // league and nine tenths of his actual price is not. Both halves of that are
+  // measured in the note over there.
   const openingApy = () =>
-    clampStep(Math.max(gate.minSalary, Math.min(ctx.marketApy * 0.9, gate.maxSalary)), gate.minSalary, gate.maxSalary);
+    clampStep(Math.max(gate.minSalary, Math.min(openingBidApy(ctx), gate.maxSalary)), gate.minSalary, gate.maxSalary);
   // He will not commit past his own horizon, so the panel does not open past
   // it either. The limit is stated under the control either way.
   const openingYears = () => Math.min(ctx.desiredYears, gate.maxYears, ctx.willingYears);

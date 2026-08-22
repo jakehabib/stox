@@ -366,10 +366,20 @@ export default async function PlayerPage({
   // simply doesn't render.
   const careerStartYear = league.seasonYear - player.experience;
   const [awardTxs, titleSeasons, allStarYears] = await Promise.all([
+    // HIS TROPHIES, BY ID. This matched the headline as a string — "First Last
+    // (" — which meant the honours on a man's own page depended on a sentence
+    // format and on no two men in a league ever sharing a name. Award rows
+    // carry `playerId` now (lib/season.ts writes it, and the seeded backstory
+    // writes it for anyone who is still a real player). The name match is kept
+    // only for rows that have no id at all: saves written before the column
+    // was filled in, where it is the only thing the database knows.
     prisma.transaction.findMany({
       where: {
         leagueId: league.id, type: { in: Object.keys(AWARD_LABEL) },
-        headline: { startsWith: `${player.firstName} ${player.lastName} (` },
+        OR: [
+          { playerId: player.id },
+          { playerId: null, headline: { startsWith: `${player.firstName} ${player.lastName} (` } },
+        ],
       },
       orderBy: { seasonYear: 'asc' },
     }),
@@ -382,9 +392,9 @@ export default async function PlayerPage({
     // Read back rather than listed among the awards above: a selection is not
     // a trophy with a name, it is a season he was one of the best at his
     // position, and CareerHonors counts them ("4x All-Star") instead of
-    // printing four identical rows. Matched by name, like the awards, because
-    // Transaction has no player relation — see lib/allStars.ts.
-    allStarYearsFor(league.id, player.firstName, player.lastName),
+    // printing four identical rows. Matched by id, like the awards — see
+    // lib/allStars.ts for the same fallback and the same reason.
+    allStarYearsFor(league.id, player),
   ]);
   const honorAwards: HonorAward[] = awardTxs.map((t) => ({
     year: t.seasonYear, label: AWARD_LABEL[t.type] ?? t.type, statLine: t.detail,

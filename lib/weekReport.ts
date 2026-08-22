@@ -954,18 +954,27 @@ export async function buildTrophyMoment(leagueId: string, seasonYear: number, ro
     if (award) {
       // The transaction is the authority on WHO — recomputing the winner here
       // could name a different man than the one on the wire, the history page
-      // and the GM's honours list. It carries no playerId though, so the box
-      // line it was scored from is matched back by name to recover one; a miss
-      // costs the portrait and the columns, never the name.
+      // and the GM's honours list.
+      //
+      // AND IT NOW SAYS WHO. This used to read the name back out of the
+      // headline and hunt the championship box score for a line matching that
+      // string, purely to recover a portrait — the exact failure the doc on
+      // Transaction.playerId names. The row carries the man. The name match
+      // survives only for a row that has no id (a save written before the
+      // column was filled in), and a miss still costs the portrait and the
+      // stat columns, never the name.
       const m = award.headline.match(/^(.*)\s+\(([^)]+)\)$/);
       const name = m?.[1] ?? award.headline;
       const position = m?.[2] ?? '';
       mvpAward = award.detail || null;
       const winnerLines = (userIsHome ? lastBox?.lines?.home : lastBox?.lines?.away) ?? [];
-      const line = winnerLines.find((l) => l.name === name);
+      const line = award.playerId
+        ? winnerLines.find((l) => l.playerId === award.playerId)
+        : winnerLines.find((l) => l.name === name);
+      const playerId = award.playerId ?? line?.playerId ?? '';
       mvp = {
-        ...(await portraitFor(line?.playerId ?? null)),
-        playerId: line?.playerId ?? '',
+        ...(await portraitFor(playerId || null)),
+        playerId,
         name,
         position: line ? String(line.position) : position,
         stats: line ? statCells(String(line.position), line.stats) : [],

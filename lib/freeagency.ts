@@ -9,7 +9,7 @@ import { loadDynastyProfile, parseSkills, scoutingModsFor, signBandMultFor } fro
 import {
   buildNegotiationContext, contractShapeFor, decideOffer, sessionFingerprint,
   DEFAULT_STRUCTURE, RESIGN_LEVERAGE, extensionLeverage, clampOffer,
-  evaluateOffer, rivalView, winsContest,
+  evaluateOffer, rivalView, winsContest, leastAcceptableApy,
   type DealStructure, type NegotiationContext, type NegotiationGate, type NegotiationMode,
   type NegotiationOutcome, type NegotiationSession, type Offer, type ResignWindow, type Suitor,
 } from './negotiation';
@@ -25,9 +25,10 @@ import { reconcileDepthChart } from './gen/league';
  * The user negotiates directly (offer -> accept/counter/reject). AI teams run
  * a simple sealed-bid loop each time `runAiFreeAgencyWave` is called: every AI
  * team looks at its needs, decides a max offer per free agent it wants, and
- * the highest bidder above the player's asking price signs him. Called once
- * per offseason week during the FREE_AGENCY phase, and can also be invoked
- * on demand to fast-forward.
+ * the highest bidder signs him if that bid clears what the man will actually
+ * sign for — the same model the user's panel runs, see WHAT A BID HAS TO
+ * CLEAR below. Called once per offseason week during the FREE_AGENCY phase,
+ * and can also be invoked on demand to fast-forward.
  *
  * THE MARKET DOES NOT CLOSE WHEN THAT WINDOW DOES. `runInSeasonSignings`
  * below is the same machinery run much more quietly through PRESEASON and the
@@ -42,7 +43,7 @@ import { reconcileDepthChart } from './gen/league';
 
 /**
  * ---------------------------------------------------------------------------
- * WHERE `evaluateOffer` WENT
+ * WHERE `evaluateOffer` WENT — AND WHERE IT DID NOT GO, FOR A YEAR
  * ---------------------------------------------------------------------------
  * There used to be a second acceptance model here:
  *
@@ -55,11 +56,26 @@ import { reconcileDepthChart } from './gen/league';
  * unimported. Two evaluators is one more than a game may have: the meter can
  * only be honest if the thing it draws is the thing that decides.
  *
- * So this one is gone. Acceptance now lives in exactly one place —
- * `decideOffer` in lib/negotiation.ts — and both the browser (per drag) and
- * the Server Action (on submit) call it. `resolveNegotiationSession` below
- * builds the input from the database; `negotiateOffer` is the only path that
- * signs anything a user negotiated.
+ * So the USER's path was fixed, and this block then said acceptance lived in
+ * exactly one place. It did not. The four lines had moved a few hundred lines
+ * down the file and taken a name:
+ *
+ *     export const MARKET_FLOOR = 0.85;
+ *     if (best.offer < market * MARKET_FLOOR) continue;
+ *
+ * — the identical salary-only ratio, deciding the identical question for every
+ * club that is not the user's. A comment claiming one model over a file
+ * carrying two is the defect this codebase treats as seriously as a bad
+ * number, so: acceptance now lives in exactly one place FOR EVERYBODY.
+ *
+ *   THE USER   `decideOffer` (lib/negotiation.ts), called by the browser on
+ *              every drag and by the Server Action on submit.
+ *   THE AI     `aiDealFor` below, which asks `leastAcceptableApy` — the bottom
+ *              of the same band, off the same curve, about the same man.
+ *
+ * And the number the free-agency board prints is now the top of that band: pay
+ * the advertised asking price on a deal he has no other complaint about and he
+ * signs, whoever is asking. See WHAT THE ASK IS WORTH in lib/negotiation.ts.
  * ---------------------------------------------------------------------------
  */
 
@@ -104,9 +120,10 @@ export type CompetingBid = Suitor;
  *      67-overall backup guard, sitting behind eleven better guards on
  *      everybody's board, ignored.
  *   3. THEIR NUMBER IS A REAL BID. What their GM would actually put on him has
- *      to clear MARKET_FLOOR — the same line the wave's resolution throws bids
- *      out under. A club named at a number the wave would discard is a rumour
- *      about nothing.
+ *      to clear the least he will sign for (`aiDealFor`) — the same line the
+ *      wave's resolution throws bids out under, and the same bottom-of-the-band
+ *      the user's own meter draws. A club named at a number the wave would
+ *      discard is a rumour about nothing.
  *
  * WHAT DID NOT CHANGE, because it is the property that makes the rumour
  * honest: the club named still genuinely has the room and the reason — its cap
@@ -117,12 +134,16 @@ export type CompetingBid = Suitor;
  * so the same matchup re-read on every render, every keystroke and every
  * submit returns the same club at the same number.
  *
- * The reachability walk is priced at the MARKET FLOOR rather than at each
- * rival's own random draw, and that is deliberate in the club's favour: the
- * floor is the cheapest bid that could possibly win, so charging the men ahead
- * of him no more than that only ever rules a club out when it plainly could
- * not have afforded to get down to him. A forecast that errs toward "yes, they
- * would be there" cannot manufacture a suitor out of nothing.
+ * The reachability walk is the WAVE'S OWN WALK, at the wave's own prices: each
+ * man ahead of him costs what this club's GM would really put on him, at the
+ * stable `fa-bid-<player>-<team>` seed, so the forecast is a replay rather than
+ * a sketch. It used to charge the men above him the cheapest bid that could
+ * possibly count, on the reasoning that a forecast should err toward "yes, they
+ * would be there". That reasoning ignored ROSTER SLOTS: a club priced cheaply
+ * affords more of the men above him, spends its openings on them, and never
+ * reaches him — so the generous pricing produced false NEGATIVES, which is the
+ * one direction this rumour may never be wrong in. Measured: a 71-overall
+ * receiver reported as uncircled, signed by the very next wave.
  */
 export async function leadingCompetingBid(
   leagueId: string, playerId: string, excludeTeamId: string, seasonYear: number, settings: LeagueSettings,
@@ -155,14 +176,14 @@ export async function leadingCompetingBid(
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false, id: { not: excludeTeamId } } });
   const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
   const rookieReserve = Math.ceil(settings.draftRounds * LEAGUE.ROOKIE_ROSTER_HIT_RATE);
-  // HIS PRICE TODAY, not his price the day he was released. Everything below
-  // — the reachability walk, the bid that has to clear the market floor — is
-  // measured against what he will actually sign for now (see askingPrice), so
-  // a man whose number has come down is a man more clubs can reach.
-  const playerMarket = askingPrice({
-    ovr: player.trueOvr, position: player.position as Position, age: player.age,
-    potential: player.potential, weeksUnsigned: player.weeksUnsigned,
-  });
+  // WHAT IT TAKES TO SIGN EACH OF THEM, priced once for the whole walk. This
+  // used to be `askingPrice * MARKET_FLOOR` — a share of his advertised price,
+  // computed here and again in the wave. It is `leastAcceptableApy` now, the
+  // bottom of the band the user's meter draws, so the number a club has to
+  // clear to be NAMED in a panel is the number it has to clear to actually
+  // sign him. See WHAT A BID HAS TO CLEAR.
+  const deals = aiDealBook(board, seasonYear);
+  const playerDeal = deals.get(playerId)!;
 
   let best: CompetingBid | null = null;
   for (const team of teams) {
@@ -188,21 +209,30 @@ export async function leadingCompetingBid(
     // wave spends — priced at the floor, so this only ever says no when the
     // club could not have afforded to reach him even paying the minimum that
     // counts. Deterministic: no draw, nothing to re-roll between renders.
-    const plan = planTeamBids(board, state, (fa, capSpace) => Math.min(
-      // The cheapest bid that could count: the market floor, but never under
-      // the league minimum, because nobody signs anybody for less than that and
-      // a price below it would make `planTeamBids` skip a man the wave bids on.
-      // (Measured: pricing depth players under the minimum silently dropped
-      // them out of a club's plan, its roster spots therefore never filled, the
-      // upgrade-and-displace branch never opened, and three of the top forty
-      // free agents in a fresh league were reported as unwanted and then signed
-      // by the very next wave.)
-      Math.max(askingPrice({
-        ovr: fa.trueOvr, position: fa.position as Position, age: fa.age,
-        potential: fa.potential, weeksUnsigned: fa.weeksUnsigned,
-      }) * MARKET_FLOOR, CAP.MIN_SALARY),
-      Math.max(0, capSpace - AI.CAP_RESERVE),
-    ));
+    const plan = planTeamBids(board, state, (fa, capSpace) => {
+      // WHAT THIS CLUB WOULD REALLY PUT ON EACH MAN AHEAD OF HIM, at the same
+      // `fa-bid-<player>-<team>` seed the target is priced at four lines below
+      // — so the walk is the wave's own walk rather than a cheaper sketch of
+      // it, and the answer is stable across every render of the panel.
+      //
+      // It used to price every man on the board at the cheapest bid that could
+      // possibly count, on the reasoning that charging the men ahead of him as
+      // little as possible errs toward "yes, that club would be there". That
+      // reasoning was half right and the missing half is ROSTER SLOTS: a club
+      // priced cheaply affords more of the men above him, fills its openings
+      // on them, and never reaches him — so the "generous" pricing produced
+      // false NEGATIVES. Measured after the market floor became per-player: a
+      // 71-overall receiver the panel reported as uncircled was signed by the
+      // very next wave, which is the one direction this rumour may never be
+      // wrong in.
+      // `capSpace` arrives already net of AI.CAP_RESERVE — `bidderState` takes
+      // it off when it builds the budget, and `planTeamBids` hands that budget
+      // straight through. Taking it off a second time here would walk a poorer
+      // club down the board than the one the wave walks.
+      const rng = new Rng(`fa-bid-${fa.id}-${team.id}`);
+      const profile = parseGmProfile(team.gmProfile, rng);
+      return maxOffer(fa as unknown as RosterPlayer, { profile, needs, capSpace, rng });
+    }, deals);
     if (!plan.some((b) => b.playerId === playerId)) continue;
 
     // What their GM would actually put on him, at the seed this has always
@@ -211,7 +241,7 @@ export async function leadingCompetingBid(
     const profile = parseGmProfile(team.gmProfile, rng);
     const offer = maxOffer(player as unknown as RosterPlayer, { profile, needs, capSpace: Math.max(0, summary.capSpace - AI.CAP_RESERVE), rng });
     // A bid the wave's own resolution would throw out is not a bid.
-    if (offer < CAP.MIN_SALARY || offer < playerMarket * MARKET_FLOOR) continue;
+    if (offer < CAP.MIN_SALARY || offer < playerDeal.floor) continue;
     if (!best || offer > best.apy) {
       // The evidence travels with the bid. A club is only ever NAMED on screen
       // out of one of these, and the two figures beside its name are the two
@@ -237,8 +267,8 @@ export async function leadingCompetingBid(
         // share `buildContract` locks in when they call it with no override.
         // If the wave ever structures its deals differently, both move here
         // with it or the rumour stops being checkable.
-        years: suggestedYears(player.trueOvr, player.age),
-        guaranteePct: AI_GUARANTEE_PCT,
+        years: playerDeal.years,
+        guaranteePct: playerDeal.guaranteePct,
         capSpace: summary.capSpace,
         need: needs[player.position] ?? 0,
         starterOvr: atPosition[0]?.trueOvr ?? null,
@@ -354,6 +384,15 @@ export async function signFreeAgent(opts: {
         week,
         type: 'SIGN',
         teamId,
+        // THE MAN, NOT HIS NAME. A signing is the canonical player-shaped row,
+        // and this column is why the wire, his own page and the GM's career
+        // can link back to him instead of matching a string — see the doc on
+        // Transaction.playerId in prisma/schema.prisma, which is explicit that
+        // every row of this shape carries it. Every signing path in this file
+        // now does; the ones that genuinely are not about one man (a
+        // twelve-player cut-down, a trade between two clubs) still do not, and
+        // that is what null MEANS.
+        playerId,
         headline: `Signed ${player.firstName} ${player.lastName}`,
         detail: `${years}-yr deal, ~$${(apy / 1_000_000).toFixed(1)}M/yr`,
       },
@@ -516,7 +555,7 @@ export async function extendContract(opts: {
     await tx.transaction.create({
       data: {
         leagueId: opts.leagueId, seasonYear, week,
-        type: reSign ? 'RESIGN' : 'SIGN', teamId,
+        type: reSign ? 'RESIGN' : 'SIGN', teamId, playerId,
         headline: reSign
           ? `Re-signed ${player.firstName} ${player.lastName}`
           : `Extended ${player.firstName} ${player.lastName}`,
@@ -615,7 +654,7 @@ export async function signExtension(opts: {
     await tx.transaction.create({
       data: {
         leagueId: opts.leagueId, seasonYear, week,
-        type: opts.reSign ? 'RESIGN' : 'SIGN', teamId,
+        type: opts.reSign ? 'RESIGN' : 'SIGN', teamId, playerId,
         headline: opts.reSign
           ? `Re-signed ${player.firstName} ${player.lastName}`
           : `Extended ${player.firstName} ${player.lastName}`,
@@ -684,7 +723,7 @@ export async function applyFranchiseTag(opts: {
     });
     await tx.transaction.create({
       data: {
-        leagueId: opts.leagueId, seasonYear, week: opts.week, type: 'TAG', teamId,
+        leagueId: opts.leagueId, seasonYear, week: opts.week, type: 'TAG', teamId, playerId,
         headline: `${player.firstName} ${player.lastName} franchise-tagged`,
         detail: `1-yr, fully guaranteed at ${formatMoney(tagValue)}`,
       },
@@ -751,6 +790,7 @@ export async function restructureContract(opts: {
     await tx.transaction.create({
       data: {
         leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week, type: 'SIGN', teamId: player.teamId,
+        playerId: opts.playerId,
         headline: `Restructured ${player.firstName} ${player.lastName}'s contract`,
         detail: `Converted $${(opts.convertAmount / 1_000_000).toFixed(1)}M of base salary to bonus for cap relief.`,
       },
@@ -799,11 +839,14 @@ export async function signFreeAgentWithCompetition(opts: {
       )
     : competing.apy > opts.apy);
   if (competing && lost) {
-    const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId } });
     await signFreeAgent({
       leagueId: opts.leagueId, playerId: opts.playerId, teamId: competing.teamId,
-      apy: competing.apy, years: suggestedYears(player.trueOvr, player.age),
-      guaranteedPct: AI_GUARANTEE_PCT,
+      // THE PACKAGE THE PANEL QUOTED, not a second guess at it. `competing`
+      // carries the term and the guaranteed share `leadingCompetingBid` read
+      // off `aiDealFor`, which is the deal the rival's floor was priced for —
+      // rebuilding either here would let the club that beat you sign a
+      // contract the user was never shown.
+      apy: competing.apy, years: competing.years, guaranteedPct: competing.guaranteePct,
       seasonYear: opts.seasonYear, capMode, week: opts.week,
     }).catch(() => { /* rival couldn't actually close it either — player just stays in free agency */ });
     throw new Error(`Outbid — the ${competing.teamName} swooped in with ~$${(competing.apy / 1_000_000).toFixed(1)}M/yr over ${competing.years} year${competing.years === 1 ? '' : 's'} before you closed the deal.`);
@@ -849,6 +892,7 @@ export async function cutPlayer(opts: {
     await tx.transaction.create({
       data: {
         leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week, type: 'CUT', teamId: player.teamId,
+        playerId: player.id,
         headline: `Released ${player.firstName} ${player.lastName}`,
       },
     });
@@ -884,33 +928,152 @@ export async function cutPlayer(opts: {
  * upgrading is a cap decision like every other.
  */
 /**
- * Share of market value a free agent will actually sign for. [TUNE]
+ * ===========================================================================
+ * WHAT A BID HAS TO CLEAR — AND IT IS THE USER'S OWN MODEL NOW
+ * ===========================================================================
+ * There used to be a constant here:
  *
- * Exported because it is the threshold a bid has to clear to be a real bid,
- * and scripts/checkNegotiationAgreement.ts checks a named suitor against the
- * same number the wave resolves on — a rumour that names a club which would
- * not survive this line would be a rumour about nothing.
+ *     export const MARKET_FLOOR = 0.85;   // share of market he will sign for
+ *
+ * and it was the second acceptance model this file was supposed to have
+ * deleted. Read the block at the top of this file — WHERE `evaluateOffer`
+ * WENT — and then read what the wave actually resolved on: a salary-only
+ * ratio, no personality, no term, no guarantee, no band. The four lines that
+ * block says are gone had simply moved down the file and put on a name.
+ *
+ * It also meant the free-agency board could not tell the truth. The board
+ * advertises `askingPrice`; a CPU club signed at 0.85 of it while the user's
+ * `decideOffer` wanted a median of 1.04 and as much as 1.44 — two different
+ * answers to "what does this man sign for", both of them about the same
+ * printed number. Measured across sixty free agents in a fresh league,
+ * offering exactly the advertised price closed 13 of them.
+ *
+ * So the wave asks the model. `leastAcceptableApy` (lib/negotiation.ts) is
+ * the bottom of the "he might sign" band in dollars — the same band the
+ * user's meter draws, read at the same interest level — and a bid under it is
+ * not a bid. What that costs, measured after the reservation price was
+ * anchored to the advertised ask: the model puts a neutral free agent's floor
+ * at a median of 0.89 of his ask, spread 0.73 to 1.00 by personality, term
+ * and how much of the deal is guaranteed. The old flat 0.85 sat inside that
+ * spread, which is the retrospective proof it was never a CPU discount — it
+ * was the band bottom, hard-coded, against a price that meant "what he asks"
+ * rather than "what he takes".
+ *
+ * WHAT THE CLUB IS ACTUALLY OFFERING has to be the package the floor is
+ * priced for, or this is just a nicer-looking lie. `aiDealFor` below returns
+ * all three together — term, guaranteed share, floor — and every AI signing
+ * path writes the contract it describes.
+ * ===========================================================================
  */
-export const MARKET_FLOOR = 0.85;
 
 /**
- * The share of a deal an AI club guarantees, 0..1.
+ * The share of a deal an AI club guarantees, 0..1 — before his own floor is
+ * applied. See `aiDealFor`.
  *
  * Not a tuning knob invented for the negotiation panel — it is
  * `buildContract`'s own default, which is what every AI signing in this file
- * takes because none of them pass `guaranteedPct`. It is named and exported
- * here because a rival's guarantee is now a term the PLAYER SCORES: a
+ * takes unless it passes `guaranteedPct`. It is named and exported here
+ * because a rival's guarantee is now a term the PLAYER SCORES: a
  * business-first man weights guaranteed money at 0.18 and a ring-chaser at
  * 0.30, so what a rival locks in decides contests. A constant the panel
  * invented would be the lying metric README design principle 6 rules out;
  * this one is checkable against the contract the wave actually writes, and
  * scripts/checkNegotiationAgreement.ts checks it.
- *
- * When AI clubs start structuring deals differently from one another, this is
- * the single place that changes, and `leadingCompetingBid` follows it for
- * free.
  */
 export const AI_GUARANTEE_PCT = 0.45;
+
+/**
+ * The man as the MARKET sees him — a negotiating context with no club
+ * attached to it.
+ *
+ * Seeded on the player and the league year and NOTHING ELSE, which is the
+ * same seed `resolveNegotiationSession` uses: a man's personality, the years
+ * he wants and the wobble on his price are facts about HIM, so the club
+ * asking may not change them. What a club does change is priced separately
+ * and on purpose — loyalty, years of control, a ring-chaser's read on the
+ * roster — and all three live in `clubDiscount` (lib/negotiation.ts), which
+ * is exactly why they can be left out here without inventing a different man.
+ *
+ * `teamStrength` is the league average for the same reason `rivalView` uses a
+ * neutral price: the wave is thirty-one clubs, not one, and the honest default
+ * for a club nobody is being shown is the middle.
+ */
+export function marketContextFor(fa: BoardPlayer, seasonYear: number): NegotiationContext {
+  const ask = askingPrice({
+    ovr: fa.trueOvr, position: fa.position as Position, age: fa.age,
+    potential: fa.potential, weeksUnsigned: fa.weeksUnsigned,
+  });
+  return buildNegotiationContext({
+    playerId: fa.id,
+    // Nothing in the wave ever renders his voice — no headline, no demand
+    // line, no refusal sentence reaches a screen from here. The name is on
+    // the transaction row the signing writes, off the player record.
+    playerName: '',
+    position: fa.position,
+    age: fa.age,
+    ovr: fa.trueOvr,
+    marketApy: ask,
+    trueMarketApy: ask,
+    incumbent: false,
+    teamStrength: 0.5,
+    yearsWithTeam: 0,
+    // The auction IS the competition here, and it is settled by the highest
+    // bid a few lines below. Charging him a premium for it as well would be
+    // the double-count `buildNegotiationContext` just stopped making on the
+    // open market.
+    competition: 0,
+    mode: 'FREE_AGENT',
+    seasonYear,
+    rng: new Rng(`nego-${fa.id}-${seasonYear}`),
+  });
+}
+
+/** The deal an AI club actually writes, and the least he will sign it for. */
+export interface AiDeal {
+  years: number;
+  guaranteePct: number;
+  /** The bottom of his "he might sign" band, in dollars. A bid under it is not a bid. */
+  floor: number;
+}
+
+/**
+ * What it takes to sign this man on a standard club deal.
+ *
+ * The guarantee is raised to HIS floor where it has to be, and that is not
+ * tidying: `guaranteeFloorFor` caps interest below the band for a deal with
+ * less locked in than he will accept, so an elite man offered the flat 45%
+ * has refused the STRUCTURE and no salary closes him. A club that wrote him
+ * that contract anyway — which is what every AI signing did — was signing a
+ * deal the user's own panel would have said was unsignable.
+ *
+ * `term` overrides the length for callers that sign something other than a
+ * standard deal; the in-season market writes one-year contracts, and a year
+ * is not free (see `termPremium`), so its floor has to be priced for the year
+ * it is actually offering.
+ */
+export function aiDealFor(fa: BoardPlayer, seasonYear: number, term?: number): AiDeal {
+  const ctx = marketContextFor(fa, seasonYear);
+  const years = Math.max(1, Math.min(term ?? suggestedYears(fa.trueOvr, fa.age), ctx.willingYears));
+  const guaranteePct = Math.max(AI_GUARANTEE_PCT, ctx.guaranteeFloor);
+  // Never null once the guarantee clears his floor — that is the only thing
+  // that caps his interest below the band whatever the money — but the
+  // fallback is stated rather than asserted, because a silent `!` here would
+  // turn a future change to the interest caps into free players.
+  const least = leastAcceptableApy(ctx, years, guaranteePct) ?? ctx.reservationApy;
+  return { years, guaranteePct, floor: Math.max(CAP.MIN_SALARY, Math.round(least)) };
+}
+
+/**
+ * One pass's worth of them, priced once. The wave asks the same question up to
+ * thirty-one times per free agent — once per club walking its board — and the
+ * answer does not depend on who is asking, so it is a lookup rather than a
+ * bisection each time.
+ */
+export function aiDealBook(board: BoardPlayer[], seasonYear: number, term?: number): Map<string, AiDeal> {
+  const book = new Map<string, AiDeal>();
+  for (const fa of board) book.set(fa.id, aiDealFor(fa, seasonYear, term));
+  return book;
+}
 
 /**
  * ---------------------------------------------------------------------------
@@ -926,13 +1089,13 @@ export const AI_GUARANTEE_PCT = 0.45;
  *   `leadingCompetingBid` — whether the club named in a negotiation panel as
  *                           chasing this player would in fact get to him.
  *
- * They differ only in `price`, which is what that club would put on a man
- * given the room it has left: the wave prices with `maxOffer` off its GM
- * profile and the wave's own seeded rng, the rumour prices at MARKET_FLOOR
- * (see leadingCompetingBid for why the forecast is deliberately the cheap,
- * deterministic one). Everything that decides WHETHER a bid happens — the
- * order, the need threshold, the roster-slot rule, the upgrade-and-displace
- * rule, the market floor — is here, once.
+ * They differ only in the SEED behind `price`. Both price with `maxOffer` off
+ * the club's GM profile; the wave draws from the wave's own rng and the rumour
+ * from the stable `fa-bid-<player>-<team>` one, so a panel re-read on every
+ * keystroke returns the same club at the same number while a wave rolled twice
+ * in one offseason does not. Everything that decides WHETHER a bid happens —
+ * the order, the need threshold, the roster-slot rule, the upgrade-and-displace
+ * rule, the line a bid has to clear — is here, once.
  */
 export interface BoardPlayer {
   id: string;
@@ -1016,6 +1179,13 @@ export function planTeamBids(
   board: BoardPlayer[],
   state: BidderState,
   price: (fa: BoardPlayer, capSpace: number) => number,
+  /**
+   * The least each man on the board will sign for, priced once for the whole
+   * pass — see `aiDealBook`. Every caller passes one: the line a bid has to
+   * clear is the player's own, and a club that could only reach him at less
+   * than that has not reached him.
+   */
+  deals: Map<string, AiDeal>,
 ): PlannedBid[] {
   // Bid on the highest-need positions among top available talent.
   const ranked = [...board].sort(
@@ -1049,20 +1219,21 @@ export function planTeamBids(
     if (offer < CAP.MIN_SALARY) continue;
     // Don't commit budget to a bid that cannot possibly win. The price is
     // capped at what the team can afford, and the resolution step throws out
-    // anything under 85% of market — so a team facing a free agent it cannot
-    // afford used to bid its entire remaining budget on him, have that bid
-    // rejected, and then `break` on an exhausted budget without having signed
-    // anyone. Because the board is sorted best-first once needs flatten out,
-    // every team in the league did this to the same unaffordable player, every
-    // week: measured 17 signings league-wide in the final year of a 13-season
-    // run while 350 free agents rated 80+ sat unsigned. Applying the same
-    // floor here, before the money is committed, lets a team walk down the
-    // board to somebody it can actually sign.
-    const market = askingPrice({
-      ovr: fa.trueOvr, position: fa.position as Position, age: fa.age,
-      potential: fa.potential, weeksUnsigned: fa.weeksUnsigned,
-    });
-    if (offer < market * MARKET_FLOOR) continue;
+    // anything the player would refuse — so a team facing a free agent it
+    // cannot afford used to bid its entire remaining budget on him, have that
+    // bid rejected, and then `break` on an exhausted budget without having
+    // signed anyone. Because the board is sorted best-first once needs flatten
+    // out, every team in the league did this to the same unaffordable player,
+    // every week: measured 17 signings league-wide in the final year of a
+    // 13-season run while 350 free agents rated 80+ sat unsigned. Applying the
+    // same floor here, before the money is committed, lets a team walk down
+    // the board to somebody it can actually sign.
+    //
+    // THE SAME FLOOR, and it is his rather than the file's: `aiDealBook` reads
+    // it off `leastAcceptableApy`, the bottom of the band the user's own meter
+    // draws. See WHAT A BID HAS TO CLEAR above.
+    const deal = deals.get(fa.id);
+    if (!deal || offer < deal.floor) continue;
 
     out.push({ playerId: fa.id, offer, displacePlayerId: displace?.id });
     state.budget -= offer - freed;
@@ -1076,7 +1247,24 @@ export function planTeamBids(
   return out;
 }
 
-export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, week: number, settings: LeagueSettings, rng: Rng) {
+/**
+ * WHY THIS TAKES NO RNG ANY MORE.
+ *
+ * It used to take one and draw every club's bid out of it, while
+ * `leadingCompetingBid` drew the same club's bid for the same man out of the
+ * stable `fa-bid-<player>-<team>` seed. Two draws from one distribution are
+ * still two different numbers, so the panel's "nobody is circling" was a
+ * forecast of a DIFFERENT roll than the one the wave would make — and it was
+ * wrong in the one direction that claim may never be wrong in. Measured on the
+ * agreement harness: two of the top forty free agents reported as uncircled,
+ * signed by the very next wave.
+ *
+ * lib/negotiation.ts has always described these as "the same function, the
+ * same seed, the same cap-and-need test the AI bids on". They are now. A bid
+ * is a pure function of the matchup and the board, so a rumour is not a
+ * forecast of a roll — it is the roll, read early.
+ */
+export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, week: number, settings: LeagueSettings) {
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
   // isDraftee players aren't real free agents yet — they're this year's
   // rookie class waiting for the draft. Without excluding them, AI teams
@@ -1092,6 +1280,10 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
   interface Bid { playerId: string; teamId: string; offer: number; displacePlayerId?: string }
   const bids: Bid[] = [];
 
+  // WHAT EACH MAN WILL SIGN FOR, priced once for the whole wave off the same
+  // model the user's panel runs. See WHAT A BID HAS TO CLEAR.
+  const deals = aiDealBook(freeAgents as unknown as BoardPlayer[], seasonYear);
+
   const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
   const rookieReserve = Math.ceil(settings.draftRounds * LEAGUE.ROOKIE_ROSTER_HIT_RATE);
 
@@ -1103,22 +1295,28 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
     });
     const needs = teamNeeds(roster as RosterPlayer[]);
     const summary = await teamCapSummary(team.id, seasonYear, settings.capMode);
-    const profile = parseGmProfile(team.gmProfile, rng);
 
     // The walk down this club's board — order, slots, budget, the upgrade
-    // rule, the market floor. Shared with `leadingCompetingBid`, which is how
+    // rule, the signing floor. Shared with `leadingCompetingBid`, which is how
     // a suitor named in a negotiation panel is the club that actually comes
     // for him here. See planTeamBids.
     const state = bidderState({
       roster: roster as RosterPlayer[], needs, capSpace: summary.capSpace,
       capMode: settings.capMode, rosterMax, rookieReserve,
     });
-    for (const bid of planTeamBids(freeAgents, state, (fa, capSpace) => maxOffer(fa as unknown as RosterPlayer, { profile, needs, capSpace, rng }))) {
+    for (const bid of planTeamBids(freeAgents, state, (fa, capSpace) => {
+      // One rng per matchup, feeding the profile fallback and then the bid
+      // noise — the identical two lines `leadingCompetingBid` runs, so the
+      // number a panel quotes is the number this wave puts on him.
+      const rng = new Rng(`fa-bid-${fa.id}-${team.id}`);
+      const profile = parseGmProfile(team.gmProfile, rng);
+      return maxOffer(fa as unknown as RosterPlayer, { profile, needs, capSpace, rng });
+    }, deals)) {
       bids.push({ ...bid, teamId: team.id });
     }
   }
 
-  // Resolve: highest bid per player wins, if it clears market floor.
+  // Resolve: highest bid per player wins, if it clears what he will sign for.
   let signings = 0;
   let displaced = 0;
   const byPlayer = new Map<string, Bid[]>();
@@ -1130,15 +1328,14 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
   // bid that actually lands.
   const releasedThisWave = new Set<string>();
   for (const [playerId, offers] of byPlayer) {
-    const player = freeAgents.find((f) => f.id === playerId)!;
-    const market = askingPrice({
-      ovr: player.trueOvr, position: player.position as any, age: player.age,
-      potential: player.potential, weeksUnsigned: player.weeksUnsigned,
-    });
+    const deal = deals.get(playerId)!;
     const best = offers.sort((a, b) => b.offer - a.offer || a.teamId.localeCompare(b.teamId))[0];
-    if (best.offer < market * MARKET_FLOOR) continue;
+    // THE ONE ACCEPTANCE TEST. Highest bid wins if it clears what HE will sign
+    // for — `leastAcceptableApy`, the bottom of the band the user's own meter
+    // draws — rather than a share of his advertised price written down here.
+    if (best.offer < deal.floor) continue;
 
-    const years = suggestedYears(player.trueOvr, player.age);
+    const years = deal.years;
     try {
       if (best.displacePlayerId) {
         if (releasedThisWave.has(best.displacePlayerId)) continue;
@@ -1160,6 +1357,9 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
       }
       await signFreeAgent({
         leagueId, playerId, teamId: best.teamId, apy: Math.round(best.offer), years, seasonYear, capMode: settings.capMode, week,
+        // The share the floor above was priced for. A club that guaranteed
+        // less than that would be writing the deal he refused.
+        guaranteedPct: deal.guaranteePct,
       });
       signings += 1;
     } catch {
@@ -1257,6 +1457,14 @@ export async function runInSeasonSignings(opts: {
   });
   if (board.length === 0) return quiet;
 
+  // WHAT EACH OF THEM WILL SIGN FOR, once for the week. The TERM is passed in
+  // rather than left to `suggestedYears`, because a regular-season deal runs
+  // to the end of this year and no further (see TERM above) and a year away
+  // from what a man wants has a price on it (`termPremium`) — a floor priced
+  // for a four-year contract is not the floor for the one-year contract this
+  // club is actually offering.
+  const deals = aiDealBook(board, seasonYear, phase === 'REGULAR' ? 1 : undefined);
+
   // Every AI roster in one read, without contracts. This is the scan that
   // decides WHO has a hole; the two clubs that end up shopping are re-read
   // properly below. Thirty-one separate queries with the contract join — what
@@ -1341,7 +1549,6 @@ export async function runInSeasonSignings(opts: {
       orderBy: [{ trueOvr: 'asc' }, { id: 'asc' }],
     });
     const summary = await teamCapSummary(team.id, seasonYear, settings.capMode);
-    const profile = parseGmProfile(team.gmProfile, rng);
     const state = bidderState({
       roster: roster as RosterPlayer[],
       needs: candidate.needs,
@@ -1353,17 +1560,21 @@ export async function runInSeasonSignings(opts: {
       maxDisplace: FREE_AGENCY.IN_SEASON.MAX_DISPLACE,
     });
     const open = board.filter((p) => !taken.has(p.id));
-    const plan = planTeamBids(open, state, (fa, capSpace) => maxOffer(
-      fa as unknown as RosterPlayer, { profile, needs: candidate.needs, capSpace, rng },
-    ));
+    const plan = planTeamBids(open, state, (fa, capSpace) => {
+      // The same stable matchup seed the offseason wave and the panel's rumour
+      // use. What a club would put on a man is a fact about the pair of them,
+      // not about which of the three code paths happened to ask.
+      const bidRng = new Rng(`fa-bid-${fa.id}-${team.id}`);
+      return maxOffer(fa as unknown as RosterPlayer, {
+        profile: parseGmProfile(team.gmProfile, bidRng), needs: candidate.needs, capSpace, rng: bidRng,
+      });
+    }, deals);
     // The top of ITS board, not the whole plan. A club fills a hole this week;
     // it does not run a wave of its own.
     for (const bid of plan.slice(0, FREE_AGENCY.IN_SEASON.MAX_SIGNINGS_PER_CLUB)) {
-      const player = board.find((p) => p.id === bid.playerId)!;
-      // Regular-season deals run to the end of this year and no further — see
-      // TERM above. Preseason is still the offseason as far as a contract is
-      // concerned.
-      const years = phase === 'REGULAR' ? 1 : suggestedYears(player.trueOvr, player.age);
+      // Term and guaranteed share off the same deal its floor was priced for.
+      const deal = deals.get(bid.playerId)!;
+      const years = deal.years;
       try {
         if (bid.displacePlayerId) {
           // Identical to the wave's own swap check, and for the same reason:
@@ -1382,6 +1593,7 @@ export async function runInSeasonSignings(opts: {
         await signFreeAgent({
           leagueId, playerId: bid.playerId, teamId: team.id, apy: Math.round(bid.offer),
           years, seasonYear, capMode: settings.capMode, week,
+          guaranteedPct: deal.guaranteePct,
         });
         taken.add(bid.playerId);
         signings += 1;
@@ -1410,10 +1622,10 @@ export async function runInSeasonSignings(opts: {
  * nothing beyond this season. User teams are never touched — filling the
  * human's roster is the "Fill Roster" button's job, on his own click.
  *
- * WHAT A MINIMUM-SALARY DEAL MAY BUY. This was the one signing path in the
- * game that ignored MARKET_FLOOR — it offered CAP.MIN_SALARY and took whoever
- * was best, so a short club bought the best free agent in football for the
- * league minimum. Because it also runs BEFORE the wave and before the user
+ * WHAT A MINIMUM-SALARY DEAL MAY BUY. This is still the one signing path in
+ * the game that does not ask whether the man would accept — it offers
+ * CAP.MIN_SALARY and takes whoever is best, so a short club used to buy the
+ * best free agent in football for the league minimum. Because it also runs BEFORE the wave and before the user
  * ever sees the free-agency screen, it emptied the market from the top down:
  * measured, the first offseason's pool went 91 players to 15 and its best
  * available went 85 OVR to 57 in a single step, with nothing on screen in
@@ -1719,11 +1931,19 @@ export async function resolveNegotiationSession(opts: {
     // the panel and pressing the button from silently re-pricing a
     // negotiation the meter had already described.
     signBandMult: signBandMultFor(skills),
-    // Seeded on the matchup and the league year — NOT the clock. Re-opening
-    // the panel, refreshing the page or submitting an offer all rebuild the
-    // identical man with the identical asking price; only the season rolling
-    // over gives him a new read on himself.
-    rng: new Rng(`nego-${playerId}-${teamId}-${seasonYear}`),
+    // Seeded on the MAN and the league year — not the clock, and no longer the
+    // club. Re-opening the panel, refreshing the page or submitting an offer
+    // all rebuild the identical man with the identical asking price; only the
+    // season rolling over gives him a new read on himself.
+    //
+    // The team came out of this seed when the AI started asking the same model
+    // (`marketContextFor`). His personality, the years he wants and the wobble
+    // on his price are facts about HIM: a floor the sealed-bid wave enforces
+    // and a meter the user's panel draws cannot be about two different men and
+    // still be one acceptance model. What a club changes is priced separately
+    // and always was — loyalty, years of control, a ring-chaser's read on the
+    // roster all live in `clubDiscount` — so nothing club-specific is lost.
+    rng: new Rng(`nego-${playerId}-${seasonYear}`),
   });
 
   // Cap room. An extension credits back the deal it replaces, exactly as
@@ -2111,16 +2331,14 @@ async function loseToCompetingBid(opts: {
   const capMode = opts.settings.capMode;
   const competing = await leadingCompetingBid(opts.leagueId, opts.playerId, opts.teamId, opts.seasonYear, opts.settings);
   if (!competing) return null;
-  const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId } });
   try {
     await signFreeAgent({
       leagueId: opts.leagueId, playerId: opts.playerId, teamId: competing.teamId,
-      apy: competing.apy, years: suggestedYears(player.trueOvr, player.age),
-      // Stated rather than defaulted: this is the deal the panel promised he
-      // would get if he walked, so it is written with the share the panel
-      // quoted. Same value `buildContract` would have used anyway — the point
-      // is that changing one now changes both.
-      guaranteedPct: AI_GUARANTEE_PCT,
+      // Read off the bid itself rather than rebuilt: this is the deal the panel
+      // promised he would get if he walked — the term and the guaranteed share
+      // `aiDealFor` priced his floor for — so it is written exactly as it was
+      // quoted. Changing what a club offers now changes both.
+      apy: competing.apy, years: competing.years, guaranteedPct: competing.guaranteePct,
       seasonYear: opts.seasonYear, capMode, week: opts.week,
     });
   } catch {
