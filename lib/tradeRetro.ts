@@ -103,6 +103,15 @@ export interface TradeRetrospective {
   aValueNow: number | null; // null if any asset on this side is still pending
   bValueNow: number | null;
   pending: boolean;
+  /**
+   * How much MORE A's return has grown than B's, as a share of what each was
+   * worth on the day. Null while the trade is pending. This is the exact
+   * figure `verdict` is written from — anything RANKING trades by who did
+   * better (the GM career page's best/worst deal) must read this rather than
+   * recompute a growth comparison of its own, or a panel headed "best deal"
+   * can end up sitting over a verdict that names the other club.
+   */
+  growthGap: number | null;
   verdict: string;
 }
 
@@ -135,22 +144,65 @@ function sideValue(outcomes: AssetOutcome[]): number | null {
   return outcomes.reduce((s, o) => s + (o.currentValue ?? 0), 0);
 }
 
-function buildVerdict(r: Pick<TradeRetrospective, 'teamAAbbr' | 'teamBAbbr' | 'aValueThen' | 'bValueThen' | 'aValueNow' | 'bValueNow' | 'pending'>): string {
-  if (r.aValueNow === null || r.bValueNow === null) {
-    return 'Too early to call — at least one future pick from this trade hasn\'t been used yet.';
-  }
-  // Grade by how each side's return GREW relative to what it was worth at
-  // the time, not just who has more total value now (a side that took on
-  // a strict star already "won" the day of the trade — this highlights
-  // whether that lead grew, shrank, or flipped since).
+/** Inside this band the two returns are called even rather than graded. */
+const EVEN_BAND = 0.08;
+/** Past this the edge is called lopsided rather than an edge. */
+const LOPSIDED_BAND = 0.35;
+
+/**
+ * Grade by how each side's return GREW relative to what it was worth at the
+ * time, not just who has more total value now (a side that took on a straight
+ * star already "won" the day of the trade — this highlights whether that lead
+ * grew, shrank, or flipped since).
+ *
+ * Positive favours A, negative favours B. Null while either side still holds
+ * an unused pick, which is the one state that cannot be graded at all.
+ */
+function computeGrowthGap(r: Pick<TradeRetrospective, 'aValueThen' | 'bValueThen' | 'aValueNow' | 'bValueNow'>): number | null {
+  if (r.aValueNow === null || r.bValueNow === null) return null;
   const aGrowth = r.aValueThen > 0 ? (r.aValueNow - r.aValueThen) / r.aValueThen : 0;
   const bGrowth = r.bValueThen > 0 ? (r.bValueNow - r.bValueThen) / r.bValueThen : 0;
-  const gap = aGrowth - bGrowth;
-  if (Math.abs(gap) < 0.08) return 'A fair trade — both returns have held up about the same since.';
+  return aGrowth - bGrowth;
+}
+
+function buildVerdict(r: Pick<TradeRetrospective, 'teamAAbbr' | 'teamBAbbr'>, gap: number | null): string {
+  if (gap === null) {
+    return 'Too early to call — at least one future pick from this trade hasn\'t been used yet.';
+  }
+  if (Math.abs(gap) < EVEN_BAND) return 'A fair trade — both returns have held up about the same since.';
   const winner = gap > 0 ? r.teamAAbbr : r.teamBAbbr;
   const loser = gap > 0 ? r.teamBAbbr : r.teamAAbbr;
-  const magnitude = Math.abs(gap) >= 0.35 ? 'lopsided win' : 'edge';
+  const magnitude = Math.abs(gap) >= LOPSIDED_BAND ? 'lopsided win' : 'edge';
   return `${winner} has the ${magnitude} here — their return has outgained ${loser}'s since the deal.`;
+}
+
+/**
+ * The grading gap from ONE team's point of view: positive means that club's
+ * return has outgrown what it gave up, negative means it hasn't. Null while
+ * the deal is ungradable. Sort a career's trades on this and the top and
+ * bottom of the list are, by construction, the deals the verdicts already
+ * call his best and his worst.
+ */
+export function retroEdgeFor(r: Pick<TradeRetrospective, 'teamAAbbr' | 'growthGap'>, abbr: string): number | null {
+  if (r.growthGap === null) return null;
+  return r.teamAAbbr === abbr ? r.growthGap : -r.growthGap;
+}
+
+/**
+ * The same three-way call the verdict sentence makes, off the same gap and
+ * the same band, for a club that wants it as a value rather than as prose.
+ * A surface that wants to CLAIM a trade — the GM card's best deal — must gate
+ * on this, or it can end up boasting about a deal the verdict beneath it
+ * calls fair.
+ */
+export function retroOutcomeFor(
+  r: Pick<TradeRetrospective, 'teamAAbbr' | 'growthGap'>,
+  abbr: string,
+): 'WON' | 'LOST' | 'EVEN' | 'PENDING' {
+  const edge = retroEdgeFor(r, abbr);
+  if (edge === null) return 'PENDING';
+  if (Math.abs(edge) < EVEN_BAND) return 'EVEN';
+  return edge > 0 ? 'WON' : 'LOST';
 }
 
 export async function buildTradeRetrospectives(leagueId: string, teamId: string, capMode: CapMode, currentYear: number): Promise<TradeRetrospective[]> {
@@ -179,10 +231,11 @@ export async function buildTradeRetrospectives(leagueId: string, teamId: string,
     const aValueNow = sideValue(bToA);
     const bValueNow = sideValue(aToB);
     const pending = aValueNow === null || bValueNow === null;
-    const verdict = buildVerdict({ teamAAbbr: rec.teamAAbbr, teamBAbbr: rec.teamBAbbr, aValueThen, bValueThen, aValueNow, bValueNow, pending });
+    const growthGap = computeGrowthGap({ aValueThen, bValueThen, aValueNow, bValueNow });
+    const verdict = buildVerdict({ teamAAbbr: rec.teamAAbbr, teamBAbbr: rec.teamBAbbr }, growthGap);
     out.push({
       id: rec.id, seasonYear: rec.seasonYear, week: rec.week, teamAAbbr: rec.teamAAbbr, teamBAbbr: rec.teamBAbbr,
-      aToB, bToA, aValueThen, bValueThen, aValueNow, bValueNow, pending, verdict,
+      aToB, bToA, aValueThen, bValueThen, aValueNow, bValueNow, pending, growthGap, verdict,
     });
   }
   return out;

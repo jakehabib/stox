@@ -31,6 +31,16 @@ export interface GmAward {
   year: number;
 }
 
+export interface GmSignaturePick {
+  playerId: string;
+  name: string;
+  position: string;
+  /** Current true rating — the same figure the hit-rate bar is measured against. */
+  ovr: number;
+  round: number;
+  year: number;
+}
+
 /**
  * A trade transaction carries no teamId — both sides live on one row, encoded
  * in the headline as "Trade: {abbrA} <-> {abbrB}". Anything counting a team's
@@ -59,6 +69,13 @@ export interface GmCareerSummary {
   draftHitRate: number | null;
   avgDeadMoneyPerYear: number;
   tagsUsed: number;
+  /**
+   * The best player this GM has drafted — highest current rating out of the
+   * SAME set of used picks `draftPicksMade` and `draftHitRate` are counted
+   * from, so the name here can never be a pick the hit rate says he didn't
+   * make. Null before he's used a pick.
+   */
+  signaturePick: GmSignaturePick | null;
   awards: GmAward[];
   /**
    * All-Stars produced during this tenure — the honour players EARNED from
@@ -83,6 +100,17 @@ const AWARD_LABEL: Record<string, string> = {
   AWARD_DPOY: 'Defensive Player of the Year',
   AWARD_ROTY: 'Rookie of the Year',
   AWARD_SBMVP: 'Championship MVP',
+};
+
+/**
+ * How a stored `playoffResult` is spelled anywhere it is shown to a GM. One
+ * map, exported, because the career page's season log and the GM card both
+ * print it and two copies would eventually spell the same enum two ways on
+ * two surfaces describing the same season.
+ */
+export const PLAYOFF_RESULT_LABEL: Record<string, string> = {
+  MISSED: 'Missed Playoffs', WILDCARD: 'Lost Wild Card', DIVISIONAL: 'Lost Divisional',
+  CONFERENCE: 'Lost Conference', RUNNER_UP: 'Runner-Up', CHAMPION: 'Champion',
 };
 
 // Playoff results ranked best-to-worst so "best season" picks the deepest run.
@@ -122,7 +150,7 @@ export async function buildGmCareerSummary(
     prisma.transaction.findMany({ where: { leagueId, type: 'TRADE' }, select: { headline: true } }),
     prisma.draftPick.findMany({
       where: { leagueId, ownerTeamId: team.id, used: true, playerId: { not: null } },
-      select: { round: true, player: { select: { trueOvr: true } } },
+      select: { round: true, year: true, player: { select: { id: true, firstName: true, lastName: true, position: true, trueOvr: true } } },
     }),
     prisma.capCharge.findMany({ where: { teamId: team.id, year: { gte: hiredIn } }, select: { year: true, amount: true } }),
     prisma.transaction.count({ where: { leagueId, type: 'TAG', teamId: team.id } }),
@@ -172,6 +200,26 @@ export async function buildGmCareerSummary(
     if (dp.player && dp.player.trueOvr >= hitThreshold(dp.round)) draftHits++;
   }
   const draftPicksMade = draftPicks.length;
+
+  // The one pick a GM would name if you asked him. Ranked on the same
+  // `trueOvr` the hit bar above uses, off the same rows, so "42 of 56 hit"
+  // and "his best pick" can never be drawn from two different pick sets.
+  // Ties break to the later round and then the earlier year — finding a 90
+  // in the sixth beats finding one first overall, and having done it longer
+  // ago beats having just done it.
+  const bestPick = [...draftPicks]
+    .filter((dp): dp is typeof dp & { player: NonNullable<typeof dp.player> } => dp.player !== null)
+    .sort((a, b) => b.player.trueOvr - a.player.trueOvr || b.round - a.round || a.year - b.year)[0];
+  const signaturePick: GmSignaturePick | null = bestPick
+    ? {
+      playerId: bestPick.player.id,
+      name: `${bestPick.player.firstName} ${bestPick.player.lastName}`,
+      position: bestPick.player.position,
+      ovr: bestPick.player.trueOvr,
+      round: bestPick.round,
+      year: bestPick.year,
+    }
+    : null;
   // Below 5 picks the hit rate is too noisy to badge off of either way.
   const draftHitRate = draftPicksMade >= 5 ? draftHits / draftPicksMade : null;
 
@@ -190,7 +238,7 @@ export async function buildGmCareerSummary(
 
   return {
     tenureYears, firstYear, wins, losses, ties, playoffAppearances, championships, runnerUps, bestSeason,
-    trades, draftPicksMade, draftHits, draftHitRate, avgDeadMoneyPerYear, tagsUsed: tagCount, awards,
+    trades, draftPicksMade, draftHits, draftHitRate, avgDeadMoneyPerYear, tagsUsed: tagCount, signaturePick, awards,
     allStars, badges,
   };
 }

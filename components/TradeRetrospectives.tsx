@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { TradeRetrospective, AssetOutcome } from '@/lib/tradeRetro';
 
 function AssetLine({ o }: { o: AssetOutcome }) {
@@ -23,13 +24,38 @@ function ValueDelta({ then, now }: { then: number; now: number | null }) {
   );
 }
 
-export function TradeRetrospectives({ myAbbr, retrospectives }: { myAbbr: string; retrospectives: TradeRetrospective[] }) {
+/**
+ * One renderer, two homes. The trade screen shows every deal in the order they
+ * were made; the GM career page shows the two ends of the same graded list.
+ * Both read the SAME `TradeRetrospective` rows and print the SAME `verdict`
+ * string off them — the career page's ranking comes from `retroEdgeFor`, which
+ * is the very number that verdict is written from, so a card headed "Best of
+ * seven" can never sit above a sentence naming the other club. That is exactly
+ * what a second renderer here would eventually get wrong, hence the props.
+ */
+export function TradeRetrospectives({ myAbbr, retrospectives, title = 'Trade Retrospectives', lede, labels, action }: {
+  myAbbr: string;
+  retrospectives: TradeRetrospective[];
+  /** Panel heading. The career page names its cut ("Best & Worst Deals"). */
+  title?: string;
+  /** Replaces the first sentence of the standfirst only. The second sentence
+   *  — what these figures are priced against — is not optional anywhere. */
+  lede?: string;
+  /** Per-row tag, keyed by retrospective id. A RANKING ("Best of 7"), never a
+   *  verdict: the verdict is the row's own sentence and there is only one. */
+  labels?: Record<string, string>;
+  /** Trailing control on the header row — the career page links to the full list. */
+  action?: ReactNode;
+}) {
   if (retrospectives.length === 0) return null;
 
   return (
     <div className="panel overflow-hidden">
       <div className="px-4 py-3 border-b border-line">
-        <div className="font-semibold text-sm">Trade Retrospectives</div>
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="font-semibold text-sm">{title}</div>
+          {action}
+        </div>
         {/* THE TWO NUMBERS ARE NOT THE SAME NUMBER, AND THE PAGE HAS TO SAY SO.
             These figures price both sides on the open market, with none of the
             buyer's need premium in them — see NEUTRAL_PROFILE in
@@ -39,9 +65,9 @@ export function TradeRetrospectives({ myAbbr, retrospectives }: { myAbbr: string
             looking at two honest answers to two different questions, and
             without this sentence has no way to know that. */}
         <div className="text-xs text-muted mt-0.5">
-          Every trade you&apos;ve made, graded by how the return has held up since. Both sides are priced on the open
-          market — not by what either club happened to need that week, which is what the acceptance meter measures
-          when you make the deal.
+          {lede ?? 'Every trade you\u2019ve made, graded by how the return has held up since.'} Both sides are priced on
+          the open market — not by what either club happened to need that week, which is what the acceptance meter
+          measures when you make the deal.
         </div>
       </div>
       <div className="divide-y divide-line/60">
@@ -60,7 +86,12 @@ export function TradeRetrospectives({ myAbbr, retrospectives }: { myAbbr: string
           return (
             <div key={r.id} className="px-4 py-3 space-y-2.5">
               <div className="flex items-center justify-between flex-wrap gap-1">
-                <div className="text-xs text-muted font-mono">{r.seasonYear} · Wk {r.week} · vs {partnerAbbr}</div>
+                <div className="flex items-center gap-2 min-w-0">
+                  {labels?.[r.id] && (
+                    <span className="pill border-line text-[10px] text-muted uppercase tracking-wider">{labels[r.id]}</span>
+                  )}
+                  <span className="text-xs text-muted font-mono">{r.seasonYear} · Wk {r.week} · vs {partnerAbbr}</span>
+                </div>
                 <div className={`text-xs font-medium ${youWon ? 'text-accent' : youLost ? 'text-bad' : 'text-muted'}`}>{r.verdict}</div>
               </div>
               <div className="grid sm:grid-cols-2 gap-3">

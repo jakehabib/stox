@@ -1,20 +1,32 @@
 import { getLeagueContext } from '@/lib/league-data';
-import { buildGmCareerSummary, tradeInvolves } from '@/lib/gmCareer';
+import { buildGmCareerSummary, tradeInvolves, PLAYOFF_RESULT_LABEL as RESULT_LABEL } from '@/lib/gmCareer';
+import { buildTradeRetrospectives, retroEdgeFor, retroOutcomeFor, type TradeRetrospective } from '@/lib/tradeRetro';
+import { buildDynastyState } from '@/lib/dynasty';
 import { formatMoney } from '@/lib/cap';
 import { TeamLogo } from '@/components/TeamLogo';
+import { TradeRetrospectives } from '@/components/TradeRetrospectives';
+import { GmCard } from '@/components/ds/GmCard';
+import { GmCardReveal } from '@/components/GmCardReveal';
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
 
-const RESULT_LABEL: Record<string, string> = {
-  MISSED: 'Missed Playoffs', WILDCARD: 'Lost Wild Card', DIVISIONAL: 'Lost Divisional',
-  CONFERENCE: 'Lost Conference', RUNNER_UP: 'Runner-Up', CHAMPION: 'Champion',
-};
+/**
+ * What a graded deal's return is called on the GM card — the first two assets
+ * that actually came back, off the SAME row the panel below prints in full.
+ */
+function receivedSummary(r: TradeRetrospective, myAbbr: string): string {
+  const mine = r.teamAAbbr === myAbbr ? r.bToA : r.aToB;
+  const names = mine.map((o) => o.label);
+  if (names.length === 0) return 'Cap relief';
+  if (names.length <= 2) return names.join(' + ');
+  return `${names.slice(0, 2).join(' + ')} +${names.length - 2} more`;
+}
 
 export default async function GmCareerPage({ params }: { params: { id: string } }) {
-  const { league, userTeam } = await getLeagueContext(params.id);
+  const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
   const s = await buildGmCareerSummary(league.id, team, league.seasonYear);
 
@@ -23,7 +35,7 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
   // than placeholders: the season log (including the season in progress, which
   // has no TeamSeasonRecord row yet) and the ledger of moves they've made.
   const MOVE_TYPES = ['SIGN', 'CUT', 'DRAFT', 'TAG'];
-  const [seasonRecords, ownMoves, moveCounts, tradeRows] = await Promise.all([
+  const [seasonRecords, ownMoves, moveCounts, tradeRows, retrospectives, dynasty, owner] = await Promise.all([
     // Bounded on the hire year, exactly as lib/gmCareer.ts bounds the same
     // table. Unbounded, a first-year GM's "1 season" header sat above nine
     // rows of seeded franchise history he had nothing to do with.
@@ -46,12 +58,61 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
       where: { leagueId: league.id, type: 'TRADE' },
       orderBy: [{ seasonYear: 'desc' }, { createdAt: 'desc' }],
     }),
+    // The same call the trade screen makes, so the two screens grade the same
+    // deals the same way — this page just takes a different cut of the result.
+    buildTradeRetrospectives(league.id, team.id, settings.capMode, league.seasonYear),
+    // The GM card's Dynasty level is the Dynasty screen's own figure, not a
+    // second reading of the same history.
+    buildDynastyState(league.id),
+    league.userId
+      ? prisma.user.findUnique({ where: { id: league.userId }, select: { username: true } })
+      : Promise.resolve(null),
   ]);
   const myTrades = tradeRows.filter((t) => tradeInvolves(t.headline, team.abbr));
   const countOf = (t: string) => (t === 'TRADE' ? myTrades.length : moveCounts.find((m) => m.type === t)?._count ?? 0);
   const moves = [...ownMoves, ...myTrades]
     .sort((a, b) => b.seasonYear - a.seasonYear || b.createdAt.getTime() - a.createdAt.getTime())
     .slice(0, 14);
+
+  // A CAREER page wants the two ends of the whole body of work, not the last
+  // four deals — the trade screen already shows every one of them in order.
+  // The ranking is `retroEdgeFor`, which returns the very number each row's
+  // verdict sentence is written from (lib/tradeRetro.ts), so the "best of"
+  // tag and the sentence under it cannot come apart. A deal with a pick still
+  // on the board has no grade at all and is not rankable; when nothing can be
+  // graded yet the panel falls back to the most recent deals, which is the
+  // only honest thing left to show.
+  const graded = retrospectives
+    .map((r) => ({ r, edge: retroEdgeFor(r, team.abbr) }))
+    .filter((x): x is { r: TradeRetrospective; edge: number } => x.edge !== null)
+    .sort((a, b) => b.edge - a.edge);
+  const careerDeals: TradeRetrospective[] = graded.length >= 2
+    ? [graded[0].r, graded[graded.length - 1].r]
+    : graded.length === 1
+      ? [graded[0].r]
+      : retrospectives.slice(0, 2);
+  const dealLabels: Record<string, string> = graded.length >= 2
+    ? { [graded[0].r.id]: `Best of ${graded.length}`, [graded[graded.length - 1].r.id]: `Worst of ${graded.length}` }
+    : {};
+  const dealsLede = graded.length >= 2
+    ? `Your best and your worst, out of ${graded.length} deals old enough to grade.`
+    : graded.length === 1
+      ? 'The one deal of yours old enough to grade so far.'
+      : 'None of your deals can be graded yet — each still has a pick on the board.';
+
+  // The card's best deal is the SAME row the panel tags "Best of n" — one
+  // ranking, read twice, never computed twice. It is only CLAIMED when the
+  // verdict itself calls that deal a win: a card boasting "Best Deal" over a
+  // trade the panel below grades as fair is the same figure saying two
+  // things. A GM whose best deal was merely fair gets his best season there
+  // instead.
+  const bestDeal = graded.length > 0 && retroOutcomeFor(graded[0].r, team.abbr) === 'WON'
+    ? {
+      year: graded[0].r.seasonYear,
+      partnerAbbr: graded[0].r.teamAAbbr === team.abbr ? graded[0].r.teamBAbbr : graded[0].r.teamAAbbr,
+      received: receivedSummary(graded[0].r, team.abbr),
+    }
+    : null;
 
   // The header beside this table reads `s.tenureYears`, which is
   // seasons-on-file plus the one in progress. Row count has to match it.
@@ -71,16 +132,34 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
         }}
       >
         <TeamLogo seed={team.id} abbr={team.abbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
-        <div className="relative flex items-center gap-4 px-6 py-5">
-          <TeamLogo seed={team.id} abbr={team.abbr} size={48} />
-          <div>
-            <div className="label-sm">GM Career</div>
-            <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none mt-1 text-team">
-              {team.city} {team.nickname}
+        <div className="relative flex flex-wrap items-center justify-between gap-4 px-6 py-5">
+          <div className="flex items-center gap-4 min-w-0">
+            <TeamLogo seed={team.id} abbr={team.abbr} size={48} />
+            <div>
+              <div className="label-sm">GM Career</div>
+              <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none mt-1 text-team">
+                {team.city} {team.nickname}
+              </div>
+              <p className="text-muted text-sm mt-1.5">
+                On the job since {s.firstYear} — {s.tenureYears} season{s.tenureYears === 1 ? '' : 's'} and counting.
+              </p>
             </div>
-            <p className="text-muted text-sm mt-1.5">
-              On the job since {s.firstYear} — {s.tenureYears} season{s.tenureYears === 1 ? '' : 's'} and counting.
-            </p>
+          </div>
+          {/* Everything the card prints is handed to it from this page's own
+              summary — it is a second VIEW of these numbers, never a second
+              source for them. */}
+          <div className="shrink-0">
+            <GmCardReveal>
+              <GmCard
+                team={team}
+                leagueName={league.name}
+                seasonYear={league.seasonYear}
+                gmName={owner?.username ?? null}
+                summary={s}
+                dynastyLevel={dynasty.level.level}
+                bestDeal={bestDeal}
+              />
+            </GmCardReveal>
           </div>
         </div>
       </div>
@@ -249,6 +328,21 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
           </div>
         </div>
       </div>
+
+      {careerDeals.length > 0 && (
+        <TradeRetrospectives
+          myAbbr={team.abbr}
+          retrospectives={careerDeals}
+          title="The Deals That Defined You"
+          lede={dealsLede}
+          labels={dealLabels}
+          action={
+            <Link href={`/league/${league.id}/trade`} className="text-xs text-accent2 hover:underline shrink-0">
+              Every deal →
+            </Link>
+          }
+        />
+      )}
 
       {s.allStars.entries.length > 0 && (
         <div className="panel overflow-hidden">
