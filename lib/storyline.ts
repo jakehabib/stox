@@ -431,13 +431,30 @@ export async function generateStorylines(leagueId: string, teamId: string, opts:
   const rng = new Rng(`${leagueId}-${teamId}-${league.seasonYear}-${league.week}-storyline`);
 
   const inSeason = league.phase === 'REGULAR' || league.phase === 'PLAYOFFS';
+  // MILESTONE and PLAYER_ARC are IN-SEASON threads and are gated as such.
+  // Both are written in the present progressive off Player.seasonStats — "is
+  // 40 yards from 1,000 this season", "is off his career pace", "is a breakout
+  // rookie" — and seasonStats is not cleared until the offseason rollover, so
+  // through the OFFSEASON phase they went on being generated about a season
+  // that had already finished. Two things were wrong with that and only the
+  // first is about this file: a man cannot be closing in on a milestone in a
+  // season that is over, and he had already either got there or not.
+  //
+  // The second is that the dashboard now carries the season review
+  // (lib/seasonReview.ts) in exactly that phase, which reaches a considered
+  // verdict on the same players from the same year's games — so "X is off his
+  // career pace" sat three inches above "X had the best year of his career",
+  // both true of different windows and reading as a bug. A beat and a verdict
+  // about one man's one season must not appear on one screen disagreeing.
+  // RECORD_CHASE is deliberately left alone: it is about the all-time book
+  // rather than about this season, and it reads correctly in any phase.
   const [stakes, streak, rivalry, records, milestones, arcs] = await Promise.all([
     league.phase === 'REGULAR' ? stakesStoryline(leagueId, teamId) : Promise.resolve(null),
     inSeason ? streakStoryline(leagueId, teamId, league.seasonYear, rng) : Promise.resolve(null),
     inSeason ? rivalryStoryline(leagueId, teamId, rng) : Promise.resolve(null),
     recordChaseStorylines(leagueId, teamId),
-    milestoneStorylines(leagueId, teamId),
-    playerArcStorylines(leagueId, teamId),
+    inSeason ? milestoneStorylines(leagueId, teamId) : Promise.resolve([]),
+    inSeason ? playerArcStorylines(leagueId, teamId) : Promise.resolve([]),
   ]);
 
   const all = [stakes, streak, rivalry, ...records, ...milestones, ...arcs].filter((s): s is Storyline => s !== null);

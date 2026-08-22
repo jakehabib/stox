@@ -54,6 +54,22 @@ import type { DynastyScoutMods } from './dynasty';
  * site that says nothing gets true ratings. The draft-facing call sites pass
  * `isProspect: player.isDraftee` and keep every range they had.
  *
+ * THE THREE TIERS, in full. Potential is the one thing that is not simply
+ * on or off, because a ceiling is a forecast even for a man with tape:
+ *
+ *   YOUR OWN ROSTER   current: exact   potential: exact
+ *   OTHER PROS        current: exact   potential: +/-5, flat and permanent
+ *   DRAFT PROSPECTS   current: fogged  potential: fogged, narrows with work
+ *
+ * The middle row is the app owner's, verbatim: *"Exact for your current team
+ * members, +/- 5 point ranges for other pros not on your team and we just
+ * leave it at that."* Read the last clause literally — POT_FLAT_HALF_BAND
+ * does not move with confidence, with a scouting report, with a Dynasty rank
+ * or with the calendar. It is not fog; it is the honest statement that you
+ * know your own players' ceilings because you coach them every day and you do
+ * not know another club's because you do not. Threading confidence into it
+ * would be re-introducing exactly the machinery this change removed.
+ *
  * The machinery below is untouched and still exact — this is one boolean at
  * the top of one function, so pointing it at another surface later is a
  * one-line change rather than an archaeology project.
@@ -83,8 +99,19 @@ export interface ScoutedPlayerView {
   potHigh: number;
   confidence: number;
   attrs: ScoutedAttr[];
-  /** True when the numbers shown ARE the true values. */
+  /**
+   * True when the ATTRIBUTES and OVR shown are the true values. Says nothing
+   * about potential — an established pro on another roster is `revealed` and
+   * still carries a potential band. Read `potentialRevealed` for that.
+   */
   revealed: boolean;
+  /**
+   * True only when potLow === potHigh === his real ceiling. That is your own
+   * roster, a Full Scout, or a league with the fog switched off — nothing
+   * else. Every potential-rendering site branches on THIS, not on `revealed`;
+   * using `revealed` there is what would print another club's exact ceiling.
+   */
+  potentialRevealed: boolean;
   /** Scout's plain-language read. */
   notes: string;
 }
@@ -137,6 +164,33 @@ export function observe(
     out[POTENTIAL_OBS_KEY] = clamp(Math.round(rng.normal(truePotential, sd)), 40, 99);
   }
   return out;
+}
+
+/**
+ * [TUNE] Half-width of the flat potential band shown for an established
+ * professional who is not on your roster. Ten points wide, always.
+ */
+export const POT_FLAT_HALF_BAND = 5;
+/** The scale a displayed potential band is allowed to live on. */
+const POT_SCALE_MIN = 40;
+const POT_SCALE_MAX = 99;
+
+/**
+ * The +/-5 band for another club's player, made boundary-safe.
+ *
+ * The naive `[p-5, p+5]` clamped to the scale LEAKS at both ends: a ceiling of
+ * 99 would render 94-99, and a six-point band where every other player shows
+ * ten tells the reader he is at the very top — the one thing the band exists
+ * to avoid saying. So the window SHIFTS instead of truncating. Its width is
+ * constant at 2 * POT_FLAT_HALF_BAND, and near the ends several different
+ * ceilings map to the same band (a 94 and a 99 both read 89-99), which is
+ * strictly more ambiguity than the middle of the scale, never less.
+ */
+export function flatPotentialBand(potential: number): { low: number; high: number } {
+  const width = POT_FLAT_HALF_BAND * 2;
+  const truth = clamp(Math.round(potential), POT_SCALE_MIN, POT_SCALE_MAX);
+  const low = clamp(truth - POT_FLAT_HALF_BAND, POT_SCALE_MIN, POT_SCALE_MAX - width);
+  return { low, high: low + width };
 }
 
 /**
@@ -196,14 +250,28 @@ export function buildScoutedView(args: {
     (args.isOwnRoster && !settings.fogOnOwnRoster);
 
   if (fullyRevealed) {
+    // POTENTIAL IS THE ONE THING STILL WITHHELD FROM A REVEALED PLAYER.
+    // You know your own men's ceilings — you coach them. A rival's ceiling is
+    // a forecast you are not in the building for, so it comes back as a flat
+    // ten-point band. Own roster, a Full Scout, or fog switched off league-
+    // wide are the three ways to see it exactly.
+    const ownCeiling =
+      fullScouted || settings.revealTrueRatings || !settings.scoutingEnabled || args.isOwnRoster === true;
+    // Still a range in the degenerate case rather than a second return shape:
+    // the invariant every caller relies on is "potLow/potHigh always exist",
+    // and it has been broken twice by code paths that returned something else.
+    const pot = ownCeiling
+      ? { low: args.potential, high: args.potential }
+      : flatPotentialBand(args.potential);
     return {
       scoutedOvr: trueOvr,
       ovrLow: trueOvr,
       ovrHigh: trueOvr,
-      potLow: args.potential,
-      potHigh: args.potential,
+      potLow: pot.low,
+      potHigh: pot.high,
       confidence: 100,
       revealed: true,
+      potentialRevealed: ownCeiling,
       notes: fullScouted
         ? 'Full Scout: your staff dropped everything and put a complete, exact file together on this player.'
         : notAProspect
@@ -284,10 +352,14 @@ export function buildScoutedView(args: {
     scoutedOvr: computeOverall(position, centerMap),
     ovrLow: computeOverall(position, lowMap),
     ovrHigh: computeOverall(position, highMap),
-    potLow: clamp(Math.round(potCenter - potBand), 40, 99),
-    potHigh: clamp(Math.round(potCenter + potBand), 40, 99),
+    potLow: clamp(Math.round(potCenter - potBand), POT_SCALE_MIN, POT_SCALE_MAX),
+    potHigh: clamp(Math.round(potCenter + potBand), POT_SCALE_MIN, POT_SCALE_MAX),
     confidence,
     revealed: false,
+    // A prospect's ceiling is the hardest number in the game to know and is
+    // never exact — not at 99 confidence, not with every Dynasty rank bought.
+    // Only Full Scout collapses it, and that takes the branch above.
+    potentialRevealed: false,
     attrs,
     notes: args.report?.notes || scoutNote(confidence),
   };

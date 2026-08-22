@@ -26,12 +26,39 @@ import { AGE_CURVE, DEV_TRAIT_MULT, POSITION_AGE_PROFILE, DEFAULT_AGE_PROFILE, P
  *   SPENT SKILL POINTS and LIMITED-USE CHARGES are the only persisted state
  *   (DynastyProfile). Those genuinely cannot be derived from anything else.
  *
- * WHAT SKILLS MAY DO. Informational and quality-of-life only. Nothing here
- * touches a player's ratings, a development roll, a sim result or an AI
- * team's willingness to accept a trade. A level-50 GM and a level-1 GM play
- * the same football universe; the level-50 GM just sees more of it. That is
- * a hard design constraint, not a v1 shortcut — the moment a skill grants
- * +OVR, every franchise record in the save becomes incomparable.
+ * WHAT SKILLS MAY DO — THE RULE CHANGED, 2026-08. READ THIS BEFORE ADDING ONE.
+ *
+ * The old rule was "informational and quality-of-life only": nothing here
+ * could touch a development roll or a sim result, on the grounds that a
+ * level-50 GM and a level-1 GM had to play the same football universe or no
+ * franchise record in the save would be comparable.
+ *
+ * The app owner overruled it, in his own words: *"development tree should be
+ * +5% exp gained to players, 10% and 15% maxed out"* and *"the negotiating
+ * tree should be about signings. Each point up to the 3 abilities narrows the
+ * uncertainty band"*. Both of those are mechanical edges, not information. So
+ * the rule is now:
+ *
+ *   A skill MAY change a rate the GM's own front office plausibly controls —
+ *   how fast his players develop, how precisely his cap staff can read a
+ *   negotiation, how many prospects his scouts can work out. It MAY NOT
+ *   change a player's ratings directly, a game result, or what an AI team
+ *   will accept in a trade. Coaching is a front-office job; the scoreboard
+ *   is not.
+ *
+ * The comparability concern is real and is handled by SIZE rather than by
+ * prohibition: the biggest effect in the tree is +15% on a development roll
+ * whose mean is already a fraction of an OVR point per checkpoint. It is a
+ * thumb on the scale, not a cheat code. If a future skill cannot be justified
+ * at that size, it does not belong here.
+ *
+ * THE TREE IS A TREE. Within a branch, `requires` chains each skill to the
+ * one before it: the cheapest, weakest ability must be bought before the next
+ * unlocks (app/actions/dynasty.ts enforces it server-side; the Dynasty page
+ * renders a locked node with what unlocks it). This is the owner's rule —
+ * *"No matter what, it should be a TREE, so the weakest ability needs to be
+ * purchased first"* — and it is modelled explicitly rather than by array
+ * position, so reordering DYNASTY_SKILLS cannot silently reorder the tree.
  *
  * WHERE THE NUMBERS LIVE. All of them are in DYNASTY below, marked [TUNE].
  * Nothing outside this file hardcodes a Dynasty balance value.
@@ -186,6 +213,54 @@ export const DYNASTY = {
    * no skill, no estimate shown, same as today.
    */
   MARKET_BAND_PCT: [null, 0.14, 0.07] as (number | null)[],
+
+  /**
+   * [TUNE] NEGOTIATION — the "he might sign" band. The owner's brief:
+   * *"the negotiating tree should be about signings. Each point up to the 3
+   * abilities narrows the uncertainty band."*
+   *
+   * Indexed by TOTAL RANKS bought anywhere in the Negotiation branch (0..5),
+   * so it is literally "each point narrows it", not "one node owns it". The
+   * value multiplies lib/negotiation.ts's bandHalfWidthFor() output.
+   *
+   * WHY THIS BRANCH NEEDED A NEW JOB. bandHalfWidthFor reads scout
+   * confidence, and fog is now scoped to draft prospects (lib/scouting.ts), so
+   * every free agent negotiates at confidence 100 and the raw band is a
+   * constant 12 points below ACCEPT_INTEREST. Constant is the right answer for
+   * a man you can fully evaluate — but it left the mechanic with no source of
+   * variation at all. Skill is a better source than fog was: it varies by
+   * something the GM chose, and it never pretends not to know a rating it can
+   * plainly see.
+   *
+   * At 5 ranks the band is 12 * 0.55 = 6.6 -> 7 points, i.e. 83-90 instead of
+   * 78-90. Floored well above zero on purpose: a band that collapses to a
+   * point would turn negotiation into a solved equation.
+   */
+  SIGN_BAND_MULT: [1, 0.92, 0.84, 0.76, 0.66, 0.55],
+  /** Absolute floor, in interest points, on the narrowed band. Never zero — see above. */
+  SIGN_BAND_MIN: 5,
+
+  /**
+   * [TUNE] DEVELOPMENT — how much faster your players get better.
+   *
+   * The owner asked for "+5% / +10% / +15% exp gained". There is no XP
+   * quantity in this game and none was invented: lib/progression.ts models
+   * development as an age curve x dev trait x performance roll against the
+   * player's potential ceiling, and `speedMult` is a first-class parameter
+   * already threaded into the growth mean. These ARE that multiplier, so
+   * "+15%" means the growth mean is literally 1.15x. Index 0 is rank 0.
+   */
+  DEV_SPEED_MULT: [1, 1.05, 1.10, 1.15],
+
+  /**
+   * [TUNE] Development Focus charges granted per league year at the capstone
+   * rank of Coaching Staff. See Player.devFocus — a per-player growth
+   * multiplier that already existed, already fired, and had no way to be
+   * granted since the scouting focus-point economy it belonged to was cut.
+   * Three is deliberately fewer than a roster: the point is choosing which
+   * young player gets the coaching hours.
+   */
+  DEV_FOCUS_USES_PER_SEASON: 3,
   /** Round-scaled bar a drafted player must clear to count as a hit. Matches lib/gmCareer.ts so two screens never disagree about the same pick. */
   DRAFT_HIT_THRESHOLD: (round: number): number => (round === 1 ? 78 : round <= 3 ? 73 : round <= 5 ? 68 : 64),
 };
@@ -194,7 +269,13 @@ export const DYNASTY = {
 // Skill tree
 // ---------------------------------------------------------------------------
 
-export type DynastyBranch = 'SCOUTING' | 'NEGOTIATION' | 'DEVELOPMENT';
+/**
+ * SCOUTING was renamed DRAFT when fog of war was scoped to draft prospects
+ * (lib/scouting.ts). The branch's subject did not change — it was always
+ * about the board — but "Scouting" now names a room that only matters in the
+ * run-up to a draft, and the branch label has to say so.
+ */
+export type DynastyBranch = 'DRAFT' | 'DEVELOPMENT' | 'NEGOTIATION';
 
 export type DynastySkillId =
   | 'EVALUATIONS'
@@ -219,16 +300,23 @@ export interface DynastySkillDef {
 }
 
 export const BRANCH_LABEL: Record<DynastyBranch, string> = {
-  SCOUTING: 'Scouting',
-  NEGOTIATION: 'Negotiation',
+  DRAFT: 'Draft',
   DEVELOPMENT: 'Development',
+  NEGOTIATION: 'Negotiation',
 };
 
 export const BRANCH_BLURB: Record<DynastyBranch, string> = {
-  SCOUTING: 'See the board more clearly. Every upgrade tightens what your staff can tell you — none of them tells you the truth outright.',
-  NEGOTIATION: 'Read the other side of the table: what a player will sign for, what a rival actually wants, what a deal costs you in 2029.',
-  DEVELOPMENT: 'Project forward. Where a young player is headed, when an old one falls off, and who is about to take a jump.',
+  DRAFT: 'The only men in this league you cannot simply watch on tape. Every upgrade tightens what your staff can tell you about a prospect, and the last one buys more of the visits and evaluations that settle it.',
+  DEVELOPMENT: 'Your coaching staff. First the ability to see where a player is headed, then the ability to change it — faster development across the roster, and the hours to put into one man in particular.',
+  NEGOTIATION: 'Read the other side of the table. Every point you spend here narrows the window between "he might sign this" and "he will", so you stop overpaying for certainty.',
 };
+
+/**
+ * Branch render order. Also the order the tree is meant to be READ in, which
+ * is why it is declared here rather than left to whatever order a page happens
+ * to list.
+ */
+export const BRANCH_ORDER: DynastyBranch[] = ['DRAFT', 'DEVELOPMENT', 'NEGOTIATION'];
 
 export const DYNASTY_SKILLS: DynastySkillDef[] = [
   // --- SCOUTING ------------------------------------------------------------

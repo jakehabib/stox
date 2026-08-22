@@ -15,6 +15,8 @@ import { rankWire } from '@/lib/wireRank';
 import { computeClinchStatus, clinchScenarioTag } from '@/lib/clinchScenario';
 import { computeRankDeltas } from '@/lib/standingsTrend';
 import { SeasonAnnouncement, AwardLine } from '@/components/SeasonAnnouncement';
+import { SeasonReview } from '@/components/ds/SeasonReview';
+import { buildSeasonReview } from '@/lib/seasonReview';
 import { OffseasonRoadmap } from '@/components/OffseasonRoadmap';
 import { TeamHeader } from '@/components/ds/TeamHeader';
 import { FrontOfficeBrief } from '@/components/ds/FrontOfficeBrief';
@@ -112,6 +114,17 @@ export default async function TeamDashboard({ params }: { params: { id: string }
     }
   }
   const userSeasonRecord = seasonAnnouncement ? await prisma.teamSeasonRecord.findUnique({ where: { teamId_year: { teamId: team.id, year: league.seasonYear } } }) : null;
+
+  // --- The season in review — narrative reads on YOUR OWN players' years,
+  // computed at read time from the games that were played (see
+  // lib/seasonReview.ts). Gated on OFFSEASON for the same reason the
+  // announcement above is: that is the one phase in which League.seasonYear
+  // still names the season that just finished. The moment the league year
+  // rolls forward the panel would be describing the wrong year, so it goes
+  // away on its own rather than being cleaned up by anything.
+  const seasonReview = league.phase === 'OFFSEASON'
+    ? await buildSeasonReview(league.id, team.id, league.seasonYear)
+    : null;
 
   // --- Your All-Stars ------------------------------------------------------
   // Rosters are named the week the regular season ends (lib/allStars.ts), so
@@ -377,6 +390,9 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           userResult={userSeasonRecord?.playoffResult ?? 'MISSED'}
           awards={seasonAnnouncement.awards}
         />
+      )}
+      {seasonReview && (
+        <SeasonReview review={seasonReview} leagueId={league.id} teamColor={teamColor} />
       )}
       <AllStarHonorRoll
         seasonYear={league.seasonYear}
