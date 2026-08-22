@@ -233,9 +233,9 @@ export interface NegotiationContext {
   intendedFinalAge: number;
   /**
    * Half-width, in interest points, of the band around the signing threshold
-   * inside which he MIGHT sign — see `signBandFor`. Narrow for a player your
-   * scouts know cold, wide for one they barely know: the fog at the
-   * negotiating table is the same fog that is on his ratings.
+   * inside which he MIGHT sign — see `signBandFor` and `bandHalfWidthFor`.
+   * How narrow it is is what your front office has BOUGHT: every rank in the
+   * Dynasty NEGOTIATION branch tightens it.
    */
   bandHalfWidth: number;
   /** Which half of the re-sign window this is. Null in free agency. */
@@ -374,6 +374,12 @@ export function buildNegotiationContext(opts: {
    * pays at the table as well as on the board.
    */
   scoutConfidence?: number;
+  /**
+   * Dynasty NEGOTIATION branch: `signBandMultFor(skills)` from lib/dynasty.ts.
+   * 1 with no ranks bought. It is the ONLY thing that varies the band now —
+   * see `bandHalfWidthFor`.
+   */
+  signBandMult?: number;
   rng: Rng;
 }): NegotiationContext {
   const personality = opts.rng.weighted<Personality>({
@@ -477,7 +483,15 @@ export function buildNegotiationContext(opts: {
     currentContract: opts.currentContract ?? null,
     willingYears: horizon.years,
     intendedFinalAge: horizon.finalAge,
-    bandHalfWidth: bandHalfWidthFor(opts.scoutConfidence ?? 100),
+    // Floored, because a band that can shrink to nothing is a solved
+    // equation: at zero width the meter flips cleanly at 90 again and the
+    // binary search the whole "HE MIGHT SIGN HERE" block exists to prevent is
+    // back. The tree may buy you a tighter read; it may not buy you the
+    // answer.
+    bandHalfWidth: Math.max(
+      SIGN_BAND_MIN,
+      Math.round(bandHalfWidthFor(opts.scoutConfidence ?? 100) * (opts.signBandMult ?? 1)),
+    ),
     resignWindow,
     loyaltyDiscount,
     clubDiscount,
@@ -949,13 +963,42 @@ export const ACCEPT_INTEREST = 90;
 /**
  * [TUNE] How far below a certain yes the "he might sign" stretch reaches.
  *
- * Scouting still narrows it, because how well you know a man is exactly how
- * well you can price him: an unscouted player's window is 65-90, and a fully
- * scouted one's is 78-90. Around here a point of interest is worth roughly
- * 0.6% of his asking price, so the fog is a real spread, not a rounding.
+ * ===========================================================================
+ * WHAT NARROWS THE BAND — AND IT IS NO LONGER SCOUTING
+ * ===========================================================================
+ * This used to read "scouting still narrows it, because how well you know a
+ * man is exactly how well you can price him", and it was true when scouting
+ * fog covered everybody. It does not any more: fog is DRAFT PROSPECTS ONLY,
+ * so every free agent and every incumbent arrives at `scoutConfidence = 100`
+ * and this function returns MAYBE_WIDTH_SCOUTED — 12, a flat 78-90 — for the
+ * entire league, for ever. The confidence parameter still exists because
+ * prospects still have one, and because the two ends of the curve are what
+ * the number 12 MEANS; it simply no longer varies at the negotiating table.
+ *
+ * The variation comes from the Dynasty NEGOTIATION branch instead, which is
+ * where the app owner put it: *"the negotiating tree should be about
+ * signings. Each point up to the 3 abilities narrows the uncertainty band."*
+ * `signBandMultFor` in lib/dynasty.ts is keyed on TOTAL ranks bought in the
+ * branch, so every purchase pays; `buildNegotiationContext` multiplies this
+ * width by it and floors the result at SIGN_BAND_MIN.
+ *
+ *   0 ranks  78-90      3 ranks  81-90
+ *   1 rank   79-90      4 ranks  82-90
+ *   2 ranks  80-90      5 ranks  83-90
+ *
+ * A comment that still described the old mechanism would be exactly the
+ * defect that hid a twelve-man defence in this codebase for months, so it is
+ * written down here rather than left to be inferred from a constant.
+ * ===========================================================================
  */
 const MAYBE_WIDTH_SCOUTED = 12;
 const MAYBE_WIDTH_UNKNOWN = 25;
+
+/**
+ * [TUNE] The narrowest the band may ever be, in interest points. A floor, not
+ * a target: see the note in `buildNegotiationContext`.
+ */
+const SIGN_BAND_MIN = 5;
 
 export function bandHalfWidthFor(scoutConfidence: number): number {
   const known = Math.max(0, Math.min(100, scoutConfidence)) / 100;

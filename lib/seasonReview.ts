@@ -1109,7 +1109,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
           () => `Nothing on his record touches this. ${capitalise(spoken(pos, p.stats))} in ${p.gp} games, past the ${bestPrior.seasonYear} he had been measured by — ${headlineNumber(pos, bestPrior.stats)} in ${bestPrior.gp}.`,
           () => `${capitalise(spoken(pos, p.stats))}: the best football of his career, and not by a small margin. His ${bestPrior.seasonYear} came to ${headlineNumber(pos, bestPrior.stats)}.`,
           () => `Career year, at ${p.age}, in year ${solidPrior.length + 1} of it. ${capitalise(spoken(pos, p.stats))} — his ${bestPrior.seasonYear} was ${headlineNumber(pos, bestPrior.stats)} and that had been the ceiling.`,
-          () => `${count(years, 'season')} on the books now and this is the one. ${capitalise(spoken(pos, p.stats))}, against ${headlineNumber(pos, bestPrior.stats)} in ${bestPrior.seasonYear}.`,
+          () => `${capitalise(count(years, 'season'))} on the books now and this is the one. ${capitalise(spoken(pos, p.stats))}, against ${headlineNumber(pos, bestPrior.stats)} in ${bestPrior.seasonYear}.`,
           () => `He is ${p.age} and he has never played like this — ${spoken(pos, p.stats)}, clear of the ${bestPrior.seasonYear} that used to be his best.`,
         ])(),
       });
@@ -1163,9 +1163,9 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         kind: 'SECOND_YEAR_LEAP', shape: sh, margin: (jump - bar) / Math.max(0.1, bar),
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
         write: (v) => v.pick([
-          () => `Second year, different player: ${spoken(pos, p.stats)}, against ${headlineNumber(pos, rookieYear.stats)} as a rookie.`,
+          () => `Second year, different player: ${spoken(pos, p.stats)}, against ${spoken(pos, rookieYear.stats)} as a rookie.`,
           () => `He went from ${headlineNumber(pos, rookieYear.stats)} in ${rookieYear.seasonYear} to ${spoken(pos, p.stats)}. That is the jump you hope for and rarely get.`,
-          () => `${capitalise(spoken(pos, p.stats))} in year two. His rookie season was ${headlineNumber(pos, rookieYear.stats)}.`,
+          () => `${capitalise(spoken(pos, p.stats))} in year two, off a rookie year that came to ${spoken(pos, rookieYear.stats)}.`,
         ])(),
       });
     }
@@ -1641,9 +1641,18 @@ export async function buildSeasonReview(
     }
   }
 
+  // Deduplicated BY WEEK. One checkpoint can only find a man leading the league
+  // once, but a save that re-simmed a week has the row written again — this
+  // database holds 595 copies of one league's week 4 — and counting the rows
+  // instead of the occasions printed "he led the league at 88 points of the
+  // season". The event is the week, not the row.
   const milestonesByPlayer = new Map<string, { week: number; categories: string }[]>();
+  const milestoneSeen = new Set<string>();
   for (const m of milestoneRows) {
     if (!m.playerId) continue;
+    const key = `${m.playerId}|${m.week}`;
+    if (milestoneSeen.has(key)) continue;
+    milestoneSeen.add(key);
     // "<name> is pacing the league in receiving yards and rushing yards".
     // The categories are recoverable off the tail; if that ever stops being
     // the shape, the fallback is a phrase that still says something true.
