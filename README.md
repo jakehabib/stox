@@ -334,16 +334,12 @@ something here, the principle wins and the change is wrong.
 
 ## Known simplifications (documented, not bugs)
 
-- Negotiation PATIENCE is per-session, not stored. Each offer a player turns
-  down costs a pip (two for a lowball), decided and charged server-side — but
-  the counter itself lives in the panel's React state, so reloading the page
-  reopens talks with a full meter. Persisting it would need a new column
-  (a patience counter per player *per negotiating team*), and it would buy
-  less than it looks: the reservation price is seeded off the matchup and the
-  league year, so a reload hands you back the same man wanting the same money,
-  not a fresh roll. The consequence that DOES persist is the one that matters
-  — run out of patience on a contested free agent and he signs with the team
-  that was bidding against you, which is a real transaction and permanent.
+- ~~Negotiation patience is per-session, not stored.~~ **Fixed — this entry
+  described the old behaviour.** Patience now persists: `NegotiationTalks`
+  carries `patienceSpent` keyed by team + player + league year, it never
+  decreases within a year, and it is read server-side
+  (`readPatienceSpent` in `lib/freeagency.ts`) rather than passed up from the
+  browser. Reloading the page no longer reopens talks with a full meter.
 - AI teams don't carry their own `ScoutingReport` rows — they evaluate free
   agents and trades off true ratings. Modeling AI fog-of-war there would 32x
   the scouting data for no gameplay benefit in a single-player game, and a
@@ -353,11 +349,15 @@ something here, the principle wins and the change is wrong.
   nothing about the order players actually came off it. AI clubs now draft
   off the public board plus a private per-club lean, with no scouting rows
   involved — see AI CLUBS DRAFT OFF A READ in `lib/draft.ts`.
-- The re-sign window doesn't give the original team an *exclusive*
-  negotiating period before a player hits the open market — expiring
-  contracts go straight to the free agent pool, which anyone (including
-  you) can then sign from. (Visibility is earlier than the real deadline,
-  per above — it's specifically the exclusivity that isn't modeled.)
+- ~~The re-sign window isn't exclusive.~~ **Fixed — this entry described the
+  old behaviour.** The RESIGN phase IS an exclusive window:
+  `releaseUnresignedExpiringContracts` runs on the way OUT of it, so nobody
+  else can sign your expiring men while you are working them. The incumbent
+  also carries a real edge inside it — a hometown discount that is priced
+  into his reservation number and deliberately NOT extended to the rival
+  bidding against you, which is the one loyalty concept in `lib/negotiation.ts`.
+  What is still not modelled is a separate legal-tampering period before that
+  window opens.
 - There's no autonomous AI-vs-AI trading — AI teams only trade with the
   user (via the trade screen, or an unsolicited offer the AI proposes).
   Two AI teams never make a deal with each other in the background.
@@ -366,11 +366,17 @@ something here, the principle wins and the change is wrong.
   the header comment in `lib/gen/prospectProfile.ts` for exactly what's
   tuned to real NCAA norms (13-game season, the real NCAA passer
   efficiency formula) versus placeholder.
-- `showAdvancedStats` and `autoAdvanceWeeks` settings are stored and shown in
-  the Settings screen but don't yet gate any behavior — flagged as
-  "STORED-ONLY" right in the settings UI.
+- `showAdvancedStats`, `autoAdvanceWeeks` and `confirmRiskyMoves` are stored
+  on the settings blob and gate nothing. They are no longer OFFERED on the
+  Settings screen — a control that does nothing is worse than an absent one —
+  but whatever an existing save stored is preserved rather than dropped
+  (`app/actions/league.ts`).
 - Stat lines are allocated top-down from team drive totals (so the score and
   box score can never disagree) rather than simulated play-by-play.
+- No AI club has ever used the franchise tag. `applyFranchiseTag` exists and
+  the user can use it, but no AI path calls it — measured, a 99 QB whose club
+  held $50.9M of room walked to the market because it could not fit his ask
+  after reserve. A real club tags him.
 
 ## Changelog
 
