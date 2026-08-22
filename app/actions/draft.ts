@@ -25,7 +25,30 @@ export async function draftPlayerAction(leagueId: string, playerId: string, team
   const rng = new Rng(`draft-${leagueId}-${Date.now()}`);
   await runAiPicksUntilUser(leagueId, teamId, rng, league.seasonYear);
 
-  revalidatePath(`/league/${leagueId}`, 'layout');
+  /*
+   * NO revalidatePath HERE, AND THAT IS THE WHOLE FIX FOR THE VANISHING CARD.
+   *
+   * The app owner: *"the pick confirmation popup literally pops up for a
+   * microsecond before disappearing"*.
+   *
+   * DraftSelectionButton renders that card, and it renders it from INSIDE the
+   * drafted player's own board row. Its doc comment states the design plainly
+   * — "the board refresh is deliberately held until the card is dismissed...
+   * refreshing underneath it would unmount this component (its row leaves the
+   * board the instant he is drafted) and take the card with it" — and the
+   * client honours that: it sets `made` and calls router.refresh() only on
+   * dismiss.
+   *
+   * This line then did the refresh anyway. Inside the same startTransition as
+   * the action call, the revalidation lands before `setMade(true)` can paint,
+   * the row unmounts, and the card dies in a frame. The comment described a
+   * policy the code did not follow, which is the same failure this codebase
+   * treats as a bug in its own right.
+   *
+   * Nothing goes stale: dismissing the card calls router.refresh(), which
+   * re-renders the layout and every server component on it. The refresh is
+   * deferred, not dropped.
+   */
   return { ok: true, message: 'Pick is in.' };
 }
 
