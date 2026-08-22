@@ -1013,10 +1013,10 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         kind: 'SLOW_START', shape: sh, margin: (t - tBar) / tBar,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
         write: (v) => v.pick([
-          () => `Through week ${mid} it was ${fS}, and the year looked gone. After it: ${sS}.`,
+          () => `Through his first ${fG} games it was ${fS}, and the year looked gone. Over the last ${sG}: ${sS}.`,
           () => `${capitalise(fS)} in his first ${fG} games — then ${sS} in the ${sG} that followed.`,
-          () => `The opening half of his year was a genuine problem: ${fS} through week ${mid}. He closed it out with ${sS}.`,
-          () => `He started the season with ${fS} and ended it with ${sS}. By December nobody was talking about the start.`,
+          () => `The opening half of his year was a genuine problem: ${fS}, in ${count(fG, 'game')} up to week ${mid}. He closed it out with ${sS} in the ${sG} after it.`,
+          () => `He opened the season with ${fS} across ${fG} games and finished it with ${sS} across ${sG}. By December nobody was talking about the start.`,
         ])(),
       });
     } else if (t >= tBar && sh.secondPct >= 75 && sh.firstPct > 30 && leadRose) {
@@ -1024,9 +1024,9 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         kind: 'SURGED', shape: sh, margin: (t - tBar) / tBar,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
         write: (v) => v.pick([
-          () => `He was fine and no more than fine until about week ${mid} — ${fS} — and then went and put up ${sS}.`,
+          () => `He was fine and no more than fine for ${fG} games — ${fS} — and then went and put up ${sS} over the last ${sG}.`,
           () => `${capitalise(fS)} through the first ${fG}. Over the last ${sG}: ${sS}.`,
-          () => `Something turned around the halfway mark. ${capitalise(fS)} before it, ${sS} after.`,
+          () => `Something turned around the halfway mark. ${capitalise(fS)} in the ${fG} games before it, ${sS} in the ${sG} after.`,
         ])(),
       });
     } else if (t <= -tBar && sh.firstPct >= 60 && sh.secondPct <= 40 && leadFell) {
@@ -1034,10 +1034,10 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         kind: 'FADED', shape: sh, margin: (-t - tBar) / tBar,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
         write: (v) => v.pick([
-          () => `${capitalise(fS)} through week ${mid}, and then ${sS} the rest of the way.`,
-          () => `For half a season he was one of the best things about us: ${fS} in ${fG} games. The other ${sG} came to ${sS}.`,
-          () => `Through week ${mid} — ${fS}. From there it fell away to ${sS}.`,
-          () => `He gave us ${fS} early. Whatever that was, it was not there for the run-in: ${sS} after week ${mid}.`,
+          () => `${capitalise(fS)} in his first ${fG} games, and then ${sS} across the ${sG} that followed.`,
+          () => `For half a season he was one of the best things about us: ${fS} in ${count(fG, 'game')}. The other ${sG} came to ${sS}.`,
+          () => `${capitalise(fS)}, in ${count(fG, 'game')} up to week ${mid}. From there it fell away to ${sS} in the ${sG} that followed.`,
+          () => `He gave us ${fS} over ${fG} games early. Whatever that was, it was not there for the run-in: ${sS} in the last ${sG}.`,
         ])(),
       });
     }

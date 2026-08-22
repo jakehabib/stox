@@ -8,8 +8,11 @@ import { decideOffer, type DealStructure, type NegotiationOutcome, type Negotiat
 import { parseSettings } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { capHit, deadMoneyOnCut, capSavingsOnCut } from '@/lib/cap';
-import { autoDepthChart } from '@/lib/gen/league';
+import { autoDepthChart, reconcileDepthChart } from '@/lib/gen/league';
 import { Rng } from '@/lib/rng';
+import { readJson, writeJson } from '@/lib/json';
+import { AttrMap, positionMove, canChangePositionTo, relatedPositions } from '@/lib/ratings';
+import { canonicalPosition, Position } from '@/lib/tuning';
 
 export async function cutPlayerAction(leagueId: string, playerId: string) {
   await assertLeagueOwner(leagueId);
@@ -210,6 +213,117 @@ export async function restructureContractAction(leagueId: string, playerId: stri
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : 'Restructure failed.' };
   }
+}
+
+/**
+ * ===========================================================================
+ * MOVE A MAN TO A NEW POSITION
+ * ===========================================================================
+ * The app owner's hole, in his words: *"if someone has two solid RT and a
+ * weak LT, they can't swap the spare RT over. we need to have that
+ * functionality somehow being elegant"* — and his own answer to it: *"what if
+ * we just allow you to change a player's position in the player card? so you
+ * can make a new RT or LT as you need, and we don't have any wonkiness with
+ * other tools."*
+ *
+ * He is right, and the reason it is this short is that nothing here invents a
+ * penalty. `positionMove` (lib/ratings.ts) re-weights his attributes through
+ * the new position's formula, which is what an overall already IS. The cost
+ * of the move is the number that comes out, and it is the same number the
+ * card previewed before the click — the preview and this write call the same
+ * function, so they cannot disagree (README principle 6).
+ *
+ * WHY THIS NEEDS NO DEPTH-CHART SPECIAL CASE. `reconcileDepthChart` drops any
+ * slot whose position no longer matches the player's — *"Trust the roster's
+ * position, not the slot's: a slot written before a position change would
+ * otherwise file him under the old one."* That line was written for exactly
+ * this event and had never been reached, because nothing in the game changed
+ * a position. It is now doing its real job: his old slot goes, and he is
+ * placed at the new position on merit by the same insertion rule the sim,
+ * the free-agency comparison and the chart itself all use. No new opinion
+ * about who plays, and no schema change.
+ *
+ * NOT GATED, COOLED DOWN OR CHARGED FOR, deliberately. The rating drop is the
+ * cost and it is an honest one; a camp-time gate or a once-per-season limit
+ * would be invented friction on top of a mechanic that already prices itself.
+ * What it is NOT is silent: it goes on the wire as a POSITION transaction
+ * linked to the man, because a front office moving a tackle inside is a real
+ * decision and this world is supposed to have a legible past (principle 0).
+ */
+export async function changePositionAction(leagueId: string, playerId: string, newPosition: string) {
+  await assertLeagueOwner(leagueId);
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const player = await prisma.player.findUniqueOrThrow({
+    where: { id: playerId },
+    include: { team: true },
+  });
+
+  // Your own men only. A free agent is not yours to reassign, an opponent's
+  // player obviously is not, and a draft prospect's position is what your
+  // scouts filed him under — moving him would be editing a scouting report,
+  // not making a coaching decision.
+  if (!player.teamId || player.leagueId !== leagueId) return { ok: false as const, message: 'He is not on your roster.' };
+  await assertTeamOwner(player.teamId);
+  if (player.isDraftee) return { ok: false as const, message: 'Draft prospects keep the position they were scouted at.' };
+
+  const from = canonicalPosition(player.position);
+  const to = canonicalPosition(newPosition);
+  if (from === to) return { ok: false as const, message: `He already plays ${to}.` };
+  // Re-checked here rather than trusted from the client: a Server Action is a
+  // POST endpoint, and the menu that hid `P` from a quarterback's card is a
+  // rendering decision, not a security boundary. A move the engine cannot
+  // price honestly (see RELATED_POSITIONS) must not be reachable by hand.
+  if (!canChangePositionTo(from, to)) {
+    const offered = relatedPositions(from);
+    return {
+      ok: false as const,
+      message: offered.length === 0
+        ? `A ${from} has no position to move to.`
+        : `A ${from} can only move to ${offered.join(', ')}.`,
+    };
+  }
+
+  const move = positionMove(
+    { position: from, trueOvr: player.trueOvr, trueAttrs: readJson<AttrMap>(player.trueAttrs, {}) },
+    to as Position,
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.player.update({
+      where: { id: player.id },
+      // `potential` is deliberately untouched: it is a ceiling on the man, not
+      // on the job, so a converted player who lands below it now has room to
+      // grow INTO the new position at the next development checkpoint. That is
+      // the right story — he is learning it — and it falls out of
+      // progressPlayer rolling attrsForPosition(position) with no change there.
+      data: { position: to, trueAttrs: writeJson(move.attrs), trueOvr: move.ovr },
+    });
+    // His old slot is now stale by the roster's own reckoning and reconcile
+    // drops it; he is re-placed at his new position in the same call.
+    await reconcileDepthChart(player.teamId!, tx);
+    await tx.transaction.create({
+      data: {
+        leagueId,
+        seasonYear: league.seasonYear,
+        week: league.week,
+        type: 'POSITION',
+        teamId: player.teamId,
+        playerId: player.id,
+        headline: `${player.firstName} ${player.lastName} moves from ${from} to ${to}`,
+        detail: `${player.team?.city ?? ''} ${player.team?.nickname ?? ''}`.trim()
+          + ` — ${player.trueOvr} OVR at ${from}, ${move.ovr} at ${to}.`
+          + (move.learned.length > 0 ? ` New to the job: ${move.learned.length} untested trait${move.learned.length === 1 ? '' : 's'}.` : ''),
+      },
+    });
+  });
+
+  revalidatePath(`/league/${leagueId}`, 'layout');
+  return {
+    ok: true as const,
+    message: `${player.lastName} is a ${to} — ${move.ovr} OVR (${move.delta >= 0 ? '+' : ''}${move.delta}).`,
+    ovr: move.ovr,
+    delta: move.delta,
+  };
 }
 
 export async function setDepthChartAction(teamId: string, position: string, orderedPlayerIds: string[]) {
