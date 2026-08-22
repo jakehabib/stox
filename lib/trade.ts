@@ -1,6 +1,7 @@
 import { prisma } from './db';
 import { Rng } from './rng';
-import { AI, LEAGUE } from './tuning';
+import { AI, LEAGUE, TRADE_VALUE, PICK_VALUE_CHART } from './tuning';
+import { parseSettings } from './settings';
 import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, rosterFit, philosophySummary, leagueScarcity, RosterPlayer } from './ai/gm';
 import { projectedDraftOrder, imminentDraftYear } from './draft';
 import { CapMode } from './types';
@@ -60,15 +61,41 @@ export interface TradeEvaluation {
 }
 
 /**
+ * How much of a club's projected finish survives each further year into the
+ * future. [TUNE] 0.65: a club two drafts out keeps about two thirds of the
+ * gap between where it is projected to pick and the middle of the round, one
+ * three drafts out about four ninths, and so on toward the middle.
+ *
+ * SIZED SO THAT A FURTHER-OUT PICK IS NEVER WORTH MORE THAN A NEARER ONE
+ * FROM THE SAME CLUB, which the old "everything past the next draft is a
+ * mid-rounder" rule got badly wrong. Measured on the probe save before this
+ * change: Jacksonville's first in the next draft priced at 495 and its first
+ * the year after at 713 — the further-away pick was worth 44% MORE, because
+ * a club projected to pick 32nd had its future firsts revalued as if it
+ * picked 16th, and the 15%-per-year time discount could not cover a 1.6x jump
+ * in slot. Atlanta's was 693 against 950, San Diego's 570 against 808. That
+ * inversion is the mechanism behind the app owner's screenshot: a future
+ * first from a good club was being charged for as a mid-first.
+ *
+ * Full regression to the middle is not the honest answer either. Clubs
+ * regress, but not instantly and not completely, and a front office plainly
+ * does not treat a contender's future first the way it treats a bad club's.
+ * At 0.65 the worst residual inversion across the league is under 1%, inside
+ * the valuation noise, and the ordering everywhere else is strict.
+ */
+const FUTURE_SLOT_REGRESSION = 0.65;
+
+/**
  * DraftPick.slot only ever reflects real standings for a year that's
  * already been reseeded (right before that year's own draft) — before that
  * it's just the placeholder assigned at generation time, unrelated to
  * performance. For the NEXT draft that hasn't happened yet, use the live
  * "if the season ended today" projection instead, so a 0-5 team's 1st
  * actually prices like a 1st, not whatever arbitrary slot it was created
- * with. Every year after that has no standings to project from at all yet,
- * so it prices at the middle of the round — a neutral assumption rather
- * than a stale, arbitrarily-favorable-or-unfavorable placeholder.
+ * with. Every year after that, regress that same projection toward the
+ * middle of the round — see FUTURE_SLOT_REGRESSION — because a club's
+ * standing decays toward average as you look further out, but does not get
+ * there in one season.
  *
  * "The next draft" is deliberately identified by `imminentYear` (the
  * smallest year with any unused pick), not by comparing `pick.year` to
@@ -79,9 +106,14 @@ export interface TradeEvaluation {
  * season's pick" depends on where in the phase machine the league sits.
  */
 function effectiveSlot(pick: { year: number; slot: number; originalTeamId: string }, imminentYear: number | null, projectedOrder: Map<string, number>): number {
-  if (imminentYear !== null && pick.year === imminentYear) return projectedOrder.get(pick.originalTeamId) ?? pick.slot;
-  if (imminentYear !== null && pick.year > imminentYear) return Math.ceil(LEAGUE.TEAM_COUNT / 2);
-  return pick.slot;
+  if (imminentYear === null) return pick.slot;
+  const projected = projectedOrder.get(pick.originalTeamId) ?? pick.slot;
+  if (pick.year === imminentYear) return projected;
+  if (pick.year < imminentYear) return pick.slot;
+  const middle = Math.ceil(LEAGUE.TEAM_COUNT / 2);
+  const yearsBeyond = pick.year - imminentYear;
+  const kept = Math.pow(FUTURE_SLOT_REGRESSION, yearsBeyond);
+  return Math.min(LEAGUE.TEAM_COUNT, Math.max(1, Math.round(middle + (projected - middle) * kept)));
 }
 
 async function assetValues(
@@ -98,8 +130,15 @@ async function assetValues(
   scarcity: Record<string, number>,
   /** The AI club's roster and live cap space — what turns "how good is he" into "what does he do to US". */
   club: { roster: RosterPlayer[]; capSpace?: number },
-): Promise<{ total: number; reasons: string[] }> {
-  let total = 0;
+  /**
+   * Which way this pile is travelling, and how wide the club's bid/ask spread
+   * is. See TRADE_VALUE.SPREAD: prying a man loose costs a premium, handing
+   * one over meets a haircut, and picks are exempt from both because a spread
+   * on everything is just a stricter acceptance threshold wearing a costume.
+   */
+  spread: { side: 'receive' | 'send'; poach: number; haircut: number; badContractTax: number },
+): Promise<AssetSide> {
+  const each: { label: string; value: number }[] = [];
   const weighted: { text: string; weight: number }[] = [];
   for (const a of assets) {
     if (a.type === 'PLAYER') {
@@ -108,18 +147,74 @@ async function assetValues(
         profile, needs, rng: new Rng(`${noisePrefix}-${a.type}:${a.id}`), capMode, scarcity,
         roster: club.roster, capSpace: club.capSpace,
       });
-      total += v.total;
+      let value = v.total;
+      if (spread.side === 'send') {
+        value *= 1 + spread.poach;
+      } else {
+        value *= 1 - spread.haircut;
+        // What the bad contract already cost him, charged again as the price
+        // of the favour: the club taking a burden on wants paying for it, and
+        // how much depends on the difficulty. Zero on any fair deal.
+        const deficit = v.contractMult < 1 ? v.total * (1 / v.contractMult - 1) : 0;
+        value = Math.max(1, value - deficit * spread.badContractTax);
+      }
+      each.push({ label: `${p.firstName} ${p.lastName}`, value });
       for (const r of v.reasons) weighted.push({ text: `${p.firstName} ${p.lastName}: ${r.text}`, weight: r.weight });
     } else {
       const pick = await prisma.draftPick.findUniqueOrThrow({ where: { id: a.id } });
-      total += pickValue(pick.round, effectiveSlot(pick, imminentYear, projectedOrder), profile, pick.year, currentYear);
+      each.push({
+        label: `${pick.year} Round ${pick.round}`,
+        value: pickValue(pick.round, effectiveSlot(pick, imminentYear, projectedOrder), profile, pick.year, currentYear, imminentYear),
+      });
     }
   }
   // Sort ACROSS every asset on this side of the deal, not just within one —
   // otherwise a minor note about asset #1 could outrank the actual dominant
   // factor on asset #2 just by having been evaluated first.
   const reasons = weighted.sort((a, b) => b.weight - a.weight).map((r) => r.text);
-  return { total, reasons };
+
+  // A pile is worth less than the sum of its parts — see TRADE_VALUE.PACKAGE.
+  const ranked = [...each].sort((a, b) => b.value - a.value);
+  const total = ranked.reduce(
+    (sum, asset, i) => sum + asset.value * (TRADE_VALUE.PACKAGE.CONCENTRATION[i] ?? TRADE_VALUE.PACKAGE.CONCENTRATION_TAIL),
+    0,
+  );
+  // "First-round quality" is read off the chart itself rather than written
+  // down, so it stays true if the league ever changes size.
+  const premiumLine = PICK_VALUE_CHART(LEAGUE.TEAM_COUNT);
+  return { total, reasons, best: ranked[0] ?? null, premiumCount: ranked.filter((a) => a.value >= premiumLine).length };
+}
+
+/** One side of a proposed trade, priced. See assetValues and TRADE_VALUE.PACKAGE. */
+interface AssetSide {
+  /** What the pile is worth AFTER the concentration weighting — the number the verdict uses. */
+  total: number;
+  reasons: string[];
+  /** The single most valuable asset on this side, which is what the headline rule tests. */
+  best: { label: string; value: number } | null;
+  /** How many assets here are worth a first-round pick or more — the headline rule's second clause. */
+  premiumCount: number;
+}
+
+/**
+ * THE HEADLINE RULE: a cornerstone may not be bought with depth.
+ *
+ * Returns the refusal when the AI is being asked to give up a genuine pillar
+ * and nothing coming back is a real piece — see TRADE_VALUE.PACKAGE. This is
+ * checked BEFORE the value comparison, because it is not a statement about
+ * value: a package can clear the ratio comfortably and still be six backups,
+ * and the answer to six backups is not "we need a bit more".
+ */
+function headlineShortfall(receive: AssetSide, send: AssetSide): { wanted: number; best: number; name: string } | null {
+  const pillar = send.best;
+  if (!pillar || pillar.value < TRADE_VALUE.PACKAGE.HEADLINE_THRESHOLD) return null;
+  // Either one piece is big enough on its own...
+  const wanted = pillar.value * TRADE_VALUE.PACKAGE.HEADLINE_SHARE;
+  const best = receive.best?.value ?? 0;
+  if (best >= wanted) return null;
+  // ...or enough of the package is first-round quality (see premiumCount).
+  if (receive.premiumCount >= TRADE_VALUE.PACKAGE.HEADLINE_PREMIUM_COUNT) return null;
+  return { wanted, best, name: pillar.label };
 }
 
 /**
@@ -141,7 +236,23 @@ export async function evaluateTrade(opts: {
 }): Promise<TradeEvaluation> {
   const team = await prisma.team.findUniqueOrThrow({ where: { id: opts.aiTeamId } });
   const league = await prisma.league.findUniqueOrThrow({ where: { id: team.leagueId } });
-  const capMode: CapMode = JSON.parse(league.settings).capMode ?? 'REALISTIC';
+  const settings = parseSettings(league.settings);
+  const capMode: CapMode = settings.capMode;
+
+  /**
+   * DIFFICULTY IS READ OFF THE LEAGUE, not passed in. Every caller already
+   * hands us the league by id and the setting has always lived on it, so
+   * threading it through three call sites would only have created a way for
+   * one of them to pass the wrong thing. The spread it selects is the one
+   * place difficulty touches trades at all — see TRADE_VALUE.SPREAD for why
+   * it is a spread and not a stricter acceptance threshold.
+   */
+  const S = TRADE_VALUE.SPREAD;
+  const spread = {
+    poach: S.POACH_PREMIUM[settings.difficulty] ?? S.POACH_PREMIUM.NORMAL,
+    haircut: S.DUMP_HAIRCUT[settings.difficulty] ?? S.DUMP_HAIRCUT.NORMAL,
+    badContractTax: S.BAD_CONTRACT_TAX[settings.difficulty] ?? S.BAD_CONTRACT_TAX.NORMAL,
+  };
 
   /**
    * ==========================================================================
@@ -213,8 +324,8 @@ export async function evaluateTrade(opts: {
 
   // opts.give flows TO the AI => that's what the AI receives.
   // opts.get flows FROM the AI => that's what the AI sends away.
-  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, projectedOrder, imminentYear, capMode, scarcity, club);
-  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, projectedOrder, imminentYear, capMode, scarcity, club);
+  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, projectedOrder, imminentYear, capMode, scarcity, club, { side: 'receive', ...spread });
+  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, projectedOrder, imminentYear, capMode, scarcity, club, { side: 'send', ...spread });
   const sendValue = send.total;
   const receiveValue = receive.total;
   const philosophy = philosophySummary(profile);
@@ -224,6 +335,20 @@ export async function evaluateTrade(opts: {
 
   const requiredRatio = opts.settings.aiAcceptsLopsided ? 0.9 : AI.TRADE_ACCEPT_RATIO;
   const ratio = sendValue === 0 ? Infinity : receiveValue / sendValue;
+
+  /**
+   * HOW MUCH MORE, STATED SO THAT DOING IT ACTUALLY CLOSES THE DEAL.
+   *
+   * There were two of these and they disagreed. The cap-blocked message
+   * divided (`requiredRatio / ratio - 1`), which is the real answer; the plain
+   * value refusal subtracted (`requiredRatio - ratio`), which is not a
+   * percentage of anything. At a ratio of 0.70 against a required 1.04 the
+   * subtraction says "34% short" when the offer actually has to grow by 49% —
+   * so a user who added exactly what he was told was still refused, and the
+   * screen looked like it was moving the goalposts. One derivation, used by
+   * both messages.
+   */
+  const shortPct = Math.round((requiredRatio / Math.max(ratio, 0.01) - 1) * 100);
 
   /**
    * A deal the club has no room for is not a deal, however good the value.
@@ -256,7 +381,6 @@ export async function evaluateTrade(opts: {
      * taking salary back is still exactly right and is still what we say.
      */
     const valueShort = ratio < requiredRatio;
-    const shortPct = Math.round((requiredRatio / Math.max(ratio, 0.01) - 1) * 100);
     const ask = valueShort
       ? ` The value is short too — about ${shortPct}% more our way. Picks are the clean way to do both at once: they carry value and nothing lands on our cap.`
       : ` Take a contract back the other way, or send someone cheaper, and we'll talk — we like the deal otherwise.`;
@@ -268,13 +392,32 @@ export async function evaluateTrade(opts: {
     };
   }
 
+  /**
+   * The package-quality test sits between the cap gate and the value
+   * comparison, and it can only ever REFUSE — never accept. A pile of depth
+   * that clears the ratio is still a pile of depth, and the reason has to say
+   * so rather than asking for more of the same, which is what "we're 12%
+   * short" would send a user off to do.
+   */
+  const headline = headlineShortfall(receive, send);
+  if (headline) {
+    return {
+      accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy,
+      counter: {
+        message: `${headline.name} is a cornerstone for us — we're not moving him for depth. `
+          + `Whatever the totals say, at least one piece coming back has to be a real asset in its own right, `
+          + `and the best you've offered is worth about ${Math.round((headline.best / Math.max(headline.wanted, 1)) * 100)}% of what that would take.`,
+      },
+    };
+  }
+
   if (ratio >= requiredRatio) {
     return { accepted: true, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy };
   }
   if (ratio >= requiredRatio - AI.TRADE_COUNTER_WINDOW) {
     return {
       accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy,
-      counter: { message: `Close, but we need a bit more. Try sweetening the offer — we're about ${Math.round((requiredRatio - ratio) * 100)}% short on value.` },
+      counter: { message: `Close, but we need a bit more. Try sweetening the offer — we're about ${shortPct}% short on value.` },
     };
   }
   return {
@@ -524,7 +667,7 @@ export async function maybeGenerateAiTradeOffer(leagueId: string, userTeamId: st
   const currentYear = league.seasonYear;
   const [projectedOrder, imminentYear] = await Promise.all([projectedDraftOrder(leagueId), imminentDraftYear(leagueId)]);
   const priced = userPicks
-    .map((p) => ({ pick: p, value: pickValue(p.round, effectiveSlot(p, imminentYear, projectedOrder), profile, p.year, currentYear) }))
+    .map((p) => ({ pick: p, value: pickValue(p.round, effectiveSlot(p, imminentYear, projectedOrder), profile, p.year, currentYear, imminentYear) }))
     .filter((x) => x.value >= askValue * 0.8)
     .sort((a, b) => a.value - b.value);
   const askPick = priced[0]?.pick ?? userPicks[userPicks.length - 1];

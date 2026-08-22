@@ -1039,10 +1039,32 @@ export const AI = {
   FA_MAX_OVERPAY: 1.22,
   /** AI keeps this much cap space in reserve for in-season moves. */
   CAP_RESERVE: 4_000_000,
-  /** Trade acceptance: AI accepts if incoming value >= outgoing * this. */
-  TRADE_ACCEPT_RATIO: 1.06,
-  /** Range within which the AI counters rather than flatly refusing. */
-  TRADE_COUNTER_WINDOW: 0.25,
+  /**
+   * Trade acceptance: AI accepts if incoming value >= outgoing * this.
+   *
+   * [TUNE] 1.04, down from 1.06. This is the AI's negotiating margin — the
+   * edge it wants for agreeing to a deal it did not propose — and it is not
+   * the only tax on a trade: TRADE_VALUE.NEED_MULT already charges an
+   * incoming player the bottom of its band and an outgoing one the top, so
+   * the two compound to about 1.47x on a player-for-player swap. 4% keeps a
+   * visible thumb on the scale without that product reaching the point where
+   * a football-literate offer reads as lopsided. It is also inside the ~9%
+   * per-asset valuation noise, so a genuinely fair offer is answered
+   * differently by different clubs rather than uniformly — which is what
+   * shopping a player around should feel like. Note the noise is seeded per
+   * club, per season, per asset (see lib/trade.ts), so this is variety
+   * between front offices, never a re-roll on the same one.
+   */
+  TRADE_ACCEPT_RATIO: 1.04,
+  /**
+   * Range below the accept ratio within which the AI counters ("close, but
+   * we need a bit more") rather than flatly refusing ("not enough here").
+   * [TUNE] 0.35, up from 0.25: with players and picks now on one scale a
+   * near-miss is usually one mid-round pick away from closing, and a deal
+   * that close should say so. Purely how a refusal is worded — the accept
+   * threshold above is the only thing that decides yes or no.
+   */
+  TRADE_COUNTER_WINDOW: 0.35,
   /** How much AI values a draft pick vs a player of equal chart value. */
   PICK_VALUE_BIAS: 1.0,
   /** Rebuilding teams weight youth/potential this much more. */
@@ -1067,10 +1089,87 @@ export const AI = {
   } as Record<Position, number>,
 };
 
-/** [TUNE] Jimmy Johnson-style draft pick value chart, by overall pick number. */
+/**
+ * THE DRAFT PICK VALUE CHART, BY OVERALL PICK NUMBER — the real one.
+ *
+ * This is the Jimmy Johnson chart, transcribed as a literal table rather than
+ * approximated by a curve, on the app owner's instruction: *"this is a chart
+ * of draft picks value as used by the NFL"*. It is the chart front offices
+ * have actually traded off since the early nineties, and it runs to exactly
+ * 224 picks — which is exactly this league (LEAGUE.TEAM_COUNT 32 x 7 rounds),
+ * so the pick axis maps one-to-one with no rescaling at all.
+ *
+ * ITS NUMBERS ARE THIS GAME'S VALUE UNITS. Everything a trade weighs —
+ * players, picks, both sides of a swap — is quoted in Jimmy Johnson points,
+ * so every valuation in the game is a sentence a football person can check:
+ * "this man is worth 420" means "this man is worth pick 48". The tier curves
+ * below are calibrated directly against it and pickValue() returns it
+ * unscaled to a neutral GM, so there is no conversion factor anywhere for a
+ * later change to desynchronise.
+ *
+ * WHAT REPLACING THE OLD EXPONENTIAL FIXED. `3000 * exp(-0.0255 * (pick - 1))`
+ * tracked this table at roughly 0.55-0.65x through the middle rounds, but the
+ * ratio drifted (0.55 at pick 16, 0.69 at pick 112, 2.0x too generous at pick
+ * 176) and it could not hold the top of round one at all: the real chart puts
+ * pick 1 at 5.1x pick 32 and 68x pick 128, the exponential put it at 2.2x and
+ * 15x. A smooth curve cannot be that steep in one place and that flat in
+ * another, which is why the first overall pick used to trade for barely more
+ * than a mid-first.
+ *
+ * JIMMY JOHNSON IS FAMOUSLY TOP-HEAVY and most modern front offices use a
+ * flatter successor (Rich Hill and the analytics charts) for exactly that
+ * reason. The owner named this chart, so this chart is the reference; the
+ * top-heaviness is then a deliberate property, not a defect — see the ceiling
+ * note on TIER_CURVE for where it bites and what bounds it.
+ */
+const JIMMY_JOHNSON: readonly number[] = [
+  // Round 1
+  3000, 2600, 2200, 1800, 1700, 1600, 1500, 1400,
+  1350, 1300, 1250, 1200, 1150, 1100, 1050, 1000,
+   950,  900,  875,  850,  800,  780,  760,  740,
+   720,  700,  680,  660,  640,  620,  600,  590,
+  // Round 2
+   580,  560,  550,  540,  530,  520,  510,  500,
+   490,  480,  470,  460,  450,  440,  430,  420,
+   410,  400,  390,  380,  370,  360,  350,  340,
+   330,  320,  310,  300,  292,  284,  276,  270,
+  // Round 3
+   265,  260,  255,  250,  245,  240,  235,  230,
+   225,  220,  215,  210,  205,  200,  195,  190,
+   185,  180,  175,  170,  165,  160,  155,  150,
+   145,  140,  136,  132,  128,  124,  120,  116,
+  // Round 4
+   112,  108,  104,  100,   96,   92,   88,   86,
+    84,   82,   80,   78,   76,   74,   72,   70,
+    68,   66,   64,   62,   60,   58,   56,   54,
+    52,   50,   49,   48,   47,   46,   45,   44,
+  // Round 5
+    43,   42,   41,   40,   39,   38,   38,   38,
+    37,   37,   36,   36,   35,   35,   34,   34,
+    33,   33,   32,   32,   31,   31,   31,   30,
+    30,   29,   29,   29,   28,   28,   27,   27,
+  // Round 6
+    27,   26,   26,   25,   25,   25,   24,   24,
+    23,   23,   23,   22,   22,   21,   21,   21,
+    20,   20,   19,   19,   19,   18,   18,   17,
+    17,   17,   16,   16,   15,   15,   15,   14,
+  // Round 7
+    14,   13,   13,   13,   12,   12,   11,   11,
+    11,   10,   10,    9,    9,    9,    8,    8,
+     7,    7,    7,    6,    6,    5,    5,    5,
+     4,    4,    3,    3,    3,    2,    2,    2,
+];
+
+/**
+ * Chart value of an overall pick number. Clamped rather than allowed to
+ * return undefined: a league configured with more teams than the chart has
+ * rows would otherwise silently price its last round at NaN, and the honest
+ * answer for a pick past the end of the chart is what the last pick on it is
+ * worth.
+ */
 export const PICK_VALUE_CHART = (overallPick: number): number => {
-  // Smooth exponential approximation of the classic chart. PLACEHOLDER curve.
-  return Math.round(3000 * Math.exp(-0.0255 * (overallPick - 1)));
+  const i = Math.min(Math.max(Math.round(overallPick), 1), JIMMY_JOHNSON.length);
+  return JIMMY_JOHNSON[i - 1];
 };
 
 // ---------------------------------------------------------------------------
@@ -1086,21 +1185,68 @@ export const PICK_VALUE_CHART = (overallPick: number): number => {
  * The fix is to give each position its own curve, not just a flat
  * multiplier bolted onto one shared curve — "elite at a low-value position"
  * should mean "the best version of a replaceable role," not "as valuable as
- * an elite premium-position player." Five tiers, from real NFL trade-market
- * economics: QB is its own tier (retains value into its 30s, curves up
- * sharply near the top); EDGE/LT/WR/CB are premium non-QB spots that can
- * still fetch true blue-chip value; DT/RT/IOL/TE/S/LB matter but the market
- * doesn't pay a premium-position price for them; RB is real but shallow —
- * even a great one caps out around Day 2 value on the age curve realities
- * of the position; K/P stay compressed near the bottom no matter the
- * rating, because a replacement at those spots is always close by.
+ * an elite premium-position player."
+ *
+ * ---------------------------------------------------------------------------
+ * A TIER IS A CONVERSION COMPONENT, NOT A POSITION
+ * ---------------------------------------------------------------------------
+ * The owner's ruling: *"Why would RT be mid and LT be premium? they should be
+ * same value. For the most part the position groups should be similar"*.
+ *
+ * It is also forced, not merely preferred. Since lib/ratings.ts made position
+ * changes free (CONVERSION_ATTR_FRACTION), any two positions its menu connects
+ * MUST price identically or the difference is money for nothing: buy the cheap
+ * label, convert at no cost, sell the dear one. That arbitrage was live and
+ * measured at 5.5x — the same 84-rated man was 46 points as a right tackle and
+ * 251 as a left tackle. So the unit of tiering is a connected component of
+ * RELATED_POSITIONS:
+ *
+ *   {LT, LG, C, RG, RT}   {EDGE, DT, LB}   {CB, S}   and six singletons
+ *
+ * assertNoProfitableConversion() (lib/ratings.ts) fails the build if this
+ * table and that menu ever drift into a state where a move PAYS; lib/ai/gm.ts,
+ * the only consumer of this table, calls it at module load. Note it asserts
+ * the outcome rather than equal tiers — lib/ratings.ts charges a conversion in
+ * rating points, so two connected positions may legitimately price apart if
+ * the rating cost covers the gap. Equal tiers, as below, satisfies it
+ * trivially and is the safest way to satisfy it.
+ *
+ * Note LB rides with EDGE/DT because the menu connects them, not because the
+ * off-ball linebacker market deserves premium money — it does not (a good one
+ * fetches a second and a fifth). Pricing that component at MID instead would
+ * badly underprice edge rushers, who are the second most valuable thing in
+ * football; overpricing off-ball linebackers is the cheaper of the two errors.
+ *
+ * Where the components land, against real NFL trade comparables:
+ *
+ *   QB       — its own tier and by a clear margin. Three firsts for a
+ *              franchise passer is a real price teams have paid.
+ *   PREMIUM  — WR, the offensive line, and the EDGE/DT/LB front. The trenches
+ *              and the receivers: unified OL franchise tag, DE/DT and WR tags
+ *              all sit within a few percent of each other at the top of the
+ *              non-QB market, and elite ones fetch a genuine first.
+ *   MID      — CB/S and TE. Real starters whose trade market is visibly
+ *              softer than the trenches: corners have gone for a third
+ *              (Sneed) and a third-plus-change (Lattimore), the best tight
+ *              ends for a third (Waller).
+ *   LOW      — RB. Genuinely devalued in the modern game, and capped: even
+ *              the best back in football tops out around second-round money.
+ *   MINIMAL  — K/P. Near-worthless in trade without being literally zero,
+ *              because a replacement is always close by.
  */
 export type TradeValueTier = 'QB' | 'PREMIUM' | 'MID' | 'LOW' | 'MINIMAL';
 
+/** Career-arc shapes, kept separate from the trade tiers — see AGE_CURVE. */
+export type AgeArc = 'QB' | 'SPEED' | 'STURDY' | 'BACK' | 'SPECIALIST';
+
 export const TRADE_VALUE_TIER: Record<Position, TradeValueTier> = {
   QB: 'QB',
-  EDGE: 'PREMIUM', LT: 'PREMIUM', WR: 'PREMIUM', CB: 'PREMIUM',
-  DT: 'MID', RT: 'MID', LG: 'MID', RG: 'MID', C: 'MID', TE: 'MID', S: 'MID', LB: 'MID',
+  // one tier per conversion component — see the block above before editing
+  WR: 'PREMIUM',
+  LT: 'PREMIUM', LG: 'PREMIUM', C: 'PREMIUM', RG: 'PREMIUM', RT: 'PREMIUM',
+  EDGE: 'PREMIUM', DT: 'PREMIUM', LB: 'PREMIUM',
+  CB: 'MID', S: 'MID',
+  TE: 'MID',
   RB: 'LOW',
   K: 'MINIMAL', P: 'MINIMAL',
 };
@@ -1112,36 +1258,143 @@ export const TRADE_VALUE = {
    * surplus starts being counted at all (a below-replacement player is
    * theoretically a zero/negative asset, floored at a small positive number
    * so the math never inverts); `steepness` is how fast surplus compounds
-   * into value — this is the part a flat multiplier can't express, since it
-   * changes the CURVE's shape, not just its height; `ceiling` is the
-   * absolute sanity cap in the same value-point units pickValue() already
-   * uses (a mid/late Round 1 pick prices around 400-900 in these units, see
-   * pickValue below), so no combination of contract/age/scarcity bonuses can
-   * ever push an ordinary punter into premium-pick territory.
+   * into value; `scale` is the height.
+   *
+   * `ceiling` CAPS THE FINISHED VALUATION, not the base curve — see the end
+   * of playerValueDetailed, which applies it after age, contract, fit,
+   * scarcity, cap and noise have all been multiplied in. That is what makes
+   * it a real bound: no stack of favourable modifiers on a cheap young
+   * in-demand player can carry any position past what that position can ever
+   * be worth. (This comment used to claim the opposite. It was wrong about
+   * the code, which is worse than saying nothing.)
+   *
+   * -------------------------------------------------------------------------
+   * CALIBRATED IN JIMMY JOHNSON POINTS — the same units PICK_VALUE_CHART
+   * returns, unscaled. A value here IS a pick number, and every row below is
+   * a claim about football that can be checked by reading it aloud:
+   *
+   *   pick   1 = 3000    pick  16 = 1000    pick  48 = 420    pick  96 = 116
+   *   pick   5 = 1700    pick  32 =  590    pick  64 = 270    pick 144 =  34
+   *
+   * THE ANCHORS, and the real trades behind them. Real NFL trades are the
+   * source of truth (the owner's ruling); dynasty markets such as KeepTradeCut
+   * are one more data point and are cited nowhere below, because they price
+   * only skill positions — no linemen, no linebackers, no defensive backs,
+   * which is more than half a starting lineup and the whole of MID.
+   *
+   *   QB       94 ~ 2799, about the first overall pick; 96 ~ 3796; 98+ clips
+   *            at the 5000 ceiling, four to five mid-firsts. The owner's
+   *            anchor: *"Josh Allen in the real nfl would go for at least 4
+   *            or 5 first round pick equivalents"*. 91 ~ 1783 is the Stafford
+   *            package (two firsts and a third); 85 ~ 716 a late first.
+   *   PREMIUM  94 ~ 1457 (pick 8), 96 ~ 1957 (pick 4). Mack cost two firsts
+   *            and a third against a second coming back (~1765); Tunsil two
+   *            firsts and a second; Hill a first, a second and three later
+   *            picks (~1205). 88 ~ 597 is a late first, which is what a
+   *            Pro-Bowl receiver or tackle actually fetches; 82 ~ 241 a
+   *            third; 78 ~ 130 a late third.
+   *   MID      94 ~ 766 (pick 23) — Fitzpatrick went for a first, Ramsey for
+   *            two and a fourth, and the elite corner market is genuinely
+   *            that bimodal. 88 ~ 313 (a late second): Sneed went for a
+   *            third, Lattimore for a third and change, Waller for pick 100.
+   *   LOW      94 ~ 442 (a mid second) and the ceiling at 750 is the
+   *            McCaffrey package itself (a second, third, fourth and fifth ~
+   *            713). 90 ~ 243, a third — Swift went for a fourth and the best
+   *            backs of the last few years reached free agency untraded.
+   *   MINIMAL  99 ~ 32, a fifth. 94 ~ 16, a sixth. Never zero, never a real
+   *            asset, and the ceiling stops even a club with no kicker at all
+   *            from paying more than a low fifth for one.
+   *
+   * WHERE THE CEILINGS COME FROM, each derived from the same anchor rather
+   * than inherited: QB 5000 = five mid-firsts, so the best quarterback in the
+   * game out-prices the first overall pick decisively, which is the real
+   * answer and why nobody trades that man for a lottery ticket. PREMIUM 2100
+   * = two mid-firsts, the most any veteran non-quarterback has actually cost.
+   * MID 1500 = a first and a high second, Ramsey's price. LOW 750 = the
+   * McCaffrey package. MINIMAL 40 = a low fifth.
+   *
+   * STEEPNESS IS SHARED ACROSS PREMIUM/MID/LOW (0.147) ON PURPOSE. Curves
+   * with their own steepness made the gap between tiers swing with rating —
+   * an older pass at this had PREMIUM at 5.5x MID at 78 and 2.4x at 94 — so
+   * the same relabel was worth wildly different amounts depending on who you
+   * did it to. One steepness makes the positional gap a stable multiple; the
+   * economics live in `replacementLevel` (a replacement kicker is a 68, a
+   * replacement quarterback a 58) and `scale`. QB is steeper still (0.150),
+   * because quarterback scarcity genuinely compounds at the top; MINIMAL is
+   * flatter (0.135), because the best kicker alive is still a kicker.
+   *
+   * Ordering QB > PREMIUM > MID > LOW > MINIMAL holds at every rating from 60
+   * to 99. QB runs about 1.9x PREMIUM and 3.6x MID at equal rating, widening
+   * to 2.4x / 3.3x at the very top where the ceilings bind — a clear margin
+   * for the most valuable job in the sport, and nothing like the 18.3x this
+   * table used to charge at rating 88.
    */
   TIER_CURVE: {
-    QB: { replacementLevel: 58, steepness: 0.145, scale: 16, ceiling: 3400 },
-    PREMIUM: { replacementLevel: 60, steepness: 0.105, scale: 22, ceiling: 2200 },
-    MID: { replacementLevel: 62, steepness: 0.082, scale: 9, ceiling: 1100 },
-    LOW: { replacementLevel: 64, steepness: 0.072, scale: 28, ceiling: 480 },
-    MINIMAL: { replacementLevel: 68, steepness: 0.05, scale: 14, ceiling: 90 },
+    QB: { replacementLevel: 58, steepness: 0.150, scale: 12.70, ceiling: 5000 },
+    PREMIUM: { replacementLevel: 60, steepness: 0.147, scale: 9.90, ceiling: 2100 },
+    MID: { replacementLevel: 62, steepness: 0.147, scale: 7.00, ceiling: 1500 },
+    LOW: { replacementLevel: 64, steepness: 0.147, scale: 5.44, ceiling: 750 },
+    MINIMAL: { replacementLevel: 68, steepness: 0.135, scale: 0.494, ceiling: 40 },
   } as Record<TradeValueTier, { replacementLevel: number; steepness: number; scale: number; ceiling: number }>,
 
   /**
-   * Age curve per tier — real career arcs differ enormously by position.
+   * HOW A CAREER ARCS IS A DIFFERENT QUESTION FROM WHAT A POSITION IS WORTH,
+   * and these used to be the same table. Age curves were keyed on
+   * TradeValueTier, which was harmless only because the old tiers happened to
+   * sort roughly by career length. Re-tiering by conversion component broke
+   * that coincidence: the offensive line and the front seven moved to
+   * PREMIUM, and would have silently started ageing like wide receivers —
+   * declining from 29 at 7.5% a year, when a left tackle is the position that
+   * ages BEST in football. So the arcs get their own names and their own
+   * mapping below, and no position's ageing changed when the tiers did.
+   *
    * `declineStart`/`declinePerYear` model the back half; `youthThreshold`/
    * `youthPremiumPerYear` model the age-control premium teams pay for a
-   * player who'll still be great years from now. RBs decline earliest and
-   * fastest; offensive line and QB retain value longest; K/P barely age at
-   * all (leg talent doesn't erode like a 25-year-old's speed does).
+   * player who'll still be great years from now. Backs decline earliest and
+   * fastest; quarterbacks and specialists latest (leg talent doesn't erode
+   * like a 25-year-old's speed does).
    */
   AGE_CURVE: {
     QB: { declineStart: 34, declinePerYear: 0.035, youthThreshold: 26, youthPremiumPerYear: 0.025 },
-    PREMIUM: { declineStart: 29, declinePerYear: 0.075, youthThreshold: 25, youthPremiumPerYear: 0.035 },
-    MID: { declineStart: 30, declinePerYear: 0.06, youthThreshold: 25, youthPremiumPerYear: 0.03 },
-    LOW: { declineStart: 26, declinePerYear: 0.12, youthThreshold: 24, youthPremiumPerYear: 0.05 },
-    MINIMAL: { declineStart: 33, declinePerYear: 0.02, youthThreshold: 26, youthPremiumPerYear: 0.012 },
-  } as Record<TradeValueTier, { declineStart: number; declinePerYear: number; youthThreshold: number; youthPremiumPerYear: number }>,
+    SPEED: { declineStart: 29, declinePerYear: 0.075, youthThreshold: 25, youthPremiumPerYear: 0.035 },
+    STURDY: { declineStart: 30, declinePerYear: 0.06, youthThreshold: 25, youthPremiumPerYear: 0.03 },
+    BACK: { declineStart: 26, declinePerYear: 0.12, youthThreshold: 24, youthPremiumPerYear: 0.05 },
+    SPECIALIST: { declineStart: 33, declinePerYear: 0.02, youthThreshold: 26, youthPremiumPerYear: 0.012 },
+  } as Record<AgeArc, { declineStart: number; declinePerYear: number; youthThreshold: number; youthPremiumPerYear: number }>,
+
+  /**
+   * Which arc each position ages on. CONSTANT ACROSS A CONVERSION COMPONENT,
+   * for exactly the reason the trade tiers are: a free position change must
+   * not move a man's price, and the age multiplier is part of his price.
+   * Keying arcs per-position reopened the arbitrage in the age dimension — an
+   * old left tackle relabelled a guard was measured at 1.10x mean and 2.49x at
+   * worst, purely by escaping the receivers' decline curve. lib/ai/gm.ts runs
+   * lib/ai/gm.ts checks this map directly, right beside the trade-value check:
+   * an age arc is a table, not an outcome, so assertNoProfitableConversion
+   * (which only ever sees value at a rating) cannot see a split in it.
+   *
+   * That constraint settles three cases the old tier-keyed lookup split down
+   * the middle, and the football answer agrees with it in all three:
+   *   - the whole offensive line is STURDY. It was LT alone on SPEED, which
+   *     was always wrong — left tackle is the position that ages BEST in
+   *     football, not like a wide receiver.
+   *   - the whole EDGE/DT/LB front is STURDY. Edge rushers were on SPEED;
+   *     interior rushers and off-ball backers hold up into their thirties and
+   *     the great edge rushers largely have too.
+   *   - both defensive backs are SPEED. Safety was on STURDY; corner is the
+   *     most speed-dependent job on the field after running back and the
+   *     component has to take the corner's arc.
+   */
+  AGE_ARC: {
+    QB: 'QB',
+    WR: 'SPEED',
+    CB: 'SPEED', S: 'SPEED',
+    LT: 'STURDY', LG: 'STURDY', C: 'STURDY', RG: 'STURDY', RT: 'STURDY',
+    EDGE: 'STURDY', DT: 'STURDY', LB: 'STURDY',
+    TE: 'STURDY',
+    RB: 'BACK',
+    K: 'SPECIALIST', P: 'SPECIALIST',
+  } as Record<Position, AgeArc>,
 
   /** Bounds on the final age multiplier — keeps even a very old/young edge case bounded rather than blowing up. */
   AGE_MULT_MIN: 0.2,
@@ -1159,8 +1412,24 @@ export const TRADE_VALUE = {
    */
   CONTRACT_SURPLUS_WEIGHT: 0.55,
   CONTRACT_CONTROL_YEARS_FULL: 4, // years of control at which the surplus/discount fraction applies at full strength
-  CONTRACT_MULT_MIN: 0.55,
-  CONTRACT_MULT_MAX: 1.75,
+  /**
+   * [TUNE] Clamped to the bands the trade-valuation research recommends
+   * (section 7, "Contract value should be modeled as surplus/deficit"):
+   * an exceptional bargain is worth at most about +30% on talent value, a
+   * severe overpay about -25 to -40%. Was 0.55/1.75 — the +75% end was the
+   * larger error, because it stacked on top of the potential term and made a
+   * cheap young ascending player nearly untouchable, which is the same
+   * "young controlled players are mispriced" failure the research names, in
+   * the direction nobody checks.
+   *
+   * The floor is not the whole downside story and is not meant to be: a
+   * contract a club genuinely cannot fit is priced a second time by `capMult`
+   * in lib/ai/gm.ts (down to 0.6x), so a toxic deal at a club with no room
+   * bottoms out near 0.36x of talent — the research's "can create negative
+   * standalone asset value", as close as a multiplicative model gets to it.
+   */
+  CONTRACT_MULT_MIN: 0.60,
+  CONTRACT_MULT_MAX: 1.30,
 
   /**
    * League scarcity: how thin the league-wide supply of good (75+ OVR)
@@ -1174,15 +1443,192 @@ export const TRADE_VALUE = {
   SCARCITY_MULT_MAX: 1.15,
 
   /**
-   * Team-need multiplier, replacing the old flat AI.NEED_MULT=1.25 for
-   * every position uniformly. Bounded exactly as real front offices behave:
-   * a team that's set at a position pays LESS for a redundant asset (not
-   * just "no bonus," an actual discount), and even desperate need has a
-   * hard ceiling — "we have no punter" is never a reason to pay a
-   * first-round price for one.
+   * =========================================================================
+   * THREE PRICES, NOT ONE — THE BID/ASK SPREAD AND THE CLUB'S WINDOW
+   * =========================================================================
+   * A club does not have a price for a player. It has two, and which one you
+   * meet depends on which way he is travelling:
+   *
+   *   ASK   what it costs to pry one of ITS players loose  = V x (1 + poach)
+   *   BID   what it will give you for one of YOURS         = V x (1 - haircut)
+   *
+   * DIFFICULTY SETS THE WIDTH OF THAT SPREAD, and that is deliberately not
+   * the same thing as moving the acceptance threshold. The research paper's
+   * "Failure 5" is difficulty settings that only make every deal need more
+   * value — which is what `aiAcceptsLopsided` does today. A spread instead
+   * makes the DIRECTION of a trade matter, so the skill on HARD is finding a
+   * club that actually wants what you have rather than finding more points.
+   *
+   * PICKS ARE EXEMPT, and that is what keeps it from collapsing back into a
+   * threshold. A spread applied to everything is algebraically identical to
+   * raising TRADE_ACCEPT_RATIO. Applied to players only, it prices the thing
+   * it is actually about — prying a man off a roster and out of a building —
+   * and leaves pick-for-pick trades at chart value, where a chart belongs.
+   *
+   * BAD_CONTRACT_TAX is the app owner's specific ask: on the hardest setting,
+   * dumping a burden should cost real compensation, because the club taking
+   * it on is doing you a favour. It multiplies the contract DEFICIT the
+   * valuation already found, so it is silent on a fair deal and bites hard on
+   * a toxic one — no separate judgement about what a bad contract is.
    */
-  NEED_MULT_MIN: 0.72, // no need / already deep
-  NEED_MULT_MAX: 1.28, // maximum, even at severe need
+  SPREAD: {
+    /** ASK: markup on a PLAYER the AI is being asked to give up. */
+    POACH_PREMIUM: { EASY: 0.03, NORMAL: 0.07, HARD: 0.18 } as Record<string, number>,
+    /** BID: markdown on a PLAYER the AI is being asked to take in. */
+    DUMP_HAIRCUT: { EASY: 0.03, NORMAL: 0.07, HARD: 0.18 } as Record<string, number>,
+    /** Extra charge, as a share of the contract deficit, for absorbing a bad deal. */
+    BAD_CONTRACT_TAX: { EASY: 0.1, NORMAL: 0.25, HARD: 0.6 } as Record<string, number>,
+
+    /**
+     * -----------------------------------------------------------------------
+     * THE CLUB'S WINDOW — WHY A REBUILDER TAKES 915 IN PICKS AND NOT IN MEN
+     * -----------------------------------------------------------------------
+     * The app owner's case, in his words: a bad club "might sell a 1000 point
+     * asset for [a] 915 point draft pick". The clarification is the whole
+     * mechanism — it is not that rebuilding clubs are cheap, it is that they
+     * want a DIFFERENT KIND of asset back. Picks are what a rebuild is for.
+     *
+     * So this is not a discount on the man being sold. It is a change in what
+     * the club thinks every asset is worth, applied wherever that asset
+     * appears, and the 915 falls out of it: to a rebuilder a future pick
+     * really is worth more than the chart says and a 30-year-old starter
+     * really is worth less, so 915 neutral points of picks clears his price
+     * and 915 neutral points of veteran does not. Pricing it this way rather
+     * than as a second scalar is also what stops it double-counting with the
+     * roster-fit term, which answers a different question entirely (does he
+     * improve our lineup, not do we want him now or later).
+     *
+     * WINDOW_SWING is how far a club at the extreme of `winNow` moves a
+     * player's price; the paper puts the buyer band at roughly +/-15% and
+     * this sits just inside it. FUTURE_DISCOUNT_* does the same job for
+     * picks: everyone marks a further-out pick down, a contender much harder
+     * (paper does not help him win this year), a rebuilder barely at all.
+     */
+    /**
+     * [TUNE] 0.13, set against the app owner's own number: a fully rebuilding
+     * club should price a 31-year-old starter at about 0.91 of neutral, so
+     * that 915 points of draft capital clears a 1000-point veteran. 31 is
+     * four years past the pivot over a six-year span = 0.67 of the full
+     * reading, and 1 - 0.67 x 0.13 = 0.913.
+     */
+    WINDOW_SWING: 0.13,
+    /** Age at which a player is neither a "future" asset nor a "win now" one. */
+    WINDOW_PIVOT_AGE: 27,
+    /** Years either side of the pivot that reach the full future/now reading — 33+ is all "now", 21 and under all "later". */
+    WINDOW_AGE_SPAN: 6,
+    /** Value kept per draft beyond the next one, for a club with no window lean. */
+    FUTURE_DISCOUNT_BASE: 0.85,
+    /** ...swung this far by the club's window: a contender discounts paper, a rebuilder hardly does. */
+    FUTURE_DISCOUNT_SWING: 0.22,
+
+    /**
+     * Bounds on fitMult x windowMult TOGETHER. The two are different
+     * questions and legitimately compose — a contender that also has a hole
+     * really does want a ready starter twice over — but their product must
+     * not run away, and checking it here is how "never apply the spread
+     * twice" stops being a hope. Measured on the probe save, the product
+     * reaches these bounds only at the extremes and sits inside 0.85-1.25 for
+     * 95% of club/player pairs.
+     */
+    FIT_WINDOW_MIN: 0.72,
+    FIT_WINDOW_MAX: 1.36,
+  },
+
+  /**
+   * =========================================================================
+   * PACKAGE QUALITY — FOUR QUARTERS ARE NOT A DOLLAR
+   * =========================================================================
+   * A trade is judged on what the piles CONTAIN, not only on what they add
+   * up to. Without this the arithmetic says six backups equal one star, and
+   * every trade economy that has shipped without it has been broken the same
+   * way: aggregate junk until the sum clears the threshold. The research the
+   * app owner commissioned calls this out by name ("the major dynasty-
+   * calculator failure: four quarters for a dollar") and it is the one
+   * exploit class this engine had no defence against at all.
+   *
+   * TWO RULES, AND THEY DO DIFFERENT JOBS.
+   *
+   * CONCENTRATION discounts the tail of a pile. The best asset counts fully,
+   * the second nearly so, and it falls away from there — a roster fields
+   * eleven men at a time and holds 53, so the fifth piece of a package is
+   * worth genuinely less to the club receiving it than its price tag says.
+   * Weights are the research's (100/95/85/70, then 50-60%).
+   *
+   * THE HEADLINE RULE is the one that actually stops the exploit. Moving a
+   * cornerstone requires getting back at least one asset that is itself a
+   * real piece: no quantity of depth adds up to a man of that class, because
+   * what the seller is short of afterwards is not points, it is a player
+   * nobody else has. Sized as the research suggests (35-50% of the man being
+   * moved; 40% here).
+   *
+   * BOTH SIDES ARE WEIGHTED THE SAME WAY, which is deliberate and is the
+   * property that keeps the rule safe. If a bundle were discounted only when
+   * received, the same assets would be worth different amounts depending on
+   * which way they were travelling, and a user could trade a pile for a star
+   * and the star back for the pile, manufacturing value on every lap. (That
+   * is invariant 14 of the research's anti-exploit list, and it is checked in
+   * scripts/_tradeEquate.ts.) Judging both piles by one rule makes a
+   * round trip exactly neutral by construction.
+   */
+  PACKAGE: {
+    /** Weight on the 1st, 2nd, 3rd... most valuable asset in a pile. */
+    CONCENTRATION: [1, 0.95, 0.85, 0.7] as number[],
+    /** Everything past that list. */
+    CONCENTRATION_TAIL: 0.55,
+    /**
+     * A single asset worth this much is a cornerstone and triggers the
+     * headline rule. 800 JJ points is about a mid-first — an 89-90 at a
+     * premium position, a 92 corner, or a genuine franchise quarterback.
+     * Below it, a club is trading a good player rather than a pillar, and
+     * quantity is a legitimate way to pay.
+     */
+    HEADLINE_THRESHOLD: 800,
+    /** ...and then at least one asset coming back must be worth this share of him. */
+    HEADLINE_SHARE: 0.4,
+    /**
+     * ...OR the package must contain at least this many first-round-quality
+     * assets, which is the research's own second clause and is not optional:
+     * without it the rule blocks the most classic real trade in the sport.
+     * Two firsts for a franchise quarterback has a headline asset worth only
+     * about a quarter of him, and the Rams, the Bears and the Texans all made
+     * that trade. What makes such a package acceptable is not one enormous
+     * piece, it is that both pieces are premium — so that is what gets
+     * checked. "First-round quality" is read off the chart itself, at the
+     * value of the LAST pick of round one, so it stays true if the league
+     * ever changes size.
+     */
+    HEADLINE_PREMIUM_COUNT: 2,
+  },
+
+  /**
+   * Team-need multiplier, replacing the old flat AI.NEED_MULT=1.25 for
+   * every position uniformly. Bounded as real front offices behave: a team
+   * that's set at a position pays LESS for a redundant asset (not just "no
+   * bonus," an actual discount), and even desperate need has a hard ceiling
+   * — "we have no punter" is never a reason to pay a first-round price for
+   * one.
+   *
+   * NARROWED FROM 0.72/1.28, AND THE WIDTH IS THE POINT. This multiplier is
+   * applied to BOTH sides of a trade, and the two sides pull opposite ways:
+   * a club prices its own starter at the top of the band (losing him drops
+   * its depth chart) and prices an incoming man at the bottom (it already
+   * has one). So the band's width is a tax on every player-for-player trade
+   * in the game, and it compounds with AI.TRADE_ACCEPT_RATIO:
+   *
+   *   0.72 / 1.28  =>  1.78x, and 1.88x once the accept ratio is applied
+   *   0.85 / 1.20  =>  1.41x, and 1.47x
+   *
+   * At the old width a club would not swap two genuinely comparable starters
+   * unless one side sent nearly twice the value — which is the "sending far
+   * more than you get is still refused" report, and it is an artefact of
+   * charging the same preference twice rather than a judgement about
+   * football. Narrowing it does not weaken the depth-chart read that feeds
+   * it (see rosterFit in lib/ai/gm.ts): an obvious upgrade still reaches the
+   * top of the band and a redundant body still sits at the bottom. It only
+   * stops the two ends being 78% apart.
+   */
+  NEED_MULT_MIN: 0.85, // no need / already deep — a discount, not a refusal
+  NEED_MULT_MAX: 1.20, // maximum, even at severe need
 };
 
 // ---------------------------------------------------------------------------

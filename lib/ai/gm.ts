@@ -6,6 +6,71 @@ import { startersAt } from '../lineup';
 import { REPLACEMENT_LEVEL } from '../sim/units';
 import { CapMode } from '../types';
 import { readJson } from '../json';
+import { assertNoProfitableConversion, relatedPositions, positionMove, attrsForPosition, computeOverall } from '../ratings';
+
+/**
+ * A POSITION CHANGE MAY NOT PAY FOR ITSELF.
+ *
+ * lib/ratings.ts offers a menu of position changes and they are reversible,
+ * so if moving a man to a position the market pays more for makes him worth
+ * more, the game is a money printer: buy the cheap label, convert, sell the
+ * dear one. It was live and measured at 6.60x on the tier table this
+ * recalibration replaced — the same 94-rated man priced 115 as a right tackle
+ * and 759 as a left tackle, for a move that cost him nothing.
+ *
+ * THIS IS THE ONE MODULE THAT READS TRADE_VALUE_TIER, so this is where the
+ * check belongs, and it is CALLED here rather than merely exported: an
+ * assertion nothing runs is a comment that lies. It runs at import rather
+ * than per-valuation because it is a statement about constant tables, and it
+ * throws rather than warns for the same reason lib/lineup.ts throws on an
+ * eleven-man sum that isn't eleven — a silent free arbitrage is worse than a
+ * failed boot. (lib/ratings.ts cannot run it itself: lib/tuning.ts is
+ * upstream of it and the cycle would break the build.)
+ *
+ * The assertion is OUTCOME-BASED, not a table comparison: lib/ratings.ts
+ * charges a conversion in rating points for the parts of the new job nobody
+ * has ever coached him in, so two connected positions may legitimately price
+ * differently as long as the rating cost covers the gap. What this passes in
+ * is the trade curve — `valueAt` is TRADE_VALUE.TIER_CURVE and nothing else,
+ * so what gets checked is exactly the table below, and the synthetic player
+ * is built the way lib/ratings.ts builds one so the two agree on what a
+ * conversion costs.
+ *
+ * As the table stands, every connected pair shares a tier, which satisfies
+ * this trivially and by construction — no rating cost can make a same-tier
+ * move profitable. The check is here for the day somebody splits them.
+ */
+const tierCurveOf = (pos: Position, ovr: number): number => {
+  const c = TRADE_VALUE.TIER_CURVE[TRADE_VALUE_TIER[pos]];
+  return Math.min(c.ceiling, (Math.exp(Math.max(0, ovr - c.replacementLevel) * c.steepness) - 1) * c.scale);
+};
+assertNoProfitableConversion(tierCurveOf, (from, to, ovr) => {
+  const attrs: Record<string, number> = {};
+  for (const key of attrsForPosition(from)) attrs[key] = ovr;
+  return positionMove({ position: from, trueOvr: computeOverall(from, attrs), trueAttrs: attrs }, to).ovr;
+});
+
+/**
+ * AND THE AGE MULTIPLIER IS PART OF A MAN'S PRICE, so it is bound by the same
+ * rule. This one cannot go through the assertion above, which only sees trade
+ * value at a rating: two positions can sit on the same tier and still age on
+ * different curves, and a 33-year-old left tackle relabelled a guard would
+ * then escape the receivers' decline and get more valuable for it. That was
+ * measured at 1.10x mean and 2.49x at worst. Connected positions must share
+ * an AGE_ARC, full stop, so that is checked directly.
+ */
+for (const from of POSITIONS) {
+  for (const to of relatedPositions(from)) {
+    if (TRADE_VALUE.AGE_ARC[from] !== TRADE_VALUE.AGE_ARC[to]) {
+      throw new Error(
+        `lib/tuning.ts: ${from} and ${to} can be converted between but age on different curves `
+        + `(${TRADE_VALUE.AGE_ARC[from]} vs ${TRADE_VALUE.AGE_ARC[to]}) — the age multiplier is part of a `
+        + `man's price, so that is a free arbitrage for anyone with an old player at the cheaper arc. `
+        + `Put them on the same TRADE_VALUE.AGE_ARC, or remove the adjacency in lib/ratings.ts.`,
+      );
+    }
+  }
+}
 
 /**
  * ===========================================================================
@@ -110,10 +175,12 @@ export function needSeverity(score: number): { label: string; className: string 
  * this exists to fix. `teamNeeds`' quality term is `(72 - starter) / 30`,
  * which is flat zero for any starter at 72 or better — so a club with a 72
  * right tackle and a club with a 90 right tackle were indistinguishable, and
- * because `TRADE_VALUE.NEED_MULT_MIN` is 0.72, "no need" is not a shrug, it
- * is an active 28% DISCOUNT. An 88 offered to a club starting a 78 came back
- * priced at 72% of his worth. The club did not merely fail to want him; it
- * marked him down.
+ * because `TRADE_VALUE.NEED_MULT_MIN` is below 1, "no need" is not a shrug,
+ * it is an active DISCOUNT — it was 0.72 when this was written, so an 88
+ * offered to a club starting a 78 came back priced at 72% of his worth. The
+ * club did not merely fail to want him; it marked him down. (The floor has
+ * since been raised to 0.85 as part of the Jimmy Johnson recalibration; the
+ * bug this block fixes is unchanged, only its severity.)
  *
  * The fix is a second, separate signal rather than a wider `teamNeeds`:
  *
@@ -126,9 +193,9 @@ export function needSeverity(score: number): { label: string; className: string 
  * They are blended at the point of use (see `playerValueDetailed`) by taking
  * the LARGER of the two, because they are two readings of one axis — "how
  * much does this man improve us" — and a club with nobody at a position both
- * has a hole and would be hugely upgraded. Taking the max keeps the existing
- * bounded multiplier exactly as wide as it already was: this fix stops the AI
- * DISCOUNTING obvious upgrades, it does not hand it a new way to overpay.
+ * has a hole and would be hugely upgraded. Taking the max cannot reach past
+ * the bounded multiplier it feeds: this fix stops the AI DISCOUNTING obvious
+ * upgrades, it does not hand it a new way to overpay.
  *
  * WHO THE INCUMBENT IS. Not "the best man at the position" — the man who
  * actually loses the job. `startersAt` (lib/lineup.ts) is the single
@@ -310,6 +377,41 @@ export function leagueScarcity(allPlayers: { position: string; trueOvr: number }
   return scarcity;
 }
 
+/**
+ * ===========================================================================
+ * THE CLUB'S WINDOW — WHAT KIND OF ASSET IS THIS, AND IS IT THE KIND WE WANT?
+ * ===========================================================================
+ * Separate from `rosterFit`, which asks whether a man improves the lineup.
+ * This asks a question a depth chart cannot answer: does he arrive in time to
+ * matter to THIS club? A 31-year-old starter is exactly as useful on the
+ * field to a rebuilding club as to a contender, and worth much less to it,
+ * because the seasons he has left land before the club is any good.
+ *
+ * Returns -1 (purely a future asset) through +1 (purely a win-now asset), off
+ * AGE AND NOTHING ELSE. Years of control were in here and came back out: the
+ * research is explicit that control must not be counted twice ("do not then
+ * also apply a large years-remaining multiplier — that double counts
+ * control"), and `contractMult` already prices it. Counting it here as well
+ * also produced a wrong answer, not just a doubled one — three years left
+ * made a 34-year-old read as a partly FUTURE asset, which is the opposite of
+ * what those three years are.
+ */
+export function assetWindow(p: { age: number }): number {
+  const S = TRADE_VALUE.SPREAD;
+  return clamp((p.age - S.WINDOW_PIVOT_AGE) / S.WINDOW_AGE_SPAN, -1, 1);
+}
+
+/**
+ * The multiplier a club's window puts on a player. `winNow` above 0.5 leans
+ * win-now, below leans rebuild; the product with `assetWindow` is positive
+ * when the two agree (a contender looking at a veteran, a rebuilder looking
+ * at a 23-year-old) and negative when they do not.
+ */
+export function windowMultiplier(profile: GmProfile, p: { age: number }): number {
+  const tilt = (profile.winNow - 0.5) * 2;
+  return 1 + tilt * assetWindow(p) * TRADE_VALUE.SPREAD.WINDOW_SWING;
+}
+
 export interface ValueBreakdown {
   base: number;
   upside: number;
@@ -323,6 +425,8 @@ export interface ValueBreakdown {
   fitMult: number;
   /** What the deal does to THIS club's books — see the cap block in playerValueDetailed. 1 when no cap space was supplied. */
   capMult: number;
+  /** The club's competitive window against this man's age — see windowMultiplier. */
+  windowMult: number;
   contractMult: number;
   scarcityMult: number;
   noiseMult: number;
@@ -425,9 +529,12 @@ export function playerValueDetailed(
     });
   }
 
-  // Age curve — position-specific arc (RB earliest/fastest decline, OL/QB
-  // longest, K/P barely age at all).
-  const ageCurve = TRADE_VALUE.AGE_CURVE[tier];
+  // Age curve — position-specific arc (RB earliest/fastest decline, QB and
+  // specialists longest). Keyed on the position's AGE_ARC, NOT on its trade
+  // tier: how long a career lasts and what the position is worth are two
+  // different questions, and tying them together meant re-tiering the
+  // offensive line would have started ageing it like a wide receiver.
+  const ageCurve = TRADE_VALUE.AGE_CURVE[TRADE_VALUE.AGE_ARC[p.position as Position] ?? 'STURDY'];
   let ageMult = 1;
   if (p.age > ageCurve.declineStart) ageMult -= (p.age - ageCurve.declineStart) * ageCurve.declinePerYear;
   else if (p.age < ageCurve.youthThreshold) ageMult += (ageCurve.youthThreshold - p.age) * ageCurve.youthPremiumPerYear;
@@ -481,10 +588,39 @@ export function playerValueDetailed(
   const needVal = needs?.[p.position] ?? 0;
   const fit = opts.roster ? rosterFit(p, opts.roster) : null;
   const fitVal = Math.max(needVal, fit?.score ?? 0);
-  const fitMult = needs || fit
+  const fitBase = needs || fit
     ? TRADE_VALUE.NEED_MULT_MIN + fitVal * (TRADE_VALUE.NEED_MULT_MAX - TRADE_VALUE.NEED_MULT_MIN)
     : 1;
+
+  /**
+   * The club's WINDOW, folded into the same bounded multiplier rather than
+   * multiplied on beside it. Fit and window are different questions and
+   * legitimately compose — a contender with a hole wants a ready starter
+   * twice over — but their product is exactly where a "we apply the
+   * preference twice" bug would live, so it is clamped here, once, against
+   * TRADE_VALUE.SPREAD.FIT_WINDOW_*, and `fitMult` continues to be the only
+   * roster-preference number in the formula.
+   */
+  const windowMult = windowMultiplier(profile, p);
+  const fitMult = clamp(fitBase * windowMult, TRADE_VALUE.SPREAD.FIT_WINDOW_MIN, TRADE_VALUE.SPREAD.FIT_WINDOW_MAX);
   const fitSwing = base * Math.abs(fitMult - 1);
+
+  // Legibility: a spread the user cannot see reads as the AI being arbitrary,
+  // which is worse than no spread. Stated only when it is actually moving the
+  // number, and in the club's own terms.
+  if (Math.abs(windowMult - 1) > 0.04) {
+    const wantsHim = windowMult > 1;
+    reasons.push({
+      text: profile.winNow < 0.5
+        ? (wantsHim
+          ? `We're rebuilding, and at ${p.age} he's still around when we're good — that's worth more to us than to most.`
+          : `We're rebuilding — a ${p.age}-year-old's best seasons land before ours do, so he's worth less to us than to a contender.`)
+        : (wantsHim
+          ? `We're going for it now, and he helps now — that's worth a premium to us.`
+          : `We're going for it now — at ${p.age} he's more future than we're shopping for.`),
+      weight: base * Math.abs(windowMult - 1),
+    });
+  }
 
   // The explanation has to read correctly from BOTH sides of a deal: the same
   // number is the price of acquiring him and the price of prising him loose,
@@ -591,7 +727,7 @@ export function playerValueDetailed(
   total = Math.min(total, curve.ceiling);
 
   reasons.sort((a, b) => b.weight - a.weight);
-  return { base, upside, ageMult, fitMult, capMult, contractMult, scarcityMult, noiseMult, fit, total: Math.max(1, total), reasons };
+  return { base, upside, ageMult, fitMult, windowMult, capMult, contractMult, scarcityMult, noiseMult, fit, total: Math.max(1, total), reasons };
 }
 
 /** Convenience wrapper for callers that only need the number. */
@@ -599,19 +735,78 @@ export function playerValue(p: RosterPlayer, opts: Parameters<typeof playerValue
   return playerValueDetailed(p, opts).total;
 }
 
-/** Value of a draft pick to this team, in the same units as playerValue. */
-export function pickValue(round: number, slot: number, profile: GmProfile, year: number, currentYear: number): number {
+/**
+ * Value of a draft pick to this team, in the same units as playerValue — which
+ * are now the Jimmy Johnson chart's own units, unscaled. See PICK_VALUE_CHART
+ * in lib/tuning.ts: to a neutral GM valuing a pick in the next draft, this
+ * function returns the chart number and nothing else, so "420" means "pick 48"
+ * everywhere in the game, for players as much as for picks.
+ *
+ * The old form multiplied the chart by a bare 0.30 marked [FRAGILE
+ * PLACEHOLDER], which is exactly what it was: a conversion factor between two
+ * scales that nobody could state in football terms, sitting between the two
+ * halves of every trade. It is gone.
+ */
+export function pickValue(
+  round: number,
+  slot: number,
+  profile: GmProfile,
+  year: number,
+  currentYear: number,
+  /**
+   * The year of the next draft that has not happened yet, when the caller
+   * knows it (lib/trade.ts does — see imminentDraftYear). Picks in THAT draft
+   * are worth face value; the discount below counts from it, not from the
+   * season. Optional because it changes an answer rather than enabling one:
+   * omit it and the discount counts from `currentYear` as it always did,
+   * which is what a retrospective grading a completed trade wants.
+   *
+   * It matters because DraftPick.year for the upcoming draft is pre-generated
+   * as seasonYear + 1 and stays that way all season, so without this a pick in
+   * the draft five months away was marked down 12% for being "a year out".
+   */
+  imminentYear?: number | null,
+): number {
   const overall = (round - 1) * LEAGUE.TEAM_COUNT + slot;
-  // Chart value is on a 3000-point scale; scale it into playerValue units.
-  // [FRAGILE PLACEHOLDER] 0.30 makes pick 1.1 ≈ a low-end star.
-  const chart = PICK_VALUE_CHART(overall) * 0.30;
+  const chart = PICK_VALUE_CHART(overall);
 
-  // Rebuilding teams (low winNow) and pick-lovers pay a premium.
-  const bias = 0.75 + profile.valuePicks * 0.5 + (1 - profile.winNow) * 0.35;
+  /**
+   * Rebuilding teams (low winNow) and pick-lovers pay a premium, win-now
+   * clubs discount. CENTRED ON 1.0: the old form was
+   * `0.75 + valuePicks * 0.5 + (1 - winNow) * 0.35`, which handed a perfectly
+   * neutral GM a 1.175x multiplier — harmless when the chart was being
+   * rescaled by an arbitrary constant anyway, and a lie now that the chart's
+   * numbers are the game's units. Same coefficients, same spread across the
+   * league (roughly 0.62x .. 1.38x); only the middle moved, so a neutral club
+   * prices pick 48 at 420 and the sentence "this player is worth a
+   * mid-second" is checkable.
+   */
+  const bias = 1 + (profile.valuePicks - 0.5) * 0.5 + (0.5 - profile.winNow) * 0.35;
 
-  // Future picks are discounted. [TUNE] 12% per year out.
-  const yearsOut = Math.max(0, year - currentYear);
-  const discount = Math.pow(0.88, yearsOut);
+  /**
+   * Future picks are discounted — a 2028 first is not a 2027 first, and no
+   * chart encodes that. [TUNE] 15% per draft beyond the next one, up from 12%
+   * per year counted from the season. Two changes in one place, both in the
+   * same direction of honesty: the imminent draft is no longer discounted at
+   * all (see `imminentYear`), and the rate is closer to how front offices
+   * actually treat future capital, where "a future second for a current
+   * third" is a routine trade. Note the slot is already handled elsewhere:
+   * lib/trade.ts prices any pick past the next draft at the middle of its
+   * round, so this multiplier carries time risk only, not slot uncertainty.
+   */
+  /*
+   * ...and how hard he discounts it is his own business too. A club going for
+   * it now marks a 2029 pick down sharply — paper does not help it win this
+   * season — while a rebuilder barely discounts it at all, because that draft
+   * is the whole plan. This is the other half of "a rebuilder will take 915
+   * points of picks for a 1000-point player": the picks are not worth 915 to
+   * him, they are worth more, and the deal clears without anybody inventing a
+   * discount on the player.
+   */
+  const S = TRADE_VALUE.SPREAD;
+  const perYear = clamp(S.FUTURE_DISCOUNT_BASE + (0.5 - profile.winNow) * S.FUTURE_DISCOUNT_SWING, 0.6, 0.98);
+  const yearsOut = Math.max(0, year - (imminentYear ?? currentYear));
+  const discount = Math.pow(perYear, yearsOut);
 
   return chart * bias * AI.PICK_VALUE_BIAS * discount;
 }
