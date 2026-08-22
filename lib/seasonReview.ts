@@ -205,12 +205,22 @@ const CAREER_WORST_MARGIN: Record<string, number> = {
 
 /**
  * [TUNE] Bars on the pay/rating gap — "paid at the Nth percentile among the
- * league's players at his position, produced at the Mth". Measured over every
- * club's last completed season, conditioned the same way the rules are: among
- * the well-paid (pay percentile 70+) the gap's 90th percentile is 66 and its
- * 95th is 75, so 70 lands the loudest version of this near one well-paid man
- * in fourteen. Unconditioned bars would have fired on any bench player whose
- * pay was merely median.
+ * league's active players at his position, produced at the Mth". Measured over
+ * every club's last completed season, and conditioned EXACTLY the way the rules
+ * below are, which is the only way these numbers mean anything: the gap's
+ * distribution among the well-paid is nothing like its distribution overall,
+ * and an unconditioned bar fired on any bench player whose pay was merely
+ * median. Among the well paid (pay percentile 70+) the gap runs 66 at the 90th
+ * percentile and 75 at the 95th; among the well rated, 65 and 74; among the
+ * cheap and the low-rated the mirror figures are -72 and -66.
+ *
+ * These were re-measured once already, and the reason is worth recording: the
+ * population changed under them. Restricting the pay and rating ladders to
+ * ACTIVE players — retired men and draft-pool prospects are not part of the
+ * market a club competes in — lifted the rating ladder, which pushed players
+ * DOWN it, which quietly turned "he outplayed his rating" from 2.3% of all
+ * reads into 13.5% without a single threshold being touched. A bar on a
+ * shifting population is not a bar.
  */
 const PAY_HIGH = 70;          // he is genuinely well paid for his position
 const PAY_LOW = 45;           // he is genuinely cheap
@@ -218,8 +228,8 @@ const PAY_GAP_UNDER = 70;     // paid that far above what he produced
 const PAY_GAP_OVER = -72;     // produced that far above what he is paid
 const RATE_HIGH = 70;
 const RATE_LOW = 45;
-const RATE_GAP_UNDER = 75;
-const RATE_GAP_OVER = -60;
+const RATE_GAP_UNDER = 66;
+const RATE_GAP_OVER = -66;
 
 /**
  * [TUNE] Missing this many games puts a man in the bottom 8% of availability
@@ -287,9 +297,9 @@ const NO_LEVEL_VERDICT = new Set(['LB']);
  *
  * ROOM: `potential - trueOvr` collapses with age — its 90th percentile is 17
  * points at 20-23, 12 at 24-25 and 9 at 26-27 — so one flat bar would have
- * called every young player a prospect and no older one. The bar is that 90th
- * percentile, by band, plus a ceiling worth having: a 55 with an 80 in him is
- * a story, a 48 with a 58 in him is a roster spot.
+ * called every young player a prospect and no older one. The bar is the 95th
+ * percentile of that gap, by band (20 / 15 / 11), plus a ceiling worth having:
+ * a 55 with an 80 in him is a story, a 48 with a 58 in him is a roster spot.
  *
  * DONE: the reverse, and the pairing the owner asked for. Half of all players
  * over 27 are within two points of their ceiling, so "he is finished growing"
@@ -297,9 +307,9 @@ const NO_LEVEL_VERDICT = new Set(['LB']);
  * which the rating bar is.
  */
 const ROOM_BAR: { maxAge: number; gap: number }[] = [
-  { maxAge: 23, gap: 17 },
-  { maxAge: 25, gap: 12 },
-  { maxAge: 27, gap: 9 },
+  { maxAge: 23, gap: 20 },
+  { maxAge: 25, gap: 15 },
+  { maxAge: 27, gap: 11 },
 ];
 const ROOM_MIN_CEILING = 80;
 const DONE_MIN_AGE = 28;
@@ -978,7 +988,27 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
     const fG = sh.first.length, sG = sh.second.length;
     // Same columns on both sides — see spokenSplit().
     const [fS, sS] = spokenSplit(pos, sh.firstStats, sh.secondStats);
-    if (t >= tBar && sh.firstPct <= 30 && sh.secondPct >= 55) {
+    /**
+     * The number the position leads with may not contradict the sentence.
+     *
+     * The grade is a weighted blend, so a quarterback can slide on touchdowns
+     * and interceptions while his YARDAGE goes up — and then the recap prints
+     * "from there it fell away" over two figures where the second is larger
+     * than the first. Found by reading real output: 1,513 yards before week 9
+     * and 1,579 after, filed as a fade. The test is non-strict, so a lead stat
+     * that simply did not move (a corner with no interceptions in either half)
+     * leaves the verdict to the rest of the line; it only ever rejects an
+     * outright contradiction.
+     */
+    const tKey = leadColumnKey(pos);
+    const half = (st: SeasonStats, g: number) =>
+      tKey ? ((st as Record<string, number | undefined>)[tKey] ?? 0) / Math.max(1, g) : null;
+    const leadFirst = half(sh.firstStats, fG);
+    const leadSecond = half(sh.secondStats, sG);
+    const leadRose = leadFirst === null || leadSecond === null || leadSecond >= leadFirst;
+    const leadFell = leadFirst === null || leadSecond === null || leadSecond <= leadFirst;
+
+    if (t >= tBar && sh.firstPct <= 30 && sh.secondPct >= 55 && leadRose) {
       out.push({
         kind: 'SLOW_START', shape: sh, margin: (t - tBar) / tBar,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
@@ -989,7 +1019,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
           () => `He started the season with ${fS} and ended it with ${sS}. By December nobody was talking about the start.`,
         ])(),
       });
-    } else if (t >= tBar && sh.secondPct >= 75 && sh.firstPct > 30) {
+    } else if (t >= tBar && sh.secondPct >= 75 && sh.firstPct > 30 && leadRose) {
       out.push({
         kind: 'SURGED', shape: sh, margin: (t - tBar) / tBar,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
@@ -999,7 +1029,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
           () => `Something turned around the halfway mark. ${capitalise(fS)} before it, ${sS} after.`,
         ])(),
       });
-    } else if (t <= -tBar && sh.firstPct >= 60 && sh.secondPct <= 40) {
+    } else if (t <= -tBar && sh.firstPct >= 60 && sh.secondPct <= 40 && leadFell) {
       out.push({
         kind: 'FADED', shape: sh, margin: (-t - tBar) / tBar,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,

@@ -1,4 +1,4 @@
-import { Position, POSITIONS } from './tuning';
+import { Position, POSITIONS, canonicalPosition } from './tuning';
 
 /**
  * Attribute catalogue. One flat namespace across all positions — a position
@@ -111,6 +111,215 @@ export function computeOverall(pos: Position, attrs: AttrMap): number {
   }
   if (wTotal === 0) return 50;
   return Math.round(sum / wTotal);
+}
+
+/**
+ * ===========================================================================
+ * POSITION CHANGES — A MAN LEARNS A NEW JOB, AND THE ENGINE PRICES IT
+ * ===========================================================================
+ * The app owner's hole: *"in the real NFL - often lineman can change
+ * positions with each other. our game doesn't allow it so if someone has two
+ * solid RT and a weak LT, they can't swap the spare RT over."* And the same
+ * for edge/linebacker, corner/safety.
+ *
+ * THERE IS NO PENALTY TABLE HERE, AND THERE MUST NOT BE ONE. The cost of
+ * playing a man out of his natural spot is already computed by
+ * `computeOverall` above, because an overall IS a position's weighting of a
+ * man's attributes. Move him and you re-weight him:
+ *
+ *   - RT -> LT re-weights pass blocking from 0.36 to 0.42 and run blocking
+ *     from 0.26 to 0.22. A right tackle barely moves, which is exactly right:
+ *     it is a cheap, sensible move and should feel like one. A pass-first
+ *     right tackle may even gain a point, and that is the engine's honest
+ *     opinion — left tackle is the pass-protection job.
+ *   - CB -> LB starts weighting tackling, pursuit and block shedding, which
+ *     is not what a corner was built out of, and his overall falls on its own.
+ *
+ * A hand-written cost matrix would be a SECOND opinion about the same thing,
+ * and every worst bug in this codebase is a second opinion disagreeing with
+ * the first (three definitions of the starting lineup, one of which fielded
+ * twelve men). `attrsForPosition` has anticipated this since it was written —
+ * *"so trades and position changes don't hit undefined values."*
+ *
+ * ---------------------------------------------------------------------------
+ * THE ONE THING THE ENGINE CANNOT DO ON ITS OWN
+ * ---------------------------------------------------------------------------
+ * `generateAttributes` only ever rolls `attrsForPosition(pos)`, so a corner
+ * genuinely has no `blockShed` value stored at all — the key is absent, not
+ * low. And `computeOverall` SKIPS absent keys and renormalises over the
+ * weights it did find. Left alone, a corner converted to linebacker would be
+ * graded on tackling, coverage, awareness and speed only — 0.62 of the
+ * linebacker weight vector, and the 0.62 that happens to be a corner's
+ * strengths. He would come out FLATTERED by the move, and worse, he would be
+ * graded by a different formula than the linebacker lined up beside him.
+ * That is a lying metric (README principle 6) twice over.
+ *
+ * So a conversion MATERIALISES the attributes the new job asks for and he has
+ * never been asked for. It does not invent a number to do it: it reuses the
+ * generator's own statement about what a player is at something his position
+ * never coached — `targetOvr * 0.85` (see generateAttributes in
+ * lib/gen/players.ts, the `isWeighted ? ... : targetOvr * 0.85` branch).
+ *
+ * Deterministic, with no `Rng` noise on top, for three reasons that agree:
+ * the preview on the player card must be the number the commit produces
+ * (principle 6); a re-roll on every conversion would let a GM farm a good
+ * `blockShed` by flipping a man back and forth; and an existing attribute is
+ * never overwritten, only an absent one filled, so a conversion cannot raise
+ * an attribute a player already has. Flip a man to a new position and back
+ * and his overall returns to exactly what it was — proved in
+ * scripts/_posProof.ts.
+ * ===========================================================================
+ */
+
+/**
+ * [TUNE] What a player is at something nobody has ever coached him to do,
+ * as a fraction of his overall. NOT a free parameter — it is the same 0.85
+ * lib/gen/players.ts uses for an attribute a position does not weight, and
+ * changing it here without changing it there would make a converted player
+ * and a generated one two different kinds of object.
+ */
+export const UNCOACHED_ATTR_FRACTION = 0.85;
+
+/**
+ * Which positions a player may be moved to. A menu, deliberately NOT a cost
+ * model — there is not a number in it, because the numbers come from
+ * POSITION_WEIGHTS and nowhere else.
+ *
+ * It exists because "offer all sixteen" is worse in both directions. A list
+ * with `P` on a quarterback's card is noise, not freedom (principle 5). And
+ * the re-weighting is only self-punishing where the two jobs share a
+ * vocabulary: a quarterback has no `kickPower` at all, so converting him to
+ * kicker would materialise one at 0.85 of his overall and hand a 99 passer an
+ * 84 kicker — the engine cannot price a move between positions that share no
+ * attributes, so those moves are not offered.
+ *
+ * Symmetric by construction (checked at module load). The pairs:
+ *
+ *   OL — all five interchangeable, which is the owner's case. They share
+ *        every weighted attribute, so a slide along the line materialises
+ *        nothing whatsoever and is pure re-weighting. Guard and centre are
+ *        the one exception: `C` weights `football_iq` and no other lineman
+ *        does, so moving to centre charges for the calls automatically.
+ *   EDGE <-> DT — the big end who reduces inside on passing downs.
+ *   EDGE <-> LB — the owner's second case; the 3-4 outside backer.
+ *   LB <-> S — the big-nickel box safety, the most common cross-training in
+ *        the modern game and the one our own nickel base (lib/lineup.ts:
+ *        two linebackers, five defensive backs) makes most necessary.
+ *   CB <-> S — the owner's third case.
+ *   WR <-> TE, WR <-> RB — the big slot and the receiving back.
+ *
+ * DT <-> LB is deliberately absent even though EDGE bridges them: a 320-lb
+ * nose tackle is not a linebacker, the weight vectors overlap enough that the
+ * engine would only charge him about nine points for it, and this game does
+ * not model body type in a rating. Where the engine cannot see the objection,
+ * the menu makes it. QB, K and P have no relatives for the same reason.
+ */
+export const RELATED_POSITIONS: Partial<Record<Position, Position[]>> = {
+  LT: ['RT', 'LG', 'RG', 'C'],
+  RT: ['LT', 'LG', 'RG', 'C'],
+  LG: ['RG', 'C', 'LT', 'RT'],
+  RG: ['LG', 'C', 'LT', 'RT'],
+  C:  ['LG', 'RG', 'LT', 'RT'],
+  EDGE: ['DT', 'LB'],
+  DT: ['EDGE'],
+  LB: ['EDGE', 'S'],
+  S: ['LB', 'CB'],
+  CB: ['S'],
+  WR: ['TE', 'RB'],
+  TE: ['WR'],
+  RB: ['WR'],
+};
+
+/**
+ * Asymmetry would be a bug rather than a design choice — a move you can make
+ * and not unmake is a trap, and the whole point of the emergent-cost model is
+ * that going back restores exactly what you had. Checked at import, like the
+ * eleven-man sums in lib/lineup.ts, because a hand-maintained adjacency list
+ * is precisely the sort of table that drifts silently.
+ */
+for (const [from, tos] of Object.entries(RELATED_POSITIONS)) {
+  for (const to of tos ?? []) {
+    if (!RELATED_POSITIONS[to]?.includes(from as Position)) {
+      throw new Error(`lib/ratings.ts: RELATED_POSITIONS is asymmetric — ${from} -> ${to} has no return leg.`);
+    }
+  }
+}
+
+/** Positions this man may be moved to. Empty for QB, K and P, and for junk. */
+export function relatedPositions(position: string): Position[] {
+  return RELATED_POSITIONS[canonicalPosition(position)] ?? [];
+}
+
+/** Whether a move is one the game offers at all. */
+export function canChangePositionTo(from: string, to: string): boolean {
+  return relatedPositions(from).includes(canonicalPosition(to));
+}
+
+/**
+ * The attribute map he would carry at `to`.
+ *
+ * Nothing is ever removed and nothing existing is ever changed — only the
+ * keys the new job weights and he has never had are filled in, at
+ * UNCOACHED_ATTR_FRACTION of his overall. Keeping the old position's
+ * attributes is what makes the move reversible at no cost, and they are not
+ * dead weight: `computeOverall` simply does not weight them any more, and if
+ * he moves back they are still exactly where he left them.
+ */
+export function convertedAttributes(
+  attrs: AttrMap,
+  to: Position,
+  trueOvr: number,
+): { attrs: AttrMap; learned: string[] } {
+  const out: AttrMap = { ...attrs };
+  const learned: string[] = [];
+  const seed = Math.max(20, Math.min(99, Math.round(trueOvr * UNCOACHED_ATTR_FRACTION)));
+  for (const key of attrsForPosition(to)) {
+    if (out[key] != null) continue;
+    out[key] = seed;
+    learned.push(key);
+  }
+  return { attrs: out, learned };
+}
+
+/** One destination, priced. `delta` is signed: negative is what it costs him. */
+export interface PositionMove {
+  position: Position;
+  /** What he would rate there — the number the commit actually writes. */
+  ovr: number;
+  /** ovr - his current overall. */
+  delta: number;
+  /** Attributes this job asks for that he has never been coached in. */
+  learned: string[];
+  /** His attribute map at the new position, ready to persist. */
+  attrs: AttrMap;
+}
+
+/**
+ * What he would rate at `to`. THE one function every preview, every AI
+ * decision and the commit itself calls, so the number on the card is by
+ * construction the number written to the database.
+ */
+export function positionMove(
+  player: { position: string; trueOvr: number; trueAttrs: AttrMap },
+  to: Position,
+): PositionMove {
+  const { attrs, learned } = convertedAttributes(player.trueAttrs, to, player.trueOvr);
+  const ovr = computeOverall(to, attrs);
+  return { position: to, ovr, delta: ovr - player.trueOvr, learned, attrs };
+}
+
+/**
+ * Every move on offer, best first. Ordering by what he would RATE rather than
+ * by some fixed position order is the whole decision on one axis — a GM
+ * scanning this list is asking "where is this man worth most", and the answer
+ * should be the top row.
+ */
+export function positionMoves(
+  player: { position: string; trueOvr: number; trueAttrs: AttrMap },
+): PositionMove[] {
+  return relatedPositions(player.position)
+    .map((to) => positionMove(player, to))
+    .sort((a, b) => b.ovr - a.ovr);
 }
 
 /**

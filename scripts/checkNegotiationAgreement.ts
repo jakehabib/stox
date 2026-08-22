@@ -92,6 +92,18 @@
  *      often the rival actually wins. A rival who never wins would be as wrong
  *      as one that contradicts the meter.
  *
+ * And one that arrived with the scouting rollback:
+ *
+ *  10. THE BAND IS BOUGHT, NOT SCOUTED. Fog is draft prospects only now, so
+ *      `scoutConfidence` is 100 at every negotiating table and the "he might
+ *      sign" stretch would be a flat 78-90 for the whole league for ever. The
+ *      Dynasty NEGOTIATION branch supplies the variation instead. Section 16
+ *      walks the rank ladder for real — ranks written to the profile row, the
+ *      session re-resolved from the database, the grid re-swept at each rung —
+ *      and pins that the width is what the tree says, never widens as you buy,
+ *      never collapses to nothing, still agrees between client and server, and
+ *      still cannot produce "will sign" over a lost auction.
+ *
  * Run: npx tsx scripts/checkNegotiationAgreement.ts
  * ===========================================================================
  */
@@ -106,7 +118,7 @@ import {
 import { advanceWeek } from '../lib/season';
 import {
   decideOffer, minimumAcceptableApy, sessionFingerprint, clampOffer,
-  signBandFor, maybeChance, ACCEPT_INTEREST, guaranteeFloorFor, beatRival,
+  signBandFor, maybeChance, ACCEPT_INTEREST, guaranteeFloorFor, beatRival, bandHalfWidthFor,
   DEFAULT_STRUCTURE, type DealStructure, type NegotiationMode,
   type NegotiationSession, type Offer, type OfferDecision,
 } from '../lib/negotiation';
@@ -114,6 +126,7 @@ import { capHit, formatMoney, marketValue, willingnessHorizon, maxYearsForAge, s
 import { teamCapSummary } from '../lib/cap-summary';
 import { maxOffer, parseGmProfile, teamNeeds, type RosterPlayer } from '../lib/ai/gm';
 import { FREE_AGENCY } from '../lib/tuning';
+import { parseSkills, signBandMultFor } from '../lib/dynasty';
 import { Rng } from '../lib/rng';
 
 let failures = 0;
@@ -1509,6 +1522,130 @@ async function main() {
         + `term ${b.yrs === null ? 'no' : `${b.yrs}yr`} (cheapest: ${b.cheapest})`,
       );
     }
+  }
+
+  // =========================================================================
+  // 16. THE BAND IS BOUGHT, NOT SCOUTED
+  // =========================================================================
+  // Scouting fog is draft prospects only now, so `scoutConfidence` is 100 at
+  // every negotiating table in the league and `bandHalfWidthFor` returns a
+  // flat 12 for everybody. The variation moved to the Dynasty NEGOTIATION
+  // branch, which is where the app owner asked for it: *"the negotiating tree
+  // should be about signings. Each point up to the 3 abilities narrows the
+  // uncertainty band."*
+  //
+  // That makes the band a PURCHASED number reaching `decideOffer` through two
+  // modules and a database row, which is three places for it to go wrong
+  // quietly. So the ladder is walked for real — ranks written to the profile,
+  // the session re-resolved from the database, the whole grid re-swept — and
+  // four things are pinned:
+  //
+  //   - the width is what the tree says it is, and it never widens as you buy;
+  //   - the client and the server still agree at every rank (the sweep in
+  //     section 2 only ever saw a zero-rank profile);
+  //   - the band never collapses to nothing, because a zero-width band is the
+  //     binary search the "HE MIGHT SIGN HERE" block exists to prevent;
+  //   - and a narrower band cannot make the panel contradict itself — no offer
+  //     may read "will sign" while the rival's package still wins. The band and
+  //     the contest are separate inputs to one answer and this is where they
+  //     are checked together.
+  console.log('\nThe band you buy (Dynasty NEGOTIATION ranks, walked against a real session):\n');
+  {
+    // Each rung respects the tree's own `requires` chain, so `parseSkills`
+    // does not prune it back on the way in.
+    const ladder: { ranks: number; skills: Record<string, number> }[] = [
+      { ranks: 0, skills: {} },
+      { ranks: 1, skills: { TRADE_INTEL: 1 } },
+      { ranks: 2, skills: { TRADE_INTEL: 1, MARKET_KNOWLEDGE: 1 } },
+      { ranks: 3, skills: { TRADE_INTEL: 1, MARKET_KNOWLEDGE: 2 } },
+      { ranks: 4, skills: { TRADE_INTEL: 1, MARKET_KNOWLEDGE: 2, INSIDER: 1 } },
+    ];
+    // A contested free agent, so the contest is live at every rank and the
+    // "will sign over a lost auction" check has something to catch.
+    const subjects = await prisma.player.findMany({
+      where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+      orderBy: [{ trueOvr: 'desc' }, { id: 'asc' }], take: 12,
+    });
+    let subject = subjects[0];
+    for (const p of subjects) {
+      const s = await resolveNegotiationSession({
+        leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      if (s.gate.rival) { subject = p; break; }
+    }
+
+    let previousWidth = Infinity;
+    let previousPrint = '';
+    const fingerprints = new Set<string>();
+    for (const rung of ladder) {
+      await prisma.dynastyProfile.update({
+        where: { leagueId },
+        data: { skills: JSON.stringify(rung.skills) },
+      });
+      const expected = Math.max(5, Math.round(bandHalfWidthFor(100) * signBandMultFor(parseSkills(JSON.stringify(rung.skills)))));
+
+      const clientSession = await resolveNegotiationSession({
+        leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      const serverSession = await resolveNegotiationSession({
+        leagueId, playerId: subject.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      const { ctx, gate } = clientSession;
+      comparisons++;
+
+      if (ctx.bandHalfWidth !== expected) {
+        fail(`${rung.ranks} negotiation rank(s): band half-width ${ctx.bandHalfWidth}, the tree says ${expected}`);
+      }
+      if (ctx.bandHalfWidth > previousWidth) {
+        fail(`${rung.ranks} negotiation rank(s): the band got WIDER (${previousWidth} -> ${ctx.bandHalfWidth}) — buying a rank may never cost you certainty`);
+      }
+      if (ctx.bandHalfWidth <= 0) fail(`${rung.ranks} negotiation rank(s): the band collapsed to nothing — that is a solved equation, not a negotiation`);
+      previousWidth = ctx.bandHalfWidth;
+      // The band is a TERM of the negotiation, so buying a rank has to read as
+      // the terms moving rather than as a quietly re-priced meter.
+      fingerprints.add(sessionFingerprint(clientSession));
+
+      // The whole grid again at this rank. Section 2 only ever swept a
+      // zero-rank profile, so every offer here is state the sweep has not
+      // seen: the NO/MAYBE boundary has moved under all of it.
+      let outbidPoints = 0;
+      const years = Math.min(ctx.desiredYears, gate.maxYears, ctx.willingYears);
+      for (const guaranteePct of [0, 0.25, 0.5, 0.75, 1]) {
+        for (let apy = gate.minSalary; apy <= gate.maxSalary; apy += 100_000) {
+          const offer: Offer = { apy, years, guaranteePct };
+          const client = decideOffer(ctx, offer, gate, DEFAULT_STRUCTURE);
+          const server = decideOffer(serverSession.ctx, offer, serverSession.gate, DEFAULT_STRUCTURE);
+          comparisons++;
+          const diff = sameDecision(client, server);
+          if (diff) fail(`${rung.ranks} rank(s) @ ${formatMoney(apy)}/${Math.round(guaranteePct * 100)}% — ${diff}`);
+          if (client.signBand === 'YES' && client.outbid) {
+            fail(`${rung.ranks} rank(s) @ ${formatMoney(apy)}: "will sign" over a lost auction`);
+          }
+          if (client.signBand !== 'LOSING' && client.signBand !== signBandFor(ctx, client.evaluation.interest)) {
+            fail(`${rung.ranks} rank(s) @ ${formatMoney(apy)}: drawn band and decided band disagree`);
+          }
+          if (client.accepted && signBandFor(ctx, client.evaluation.interest) === 'NO') {
+            fail(`${rung.ranks} rank(s) @ ${formatMoney(apy)}: signed an offer below the band`);
+          }
+          if (client.outbid) outbidPoints++;
+        }
+      }
+      const print = `${ACCEPT_INTEREST - ctx.bandHalfWidth}-${ACCEPT_INTEREST}`;
+      console.log(
+        `  ${rung.ranks} rank(s)  band ${print.padEnd(6)} (half-width ${String(ctx.bandHalfWidth).padStart(2)})`
+        + `  ${subject.lastName} vs ${gate.rival ? gate.rival.teamName.split(' ').pop() : 'nobody'}`
+        + `  — ${outbidPoints} of the sweep's offers lose the contest`,
+      );
+      previousPrint = print;
+    }
+    if (fingerprints.size !== ladder.length) {
+      fail(`buying a negotiation rank did not change the session fingerprint — a rank bought mid-negotiation would silently re-price the meter`);
+    }
+    console.log(`  Buying all four narrows it from 78-90 to ${previousPrint}; the fingerprint changes at every rung, so a rank bought mid-negotiation re-reads the meter instead of moving it under the user.`);
+
+    // Put it back, so nothing after this section is negotiating with a
+    // skill tree it did not ask for.
+    await prisma.dynastyProfile.update({ where: { leagueId }, data: { skills: '{}' } });
   }
 
   console.log(`\n${comparisons.toLocaleString()} comparisons, ${failures} disagreement${failures === 1 ? '' : 's'}.`);

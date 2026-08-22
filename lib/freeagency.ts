@@ -5,7 +5,7 @@ import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { buildContract, marketValue, suggestedYears, capHit, capSavingsOnCut, formatMoney, maxYearsForAge } from './cap';
 import { buildScoutedView } from './scouting';
-import { loadScoutMods } from './dynasty';
+import { loadDynastyProfile, parseSkills, scoutingModsFor, signBandMultFor } from './dynasty';
 import {
   buildNegotiationContext, contractShapeFor, decideOffer, sessionFingerprint,
   DEFAULT_STRUCTURE, RESIGN_LEVERAGE, extensionLeverage, clampOffer,
@@ -1190,6 +1190,13 @@ export async function resolveNegotiationSession(opts: {
   const report = await prisma.scoutingReport.findUnique({
     where: { playerId_teamId: { playerId, teamId } },
   });
+  // ONE READ OF THE TREE, TWO ANSWERS OUT OF IT. The GM's skills move both
+  // halves of what this panel shows — how his ratings are drawn
+  // (`scoutingModsFor`) and how wide the "he might sign" band is
+  // (`signBandMultFor`) — and `loadScoutMods`/`loadSignBandMult` would each
+  // fetch the identical profile row to answer one of them. Same row, same
+  // parse, one query.
+  const skills = parseSkills((await loadDynastyProfile(leagueId)).skills);
   const view = buildScoutedView({
     position: player.position as Position,
     trueAttrs: readJson(player.trueAttrs, {}),
@@ -1199,7 +1206,7 @@ export async function resolveNegotiationSession(opts: {
     settings,
     isOwnRoster: incumbent,
     isUserView: true,
-    dynasty: await loadScoutMods(leagueId),
+    dynasty: scoutingModsFor(skills),
   });
   const marketApy = marketValue({ ovr: view.scoutedOvr, position: player.position as Position, age: player.age });
   const trueMarketApy = marketValue({
@@ -1275,10 +1282,19 @@ export async function resolveNegotiationSession(opts: {
     // Only an extension prices against the existing deal — everywhere else
     // the offer IS the whole contract and this stays null.
     currentContract: mode === 'EXTENSION' ? player.contract : null,
-    // The same confidence figure that decides how wide his rating range is
-    // drawn decides how wide the "he might sign" band is. Scouting pays at
-    // the table, and the fog is one fog rather than two.
+    // Still passed, and it is now a constant at this table: scouting fog is
+    // draft prospects only, so every free agent and every incumbent comes
+    // back at 100. What actually varies the band is the line below — see the
+    // block above `bandHalfWidthFor` in lib/negotiation.ts.
     scoutConfidence: view.confidence,
+    // THE NEGOTIATION BRANCH, at the table. The app owner: *"the negotiating
+    // tree should be about signings. Each point up to the 3 abilities narrows
+    // the uncertainty band."* Keyed on total ranks in the branch, so every
+    // purchase pays. It rides on the context and therefore on
+    // `sessionFingerprint`, which is what stops a rank bought between opening
+    // the panel and pressing the button from silently re-pricing a
+    // negotiation the meter had already described.
+    signBandMult: signBandMultFor(skills),
     // Seeded on the matchup and the league year — NOT the clock. Re-opening
     // the panel, refreshing the page or submitting an offer all rebuild the
     // identical man with the identical asking price; only the season rolling
