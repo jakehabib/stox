@@ -318,10 +318,64 @@ function standingsOrder<T extends { id: string; wins: number; losses: number; ti
   });
 }
 
-/** Reseed round-1 pick slots (and every round) from final standings, worst first. */
+/**
+ * How far a club got, for draft-order purposes. Real football seeds the
+ * non-playoff clubs by record and then the playoff clubs by how deep they
+ * went, champion last — so a 13-4 club that lost in the wild card round still
+ * picks ahead of a 10-7 club that reached the final.
+ */
+const PLAYOFF_DEPTH: Record<string, number> = {
+  MISSED: 0, WILDCARD: 1, DIVISIONAL: 2, CONFERENCE: 3, RUNNER_UP: 4, CHAMPION: 5,
+};
+
+/**
+ * THE DRAFT ORDER WAS RANDOM, AND THIS IS WHY.
+ *
+ * `reseedDraftOrder` read `Team.wins/losses` — the LIVE standings columns. But
+ * it runs at FREE_AGENCY week 4, and the offseason's RESET_STANDINGS step has
+ * already zeroed those several steps earlier. So every club sorted as 0-0-0
+ * with a point differential of 0, `standingsOrder` fell through to the array
+ * order it was handed, and the draft was seeded on nothing.
+ *
+ * Measured across eight real saves before the fix: 44-60% of club pairs were
+ * INVERTED against the previous season's actual records, where 50% is a pure
+ * shuffle and 0% is perfect worst-first. In a game about building a roster,
+ * a losing season bought nothing.
+ *
+ * `snapshotSeasonHistory` in lib/season.ts already says what to use instead,
+ * in as many words: *"Team.wins/losses/etc. get wiped by RESET_STANDINGS a few
+ * offseason steps from now — this snapshot is the only place that history
+ * survives."* So the order comes from TeamSeasonRecord for the season just
+ * played, which is exactly that snapshot.
+ *
+ * The live columns remain the right source for the MID-SEASON projection
+ * (projectedDraftOrder), because during a season they are the standings.
+ */
 export async function reseedDraftOrder(leagueId: string, seasonYear: number) {
   const teams = await prisma.team.findMany({ where: { leagueId } });
-  const order = standingsOrder(teams);
+  // The season just played. The draft happens in the offseason that follows it.
+  const history = await prisma.teamSeasonRecord.findMany({
+    where: { leagueId, year: seasonYear - 1 },
+    select: { teamId: true, wins: true, losses: true, ties: true, pointsFor: true, pointsAgnst: true, playoffResult: true },
+  });
+  const byTeam = new Map(history.map((h) => [h.teamId, h]));
+
+  // A first-year league drafts before anybody has a record. Falling back to the
+  // live columns keeps that case working rather than throwing, and there it is
+  // genuinely the best information available.
+  const order = byTeam.size >= teams.length
+    ? [...teams].sort((a, b) => {
+        const ha = byTeam.get(a.id)!;
+        const hb = byTeam.get(b.id)!;
+        const depthA = PLAYOFF_DEPTH[ha.playoffResult] ?? 0;
+        const depthB = PLAYOFF_DEPTH[hb.playoffResult] ?? 0;
+        if (depthA !== depthB) return depthA - depthB;
+        const pctA = ha.wins / Math.max(1, ha.wins + ha.losses + ha.ties);
+        const pctB = hb.wins / Math.max(1, hb.wins + hb.losses + hb.ties);
+        if (pctA !== pctB) return pctA - pctB;
+        return ha.pointsFor - ha.pointsAgnst - (hb.pointsFor - hb.pointsAgnst);
+      })
+    : standingsOrder(teams);
   const picks = await prisma.draftPick.findMany({ where: { leagueId, year: seasonYear } });
   for (const pick of picks) {
     const slot = order.findIndex((t) => t.id === pick.originalTeamId) + 1;

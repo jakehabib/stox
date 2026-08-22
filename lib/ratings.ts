@@ -244,7 +244,7 @@ export const CONVERSION_ATTR_FRACTION = 0.85;
  * measurement showing the cost was never a judgement about football, and the
  * owner's ruling that it should not be charged. That makes the menu itself the
  * only thing standing between a GM and an arbitrage, so what it connects has
- * to price identically. assertConversionTiersAgree() below is the check;
+ * to price identically. assertNoProfitableConversion() below is the check;
  * it is called from wherever TRADE_VALUE_TIER is consumed (this file cannot
  * import it — lib/tuning.ts is upstream of here and the cycle would break the
  * build).
