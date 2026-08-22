@@ -95,9 +95,13 @@ export default async function ResignPage({ params }: { params: { id: string } })
   const canTag = settings.franchiseTagEnabled && league.phase === 'RESIGN';
   /** Is the deadline actually running? Everything that calls this a window depends on it. */
   const inWindow = league.phase === 'RESIGN';
-  const alreadyTagged = canTag
-    ? (await prisma.contract.findFirst({ where: { teamId: team.id, isFranchiseTag: true, signedYear: league.seasonYear } })) !== null
-    : true;
+  const tagContract = canTag
+    ? await prisma.contract.findFirst({
+        where: { teamId: team.id, isFranchiseTag: true, signedYear: league.seasonYear },
+        include: { player: { select: { firstName: true, lastName: true, position: true } } },
+      })
+    : null;
+  const alreadyTagged = canTag ? tagContract !== null : true;
 
   // What these deals currently occupy on the books. This is NOT a cost to
   // re-sign them: teamCapSummary's activeSalary already counts every active
@@ -130,6 +134,32 @@ export default async function ResignPage({ params }: { params: { id: string } })
         action={expiring.length > 0 ? <LetAiResignButton leagueId={league.id} /> : undefined}
         facts={[
           { label: 'Decisions', value: String(onTheList.length), detail: parked.length > 0 ? `${parked.length} more set aside` : 'contracts on the clock', tip: tip('walkYear') },
+          /*
+           * THE TAG EXISTS AND NOTHING SAID SO. It is one per league year, it
+           * only works inside this window, and the control is a small pill
+           * inside a row you have to click open first — so a GM could play a
+           * whole career without learning he had it. The app owner: *"Is the
+           * franchise tag available for users? I haven't seen it yet."* The
+           * rules are unchanged; this is the sign on the door.
+           */
+          ...(settings.franchiseTagEnabled ? [
+            inWindow
+              ? {
+                label: 'Franchise Tag',
+                tip: tip('franchiseTag'),
+                value: alreadyTagged ? 'Used' : '1 left',
+                detail: tagContract?.player
+                  ? `${tagContract.player.position} ${tagContract.player.lastName} — keeps him a year`
+                  : 'one a year, and only in this window',
+                color: alreadyTagged ? undefined : 'text-gold',
+              }
+              : {
+                label: 'Franchise Tag',
+                tip: tip('franchiseTag'),
+                value: '1 a year',
+                detail: 'usable once the window opens',
+              },
+          ] : []),
           {
             label: 'Already Expired',
             tip: tip('loyaltyDiscount'),
