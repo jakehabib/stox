@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { evaluateTradeAction, executeTradeAction, rankTradePartnersAction } from '@/app/actions/trade';
@@ -34,9 +34,11 @@ interface Team { id: string; name: string; abbr: string; philosophy?: Philosophy
 
 export function TradeBuilder({
   leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks, initialGive, initialGet, capSpace, capMode,
-  deadlinePassed, tradeDeadlineWeek,
+  deadlinePassed, tradeDeadlineWeek, initialPartnerPos,
 }: {
   leagueId: string; myTeam: Team; partners: Team[]; partnerId: string;
+  /** Position being shopped, carried in the URL so it survives changing club. See TeamPanel's initialPosFilter. */
+  initialPartnerPos?: string;
   myRoster: RosterP[]; myPicks: Pick[]; partnerRoster: RosterP[]; partnerPicks: Pick[];
   /** Pre-select assets when arriving to review a specific incoming AI offer. */
   initialGive?: string[]; initialGet?: string[];
@@ -46,6 +48,15 @@ export function TradeBuilder({
   deadlinePassed?: boolean; tradeDeadlineWeek?: number;
 }) {
   const router = useRouter();
+  // Held here rather than in the panel because the club switcher has to read it
+  // when it builds the URL it navigates to, and the panel unmounts on the way.
+  const [partnerPos, setPartnerPos] = useState(initialPartnerPos ?? 'ALL');
+  const goToPartner = (id: string) =>
+    // router.push, NOT window.location.href, and scroll:false. The hard
+    // navigation this replaced reloaded the whole document and threw the
+    // reader back to the top of the page every time they looked at a
+    // different club — half of the app owner's complaint was the scroll.
+    router.push(`?with=${id}${partnerPos !== 'ALL' ? `&pos=${partnerPos}` : ''}`, { scroll: false });
   const [give, setGive] = useState<Set<string>>(new Set(initialGive));
   const [get, setGet] = useState<Set<string>>(new Set(initialGet));
   const [pending, startTransition] = useTransition();
@@ -179,7 +190,7 @@ export function TradeBuilder({
         <select
           className="input"
           value={partnerId}
-          onChange={(e) => { window.location.href = `?with=${e.target.value}`; }}
+          onChange={(e) => goToPartner(e.target.value)}
         >
           {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
@@ -220,7 +231,14 @@ export function TradeBuilder({
 
       <div className="grid md:grid-cols-2 gap-4">
         <TeamPanel leagueId={leagueId} title="You send" teamId={myTeam.id} teamAbbr={myTeam.abbr} teamName={myTeam.name} roster={myRoster} picks={myPicks} selected={give} onToggle={(id) => toggle(give, setGive, id)} />
-        <TeamPanel leagueId={leagueId} title="You receive" teamId={partnerId} teamAbbr={currentPartner?.abbr ?? ''} teamName={currentPartner?.name ?? ''} roster={partnerRoster} picks={partnerPicks} selected={get} onToggle={(id) => toggle(get, setGet, id)} />
+        <TeamPanel
+          leagueId={leagueId} title="You receive" teamId={partnerId}
+          teamAbbr={currentPartner?.abbr ?? ''} teamName={currentPartner?.name ?? ''}
+          roster={partnerRoster} picks={partnerPicks} selected={get} onToggle={(id) => toggle(get, setGet, id)}
+          initialPosFilter={initialPartnerPos}
+          onPosFilter={setPartnerPos}
+          switcher={<PartnerStepper partners={partners} partnerId={partnerId} onGo={goToPartner} />}
+        />
       </div>
 
       <div className="panel p-4 flex items-center justify-between flex-wrap gap-3">
@@ -395,12 +413,51 @@ function SortHeader({ label, sortKey, active, dir, onClick, className }: {
   );
 }
 
-function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks, selected, onToggle }: {
+/**
+ * Walk to the next club without leaving the list you are reading.
+ *
+ * Shopping for one position means looking at the same slot on thirty-one
+ * rosters, and the only way to change club was a <select> at the very top of
+ * the page: *"i need to [go to] the top of the page, change teams, then it
+ * refreshes almost, and i have to re start"*. These sit in the partner panel's
+ * own header, beside the roster they change.
+ */
+function PartnerStepper({ partners, partnerId, onGo }: {
+  partners: Team[]; partnerId: string; onGo: (id: string) => void;
+}) {
+  const i = partners.findIndex((p) => p.id === partnerId);
+  if (i < 0 || partners.length < 2) return null;
+  const step = (d: number) => onGo(partners[(i + d + partners.length) % partners.length].id);
+  return (
+    <span className="ml-auto inline-flex items-center gap-1 font-normal">
+      <button type="button" onClick={() => step(-1)} aria-label="Previous club"
+        className="pill border-line text-muted hover:text-chalk px-2 py-0.5 leading-none">‹</button>
+      <span className="text-[11px] text-muted tabular-nums">{i + 1}/{partners.length}</span>
+      <button type="button" onClick={() => step(1)} aria-label="Next club"
+        className="pill border-line text-muted hover:text-chalk px-2 py-0.5 leading-none">›</button>
+    </span>
+  );
+}
+
+function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks, selected, onToggle, initialPosFilter, onPosFilter, switcher }: {
   leagueId: string; title: string; teamId: string; teamAbbr: string; teamName: string; roster: RosterP[]; picks: Pick[]; selected: Set<string>; onToggle: (id: string) => void;
+  /**
+   * SHOPPING A POSITION SURVIVES CHANGING CLUB. Switching partner is a real
+   * navigation — the other roster has to be fetched — so this panel remounts
+   * and its filter state dies with it. The app owner hit exactly that: *"i set
+   * my position filter to RB, then if i want a new team, i need to [go to] the
+   * top of the page, change teams, then it refreshes almost, and i have to re
+   * start"*. The filter is carried in the URL so the remount restores it.
+   * Optional: the user's own panel doesn't need it, only the partner's.
+   */
+  initialPosFilter?: string;
+  onPosFilter?: (pos: string) => void;
+  /** Club switcher rendered in this panel's header, so changing club never means scrolling away from the list. */
+  switcher?: ReactNode;
 }) {
   const teamColor = generateTeamLogoParams(teamId).primary;
   const [search, setSearch] = useState('');
-  const [posFilter, setPosFilter] = useState('ALL');
+  const [posFilter, setPosFilter] = useState(initialPosFilter ?? 'ALL');
   const [sortKey, setSortKey] = useState<SortKey>('ovr');
   const [dir, setDir] = useState<1 | -1>(-1);
 
@@ -434,9 +491,10 @@ function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks,
 
   return (
     <div className="panel p-4">
-      <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
+      <h3 className="font-semibold text-sm mb-3 flex items-center gap-2 flex-wrap">
         <TeamLogo seed={teamId} abbr={teamAbbr} size={24} />
         {title} <span className="text-muted font-normal">({teamName})</span>
+        {switcher}
       </h3>
       <div className="label-sm mb-1.5 inline-flex items-center gap-1.5">
         Draft Picks
@@ -465,7 +523,11 @@ function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks,
           placeholder="Search roster…"
           className="input flex-1 text-xs py-1"
         />
-        <select value={posFilter} onChange={(e) => setPosFilter(e.target.value)} className="input text-xs py-1 w-20">
+        <select
+          value={posFilter}
+          onChange={(e) => { setPosFilter(e.target.value); onPosFilter?.(e.target.value); }}
+          className="input text-xs py-1 w-20"
+        >
           <option value="ALL">All Pos</option>
           {positions.map((pos) => <option key={pos} value={pos}>{pos}</option>)}
         </select>

@@ -13,7 +13,7 @@ import { buildTradeRetrospectives } from '@/lib/tradeRetro';
 import { TradeRetrospectives } from '@/components/TradeRetrospectives';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 
-export default async function TradePage({ params, searchParams }: { params: { id: string }; searchParams: { with?: string; reviewOffer?: string } }) {
+export default async function TradePage({ params, searchParams }: { params: { id: string }; searchParams: { with?: string; reviewOffer?: string; pos?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
 
@@ -120,6 +120,7 @@ export default async function TradePage({ params, searchParams }: { params: { id
         myTeam={{ id: team.id, name: `${team.city} ${team.nickname}`, abbr: team.abbr }}
         partners={otherTeams.map((t) => ({ id: t.id, name: `${t.city} ${t.nickname}`, abbr: t.abbr, philosophy: philosophySummary(parseGmProfile(t.gmProfile)) }))}
         partnerId={partnerId ?? ''}
+        initialPartnerPos={searchParams.pos}
         myRoster={myRoster.map(toRosterP)}
         myPicks={myPicks.map(toPickP)}
         partnerRoster={partnerRoster.map(toRosterP)}
