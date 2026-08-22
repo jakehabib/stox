@@ -13,6 +13,8 @@ import { RatingBadge } from '@/components/ds/RatingBadge';
 import { ScoutingRange } from '@/components/ds/ScoutingRange';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { DepthCompare, SlotVerdictBadge, slotVerdict, type DepthCompareEntry } from '@/components/ds/DepthCompare';
+import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'market';
 
@@ -161,6 +163,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         facts={[
           ...(capSummary ? [{
             label: 'Cap Space',
+            tip: tip('capSpace'),
             value: formatMoney(capSummary.capSpace),
             detail: 'room to spend',
             color: capSummary.capSpace >= 0 ? 'text-accent' : 'text-bad',
@@ -172,11 +175,13 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
           },
           ...(topAvailable && topView ? [{
             label: 'Best Available',
+            tip: topView.revealed ? tip('overall') : tip('scoutedRange'),
             value: String(topView.revealed || topView.confidence >= 90 ? topView.scoutedOvr : `${topView.ovrLow}-${topView.ovrHigh}`),
             detail: `${topAvailable.position} · ${topAvailable.firstName} ${topAvailable.lastName}`,
           }] : []),
           ...(affordable !== null ? [{
             label: 'Within Budget',
+            tip: tip('marketValue'),
             value: String(affordable),
             detail: `of the top ${rows.length} shown`,
             color: affordable === 0 ? 'text-warn' : undefined,
@@ -235,12 +240,29 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
               <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
               <th>Name</th>
               <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-              <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th>
+                <span className="inline-flex items-center gap-1">
+                  <a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                  {/* Downward. The panel is an `overflow-x-auto` scroller, and
+                      an auto on one axis clips the other too. */}
+                  <Tooltip placement="bottom" text={settings.scoutingEnabled ? tip('scoutedRange') : tip('overall')} />
+                </span>
+              </th>
               {/* Not sortable, deliberately: the sort keys are a closed set the
                   URL round-trips, and a seventh one would need its own tie-break
                   story across sixteen positions. It is a scan column. */}
-              <th>Vs. Your Starters</th>
-              <th><a href={sortHref('market')} className="hover:text-chalk">Est. Market{sortKey === 'market' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th>
+                <span className="inline-flex items-center gap-1">
+                  Vs. Your Starters
+                  <Tooltip placement="bottom" text={tip('starter')} />
+                </span>
+              </th>
+              <th>
+                <span className="inline-flex items-center gap-1">
+                  <a href={sortHref('market')} className="hover:text-chalk">Est. Market{sortKey === 'market' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                  <Tooltip placement="bottom" text={tip('marketValue')} />
+                </span>
+              </th>
               <th></th>
             </tr>
           </thead>

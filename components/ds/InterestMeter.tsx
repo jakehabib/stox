@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { Verdict } from '@/lib/negotiation';
+import { Tooltip } from '../Tooltip';
+import { tip } from '@/lib/glossary';
 
 const VERDICT_STYLE: Record<Verdict, { label: string; text: string; bar: string }> = {
   ACCEPT:      { label: 'Will sign',   text: 'text-accent',  bar: 'bg-accent' },
@@ -72,7 +74,10 @@ export function InterestMeter({ interest, verdict, headline, maybeBand }: {
   return (
     <div>
       <div className="flex items-baseline justify-between gap-3">
-        <span className="label-sm">Interest</span>
+        <span className="label-sm inline-flex items-center gap-1.5">
+          Interest
+          <Tooltip text={tip('interestMeter')} />
+        </span>
         <span className={`label-sm ${style.text}`}>{style.label}</span>
       </div>
 
@@ -84,7 +89,10 @@ export function InterestMeter({ interest, verdict, headline, maybeBand }: {
               left: `${Math.max(0, maybeBand.lo)}%`,
               width: `${Math.max(0, Math.min(100, maybeBand.hi) - Math.max(0, maybeBand.lo))}%`,
             }}
-            title="He might sign anywhere in here — and he might not. Submitting inside it spends patience either way."
+            // The hatched band is a shape rather than a label, so it carries the
+            // glossary text as a native title — same words as every other
+            // explanation of it, without a "?" floating inside a 2.5px track.
+            title={`${tip('maybeBand')} Submitting inside it spends patience either way.`}
           />
         )}
         {THRESHOLDS.map((t) => (

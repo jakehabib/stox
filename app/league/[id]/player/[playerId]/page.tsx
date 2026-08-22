@@ -66,7 +66,7 @@ export default async function PlayerPage({
   // full navigation, and landing back at the top of a long player card reads
   // as "nothing happened".
   const scopeHref = (playoffs: boolean) =>
-    `/league/${params.id}/player/${params.playerId}${playoffs ? `?${STAT_SCOPE_PARAM}=playoffs` : ''}#stat-line`;
+    `/league/${params.id}/player/${params.playerId}${playoffs ? `?${STAT_SCOPE_PARAM}=playoffs` : ''}`;
   const player = await prisma.player.findUnique({ where: { id: params.playerId }, include: { contract: true, team: true } });
   if (!player || player.leagueId !== league.id) notFound();
 

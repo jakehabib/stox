@@ -30,6 +30,7 @@ import { TeamLeaders, LeaderEntry } from '@/components/ds/TeamLeaders';
 import { SeasonStats } from '@/lib/types';
 import { AllStarHonorRoll, AllStarHonor } from '@/components/ds/AllStarHonorRoll';
 import { ALL_STAR_TYPE, allStarSnubFor } from '@/lib/allStars';
+import { tip } from '@/lib/glossary';
 
 const AWARD_TYPES: { type: string; code: string; label: string }[] = [
   { type: 'AWARD_MVP', code: 'MVP', label: 'MVP' },
@@ -456,7 +457,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
 
         <div className="space-y-6">
           <div className="section">
-            <SectionHeading title="Roster Needs" action={<Link href={`/league/${league.id}/free-agency`} className="text-xs text-accent2 hover:underline">Browse →</Link>} />
+            <SectionHeading title="Roster Needs" tip={tip('rosterNeed')} action={<Link href={`/league/${league.id}/free-agency`} className="text-xs text-accent2 hover:underline">Browse →</Link>} />
             <div className="panel p-4">
               {topNeeds.length === 0 ? (
                 <p className="text-sm text-muted">No glaring holes right now — nice work.</p>

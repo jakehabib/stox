@@ -30,10 +30,17 @@ export function StatScopeToggle({
 }) {
   const on = 'border-accent text-accent bg-accent/10';
   const off = 'border-line text-muted hover:text-chalk';
+  // scroll={false} on BOTH, and it is not a nicety. Only the table under this
+  // control changes when the scope flips, so any scrolling at all is the page
+  // moving out from under the reader. The player card had it worse: its hrefs
+  // carried a `#stat-line` anchor, meant to keep the table in view, and
+  // because that section sits near the foot of a long card the effect was to
+  // fling you to the bottom on every click — the app owner's report, exactly.
+  // The anchor is gone and this stays put.
   return (
     <div className="flex gap-1.5">
-      <Link href={regularHref} className={`pill ${scope === 'REGULAR' ? on : off}`}>{regularLabel}</Link>
-      <Link href={playoffHref} className={`pill ${scope === 'PLAYOFFS' ? on : off}`}>{playoffLabel}</Link>
+      <Link href={regularHref} scroll={false} className={`pill ${scope === 'REGULAR' ? on : off}`}>{regularLabel}</Link>
+      <Link href={playoffHref} scroll={false} className={`pill ${scope === 'PLAYOFFS' ? on : off}`}>{playoffLabel}</Link>
     </div>
   );
 }

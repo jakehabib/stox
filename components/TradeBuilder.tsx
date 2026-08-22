@@ -15,6 +15,7 @@ import { Tooltip } from './Tooltip';
 import { positionBadgeClass } from './ds/positionColor';
 import type { PhilosophySummary } from '@/lib/ai/gm';
 import type { TradePartnerSuggestion } from '@/lib/trade';
+import { tip } from '@/lib/glossary';
 
 interface RosterP {
   id: string; name: string; position: string; ovr: number; age: number; capHit: number; yearsRemaining: number;
@@ -255,7 +256,10 @@ export function TradeBuilder({
 
           {intel?.unlocked && (
             <div className="text-xs border-t border-line/60 pt-2 space-y-0.5">
-              <div className="label-sm text-accent2">Trade Intel</div>
+              <div className="label-sm text-accent2 inline-flex items-center gap-1.5">
+                Trade Intel
+                <Tooltip text={tip('tradeValue')} />
+              </div>
               <div className="text-muted">
                 They price what you&apos;re asking for at <span className="font-mono text-chalk">{intel.theirValue.toLocaleString()}</span>{' '}
                 and your offer at <span className="font-mono text-chalk">{intel.yourValue.toLocaleString()}</span>.
@@ -302,7 +306,7 @@ function TradeScoreBar({ ratio, requiredRatio, accepted }: { ratio: number; requ
       <div className="flex items-center justify-between mb-1">
         <span className="label-sm inline-flex items-center gap-1.5">
           Trade Score
-          <Tooltip text="How your offer's value compares to what this team needs to see to accept — 100% is the acceptance line, marked by the vertical tick. Below it, they'll counter or decline; well below, they'll just decline." />
+          <Tooltip text={tip('tradeAcceptance')} />
         </span>
         <span className={`text-xs font-mono ${accepted ? 'text-accent' : 'text-muted'}`}>{Math.round(pct)}% of what they need</span>
       </div>
@@ -319,7 +323,7 @@ function PhilosophyBadges({ p }: { p: PhilosophySummary }) {
     <div className="flex gap-1.5 flex-wrap items-center">
       <span className="pill border-line text-muted inline-flex items-center gap-1">
         {p.windowLabel}
-        <Tooltip text="Where this front office sees itself right now — rebuilding teams value youth and draft capital over immediate roster quality; contenders will pay a premium for it." />
+        <Tooltip text={tip('gmPhilosophy')} />
       </span>
       <span className="pill border-line text-muted inline-flex items-center gap-1">
         {p.tradeTendency} trader
@@ -429,7 +433,10 @@ function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks,
         <TeamLogo seed={teamId} abbr={teamAbbr} size={24} />
         {title} <span className="text-muted font-normal">({teamName})</span>
       </h3>
-      <div className="label-sm mb-1.5">Draft Picks</div>
+      <div className="label-sm mb-1.5 inline-flex items-center gap-1.5">
+        Draft Picks
+        <Tooltip text={tip('pickValue')} />
+      </div>
       <div className="flex flex-wrap gap-1.5 mb-4">
         {picks.map((p) => (
           <button

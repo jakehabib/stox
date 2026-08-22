@@ -5,6 +5,7 @@ import { startersAt, splitStarters, OFFENSE_STARTERS, DEFENSE_STARTERS } from '@
 import { DepthChartGroup } from '@/components/DepthChartGroup';
 import { AutoSortButton } from '@/components/AutoSortButton';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { tip } from '@/lib/glossary';
 
 export default async function DepthChartPage({ params }: { params: { id: string } }) {
   const { userTeam } = await getLeagueContext(params.id);
@@ -91,20 +92,23 @@ export default async function DepthChartPage({ params }: { params: { id: string 
           { label: 'Position Groups', value: String(groupCount), detail: 'with at least one player' },
           {
             label: 'Open Starting Slots',
+            tip: tip('starter'),
             value: String(openStarterSlots),
             detail: openStarterSlots > 0 ? shortPositions.join(', ') : 'every starting slot filled',
             color: openStarterSlots > 0 ? 'text-bad' : 'text-accent',
           },
           {
             label: 'Starter OVR',
+            tip: tip('overall'),
             value: starterAvgOvr.toFixed(1),
             detail: `across all ${starterOvrs.length} starters`,
             color: undefined,
           },
-          { label: 'No Backup', value: String(thinPositions.length), detail: thinPositions.length > 0 ? thinPositions.join(', ') : 'depth everywhere', color: thinPositions.length > 0 ? 'text-warn' : 'text-accent' },
+          { label: 'No Backup', value: String(thinPositions.length), detail: thinPositions.length > 0 ? thinPositions.join(', ') : 'depth everywhere', tip: tip('rosterNeed'), color: thinPositions.length > 0 ? 'text-warn' : 'text-accent' },
           { label: 'Injured Starters', value: String(injuredStarters), detail: injuredStarters > 0 ? 'reorder before kickoff' : 'none', color: injuredStarters > 0 ? 'text-bad' : 'text-accent' },
           {
             label: 'Out Of Order',
+            tip: tip('depthChart'),
             value: String(misordered.length),
             detail: misordered.length > 0 ? misordered.join(', ') : 'best man starts everywhere',
             color: misordered.length > 0 ? 'text-warn' : 'text-accent',

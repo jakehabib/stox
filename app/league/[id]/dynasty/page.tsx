@@ -9,12 +9,12 @@ import { DynastySkillCard } from '@/components/DynastySkillCard';
 import { FullScoutPanel } from '@/components/FullScoutPanel';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import {
-import { Tooltip } from '@/components/Tooltip';
-import { tip } from '@/lib/glossary';
   BRANCH_BLURB, BRANCH_LABEL, DYNASTY, DYNASTY_SKILLS, buildDynastyState,
   flagBreakouts, projectDevelopment, rankOf, readAging, scoutingModsFor,
   type DynastyBranch,
 } from '@/lib/dynasty';
+import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
 
 /**
  * THE DYNASTY SCREEN.

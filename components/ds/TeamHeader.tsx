@@ -2,6 +2,8 @@ import { TeamLogo } from '../TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { StatNumber } from './StatNumber';
 import { ratingColor } from '@/lib/ratings';
+import { Tooltip } from '../Tooltip';
+import { tip } from '@/lib/glossary';
 
 interface NextGame {
   teamId: string; abbr: string; city: string; wins: number; losses: number;
@@ -82,7 +84,13 @@ export function TeamHeader({
         <div className="relative border-t border-line/60 bg-ink/30 grid grid-cols-2 sm:grid-cols-4 divide-x divide-line/40">
           {ratings.map((r) => (
             <div key={r.label} className="px-5 py-2.5">
-              <div className="label-sm">{r.label}</div>
+              {/* Upward, into the header body: this band sits inside the card's
+                  `overflow-hidden`, so downward would open past the bottom
+                  edge and be clipped away. */}
+              <div className="label-sm inline-flex items-center gap-1.5">
+                {r.label}
+                <Tooltip text={r.label === 'Team Overall' ? tip('teamOverall') : tip('unitRating')} />
+              </div>
               <div className="flex items-baseline gap-2 mt-0.5">
                 <span className={`stat-value text-stat-sm ${ratingColor(r.value)}`}>{r.value}</span>
                 <span className="text-[11px] text-muted">{ordinal(r.rank)} of {r.outOf}</span>
@@ -108,6 +116,7 @@ export function TeamHeader({
           >
             {nextGame.winProb}% Win
           </span>
+          <Tooltip className="shrink-0" text={tip('winProbability')} />
         </div>
       )}
       {nextGame && nextGame.why && nextGame.why.length > 0 && (

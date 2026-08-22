@@ -591,11 +591,15 @@ export type GlossaryKey = keyof typeof GLOSSARY;
  * file exists.
  */
 export function tip(key: GlossaryKey): string {
-  const t = GLOSSARY[key];
+  // Widened to the interface deliberately: `satisfies` keeps the literal keys,
+  // which is the point, but it also keeps each entry's literal SHAPE — and a
+  // term with no `why` then has no such property to read at all.
+  const t: GlossaryTerm = GLOSSARY[key];
   return t.why ? `${t.definition} ${t.why}` : t.definition;
 }
 
 /** Just the definition, for the rare surface with no room for the second beat. */
 export function define(key: GlossaryKey): string {
-  return GLOSSARY[key].definition;
+  const t: GlossaryTerm = GLOSSARY[key];
+  return t.definition;
 }

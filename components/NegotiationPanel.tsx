@@ -10,6 +10,8 @@ import { formatMoney } from '@/lib/cap';
 import { InterestMeter } from './ds/InterestMeter';
 import { ActionButton } from './ds/ActionButton';
 import { SigningConfirmation } from './ds/SigningConfirmation';
+import { Tooltip } from './Tooltip';
+import { tip } from '@/lib/glossary';
 
 /**
  * The negotiation minigame — the one surface in this game the app owner asked
@@ -272,7 +274,10 @@ export function NegotiationPanel({
           </div>
         </div>
         <div className="text-right">
-          <div className="label-sm">Patience</div>
+          <div className="label-sm inline-flex items-center gap-1.5 justify-end">
+            Patience
+            <Tooltip text={tip('patience')} />
+          </div>
           <div className="flex items-center gap-1 mt-1 justify-end">
             {Array.from({ length: ctx.patience }).map((_, i) => (
               <span key={i} className={`pip-well w-2 h-2 ${i < ctx.patience - patienceSpent ? '' : 'pip-spent'}`}>
@@ -312,6 +317,7 @@ export function NegotiationPanel({
         <div className="space-y-4">
           <Control
             label={extending ? 'New money' : 'Salary'}
+            tipText={extending ? tip('newMoney') : tip('apy')}
             display={`${formatMoney(offer.apy)}/yr`}
             hint={
               extending
@@ -366,6 +372,7 @@ export function NegotiationPanel({
           )}
           <Control
             label="Guaranteed"
+            tipText={tip('guaranteedMoney')}
             display={`${Math.round(offer.guaranteePct * 100)}%`}
             hint={`${formatMoney(decision.guaranteedMoney)} locked in`}
             min={0}
@@ -625,16 +632,21 @@ const PERCENT_FIELD: NumberField = { ...INTEGER_FIELD, suffix: '%', width: '3ch'
  * argument: if typing produced a different verdict from dragging to the same
  * figure, the meter would be lying about one of them.
  */
-function Control({ label, display, hint, min, max, step, value, onChange, disabled, warn, field }: {
+function Control({ label, display, hint, min, max, step, value, onChange, disabled, warn, field, tipText }: {
   label: string; display: string; hint?: string;
   min: number; max: number; step: number; value: number;
   onChange: (v: number) => void; disabled?: boolean; warn?: string;
   field: NumberField;
+  /** Glossary text for what this slider is actually setting. */
+  tipText?: string;
 }) {
   return (
     <div>
       <div className="flex items-baseline justify-between gap-3">
-        <span className="label-sm">{label}</span>
+        <span className="label-sm inline-flex items-center gap-1.5">
+          {label}
+          {tipText && <Tooltip text={tipText} />}
+        </span>
         <span className="stat-value text-stat-md">{display}</span>
       </div>
       <input

@@ -10,6 +10,7 @@ import { computeGameShape } from '@/lib/gameShape';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { GameShapePath } from '@/components/ds/GameShapePath';
 import { WeightedScore, MarginTag, ResultRule } from '@/components/ds/ResultWeight';
+import { tip } from '@/lib/glossary';
 
 /** Short round labels for the week column, in the postseason. */
 const ROUND_SHORT: Record<string, string> = {
@@ -123,6 +124,7 @@ export default async function SchedulePage({
           },
           {
             label: 'Remaining SOS',
+            tip: tip('strengthOfSchedule'),
             value: sos !== null ? sos.toFixed(3).replace(/^0/, '') : '—',
             detail: sos !== null ? (sos > 0.55 ? 'a hard run in' : sos < 0.45 ? 'a soft run in' : 'about average') : 'nothing left',
             color: sos !== null ? (sos > 0.55 ? 'text-bad' : sos < 0.45 ? 'text-accent' : undefined) : undefined,
