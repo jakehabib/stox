@@ -471,7 +471,8 @@ export function NegotiationPanel({
               thing the meter tells you when you cross it. What is stated is
               that the limit exists, which is what stops it being a gotcha. */}
           {ctx.guaranteeFloor > 0 && !over && (
-            <p className={`text-xs -mt-2.5 ${ev.underGuaranteed ? 'text-bad' : 'text-muted'}`}>
+            <p className={`text-xs -mt-2.5 inline-flex items-start gap-1.5 ${ev.underGuaranteed ? 'text-bad' : 'text-muted'}`}>
+              <Tooltip className="mt-0.5" align="start" text={tip('guaranteeFloor')} />
               {ev.underGuaranteed
                 ? `A man of his standing does not sign for this little locked in. No salary fixes it — guarantee more of it.`
                 : `A player of his standing expects a real share of it guaranteed, and this clears that.`}

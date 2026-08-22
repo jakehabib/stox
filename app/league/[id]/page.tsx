@@ -506,7 +506,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           </div>
 
           <div className="section">
-            <SectionHeading title="Injury Report" action={<Link href={`/league/${league.id}/depth-chart`} className="text-xs text-accent2 hover:underline">Depth chart →</Link>} />
+            <SectionHeading title="Injury Report" tip={tip('injuryStatus')} action={<Link href={`/league/${league.id}/depth-chart`} className="text-xs text-accent2 hover:underline">Depth chart →</Link>} />
             <InjuryReport leagueId={league.id} entries={injuries} />
           </div>
 

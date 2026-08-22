@@ -2,6 +2,8 @@
 
 import type { DealStructure } from '@/lib/negotiation';
 import { CapMode } from '@/lib/types';
+import { Tooltip } from './Tooltip';
+import { tip } from '@/lib/glossary';
 
 /** Where the escalation slider stops, and the step it moves in. */
 export const STRUCTURE_RANGE = { min: 0.85, max: 1.25, step: 0.01 };
@@ -53,7 +55,10 @@ export function DealStructureControls({ structure, onChange, capMode, disabled }
 
       <div>
         <div className="flex items-baseline justify-between gap-3">
-          <label className="label-sm" htmlFor="deal-escalation">Structure</label>
+          <label className="label-sm inline-flex items-center gap-1.5" htmlFor="deal-escalation">
+            Structure
+            <Tooltip align="start" text={tip('dealShape')} />
+          </label>
           <span className="stat-value text-stat-sm">{structureLabel(structure.escalation)}</span>
         </div>
         <input
@@ -73,7 +78,10 @@ export function DealStructureControls({ structure, onChange, capMode, disabled }
       {capMode === 'REALISTIC' && (
         <div>
           <div className="flex items-baseline justify-between gap-3">
-            <label className="label-sm" htmlFor="deal-void-years">Void years</label>
+            <label className="label-sm inline-flex items-center gap-1.5" htmlFor="deal-void-years">
+              Void years
+              <Tooltip align="start" text={tip('voidYears')} />
+            </label>
             <span className="stat-value text-stat-sm">
               {structure.voidYears === 0 ? 'None' : `+${structure.voidYears}`}
             </span>

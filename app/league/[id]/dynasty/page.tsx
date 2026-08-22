@@ -216,7 +216,7 @@ export default async function DynastyPage({ params }: { params: { id: string } }
 
       {/* Full Scout -------------------------------------------------------- */}
       <div className="section">
-        <SectionHeading eyebrow="Baseline ability" title="Perfect Evaluations" />
+        <SectionHeading eyebrow="Baseline ability" title="Perfect Evaluations" tip={tip('fullScout')} />
         <FullScoutPanel leagueId={league.id} teamId={team.id} />
       </div>
 
