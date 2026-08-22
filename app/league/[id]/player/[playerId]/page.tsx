@@ -62,7 +62,7 @@ export default async function PlayerPage({
   searchParams,
 }: {
   params: { id: string; playerId: string };
-  searchParams: { split?: string };
+  searchParams: { split?: string; view?: string };
 }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   // Which half of the year this card's stat sections are about. In the URL so
@@ -532,6 +532,15 @@ export default async function PlayerPage({
               {player.injuryType ?? 'Injured'} · out {player.injuryWeeks} wk{player.injuryWeeks === 1 ? '' : 's'}
             </span>
           )}
+          {/* A standing designation, so it sits with his identity rather than
+              in the band of things that buy information. It used to live down
+              there as a bare star captioned "Star to have him watched", which
+              is the shortlist by another name — and it vanished entirely once
+              a prospect was fully revealed, which is precisely when you have
+              made up your mind about him. */}
+          {player.isDraftee && userTeam && (
+            <ShortlistStar leagueId={league.id} teamId={userTeam.id} playerId={player.id} initial={onShortlist} label />
+          )}
         </div>
 
         {/* Split name — given name reads as a kicker over the surname, which
@@ -772,9 +781,12 @@ export default async function PlayerPage({
             <div className="flex flex-wrap items-center justify-end gap-2 min-w-0">
               {workoutSlots && (
                 <>
-                  <span className="flex items-center gap-1.5 text-xs text-muted">
-                    <ShortlistStar leagueId={league.id} teamId={userTeam.id} playerId={player.id} initial={onShortlist} />
-                    {onShortlist ? 'Worked every week' : 'Star to have him watched'}
+                  {/* Says what the shortlist is DOING for him. The control
+                      itself is up in the hero with his name — two buttons for
+                      one piece of state is how a page ends up disagreeing with
+                      itself. */}
+                  <span className="text-xs text-muted">
+                    {onShortlist ? 'Shortlisted — your scouts work him every week' : 'Not shortlisted'}
                   </span>
                   <WorkoutButton
                     leagueId={league.id}
@@ -1000,6 +1012,10 @@ export default async function PlayerPage({
         summary={bandCells}
         stats={statsPane}
         contract={contractPane}
+        // Arriving from a negotiation opens the card on the money. See the
+        // ARRIVING note in PlayerCardTabs — anything but `contract` here, and
+        // any route that doesn't set it, still lands on stats.
+        initialView={searchParams?.view === 'contract' ? 'contract' : 'stats'}
       />
 
       {!player.isDraftee && (

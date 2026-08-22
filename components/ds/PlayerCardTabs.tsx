@@ -25,18 +25,27 @@ export type PlayerCardView = 'stats' | 'contract';
  * live section in its top nav. It reads as navigation because it is
  * navigation.
  *
- * State rather than a URL, deliberately, and the opposite of StatScopeToggle's
- * decision: Regular/Playoffs changes which numbers the SERVER must fetch, so
- * it belongs in the address. Both halves of this switch are already rendered
- * by the time the card paints, so a navigation would buy nothing and would
- * cost the reader his scroll position. Both panes stay mounted and the
- * inactive one is hidden, so flipping never re-lays-out the page under him.
+ * SWITCHING is state rather than a URL, deliberately, and the opposite of
+ * StatScopeToggle's decision: Regular/Playoffs changes which numbers the
+ * SERVER must fetch, so it belongs in the address. Both halves of this switch
+ * are already rendered by the time the card paints, so a navigation would buy
+ * nothing and would cost the reader his scroll position. Both panes stay
+ * mounted and the inactive one is hidden, so flipping never re-lays-out the
+ * page under him.
+ *
+ * ARRIVING is a different question, and `initialView` answers it. A man
+ * reached from a negotiation is a man you are about to pay, and opening his
+ * card on his receiving numbers makes the reader find the tab himself. The
+ * app owner: *"if we are coming from 're-sign' or free agent 'negotiate' can
+ * it skip directly to the contract side of the player card? so that way
+ * players aren't like 'why am i looking at stats now?'"* The page reads it off
+ * the query string; every other route omits it and still lands on stats.
  *
  * `contract` is optional and that is the draft-prospect case: a prospect
  * cannot be signed, so rather than offer a tab onto an empty box, he gets no
  * tabs at all and his band is the scouting strip.
  */
-export function PlayerCardTabs({ teamColor, hero, summary, stats, contract }: {
+export function PlayerCardTabs({ teamColor, hero, summary, stats, contract, initialView = 'stats' }: {
   /** The club's primary; undefined for a free agent, who gets no tint. */
   teamColor?: string;
   hero: React.ReactNode;
@@ -45,8 +54,12 @@ export function PlayerCardTabs({ teamColor, hero, summary, stats, contract }: {
   stats: React.ReactNode;
   /** Omitted for a draft prospect: no contract, no tab, no empty box. */
   contract?: React.ReactNode;
+  /** Which face the card opens on. Only the arrival — the reader owns it after that. */
+  initialView?: PlayerCardView;
 }) {
-  const [view, setView] = useState<PlayerCardView>('stats');
+  // A prospect has no contract pane at all, so an arrival asking for one lands
+  // on stats rather than on a tab that does not exist.
+  const [view, setView] = useState<PlayerCardView>(contract != null ? initialView : 'stats');
   const tabbed = contract != null;
 
   const tab = (id: PlayerCardView, label: string, first: boolean) => (

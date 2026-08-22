@@ -204,6 +204,15 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
       </button>
       {open && (
         <div className="px-4 pb-4 pt-1 border-t border-line/60 space-y-3">
+          {/* Out to his whole file, opened on the money rather than on his
+              receiving numbers — this row is a negotiation, and the card
+              should arrive already talking about the same thing. */}
+          <a
+            href={`/league/${leagueId}/player/${playerId}?view=contract`}
+            className="text-xs text-muted hover:text-accent2 inline-flex items-center gap-1"
+          >
+            {name}&apos;s full card and contract history ▸
+          </a>
           {depth && depth.length > 0 && (
             <div className="space-y-2">
               <button

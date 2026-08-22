@@ -1,16 +1,30 @@
+import { formatMoney } from '@/lib/cap';
 import { ratingColor } from '@/lib/ratings';
 import { splitStarters, startersAt } from '@/lib/lineup';
 import { PlayerAvatar } from '../PlayerAvatar';
 import { positionBadgeClass } from './positionColor';
 
-/** One of your own men, exactly as the depth chart has him. No fog: these ratings are true. */
-export interface DepthCompareEntry {
+/**
+ * The part of a depth entry the verdict math actually reads: who he is and how
+ * good he is. Split out from DepthCompareEntry so callers that only want the
+ * verdict — the player card's own depth read, for one — are not made to look
+ * up contract figures they will never draw.
+ */
+export interface DepthRanked {
   playerId: string;
   name: string;
   ovr: number;
+}
+
+/** One of your own men, exactly as the depth chart has him. No fog: these ratings are true. */
+export interface DepthCompareEntry extends DepthRanked {
   age: number;
   weightLb?: number;
   heightIn?: number;
+  /** Cap hit this year. 0 when the cap is off — the column is hidden then. */
+  capHit: number;
+  /** Years left on his deal. 0 means it is expiring. */
+  yearsRemaining: number;
 }
 
 /**
@@ -49,7 +63,7 @@ export type SlotOutcome =
   /** Nobody starts at this position in the base lineup (a retired position in an old save). */
   | 'NONE';
 
-export interface SlotVerdict {
+export interface SlotVerdict<T extends DepthRanked = DepthRanked> {
   outcome: SlotOutcome;
   /** startersAt(position) — lib/lineup.ts, the app's one definition. */
   starterCount: number;
@@ -65,7 +79,7 @@ export interface SlotVerdict {
    */
   threshold: number | null;
   /** The man who drops out of the starting group if he slots in above the line. */
-  displaces: DepthCompareEntry | null;
+  displaces: T | null;
   /** ovrLow/ovrHigh minus `threshold`. Sign of `gapHigh` is the badge's verdict, by construction. */
   gapLow: number | null;
   gapHigh: number | null;
@@ -88,7 +102,7 @@ export interface SlotVerdict {
  * and the counting version would promise him a starting job the signing does
  * not give.
  */
-function insertIndex(depth: DepthCompareEntry[], ovr: number): number {
+function insertIndex(depth: DepthRanked[], ovr: number): number {
   let at = 0;
   for (let i = 0; i < depth.length; i++) if (depth[i].ovr > ovr) at = i + 1;
   return at;
@@ -102,7 +116,7 @@ function insertIndex(depth: DepthCompareEntry[], ovr: number): number {
  * @param depth Your men at the position, IN DEPTH-CHART ORDER (from
  *   DepthChartSlot). Not re-sorted here — the order is who plays.
  */
-export function slotVerdict(position: string, depth: DepthCompareEntry[], rating: CandidateRating): SlotVerdict {
+export function slotVerdict<T extends DepthRanked>(position: string, depth: T[], rating: CandidateRating): SlotVerdict<T> {
   const starterCount = startersAt(position);
   const { starters } = splitStarters(position, depth);
 
@@ -242,11 +256,13 @@ export function SlotVerdictBadge({ verdict }: { verdict: SlotVerdict }) {
  * file to already know how to say "depends where he really is". Unreachable
  * from today's one call site is not the same as wrong.
  */
-export function DepthCompare({ position, depth, candidate }: {
+export function DepthCompare({ position, depth, candidate, capOn }: {
   position: string;
   /** In depth-chart order. */
   depth: DepthCompareEntry[];
   candidate: Candidate;
+  /** Cap enabled for this league. Off means the money columns are meaningless and are not drawn. */
+  capOn: boolean;
 }) {
   const { rating } = candidate;
   const v = slotVerdict(position, depth, rating);
@@ -263,10 +279,24 @@ export function DepthCompare({ position, depth, candidate }: {
         <div className="label-sm">
           Your depth at <span className={positionBadgeClass(position)}>{position}</span> vs. {candidate.name}
         </div>
-        <div className="text-xs text-muted">
-          {v.starterCount === 0
-            ? 'nobody starts here in the base lineup'
-            : `${v.starterCount} start${v.starterCount === 1 ? 's' : ''} at this position`}
+        <div className="text-xs text-muted flex items-center gap-2">
+          {/* What the position already costs you. "Should I sign another one"
+              is a money question as much as a depth one, and the answer was
+              sitting one screen away. The app owner: *"where it says 'your
+              depth at X position' it should also show your current cap hits
+              for those players"*. */}
+          {capOn && depth.length > 0 && (
+            <>
+              <span className="font-mono text-chalk">{formatMoney(depth.reduce((n, d) => n + d.capHit, 0))}</span>
+              <span>committed here</span>
+              <span className="text-line">·</span>
+            </>
+          )}
+          <span>
+            {v.starterCount === 0
+              ? 'nobody starts here in the base lineup'
+              : `${v.starterCount} start${v.starterCount === 1 ? 's' : ''} at this position`}
+          </span>
         </div>
       </div>
 
@@ -358,6 +388,12 @@ export function DepthCompare({ position, depth, candidate }: {
                     {candidate.name} <span className="text-muted font-normal">— free agent</span>
                   </span>
                   <span className="text-xs text-muted w-10 text-right">{candidate.age}yo</span>
+                  {/* He has no deal here yet, so the money columns are held
+                      open rather than filled — the incumbents' figures below
+                      have to stay in a straight line to be comparable, and a
+                      number in his row would be one this screen invented. */}
+                  {capOn && <span className="text-xs text-muted/50 w-16 text-right font-mono">unsigned</span>}
+                  <span className="text-xs text-muted/50 w-16 text-right">—</span>
                   <span className={`stat-value text-stat-sm w-14 text-right ${ratingCls}`}>{ratingText}</span>
                 </div>
               )}
@@ -379,6 +415,12 @@ export function DepthCompare({ position, depth, candidate }: {
                     ) : null}
                   </span>
                   <span className="text-xs text-muted w-10 text-right">{d.age}yo</span>
+                  {capOn && <span className="text-xs text-muted w-16 text-right font-mono">{formatMoney(d.capHit)}</span>}
+                  <span className="text-xs w-16 text-right">
+                    {d.yearsRemaining <= 0
+                      ? <span className="text-bad">expiring</span>
+                      : <span className="text-muted">{d.yearsRemaining} yr{d.yearsRemaining === 1 ? '' : 's'}</span>}
+                  </span>
                   <span className={`stat-value text-stat-sm w-14 text-right ${ratingColor(d.ovr)}`}>{d.ovr}</span>
                 </div>
               )}

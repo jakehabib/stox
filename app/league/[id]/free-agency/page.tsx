@@ -4,7 +4,7 @@ import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
 import { ratingColor } from '@/lib/ratings';
-import { marketValue, formatMoney } from '@/lib/cap';
+import { marketValue, formatMoney, capHit } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { positionSortKey } from '@/lib/league-data';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
@@ -56,7 +56,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
     prisma.depthChartSlot.findMany({
       where: { teamId: team.id },
       orderBy: { rank: 'asc' },
-      include: { player: { select: { id: true, firstName: true, lastName: true, trueOvr: true, age: true, weightLb: true, heightIn: true, teamId: true } } },
+      include: { player: { select: { id: true, firstName: true, lastName: true, trueOvr: true, age: true, weightLb: true, heightIn: true, teamId: true, contract: true } } },
     }),
   ]);
 
@@ -74,6 +74,11 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
       age: slot.player.age,
       weightLb: slot.player.weightLb,
       heightIn: slot.player.heightIn,
+      // capHit(), not the raw salary — the same function every other money
+      // column in the app runs through, so the figure here and the figure on
+      // the cap page cannot drift apart.
+      capHit: capHit(slot.player.contract, settings.capMode),
+      yearsRemaining: slot.player.contract?.yearsRemaining ?? 0,
     });
     depthByPosition.set(slot.position, list);
   }
@@ -225,7 +230,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
           ) : (
             <ScoutingRange low={topView.ovrLow} high={topView.ovrHigh} confidence={topView.confidence} label="OVR" className="w-32" />
           )}
-          <a href={`/league/${league.id}/player/${topAvailable.id}`} className="btn-secondary text-xs px-2.5 py-1.5 shrink-0">Negotiate</a>
+          <a href={`/league/${league.id}/player/${topAvailable.id}?view=contract`} className="btn-secondary text-xs px-2.5 py-1.5 shrink-0">Negotiate</a>
         </div>
       )}
 
@@ -248,6 +253,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
             heightIn: focusRow.p.heightIn,
             rating: { ovrLow: focusRow.view.ovrLow, ovrHigh: focusRow.view.ovrHigh, revealed: focusRow.view.revealed },
           }}
+          capOn={settings.capMode !== 'OFF'}
         />
       )}
 
@@ -293,7 +299,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
                 <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
                 <td><SlotVerdictBadge verdict={verdict} /></td>
                 <td className="font-mono text-muted">{formatMoney(market)}/yr</td>
-                <td><a href={`/league/${league.id}/player/${p.id}`} className="btn-secondary text-xs px-2.5 py-1">Negotiate</a></td>
+                <td><a href={`/league/${league.id}/player/${p.id}?view=contract`} className="btn-secondary text-xs px-2.5 py-1">Negotiate</a></td>
               </tr>
             ))}
           </tbody>
