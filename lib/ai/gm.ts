@@ -134,34 +134,56 @@ export function parseGmProfile(raw: string | null | undefined, fallbackRng?: Rng
 }
 
 /**
- * WHAT COUNTS AS AN ACCEPTABLE STARTER DEPENDS ON THE POSITION.
+ * WHAT COUNTS AS AN ACCEPTABLE STARTER.
  *
- * The quality term used one flat number — 72 — for every position on the
- * field, and that is how a club whose starting QUARTERBACK is a 72 came back
- * with a need score of 0.00, meaning stacked. The owner hit the consequence
- * from the other side: a win-now club with $108M of room and a 68 at
+ * This was one flat 72 for every position on the field, which is how a club
+ * whose starting QUARTERBACK was a 72 came back scoring 0.00 — stacked. The
+ * owner hit the consequence: a win-now club with $108M of room and a 68 at
  * quarterback turned down a legitimate starter, because as far as this
  * function was concerned it did not need one.
  *
- * A 72 quarterback is among the worst starters in football. A 72 right guard
- * is fine, and a 72 punter is good. One number cannot mean all three.
+ * MY FIRST FIX DERIVED THE BAR FROM MARKET.POSITION_MULT, and measuring it
+ * showed that was the wrong quantity. A starter's rating tracks how many men
+ * a club rosters at the position, not what the position is paid: measured over
+ * 160 clubs, receivers (six deep) median 83 while interior linemen (paid less
+ * but rostered thinner) median 80, and linebackers median 81 against guards'
+ * 79. Pay and starter quality are simply different axes, so a bar derived from
+ * one did not track the other — it left only 3-7% of clubs reading as needing
+ * help at most positions, which is a need signal that is almost always zero.
  *
- * Derived from MARKET.POSITION_MULT rather than hand-written per position, so
- * the bar moves with the game's own idea of what a position is worth instead
- * of drifting away from it: QB lands near 80, edge near 76, guard near 70,
- * kicker near 66.
+ * Anchored to the measured distribution instead. Across five generated
+ * leagues the median starter at EVERY non-specialist position lands between
+ * 79 and 83, and 53% of all starters are 80+. So 80 is what a starter is, and
+ * the owner's read — "any position outside of specialist you'd ideally want at
+ * least 80+" — is what the data already says.
  *
- * [TUNE] The gap divisor is 18 rather than 30 for the same reason. At 30, a
- * quarterback had to be THIRTY points below the bar — a 50 overall — before
- * his club read as desperate, which no front office would recognise.
+ * Three numbers, because the data supports three and not seventeen:
+ *   QB          the one position that decides games on its own, and the one
+ *               whose median starter is genuinely higher (86). A club with an
+ *               80 at quarterback has a problem; a club with an 80 at right
+ *               guard does not.
+ *   SPECIALIST  kickers and punters sit ~8 points lower as a population
+ *               (median 73), so holding them to 80 would mark every club in
+ *               the league as needing one.
+ *   everyone else at 80.
+ * [TUNE]
  */
-const ACCEPTABLE_STARTER_BASE = 72;
-const ACCEPTABLE_STARTER_SPREAD = 9;
+const ACCEPTABLE_STARTER = 80;
+const ACCEPTABLE_STARTER_QB = 84;
+const ACCEPTABLE_STARTER_SPECIALIST = 72;
+
+/**
+ * [TUNE] How far below the bar is "desperate". At 30 a quarterback had to be
+ * thirty points under it — a 50 overall — before his club read as desperate,
+ * which no front office would recognise. At 18, a 68 at a position that wants
+ * 80 scores 0.67, which is what the owner means when he says a 68 back is bad.
+ */
 const STARTER_GAP_DIVISOR = 18;
 
 export function acceptableStarter(pos: Position): number {
-  const mult = MARKET.POSITION_MULT[pos] ?? 1;
-  return ACCEPTABLE_STARTER_BASE + ACCEPTABLE_STARTER_SPREAD * (mult - 1);
+  if (pos === 'QB') return ACCEPTABLE_STARTER_QB;
+  if (pos === 'K' || pos === 'P') return ACCEPTABLE_STARTER_SPECIALIST;
+  return ACCEPTABLE_STARTER;
 }
 
 /**
