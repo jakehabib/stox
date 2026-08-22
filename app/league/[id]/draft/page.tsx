@@ -10,6 +10,7 @@ import { consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensu
 import { imminentDraftYear, projectedDraftOrder } from '@/lib/draft';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { DraftSelectionButton } from '@/components/DraftSelectionButton';
+import { DraftMomentProvider } from '@/components/DraftMoment';
 import { LiveDraftTicker } from '@/components/LiveDraftTicker';
 import { ShortlistStar } from '@/components/ShortlistStar';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
@@ -289,14 +290,27 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     let y = capitalYears.get(year);
     if (!y) {
       const settled = year === settledYear;
-      const projected = !settled && standingsPlayed && year === upcomingDraftYear;
+      // Three things have to be true before a projected number is honest: it
+      // is the next draft, that draft is the one THIS season's standings will
+      // seed (seasonYear rolls forward mid-offseason, so after RESET_STANDINGS
+      // the imminent draft is already the one this table no longer describes),
+      // and some football has actually been played.
+      const projected = !settled
+        && year === upcomingDraftYear
+        && year === league.seasonYear + 1
+        && standingsPlayed;
       y = {
         year,
         settled,
         projected,
         // Draft year Y is seeded by the season played in Y-1 (the offseason
-        // that runs the draft has already rolled seasonYear forward).
-        orderFromSeason: settled || projected ? undefined : year - 1,
+        // that runs the draft has already rolled seasonYear forward) — but
+        // only while that season is still ahead of us. Between RESET_STANDINGS
+        // and the draft actually opening, Y-1 is a season already in the books
+        // and "order set after 2027" would be the page telling a GM to wait
+        // for a year he has finished playing. Unset, the panel says the true
+        // thing instead: the order lands when the draft opens.
+        orderFromSeason: settled || projected || year - 1 < league.seasonYear ? undefined : year - 1,
         picks: [],
         forfeited: [],
       };
@@ -325,6 +339,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         overall: bucket.settled ? overallOf(p.round, p.slot) : undefined,
         projectedSlot: projSlot,
         projectedOverall: projSlot === undefined ? undefined : overallOf(p.round, projSlot),
+        roundSize,
         from: origin ? { teamId: origin.id, abbr: origin.abbr } : undefined,
         picksAway: away !== undefined && away >= 0 ? away : undefined,
         spentOn,
@@ -332,11 +347,16 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       bucket.picks.push(pick);
     } else if (p.originalTeamId === team.id) {
       const holder = teamById.get(p.ownerTeamId);
+      // Projected off THIS club's own record, because it is this club's pick —
+      // which is exactly what makes it worth showing: a first traded away in
+      // August is a different asset in November.
+      const projSlot = bucket.projected ? projectedOrder.get(p.originalTeamId) : undefined;
       const forfeit: DraftCapitalForfeit = {
         id: p.id,
         year: p.year,
         round: p.round,
         overall: bucket.settled ? overallOf(p.round, p.slot) : undefined,
+        projectedOverall: projSlot === undefined ? undefined : overallOf(p.round, projSlot),
         to: { teamId: holder?.id ?? p.ownerTeamId, abbr: holder?.abbr ?? '???' },
         spentOn,
       };
@@ -344,11 +364,44 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     }
   }
 
+  // The club's own place in the live order, which every projected number on
+  // the panel is derived from: slot + (round - 1) * 32. Shown only when a year
+  // on the panel is actually carrying that projection.
+  const ownProjectedSlot = projectedOrder.get(team.id);
   const capitalList = [...capitalYears.values()].sort((a, b) => a.year - b.year);
   for (const y of capitalList) {
     y.picks.sort((a, b) => a.round - b.round || (a.overall ?? a.projectedOverall ?? 0) - (b.overall ?? b.projectedOverall ?? 0));
     y.forfeited.sort((a, b) => a.round - b.round);
   }
+  // The clubs whose live records are setting every projected number on the
+  // panel: this one, plus whoever a projected pick was acquired from. Each
+  // slot is the one projectedDraftOrder() returned — the same map the numbers
+  // above were built from, never a second computation of it.
+  const projectedYears = capitalList.filter((y) => y.projected);
+  const liveOrderTeamIds = [
+    ...new Set([
+      ...(ownProjectedSlot !== undefined ? [team.id] : []),
+      ...projectedYears.flatMap((y) => y.picks.map((p) => p.from?.teamId).filter((id): id is string => !!id)),
+    ]),
+  ];
+  const capitalLiveOrder = projectedYears.length === 0 ? undefined : liveOrderTeamIds
+    .map((id) => {
+      const club = teamById.get(id);
+      const slot = projectedOrder.get(id);
+      if (!club || slot === undefined) return null;
+      return {
+        teamId: id,
+        abbr: club.abbr,
+        slot,
+        outOf: projectedOrder.size,
+        record: `${club.wins}-${club.losses}-${club.ties}`,
+        isMine: id === team.id,
+      };
+    })
+    .filter((a): a is NonNullable<typeof a> => a !== null)
+    // A club that has hoarded picks from ten different teams does not need ten
+    // rows of standings; the point is made by the first few.
+    .slice(0, 5);
   const imminentPicks = capitalList.find((y) => y.year === upcomingDraftYear)?.picks.filter((p) => !p.spentOn) ?? [];
   const nextUpPick = imminentPicks
     .filter((p) => p.picksAway !== undefined)
@@ -452,6 +505,19 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // that story belongs to the careers these men have not had yet.
   const recapNotes: RecapNote[] = [];
   if (recapYear !== null && recapPickRows.length > 0) {
+    const acquiredCount = recapSelections.filter((s) => s.from).length;
+    const forfeitedCount = recapPickRows.filter((p) => p.originalTeamId === team.id && p.ownerTeamId !== team.id).length;
+    recapNotes.push({
+      label: 'Your Class',
+      value: `${recapSelections.length} selection${recapSelections.length === 1 ? '' : 's'}`,
+      detail: [
+        recapSelections[0] ? `first at #${recapSelections[0].overall}` : null,
+        acquiredCount > 0 ? `${acquiredCount} acquired by trade` : null,
+        forfeitedCount > 0 ? `${forfeitedCount} traded away` : null,
+      ].filter(Boolean).join(' · ') || undefined,
+      isUser: true,
+    });
+
     const first = recapRoundOne[0];
     if (first) {
       recapNotes.push({
@@ -466,32 +532,39 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     if (topRun && topRun[1] >= 3) {
       recapNotes.push({ label: 'Round One Run', value: `${topRun[1]} ${topRun[0]}`, detail: 'off the board in the first round' });
     }
+    // Every pick set against where the public board had the man, which is the
+    // one comparison the room could actually make on the night.
+    const againstBoard = recapPickRows
+      .filter((p) => p.player && recapBoard?.get(p.player.id))
+      .map((p) => ({ p, rank: recapBoard!.get(p.player!.id)!.rank, overall: overallOf(p.round, p.slot) }));
     // Longest wait for a man the board had in its first round. Restricted to
     // first-round grades on purpose: a #250 board card taken at #224 is not a
     // slide, it is the seventh round doing what it does.
-    const slides = recapPickRows
-      .filter((p) => p.player && (recapBoard?.get(p.player.id)?.rank ?? Infinity) <= roundSize)
-      .map((p) => ({ p, rank: recapBoard!.get(p.player!.id)!.rank, overall: overallOf(p.round, p.slot) }))
+    const slide = againstBoard
+      .filter((x) => x.rank <= roundSize)
       .sort((a, b) => (b.overall - b.rank) - (a.overall - a.rank))[0];
-    if (slides && slides.overall > slides.rank) {
-      const club = teamById.get(slides.p.ownerTeamId);
+    if (slide && slide.overall > slide.rank) {
+      const club = teamById.get(slide.p.ownerTeamId);
       recapNotes.push({
         label: 'Longest Slide',
-        value: `${slides.p.player!.firstName} ${slides.p.player!.lastName}`,
-        detail: `board #${slides.rank}, taken #${slides.overall} by ${club?.abbr ?? '???'}`,
+        value: `${slide.p.player!.firstName} ${slide.p.player!.lastName}`,
+        detail: `board #${slide.rank}, taken #${slide.overall} by ${club?.abbr ?? '???'}`,
       });
     }
-    const acquiredCount = recapSelections.filter((s) => s.from).length;
-    const forfeitedCount = recapPickRows.filter((p) => p.originalTeamId === team.id && p.ownerTeamId !== team.id).length;
-    recapNotes.push({
-      label: 'Your Class',
-      value: `${recapSelections.length} selection${recapSelections.length === 1 ? '' : 's'}`,
-      detail: [
-        recapSelections[0] ? `first at #${recapSelections[0].overall}` : null,
-        acquiredCount > 0 ? `${acquiredCount} acquired by trade` : null,
-        forfeitedCount > 0 ? `${forfeitedCount} traded away` : null,
-      ].filter(Boolean).join(' · ') || undefined,
-    });
+    // And the other direction. Confined to the first two rounds, where a club
+    // spending early capital well ahead of the board is the news; taking a man
+    // a hundred places early in the seventh is what the seventh round is.
+    const reach = againstBoard
+      .filter((x) => x.overall <= roundSize * 2)
+      .sort((a, b) => (b.rank - b.overall) - (a.rank - a.overall))[0];
+    if (reach && reach.rank > reach.overall) {
+      const club = teamById.get(reach.p.ownerTeamId);
+      recapNotes.push({
+        label: 'Earliest Call',
+        value: `${reach.p.player!.firstName} ${reach.p.player!.lastName}`,
+        detail: `board #${reach.rank}, taken #${reach.overall} by ${club?.abbr ?? '???'}`,
+      });
+    }
   }
 
   // The draft has just ended and the league has not moved on yet — the recap
@@ -516,6 +589,10 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     ?? (isFantasy && order.length > 0 ? Math.floor((state?.pickIndex ?? 0) / order.length) + 1 : state?.round ?? 1);
 
   return (
+    // The selection card is raised from inside the board but must outlive it:
+    // the pick action revalidates this route, and the row that raised it is
+    // gone from the board a moment later. The provider sits above all of that.
+    <DraftMomentProvider>
     <div className="space-y-6">
       {classOutlook && (
         <div className="panel px-4 py-3 flex items-start gap-3">
@@ -528,17 +605,33 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         <PageMasthead
           teamId={team.id}
           teamAbbr={team.abbr}
-          eyebrow={state ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft · Round ${state.round}`) : 'Scouting Hub'}
+          eyebrow={state
+            ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft · Round ${state.round}`)
+            : draftJustFinished ? 'Rookie Draft' : 'Scouting Hub'}
           // Named for the draft these prospects are actually selected in, not
           // the season being played: they're generated during one season and
           // drafted in the offseason after it, so seasonYear runs a year early
           // and wouldn't match the picks you'd spend on them.
-          title={state ? `Pick ${state.pickIndex + 1} of ${totalPicks}` : `${upcomingDraftYear ?? league.seasonYear} Draft Class`}
-          subtitle={state
+          //
+          // EXCEPT in the window between the last selection and the phase
+          // advancing. The class that just went through the draft is still
+          // flagged isDraftee (the conversion runs on the way out of DRAFT,
+          // see lib/season.ts), while upcomingDraftYear has already moved to
+          // next year's picks — so the old title called 176 undrafted men
+          // "the 2028 Draft Class", a class that will not be generated until
+          // week 1 of the coming season.
+          title={state
+            ? `Pick ${state.pickIndex + 1} of ${totalPicks}`
+            : draftJustFinished ? `${recapYear} Draft Complete` : `${upcomingDraftYear ?? league.seasonYear} Draft Class`}
+          subtitle={state || draftJustFinished
             ? undefined
             : 'The incoming class is browsable all season — scout them now, the draft opens after free agency.'}
           facts={[
-            { label: 'Prospects', value: String(classSize), detail: searchParams.pos ? `filtered to ${searchParams.pos}` : 'in the class' },
+            {
+              label: draftJustFinished ? 'Undrafted' : 'Prospects',
+              value: String(classSize),
+              detail: searchParams.pos ? `filtered to ${searchParams.pos}` : draftJustFinished ? 'nobody called their name' : 'in the class',
+            },
             {
               label: 'Shortlisted',
               tip: tip('shortlist'),
@@ -593,7 +686,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       {draftJustFinished && recap}
 
       {capitalList.length > 0 && (
-        <DraftCapitalPanel years={capitalList} nextUp={nextUp} teamAbbr={team.abbr} />
+        <DraftCapitalPanel years={capitalList} nextUp={nextUp} liveOrder={capitalLiveOrder} />
       )}
 
       {upcomingPicks.length > 1 && (
@@ -733,34 +826,43 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                         <DraftSelectionButton
                           leagueId={league.id}
                           teamId={team.id}
-                          team={{ id: team.id, abbr: team.abbr, city: team.city, nickname: team.nickname }}
-                          pick={{ year: league.seasonYear, round: onClockRound, overall: state!.pickIndex + 1 }}
-                          player={{
-                            id: p.id,
-                            firstName: p.firstName,
-                            lastName: p.lastName,
-                            position: p.position,
-                            age: p.age,
-                            college: p.college,
-                            heightIn: p.heightIn,
-                            weightLb: p.weightLb,
-                            // The card carries the file this pick was MADE on.
-                            // Drafting him clears Player.isDraftee, which is
-                            // buildScoutedView's scope gate, so a view rebuilt
-                            // a moment later would print his true rating on the
-                            // one screen that exists to celebrate not knowing.
-                            ovrLow: view.ovrLow,
-                            ovrHigh: view.ovrHigh,
-                            ovrExact: view.revealed ? view.scoutedOvr : undefined,
-                            potLow: view.potLow,
-                            potHigh: view.potHigh,
-                            potExact: view.potentialRevealed ? p.potential : undefined,
-                            confidence: view.confidence,
-                            label: label.label,
-                            labelClass: label.className,
-                            boardRank: read?.rank,
-                            boardGrade: read?.grade,
-                            bandLabel: read?.bandLabel,
+                          moment={{
+                            team: { id: team.id, abbr: team.abbr, city: team.city, nickname: team.nickname },
+                            pick: { year: league.seasonYear, round: onClockRound, overall: state!.pickIndex + 1 },
+                            player: {
+                              id: p.id,
+                              firstName: p.firstName,
+                              lastName: p.lastName,
+                              position: p.position,
+                              age: p.age,
+                              college: p.college,
+                              heightIn: p.heightIn,
+                              weightLb: p.weightLb,
+                              // The card carries the file this pick was MADE on.
+                              // Drafting him clears Player.isDraftee, which is
+                              // buildScoutedView's scope gate, so a view rebuilt
+                              // a moment later would print his true rating on
+                              // the one screen that exists to celebrate not
+                              // knowing yet.
+                              ovrLow: view.ovrLow,
+                              ovrHigh: view.ovrHigh,
+                              ovrExact: view.revealed ? view.scoutedOvr : undefined,
+                              potLow: view.potLow,
+                              potHigh: view.potHigh,
+                              potExact: view.potentialRevealed ? p.potential : undefined,
+                              confidence: view.confidence,
+                              label: label.label,
+                              labelClass: label.className,
+                              boardRank: read?.rank,
+                              boardGrade: read?.grade,
+                              bandLabel: read?.bandLabel,
+                              // The club's own line where its file differs
+                              // from the room's, the room's line where it does
+                              // not — the same two sentences this row already
+                              // carries in its title attribute, said out loud
+                              // at the moment they matter.
+                              boardNote: note ?? read?.headline,
+                            },
                           }}
                         />
                       )}
@@ -785,5 +887,6 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         </div>
       </div>
     </div>
+    </DraftMomentProvider>
   );
 }
