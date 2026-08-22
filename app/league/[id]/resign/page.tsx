@@ -17,8 +17,31 @@ export default async function ResignPage({ params }: { params: { id: string } })
   // (yearsRemaining === 1) — not just once they've actually hit 0 during
   // the RESIGN phase — so expiring deals are visible from week 1 of that
   // season, with time to negotiate instead of a surprise once the season's over.
+  /*
+   * ONLY THE MEN WHO WALK AT THE END OF THIS LEAGUE YEAR.
+   *
+   * This asked for `yearsRemaining <= 1`, which is two different cohorts
+   * wearing one list. Contracts age when the season ends, so once the
+   * offseason has begun a man at 1 has a whole season still to play — he is
+   * next year's decision, not this year's. Shown beside men who genuinely
+   * walk in a few clicks, he reads as urgent, and the app owner paid for
+   * exactly that: *"i just gave a huge extension to someone thinking they
+   * needed it but really i had 1 more year after to decide"*. A screen that
+   * costs a GM real money by implying a deadline that is twelve months away
+   * is worse than one that shows him less.
+   *
+   * So the cohort is pinned to the phase, and to the rule that actually
+   * releases people. `releaseUnresignedExpiringContracts` (lib/season.ts)
+   * takes `yearsRemaining: 0` — during the offseason cycle those men, and
+   * only those men, are the ones the window is about. Before the season ends
+   * nothing has aged yet, so the men who will be free agents when it does are
+   * the ones playing out their final year; anybody already at zero in-season
+   * is more urgent still and is never hidden.
+   */
+  const offseasonCycle = league.phase === 'OFFSEASON' || league.phase === 'RESIGN';
+  const expiringCutoff = offseasonCycle ? 0 : 1;
   const expiring = await prisma.player.findMany({
-    where: { teamId: team.id, status: 'ACTIVE', contract: { yearsRemaining: { lte: 1 } } },
+    where: { teamId: team.id, status: 'ACTIVE', contract: { yearsRemaining: { lte: expiringCutoff } } },
     include: { contract: true },
     /*
      * BEST MAN FIRST. This used to lead on `yearsRemaining`, so the list ran
@@ -142,7 +165,10 @@ export default async function ResignPage({ params }: { params: { id: string } })
          */
         eyebrow={inWindow ? `${league.seasonYear} Offseason` : `${league.seasonYear} Season`}
         title={inWindow ? 'Re-sign Window' : 'Contracts Running Out'}
-        subtitle={"Players whose deals are up or about to be. Nobody else may sign them while they are still yours — but somebody is already watching, and open talks will tell you who, what room they have and what they would pay. The hometown discount is real and it is on a clock: it is at its biggest while a contract still has a season to run and mostly gone once it has expired." + (inWindow ? ' Whoever you leave undecided is released to free agency when this window shuts, and the rest of the league can call.' : ' The window itself opens in the offseason — that is when a decision becomes a deadline. Until then this is a list, and getting ahead of it is up to you.')}
+        subtitle={"Players whose deals are up or about to be. Nobody else may sign them while they are still yours — but somebody is already watching, and open talks will tell you who, what room they have and what they would pay. The hometown discount is real and it is on a clock: it is at its biggest while a contract still has a season to run and mostly gone once it has expired." + (inWindow ? ' Whoever you leave undecided is released to free agency when this window shuts, and the rest of the league can call.' : ' The window itself opens in the offseason — that is when a decision becomes a deadline. Until then this is a list, and getting ahead of it is up to you.')
+          + (offseasonCycle
+            ? ' Only the men whose deals have actually run out are here. Anyone with a season still to play is next year\'s decision and is deliberately kept off it.'
+            : ' Only the men whose deals end when this season does are here — anyone with more than that left is not your problem yet.')}
         action={expiring.length > 0 ? <LetAiResignButton leagueId={league.id} /> : undefined}
         facts={[
           { label: 'Decisions', value: String(onTheList.length), detail: parked.length > 0 ? `${parked.length} more set aside` : 'contracts on the clock', tip: tip('walkYear') },
