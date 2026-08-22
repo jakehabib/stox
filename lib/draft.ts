@@ -68,6 +68,10 @@ export async function draftPlayer(opts: {
 }) {
   const pickInfo = await currentPick(opts.leagueId);
   if (!pickInfo) throw new Error('Draft is not active.');
+  // The war-room gate, enforced where every pick in the game passes through
+  // rather than only in the UI that hides the button. Both callers are covered
+  // by one line: the user's own selection and draftOneAiPick's.
+  if (!draftIsStarted(pickInfo.state)) throw new Error('The draft has not been opened yet.');
   if (pickInfo.teamId !== opts.teamId) throw new Error('It is not this team\'s pick.');
 
   const isFantasy = pickInfo.state.kind === 'FANTASY';
@@ -702,13 +706,39 @@ export async function imminentDraftYear(leagueId: string): Promise<number | null
   return next?.year ?? null;
 }
 
+/**
+ * Is the clock actually running on this draft?
+ *
+ * THE GATE IS FOR THE ROOKIE DRAFT AND NOTHING ELSE, and this predicate is the
+ * only place that decision lives — read it instead of `state.started`.
+ *
+ * The rookie draft arrives as a side effect of advancing a week: free agency
+ * closes, the phase flips to DRAFT, and the board was already burning picks by
+ * the time the owner opened the page. That is what the gate is for.
+ *
+ * A fantasy draft is the opposite case. It exists because the user ticked the
+ * box on the league he was creating one screen earlier, it is the only thing
+ * that happens in the FANTASY_DRAFT phase, and there is no season around it to
+ * be surprised by. Asking him to confirm the thing he just asked for is a door
+ * with nothing behind it, so FANTASY is always live.
+ */
+export function draftIsStarted(state: { kind: string; started: boolean }) {
+  return state.kind !== 'ROOKIE' || state.started;
+}
+
 export async function startRookieDraft(leagueId: string, seasonYear: number, rng: Rng) {
   // `order` is unused for ROOKIE drafts — currentPick() resolves the team on
   // the clock from live DraftPick ownership every round instead (see there
   // for why a fixed turn-order array doesn't work once picks get traded).
+  //
+  // `started: false` is what makes this "the board is set" rather than "the
+  // draft is under way". This runs from lib/season.ts the moment the last week
+  // of free agency is advanced past, which is not a moment the GM chose — the
+  // clock does not move until he presses the button on the draft page
+  // (beginRookieDraftAction).
   await prisma.draftState.deleteMany({ where: { leagueId } });
   await prisma.draftState.create({
-    data: { leagueId, kind: 'ROOKIE', round: 1, pickIndex: 0, order: writeJson([]), complete: false },
+    data: { leagueId, kind: 'ROOKIE', round: 1, pickIndex: 0, order: writeJson([]), complete: false, started: false },
   });
   await prisma.league.update({ where: { id: leagueId }, data: { phase: 'DRAFT' } });
 }

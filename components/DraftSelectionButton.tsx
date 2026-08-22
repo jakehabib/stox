@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { draftPlayerAction } from '@/app/actions/draft';
 import { useDraftMoment, type SelectionMoment } from './DraftMoment';
 
@@ -18,8 +19,10 @@ import { useDraftMoment, type SelectionMoment } from './DraftMoment';
  * server action does not revalidate.
  *
  * While the board behind a dismissed card is being refetched, every Draft
- * button on it points at a row that may already have been taken by an AI club
- * inside the same action, so they all go disabled until the new board lands.
+ * button on it points at a row that may already be gone — the ticker starts
+ * the next club's clock the moment the refresh reports the user off the clock,
+ * and draftPlayer() does not re-check that its man is still free. So they all
+ * go disabled until the new board lands.
  */
 export function DraftSelectionButton({ leagueId, teamId, moment }: {
   leagueId: string;
@@ -29,6 +32,7 @@ export function DraftSelectionButton({ leagueId, teamId, moment }: {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const draft = useDraftMoment();
+  const router = useRouter();
   const stale = draft?.refreshing ?? false;
 
   return (
@@ -40,7 +44,13 @@ export function DraftSelectionButton({ leagueId, teamId, moment }: {
           const res = await draftPlayerAction(leagueId, moment.player.id, teamId);
           if (!res.ok) { setError(res.message); return; }
           setError(null);
-          draft?.show(moment);
+          // The card's dismissal is what refreshes the board and restarts the
+          // clock on the next club (see DraftMomentProvider). Outside the
+          // provider there is no card and therefore no dismissal, so the
+          // refresh has to happen here instead — without it the draft would
+          // simply sit on a stale board with nobody picking.
+          if (draft) draft.show(moment);
+          else router.refresh();
         })}
       >
         {pending ? 'Drafting…' : stale ? 'Board updating…' : 'Draft'}

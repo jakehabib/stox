@@ -63,6 +63,13 @@ async function runOneLeague(idx: number): Promise<{ violations: TaggedViolation[
     if (league.phase === 'DRAFT' || league.phase === 'FANTASY_DRAFT') {
       const state = await prisma.draftState.findUnique({ where: { leagueId } });
       if (!state?.complete) {
+        // A rookie draft is now created with the clock stopped, waiting on the
+        // GM to open it (DraftState.started — see beginRookieDraftAction). This
+        // league has no GM, so the sim is its own commissioner: same
+        // compare-and-set, no picks until it has run.
+        if (state && !state.started) {
+          await prisma.draftState.updateMany({ where: { leagueId, started: false }, data: { started: true } });
+        }
         await runAiPicksUntilUser(leagueId, NO_USER_SENTINEL, new Rng(`${seed}-draft-${steps}`), league.seasonYear);
         continue; // check invariants once the phase actually changes, not on every partial drain
       }

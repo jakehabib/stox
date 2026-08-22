@@ -2,16 +2,18 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
-import { loadScoutMods } from '@/lib/dynasty';
+import { loadScoutMods, buildDynastyState } from '@/lib/dynasty';
 import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE } from '@/lib/tuning';
 import { consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
-import { imminentDraftYear, projectedDraftOrder } from '@/lib/draft';
+import { imminentDraftYear, projectedDraftOrder, draftIsStarted } from '@/lib/draft';
+import { loadWorkoutSlots } from '@/lib/workouts';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { DraftSelectionButton } from '@/components/DraftSelectionButton';
 import { DraftMomentProvider } from '@/components/DraftMoment';
 import { LiveDraftTicker } from '@/components/LiveDraftTicker';
+import { StartDraftButton } from '@/components/StartDraftButton';
 import { ShortlistStar } from '@/components/ShortlistStar';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
@@ -41,6 +43,11 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // "is a draft live right now" is its own check, not just "does state exist."
   const draftLive = !!stateRow && !stateRow.complete;
   const state = draftLive ? stateRow! : null;
+  // Board set, clock stopped. startRookieDraft writes DraftState the moment
+  // free agency closes; until the GM presses the button in the war room below,
+  // nothing on this page may take a pick. See draftIsStarted() in lib/draft.ts
+  // for why a fantasy draft is never in this state.
+  const draftStarted = !state || draftIsStarted(state);
 
   const isFantasy = state?.kind === 'FANTASY';
   // Fantasy draft has no DraftPick rows — it's a plain snake of team turns,
@@ -104,7 +111,11 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // 80, which would have made that claim off a sample of 80.
   const classWhere = { leagueId: league.id, teamId: null, status: 'FREE_AGENT', isDraftee: true } as const;
   const [pool, classSize] = await Promise.all([
-    prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: shortlistOnly ? undefined : (draftLive ? 80 : 300) }),
+    // The 80-row slice is for a draft in progress, where only the top of the
+    // board matters pick to pick. A draft that has not started yet is the
+    // opposite: it is the last full look at the class, so it gets the whole
+    // scouting-hub depth.
+    prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: shortlistOnly ? undefined : (draftLive && draftStarted ? 80 : 300) }),
     prisma.player.count({ where: classWhere }),
   ]);
   const reports = await prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: pool.map((p) => p.id) } } });
@@ -591,6 +602,23 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   const onClockRound = onClockRookiePick?.round
     ?? (isFantasy && order.length > 0 ? Math.floor((state?.pickIndex ?? 0) / order.length) + 1 : state?.round ?? 1);
 
+  // THE WAR ROOM: board set, clock stopped, nobody at the podium yet.
+  //
+  // The two scouting ledgers are read ONLY in this state. Private workouts die
+  // when the draft opens (lib/workouts.ts — the window is RESIGN and FREE
+  // AGENCY, and this is the last screen before it shuts), so a GM holding
+  // unused ones has to be told before he starts rather than after. Full Scout
+  // charges do not expire here; they are named alongside because the prospect
+  // does — he comes off the board and is somebody else's.
+  const warRoom = !!state && !draftStarted;
+  const [warRoomWorkouts, warRoomDynasty] = await Promise.all([
+    warRoom ? loadWorkoutSlots(league.id) : Promise.resolve(null),
+    warRoom ? buildDynastyState(league.id) : Promise.resolve(null),
+  ]);
+  const firstSelection = firstPick?.overall !== undefined
+    ? `Round ${firstPick.round}, #${firstPick.overall} overall`
+    : null;
+
   return (
     // The selection card is raised from inside the board but must outlive it:
     // the pick action revalidates this route, and the row that raised it is
@@ -654,7 +682,101 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         />
       )}
 
-      {state && onClockTeam && (
+      {/*
+        THE WAR ROOM — the ten minutes before the commissioner walks out.
+        Everything is ready and nothing has happened yet, which is exactly what
+        this panel has to say. It stands in the on-clock hero's place (same
+        card treatment, so it reads as the same object a moment later) until
+        StartDraftButton flips DraftState.started.
+      */}
+      {warRoom && (
+        <div
+          className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
+          style={{
+            ['--team-accent' as never]: generateTeamLogoParams(team.abbr).primary,
+            borderColor: 'var(--team-accent)',
+            background: 'radial-gradient(ellipse 120% 140% at 0% 50%, color-mix(in srgb, var(--team-accent) 18%, transparent), transparent 70%)',
+          }}
+        >
+          <div
+            className="absolute inset-0 opacity-[0.05] pointer-events-none"
+            style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
+          />
+          <TeamLogo seed={team.id} abbr={team.abbr} size={240} className="watermark-logo opacity-[0.06] -right-16 -top-16" />
+
+          <div className="relative px-6 py-6 space-y-5">
+            <div className="flex items-center gap-4">
+              <TeamLogo seed={team.id} abbr={team.abbr} size={56} />
+              <div>
+                <div className="label-sm">{league.seasonYear} Rookie Draft · {settings.draftRounds} rounds · {totalPicks} selections</div>
+                <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1 text-team">
+                  The War Room
+                </div>
+              </div>
+            </div>
+
+            <p className="text-sm text-chalk/90 leading-snug max-w-2xl">
+              The class is graded and the order is set{onClockTeam ? `, with ${onClockTeam.city} first to the podium` : ''}.
+              {' '}
+              {imminentPicks.length === 0
+                ? 'You hold no selections in this draft — you can still watch it, and the board comes to you if a deal happens.'
+                : firstSelection
+                ? `You hold ${imminentPicks.length} selection${imminentPicks.length === 1 ? '' : 's'}, the first at ${firstSelection}.`
+                : `You hold ${imminentPicks.length} selection${imminentPicks.length === 1 ? '' : 's'}.`}
+              {' '}
+              Nothing goes on the clock until you send it.
+            </p>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-4">
+              <div>
+                <div className="label-sm">Your Picks</div>
+                <div className="stat-value text-stat-md text-chalk mt-1">{imminentPicks.length}</div>
+                <div className="text-[11px] text-muted mt-1">{firstSelection ? `first at #${firstPick!.overall}` : 'none in this draft'}</div>
+              </div>
+              <div>
+                <div className="label-sm">On the Board</div>
+                <div className="stat-value text-stat-md text-chalk mt-1">{classSize}</div>
+                <div className="text-[11px] text-muted mt-1">prospects in the class</div>
+              </div>
+              <div>
+                <div className="label-sm">Shortlisted</div>
+                <div className={`stat-value text-stat-md mt-1 ${shortlistIds.size > 0 ? 'text-gold' : 'text-chalk'}`}>{shortlistIds.size}</div>
+                <div className="text-[11px] text-muted mt-1">{shortlistIds.size > 0 ? 'flagged to watch' : 'star anyone to track them'}</div>
+              </div>
+              <div>
+                <div className="label-sm">Well Scouted</div>
+                <div className={`stat-value text-stat-md mt-1 ${scoutedCount === 0 ? 'text-warn' : 'text-chalk'}`}>{scoutedCount}</div>
+                <div className="text-[11px] text-muted mt-1">{pool.length > 0 ? `of the top ${pool.length} shown` : 'nobody yet'}</div>
+              </div>
+            </div>
+
+            {/* The scouting department's unspent budget, stated before he
+                spends the night regretting it rather than after. */}
+            {(warRoomWorkouts?.remaining ?? 0) > 0 && (
+              <p className="text-sm text-warn/90 leading-snug">
+                {warRoomWorkouts!.remaining} private workout{warRoomWorkouts!.remaining === 1 ? '' : 's'} unused —
+                the window closes when this draft opens.
+              </p>
+            )}
+
+            <div className="flex flex-wrap items-start gap-3">
+              <StartDraftButton
+                leagueId={league.id}
+                unusedWorkouts={warRoomWorkouts?.remaining ?? 0}
+                fullScoutsLeft={warRoomDynasty?.fullScout.remaining ?? 0}
+                scoutingHref={`/league/${league.id}/scouting`}
+              />
+            </div>
+
+            <p className="text-[11px] text-muted leading-snug">
+              Clubs go on a short clock once it starts. You can pause the board or fast-forward to your
+              selection at any point, and every pick is announced as it is made.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {state && onClockTeam && draftStarted && (
         <div
           className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
           style={{
@@ -681,7 +803,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 </div>
               </div>
             </div>
-            <LiveDraftTicker leagueId={league.id} userTeamId={team.id} isUserOnClock={isUserOnClock} draftComplete={false} />
+            <LiveDraftTicker leagueId={league.id} userTeamId={team.id} isUserOnClock={isUserOnClock} draftComplete={false} started={draftStarted} />
           </div>
         </div>
       )}
@@ -825,7 +947,10 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     </td>
                     <td><span className={`text-xs font-medium ${label.className}`}>{label.label}</span></td>
                     <td>
-                      {isUserOnClock && (
+                      {/* Not while the war room is up: the GM is on the clock
+                          for pick 1 only once he has actually opened the
+                          draft. draftPlayer() refuses it server-side too. */}
+                      {isUserOnClock && draftStarted && (
                         <DraftSelectionButton
                           leagueId={league.id}
                           teamId={team.id}

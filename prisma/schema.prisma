@@ -127,6 +127,22 @@ model DraftState {
   // Serialized array of teamIds in pick order. JSON string.
   order     String  @default("[]")
   complete  Boolean @default(false)
+  // Has the GM actually opened this draft? startRookieDraft writes the row the
+  // moment free agency closes, and the live ticker used to start burning AI
+  // picks as soon as the draft page rendered — so the first round happened
+  // while the owner was still reading the phase summary. The row now exists in
+  // a "board set, clock not running" state until beginRookieDraftAction flips
+  // this (see app/actions/draft.ts).
+  //
+  // ROOKIE drafts only. A fantasy draft is the thing the user asked for by
+  // creating the league, so there is nothing to gate — draftIsStarted() in
+  // lib/draft.ts is the single place that rule lives, and it is what the app
+  // reads rather than this column directly.
+  //
+  // The migration that added it backfills every EXISTING row to true. A save
+  // sitting on the clock mid-draft when this shipped would otherwise have
+  // taken the @default(false) and frozen: no button on its screen, no ticker.
+  started   Boolean @default(false)
 }
 
 // ---------------------------------------------------------------------------

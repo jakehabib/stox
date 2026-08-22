@@ -87,10 +87,15 @@ export function DraftMomentProvider({ children }: { children: React.ReactNode })
    *
    * draftPlayerAction deliberately does not revalidate (see the comment in
    * app/actions/draft.ts), so the board on screen behind this card is the
-   * board as it was BEFORE the pick: the drafted man is still in it, and so
-   * are the AI selections the action has already made underneath. Something
-   * has to ask for the new one, and dismissal is the only moment at which
-   * doing so cannot take the card with it.
+   * board as it was BEFORE the pick — the drafted man is still sitting in it.
+   * Something has to ask for the new one, and dismissal is the only moment at
+   * which doing so cannot take the card with it.
+   *
+   * IT IS ALSO WHAT RESTARTS THE DRAFT. The pick advanced DraftState by one
+   * selection and the next club is on the clock, but LiveDraftTicker only
+   * learns that from a fresh server render — its clock is keyed on the
+   * `isUserOnClock` prop. No refresh, no next pick, and the draft sits there
+   * waiting on a GM who is done. So this is not only a redraw.
    */
   const dismiss = useCallback(() => {
     setMoment(null);
@@ -98,11 +103,11 @@ export function DraftMomentProvider({ children }: { children: React.ReactNode })
      * IN A TRANSITION, so the board can be locked while it is out of date.
      * This page's server render is a heavy one (the whole class, graded), and
      * for the second or two it takes, every row on screen still belongs to the
-     * board as it was BEFORE the pick — including men the AI clubs took inside
-     * the same action. A Draft button on one of those rows is a live control
-     * pointed at a stale target, and draftPlayer() does not re-check that its
-     * man is still free (see lib/draft.ts). `refreshing` is what the buttons
-     * disable on until the new board arrives.
+     * board as it was BEFORE the pick — and the ticker is already running the
+     * next club's clock behind it. A Draft button on one of those rows is a
+     * live control pointed at a stale target, and draftPlayer() does not
+     * re-check that its man is still free (see lib/draft.ts). `refreshing` is
+     * what the buttons disable on until the new board arrives.
      */
     startRefresh(() => router.refresh());
   }, [router]);

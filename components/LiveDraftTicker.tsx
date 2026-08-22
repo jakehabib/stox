@@ -4,17 +4,39 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { draftOneAiPickAction, advanceToUserPickAction } from '@/app/actions/draft';
 
-const TICK_SECONDS = 3;
+/**
+ * Seconds a club is left on the clock before the pick goes in.  [TUNE]
+ *
+ * Three was too fast to read: the name of the man taken, the club that took
+ * him and where the board had him all landed and were gone before you could
+ * look up. Five is long enough to actually watch a round go by and short
+ * enough that seven rounds is still one sitting — which is the trade the
+ * number is here to make.
+ */
+const TICK_SECONDS = 5;
 
 /**
- * Drives the live draft-day experience: while it isn't the user's turn,
- * ticks through AI picks one at a time on a pausable clock instead of a
- * single opaque "Skip to My Pick" batch — so picks are actually visible as
- * they happen, and the on-clock display never goes stale mid-batch the way
- * the old all-at-once skip could feel like it did.
+ * Drives the live draft-day experience: while it isn't the user's turn, ticks
+ * through AI picks one at a time on a pausable clock — so picks are actually
+ * visible as they happen instead of arriving as one opaque jump. This is now
+ * the ONLY thing that runs an AI selection during a normal draft;
+ * draftPlayerAction used to batch every intervening pick the instant the user
+ * chose, which meant the board leapt straight to his next turn and he watched
+ * none of it. Skipping ahead survives as the Fast Forward button below, which
+ * is a thing a GM presses, not a thing that happens to him.
+ *
+ * IT RUNS ONLY ONCE THE GM HAS OPENED THE DRAFT. `started` is DraftState's
+ * gate (see beginRookieDraftAction), and until it is true this component does
+ * nothing at all — no clock, no request, no rendering. The draft page puts its
+ * war room up in this component's place instead. Before that gate existed the
+ * ticker began taking picks the moment the page mounted, which is how the
+ * owner's rookie draft started without him: *"it autostarted without me
+ * knowing"*.
  */
-export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComplete }: {
+export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComplete, started }: {
   leagueId: string; userTeamId: string; isUserOnClock: boolean; draftComplete: boolean;
+  /** False while the board is set but the clock has not been started. */
+  started: boolean;
 }) {
   const [paused, setPaused] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(TICK_SECONDS);
@@ -26,7 +48,7 @@ export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComp
   const inFlight = useRef(false);
 
   useEffect(() => {
-    if (isUserOnClock || draftComplete || paused) return;
+    if (!started || isUserOnClock || draftComplete || paused) return;
 
     if (secondsLeft <= 0) {
       /*
@@ -67,9 +89,11 @@ export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComp
 
     timeoutRef.current = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
-  }, [secondsLeft, paused, isUserOnClock, draftComplete, leagueId, userTeamId, router]);
+  }, [secondsLeft, paused, isUserOnClock, draftComplete, started, leagueId, userTeamId, router]);
 
   if (draftComplete) return null;
+  // The war room owns this corner of the header until the GM opens the draft.
+  if (!started) return null;
 
   if (isUserOnClock) {
     return (

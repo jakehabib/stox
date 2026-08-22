@@ -10,7 +10,7 @@ import { SimPlayer, SimStaff } from './sim/units';
 import { retirementChance, bumpForMilestone } from './progression';
 import { AttrMap } from './ratings';
 import { applyInSeasonProgression, progressFreeAgents } from './development';
-import { proration, deadMoneyOnCut } from './cap';
+import { proration, deadMoneyOnCut, capSavingsOnCut } from './cap';
 import { runAiFreeAgencyWave, fillTeamsToRosterMinimum } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
 import { mergeStats } from './stats';
@@ -1480,11 +1480,15 @@ async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: 
  * Run once, when the draft closes, so every roster enters the new league
  * year legal.
  *
- * On AI teams the worst players go, by true rating. Their dead money is booked
- * like any other cut, because over-signing has to cost something — but the
- * players at the bottom of a 57-man roster are on small deals, so the bill is
- * small. One transaction per team rather than one per player: 100+ individual
- * CUT rows a year would bury the wire.
+ * On AI teams the worst players go, weighed against what releasing each of
+ * them costs — see CUT_DEAD_MONEY_PER_OVR below. Their dead money is booked
+ * like any other cut, because over-signing has to cost something, and since
+ * dead money became the unamortised bonus PLUS guaranteed salary still owed
+ * (lib/cap.ts) the bill at the bottom of a roster is no longer negligible: a
+ * man signed this offseason costs a real share of his deal to walk away from,
+ * whatever his rating. That is what the exchange rate below is for. One
+ * transaction per team rather than one per player: 100+ individual CUT rows a
+ * year would bury the wire.
  *
  * The USER's team is never trimmed. This used to run `findMany({ where: {
  * leagueId } })` with no isUser filter, sort the human's roster by `trueOvr`
@@ -1514,6 +1518,21 @@ async function trimRostersToLimit(
   let total = 0;
   let userOverflow: { abbr: string; over: number; rosterSize: number } | null = null;
 
+  /** One release, booked the same way for both reasons a man goes today. */
+  const release = async (p: {
+    id: string; firstName: string; lastName: string; teamId: string | null;
+    contract: Parameters<typeof deadMoneyOnCut>[0];
+  }) => {
+    const dead = deadMoneyOnCut(p.contract, settings.capMode);
+    if (dead > 0 && p.teamId) {
+      await prisma.capCharge.create({
+        data: { teamId: p.teamId, year: seasonYear, amount: dead, label: `Dead money — ${p.firstName} ${p.lastName}` },
+      });
+    }
+    if (p.contract) await prisma.contract.delete({ where: { playerId: p.id } });
+    await prisma.player.update({ where: { id: p.id }, data: { teamId: null, status: 'FREE_AGENT' } });
+  };
+
   for (const team of teams) {
     const roster = await prisma.player.findMany({
       where: { teamId: team.id, status: 'ACTIVE' },
@@ -1521,9 +1540,11 @@ async function trimRostersToLimit(
       orderBy: [{ trueOvr: 'asc' }, { id: 'asc' }],
     });
     const overflow = roster.length - limit;
-    if (overflow <= 0) continue;
+    // The user's roster is his own to decide; the advance is blocked instead.
+    // His cap sheet is likewise his own problem, and the compliance gate
+    // already stops the clock over it — so he is out of this loop entirely.
     if (team.isUser) {
-      userOverflow = { abbr: team.abbr, over: overflow, rosterSize: roster.length };
+      if (overflow > 0) userOverflow = { abbr: team.abbr, over: overflow, rosterSize: roster.length };
       continue;
     }
 
@@ -1553,27 +1574,69 @@ async function trimRostersToLimit(
      */
     const cutScore = (p: (typeof roster)[number]) =>
       p.trueOvr + deadMoneyOnCut(p.contract, settings.capMode) / CUT_DEAD_MONEY_PER_OVR;
-    const cuts = [...roster]
-      .sort((a, b) => cutScore(a) - cutScore(b) || a.trueOvr - b.trueOvr || a.id.localeCompare(b.id))
-      .slice(0, overflow);
-    for (const p of cuts) {
-      const dead = deadMoneyOnCut(p.contract, settings.capMode);
-      if (dead > 0) {
-        await prisma.capCharge.create({
-          data: { teamId: team.id, year: seasonYear, amount: dead, label: `Dead money — ${p.firstName} ${p.lastName}` },
-        });
+    const cuts = overflow > 0
+      ? [...roster]
+        .sort((a, b) => cutScore(a) - cutScore(b) || a.trueOvr - b.trueOvr || a.id.localeCompare(b.id))
+        .slice(0, overflow)
+      : [];
+    for (const p of cuts) await release(p);
+
+    /*
+     * AND THE CLUB MAY NOT WALK INTO THE SEASON OVER THE CEILING.
+     *
+     * The trim above is the last roster event before week 1, and nothing
+     * re-checks an AI club's cap between here and the following offseason —
+     * so a club that ends cut-down day over the ceiling stays over for the
+     * whole season, which is what INV-19 reports every week of it.
+     *
+     * It could always happen: the cuts above BOOK dead money, so a trim can
+     * spend a club's last room rather than free room. It got materially more
+     * likely when dead money became the unamortised bonus PLUS guaranteed
+     * salary still owed (lib/cap.ts) — measured across 6 leagues x 2 seasons,
+     * over-cap team-readings outside the offseason's own tolerated window
+     * went from 44 to 110, almost all of them clubs that crossed here by a
+     * million or two and then sat there until March.
+     *
+     * So the club keeps releasing until it is legal, and it does it the way a
+     * front office does: WORST MAN FIRST among those whose release actually
+     * frees room. Not biggest-saving-first (that waives a star to cover a
+     * $900K shortfall), and never below the roster minimum — a club that
+     * cannot get under without going illegal stops, and the standing over-cap
+     * machinery carries it from there, exactly as it does for a user whose
+     * remaining moves all cost money.
+     */
+    const capCuts: typeof roster = [];
+    if (settings.capMode === 'REALISTIC') {
+      const { teamCapSummary } = await import('./cap-summary');
+      const rosterMin = rosterMinFor(limit);
+      const gone = new Set(cuts.map((p) => p.id));
+      let size = roster.length - cuts.length;
+      let space = (await teamCapSummary(team.id, seasonYear, settings.capMode)).capSpace;
+      const affordable = roster
+        .filter((p) => !gone.has(p.id) && capSavingsOnCut(p.contract, settings.capMode) > 0)
+        .sort((a, b) => a.trueOvr - b.trueOvr || a.id.localeCompare(b.id));
+      for (const p of affordable) {
+        if (space >= 0 || size <= rosterMin) break;
+        await release(p);
+        capCuts.push(p);
+        size -= 1;
+        space = (await teamCapSummary(team.id, seasonYear, settings.capMode)).capSpace;
       }
-      if (p.contract) await prisma.contract.delete({ where: { playerId: p.id } });
-      await prisma.player.update({ where: { id: p.id }, data: { teamId: null, status: 'FREE_AGENT' } });
     }
+
+    if (cuts.length + capCuts.length === 0) continue;
+    const name = (p: (typeof roster)[number]) => `${p.firstName} ${p.lastName} (${p.position})`;
     await prisma.transaction.create({
       data: {
         leagueId, seasonYear, week: 1, type: 'CUT', teamId: team.id,
-        headline: `Final cuts — ${cuts.length} released`,
-        detail: `${cuts.map((p) => `${p.firstName} ${p.lastName} (${p.position})`).join(', ')} waived to reach the ${limit}-man limit.`,
+        headline: `Final cuts — ${cuts.length + capCuts.length} released`,
+        detail: [
+          cuts.length ? `${cuts.map(name).join(', ')} waived to reach the ${limit}-man limit.` : '',
+          capCuts.length ? `${capCuts.map(name).join(', ')} released to get back under the salary cap.` : '',
+        ].filter(Boolean).join(' '),
       },
     });
-    total += cuts.length;
+    total += cuts.length + capCuts.length;
   }
   return { trimmed: total, userOverflow };
 }
