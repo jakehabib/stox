@@ -8,7 +8,7 @@ import { readJson, writeJson } from '@/lib/json';
 import { attrsForPosition } from '@/lib/ratings';
 import type { AttrMap } from '@/lib/ratings';
 import {
-  DYNASTY, SKILL_BY_ID, buildDynastyState, fullScoutMax, loadDynastyProfile, parseSkills,
+  DYNASTY, SKILL_BY_ID, buildDynastyState, fullScoutMax, loadDynastyProfile, lockedReason, parseSkills,
   rankOf, serializeSkills, type DynastySkillId,
 } from '@/lib/dynasty';
 
@@ -76,6 +76,15 @@ export async function purchaseSkillAction(leagueId: string, skillId: DynastySkil
   if (current >= def.ranks.length) {
     return { ok: false, message: `${def.name} is already fully upgraded.` };
   }
+  // THE TREE, enforced server-side. The Dynasty page greys a locked card and
+  // hides its button, but that is a courtesy: this is the check that actually
+  // holds, because a server action is a public endpoint and the client's
+  // opinion about what is unlocked is not evidence.
+  const gate = lockedReason(state.skills, skillId);
+  if (gate) {
+    const parent = def.requires ? SKILL_BY_ID[def.requires] : null;
+    return { ok: false, message: `${def.name} is locked. ${parent ? `${parent.name} has to come first.` : gate}` };
+  }
   const cost = def.ranks[current].cost;
   if (state.pointsAvailable < cost) {
     return {
@@ -91,6 +100,11 @@ export async function purchaseSkillAction(leagueId: string, skillId: DynastySkil
   const fresh = parseSkills(profile.skills);
   if (rankOf(fresh, skillId) !== current) {
     return { ok: false, message: 'That upgrade already went through — reload to see it.' };
+  }
+  // Re-check the prerequisite against the row we are about to write, not the
+  // snapshot above: same reason the rank is re-checked here.
+  if (lockedReason(fresh, skillId)) {
+    return { ok: false, message: `${def.name} is locked.` };
   }
   const next = { ...fresh, [skillId]: current + 1 };
   // Upsert by leagueId, not by profile.id: loadDynastyProfile falls back to an

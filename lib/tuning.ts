@@ -478,7 +478,19 @@ export const PROGRESSION = {
   /** OVR + potential bump for winning a season award (MVP/OPOY/DPOY/ROTY/Super Bowl MVP). */
   AWARD_OVR_BUMP: 3,
   AWARD_POTENTIAL_BUMP: 2,
-  /** Growth multiplier at a checkpoint for a player carrying a Development Focus charge (see Player.devFocus). One charge is consumed per checkpoint. */
+  /**
+   * Growth multiplier at a checkpoint for a player carrying a Development
+   * Focus charge (Player.devFocus). One charge would be consumed per
+   * checkpoint.
+   *
+   * CURRENTLY UNREACHABLE. Charges were bought with "scouting focus points",
+   * a currency that was removed; nothing in the codebase grants a charge, so
+   * devFocus is 0 for every player and this multiplier never applies. Left in
+   * place with the column rather than deleted — see the note at the read site,
+   * lib/development.ts. If it is ever wired up, 1.5 is far too large next to
+   * the Dynasty Coaching Staff skill, whose maximum is 1.15: re-tune it before
+   * granting the first charge rather than after.
+   */
   DEV_FOCUS_GROWTH_MULT: 1.5,
 };
 

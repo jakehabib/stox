@@ -7,6 +7,7 @@ import { progressPlayer, bumpForMilestone, retirementChance } from './progressio
 import { readJson, writeJson } from './json';
 import { SeasonStats } from './types';
 import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS } from './awards';
+import { loadDevSpeedMult } from './dynasty';
 
 /**
  * ===========================================================================
@@ -71,6 +72,19 @@ export async function applyInSeasonProgression(
   const players = await prisma.player.findMany({ where: { leagueId, status: 'ACTIVE' } });
   if (players.length === 0) return;
 
+  // COACHING STAFF (Dynasty, DEVELOPMENT branch). The GM's own coaches, so it
+  // applies to the GM's own roster and to nobody else's — a skill that sped up
+  // all 32 clubs would be a no-op dressed as an upgrade. 1.0 with no ranks, so
+  // a save that has never opened the Dynasty screen rolls exactly what it
+  // rolled before this shipped.
+  //
+  // Fetched once per checkpoint, not per player: one indexed read.
+  const [coachingMult, league] = await Promise.all([
+    loadDevSpeedMult(leagueId),
+    prisma.league.findUnique({ where: { id: leagueId }, select: { userTeamId: true } }),
+  ]);
+  const coachedTeamId = league?.userTeamId ?? null;
+
   // Regular season only — seasonStats is the regular-season bucket now (see
   // Player.seasonStats in the schema). Every checkpoint this function runs at
   // falls inside the regular season anyway, so the two were never going to
@@ -129,11 +143,26 @@ export async function applyInSeasonProgression(
     const attrs = readJson<AttrMap>(p.trueAttrs, {});
     const tier = tierById.get(p.id);
     const perfMult = tier === 'breakout' ? PROGRESSION.BREAKOUT_GROWTH_MULT : tier === 'slump' ? PROGRESSION.SLUMP_GROWTH_MULT : 1;
-    // Development Focus charges bought with scouting focus points (see
-    // SCOUT_TIERS.DEVELOP): coaching hours the GM chose to spend on this guy
-    // instead of on the draft board. One charge is consumed per checkpoint.
+    // DEAD CODE, KEPT DELIBERATELY AND DOCUMENTED HONESTLY.
+    //
+    // Player.devFocus was a per-player growth charge bought with "scouting
+    // focus points". That currency was removed when the scouting economy was
+    // cut, and nothing in this codebase has granted a charge since: there is
+    // no increment, no assignment, no seed anywhere. devFocus is therefore 0
+    // for every player in every save, focusMult is always exactly 1, and the
+    // updateMany that decrements it below matches zero rows every checkpoint.
+    //
+    // The app owner has asked twice what devFocus does. The honest answer is
+    // NOTHING, and it has done nothing since focus points were removed. It is
+    // left in place rather than deleted because he asked for the answer before
+    // deciding, and because dropping a column is the one change that cannot be
+    // undone. Do not build on it without granting charges somewhere first.
     const focusMult = p.devFocus > 0 ? PROGRESSION.DEV_FOCUS_GROWTH_MULT : 1;
-    const { attrs: rolled, ovr: rolledOvr } = progressPlayer(rng, p.position as Position, attrs, p.age, p.potential, p.devTrait, speed, share * perfMult * focusMult);
+    // The GM's coaching staff multiplies the growth MEAN, which is what
+    // progressPlayer's `speedMult` parameter already is — no second system,
+    // and no invented "XP", because this game has no XP quantity to gain.
+    const speedForPlayer = speed * (coachedTeamId && p.teamId === coachedTeamId ? coachingMult : 1);
+    const { attrs: rolled, ovr: rolledOvr } = progressPlayer(rng, p.position as Position, attrs, p.age, p.potential, p.devTrait, speedForPlayer, share * perfMult * focusMult);
 
     const categories = leaderCategoriesById.get(p.id);
     if (categories) {
@@ -156,7 +185,8 @@ export async function applyInSeasonProgression(
   `;
 
   // Burn one Development Focus charge per player who carried one into this
-  // checkpoint — the spend buys a boost, not a permanent multiplier.
+  // checkpoint. Matches zero rows today — see the devFocus note above — and is
+  // kept only so the column's semantics stay whole if it is ever wired up.
   await prisma.player.updateMany({
     where: { leagueId, status: 'ACTIVE', devFocus: { gt: 0 } },
     data: { devFocus: { decrement: 1 } },
