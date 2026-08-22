@@ -104,12 +104,13 @@ function EfficiencyKey({ terms }: { terms: { label: string; term: GlossaryKey }[
   return (
     <div className="px-4 py-2.5 border-b border-line/70 flex flex-wrap items-center gap-x-3 gap-y-1.5">
       <span className="label-sm text-[10px]">Key</span>
-      {terms.map((t) => (
+      {terms.map((t, i) => (
         <span key={t.term} className="inline-flex items-center gap-1 text-xs text-muted">
           {t.label}
-          {/* The key sits at the top of the panel, so downward — the table
-              underneath is what the bubble opens over. */}
-          <Tooltip placement="bottom" text={tip(t.term)} />
+          {/* Downward — the key is at the top of the panel, so the table below
+              is what the bubble opens over. The first chip also opens to the
+              right, being flush against the panel's left padding. */}
+          <Tooltip placement="bottom" align={i === 0 ? 'start' : 'center'} text={tip(t.term)} />
         </span>
       ))}
     </div>

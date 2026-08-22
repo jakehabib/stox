@@ -93,7 +93,7 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
         <div className="px-4 py-3 border-b border-line/70">
           <div className="label-sm inline-flex items-center gap-1.5">
             Dynasty Score
-            <Tooltip placement="bottom" text={tip('dynastyScore')} />
+            <Tooltip placement="bottom" align="start" text={tip('dynastyScore')} />
           </div>
           <div className="text-xs text-muted mt-0.5">Championships, playoff depth, win rate, draft hits, cap discipline, awards, and league records held — rolled into one ranking.</div>
         </div>

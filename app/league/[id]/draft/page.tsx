@@ -372,7 +372,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th>
                   <span className="inline-flex items-center gap-1">
                     Projection
-                    <Tooltip placement="bottom" text={tip('draftBand')} />
+                    <Tooltip placement="bottom" align="end" text={tip('draftBand')} />
                   </span>
                 </th>
                 <th></th>

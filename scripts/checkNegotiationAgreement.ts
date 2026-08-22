@@ -78,6 +78,20 @@
  *      neither his pips nor his price — and that the advance warning names him
  *      before he is allowed to walk.
  *
+ * And one more, which is the reason this pass happened at all:
+ *
+ *   9. THE PANEL MAY NOT CONTRADICT ITSELF. A rival used to be a number
+ *      compared against your salary, computed with no reference to the meter
+ *      beside it, so the app owner could photograph a screen reading 95 · WILL
+ *      SIGN directly under a red "you have to beat that". A rival is a PACKAGE
+ *      the player scores now (lib/negotiation.ts, THE CONTEST). Section 15
+ *      sweeps the grid for the contradiction itself — "he will sign" and "he
+ *      signs elsewhere" true of the same offer — re-derives the rival's term
+ *      and guarantee from the functions the wave signs with, presses every chip
+ *      the panel would draw to confirm it does what it says, and measures how
+ *      often the rival actually wins. A rival who never wins would be as wrong
+ *      as one that contradicts the meter.
+ *
  * Run: npx tsx scripts/checkNegotiationAgreement.ts
  * ===========================================================================
  */
@@ -87,15 +101,16 @@ import { createLeague } from '../lib/gen/league';
 import { parseSettings } from '../lib/settings';
 import {
   resolveNegotiationSession, negotiateOffer, runAiFreeAgencyWave, setResignSetAside, MARKET_FLOOR,
+  AI_GUARANTEE_PCT,
 } from '../lib/freeagency';
 import { advanceWeek } from '../lib/season';
 import {
   decideOffer, minimumAcceptableApy, sessionFingerprint, clampOffer,
-  signBandFor, maybeChance, ACCEPT_INTEREST, guaranteeFloorFor,
+  signBandFor, maybeChance, ACCEPT_INTEREST, guaranteeFloorFor, beatRival,
   DEFAULT_STRUCTURE, type DealStructure, type NegotiationMode,
   type NegotiationSession, type Offer, type OfferDecision,
 } from '../lib/negotiation';
-import { capHit, formatMoney, marketValue, willingnessHorizon, maxYearsForAge, TERM } from '../lib/cap';
+import { capHit, formatMoney, marketValue, willingnessHorizon, maxYearsForAge, suggestedYears, TERM } from '../lib/cap';
 import { teamCapSummary } from '../lib/cap-summary';
 import { maxOffer, parseGmProfile, teamNeeds, type RosterPlayer } from '../lib/ai/gm';
 import { FREE_AGENCY } from '../lib/tuning';
@@ -166,7 +181,11 @@ function sameDecision(a: OfferDecision, b: OfferDecision): string | null {
     // draw the server ACTS on. A meter that agreed about the band and
     // disagreed about the outcome would be the subtlest lying metric this
     // file has ever had to catch, so neither is allowed to drift alone.
-    'accepted', 'signBand', 'blocked', 'outbid', 'costsPatience', 'patienceCost',
+    // `rivalInterest` is the number the meter draws the rival's mark from and
+    // `outbid` is the answer it feeds. Both are compared because the contest
+    // is now part of the decision rather than a warning printed beside it —
+    // see THE CONTEST in lib/negotiation.ts.
+    'accepted', 'signBand', 'blocked', 'outbid', 'rivalInterest', 'costsPatience', 'patienceCost',
     'maxPatienceCost', 'year1CapHit',
     'totalValue', 'guaranteedMoney', 'deadMoneyIfCut', 'strandedVoidMoney', 'reason',
   ];
@@ -500,7 +519,7 @@ async function main() {
     const s = await resolveNegotiationSession({
       leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
     });
-    if (s.gate.competingApy > 0) { contested.push(p); if (contested.length >= 2) break; }
+    if (s.gate.rival) { contested.push(p); if (contested.length >= 2) break; }
   }
   for (const p of contested) {
     let spent = 0;
@@ -689,7 +708,7 @@ async function main() {
       leagueId, playerId: signSubject.id, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
       settings, incumbent: false,
       offer: {
-        apy: Math.min(closing.gate.maxSalary, Math.round(Math.max(closing.ctx.reservationApy * 1.4, closing.gate.competingApy * 1.25) / 100_000) * 100_000),
+        apy: Math.min(closing.gate.maxSalary, Math.round(Math.max(closing.ctx.reservationApy * 1.4, (closing.gate.rival?.offer.apy ?? 0) * 1.25) / 100_000) * 100_000),
         years: Math.min(closing.ctx.desiredYears, closing.gate.maxYears),
         guaranteePct: 0.8,
       },
@@ -725,8 +744,8 @@ async function main() {
 
       // A re-sign is NOT an auction: a club that cannot legally sign him must
       // never appear as a bid the meter can make you lose.
-      if (session.gate.competingApy !== 0) {
-        fail(`${p.lastName}: a re-sign gate carried a competing bid of ${formatMoney(session.gate.competingApy)} — nobody may bid on a player under contract`);
+      if (session.gate.rival) {
+        fail(`${p.lastName}: a re-sign gate carried a competing bid of ${formatMoney(session.gate.rival.offer.apy)} — nobody may bid on a player under contract`);
       }
 
       const roster = await prisma.player.findMany({
@@ -1017,7 +1036,7 @@ async function main() {
     comparisons++;
     // Nobody may bid on a man under contract. If this were ever non-zero the
     // panel could make you lose an auction that cannot legally happen.
-    if (session.gate.competingApy !== 0) fail('an extension gate carried a competing bid');
+    if (session.gate.rival) fail('an extension gate carried a competing bid');
     if (session.ctx.controlYears !== before.yearsRemaining) fail('an extension context lost the years of control');
     if (session.gate.maxYears + before.yearsRemaining > TERM.MAX_CONTRACT_YEARS) {
       fail(`extension term ceiling ${session.gate.maxYears} + ${before.yearsRemaining} existing years exceeds the ${TERM.MAX_CONTRACT_YEARS}-year rule`);
@@ -1191,9 +1210,16 @@ async function main() {
             fail(`${p.lastName}: ${s.suitor.teamAbbr} named with neither a need (${s.suitor.need.toFixed(2)}) nor an upgrade case (their worst at ${p.position} is ${worst.trueOvr})`);
           }
         }
-        if (s.gate.competingApy !== s.suitor.apy) fail(`${p.lastName}: the free-agency gate and the named suitor disagree about the bid`);
-      } else if (s.gate.competingApy !== 0) {
-        fail(`${p.lastName}: no suitor, but the gate carries a competing bid of ${formatMoney(s.gate.competingApy)}`);
+        // The gate and the rumour are the SAME PACKAGE now, not just the same
+        // headline. A panel that named a club at one term and scored it at
+        // another would be back to two evaluators.
+        if (s.gate.rival?.offer.apy !== s.suitor.apy
+          || s.gate.rival?.offer.years !== s.suitor.years
+          || s.gate.rival?.offer.guaranteePct !== s.suitor.guaranteePct) {
+          fail(`${p.lastName}: the free-agency gate and the named suitor disagree about the package`);
+        }
+      } else if (s.gate.rival) {
+        fail(`${p.lastName}: no suitor, but the gate carries a competing bid of ${formatMoney(s.gate.rival.offer.apy)}`);
       }
       claimed.set(p.id, { name: `${p.firstName} ${p.lastName}`, ovr: p.trueOvr, position: p.position, suitor: s.suitor?.teamAbbr ?? null, apy: s.suitor?.apy ?? 0 });
     }
@@ -1328,6 +1354,146 @@ async function main() {
     if (!advance.summary.includes(subject.lastName)) fail(`the advance warning did not name ${subject.lastName}, who was set aside and about to walk`);
     if (still.teamId !== team.id) fail(`${subject.lastName} was released by the very advance that was supposed to warn about him`);
     console.log(`  Advance out of RESIGN with him parked -> blocked=${advance.blocked}, and it names him:\n    "${advance.summary}"`);
+  }
+
+  // =========================================================================
+  // 15. THE CONTEST — the panel may not contradict itself
+  // =========================================================================
+  // The app owner, on a live screen: *"this also contradicts itself as a bug.
+  // it says he WILL SIGN for X amount, but because another team is bidding, he
+  // wont. that should talk with each other"*. The cause was that they did not:
+  // the meter scored the whole package and `outbid` compared two APY numbers.
+  //
+  // Three claims are checked here, and the first is the bug itself.
+  //
+  //   A. ONE ANSWER. Across the whole grid, "he will sign this" and "he is
+  //      signing elsewhere" may never both be true of the same offer. This is
+  //      the assertion that would have failed before this pass.
+  //   B. THE RIVAL'S PACKAGE IS THE SIMULATION'S. Term and guarantee are
+  //      re-derived from the functions the wave signs with, so a rival scored
+  //      at 4 years / 45% is a rival who would really sign him at 4 years and
+  //      45%.
+  //   C. IT IS NOT JUST RAW SALARY. There has to exist an offer that loses the
+  //      contest on salary alone and wins it by adding guaranteed money or
+  //      years — otherwise the model is the old dollar comparison wearing a
+  //      score.
+  //
+  // And the distribution, because a rival who never wins is as wrong as a
+  // panel that always contradicts itself.
+  console.log('\nThe contest (a rival is a package the player scores, not a number to beat):\n');
+  {
+    let contests = 0;
+    let rivalWins = 0;
+    const beatCosts: { name: string; rival: number; you: number; apy: number | null; gtd: number | null; yrs: number | null; cheapest: string }[] = [];
+
+    for (const p of freeAgents.slice(0, 40)) {
+      const s = await resolveNegotiationSession({
+        leagueId, playerId: p.id, teamId: team.id, seasonYear: league.seasonYear, settings, incumbent: false,
+      });
+      if (!s.gate.rival) continue;
+      contests++;
+
+      // --- B. the package is the one the wave would actually write ---------
+      comparisons++;
+      const honestYears = suggestedYears(p.trueOvr, p.age);
+      if (s.gate.rival.offer.years !== honestYears) {
+        fail(`${p.lastName}: rival quoted ${s.gate.rival.offer.years} years, the wave would sign him for ${honestYears}`);
+      }
+      if (s.gate.rival.offer.guaranteePct !== AI_GUARANTEE_PCT) {
+        fail(`${p.lastName}: rival quoted ${s.gate.rival.offer.guaranteePct} guaranteed, AI deals lock in ${AI_GUARANTEE_PCT}`);
+      }
+
+      // --- A. one answer, everywhere on the grid ---------------------------
+      // The full salary x years x guarantee grid, checked for the one thing
+      // the screenshot showed: a certain yes printed over a lost auction.
+      const { ctx, gate } = s;
+      let anyOutbid = 0;
+      let gridPoints = 0;
+      for (let years = 1; years <= gate.maxYears; years += 2) {
+        for (let g = 0; g <= 100; g += 10) {
+          for (let apy = gate.minSalary; apy <= gate.maxSalary; apy += 500_000) {
+            const d = decideOffer(ctx, { apy, years, guaranteePct: g / 100 }, gate, DEFAULT_STRUCTURE);
+            comparisons++;
+            gridPoints++;
+            if (d.outbid) anyOutbid++;
+            // THE BUG. A band of YES means "he signs this"; `outbid` means "he
+            // signs there". They are the same computation now, so they cannot
+            // both fire.
+            if (d.signBand === 'YES' && d.outbid) {
+              fail(`${p.lastName} @ ${formatMoney(apy)}/${years}yr/${g}%: band says he will sign AND he is outbid`);
+            }
+            if (d.outbid && d.signBand !== 'LOSING') {
+              fail(`${p.lastName} @ ${formatMoney(apy)}/${years}yr/${g}%: outbid but the band reads ${d.signBand}`);
+            }
+            if (d.outbid && d.accepted) {
+              fail(`${p.lastName} @ ${formatMoney(apy)}/${years}yr/${g}%: outbid and accepted at the same time`);
+            }
+            // The rival's score is a fact about the session, so it is the same
+            // number at every point of the grid. If it moved with the user's
+            // offer the mark on the meter would slide under the slider.
+            if (d.rivalInterest !== decideOffer(ctx, { apy: gate.minSalary, years: 1, guaranteePct: 0 }, gate, DEFAULT_STRUCTURE).rivalInterest) {
+              fail(`${p.lastName}: the rival's interest moved with the user's own offer`);
+            }
+          }
+        }
+      }
+      if (anyOutbid > 0) rivalWins++;
+
+      // --- C. the package route --------------------------------------------
+      // Open at a salary that loses, then try to win without touching it.
+      const rivalScore = decideOffer(ctx, { apy: gate.minSalary, years: 1, guaranteePct: 0 }, gate, DEFAULT_STRUCTURE).rivalInterest ?? 0;
+      const opening: Offer = {
+        apy: Math.min(gate.maxSalary, Math.max(gate.minSalary, Math.round(ctx.reservationApy / 100_000) * 100_000)),
+        years: Math.min(ctx.desiredYears, gate.maxYears, ctx.willingYears),
+        guaranteePct: 0.5,
+      };
+      const at = decideOffer(ctx, opening, gate, DEFAULT_STRUCTURE);
+      const plan = beatRival(ctx, opening, gate);
+      comparisons++;
+      if (at.outbid && plan) {
+        // Every chip the panel would draw has to actually work when pressed.
+        for (const [label, moved] of [
+          ['salary', plan.apy === null ? null : { ...opening, apy: plan.apy }],
+          ['guarantee', plan.guaranteePct === null ? null : { ...opening, guaranteePct: plan.guaranteePct }],
+          ['term', plan.years === null ? null : { ...opening, years: plan.years }],
+        ] as [string, Offer | null][]) {
+          if (!moved) continue;
+          const after = decideOffer(ctx, moved, gate, DEFAULT_STRUCTURE);
+          comparisons++;
+          if (after.outbid) fail(`${p.lastName}: the ${label} chip does not win the contest`);
+          if (after.signBand !== 'YES') fail(`${p.lastName}: the ${label} chip wins the auction but he still will not sign (${after.signBand})`);
+        }
+        beatCosts.push({
+          name: p.lastName, rival: rivalScore, you: at.evaluation.interest,
+          apy: plan.apy, gtd: plan.guaranteePct, yrs: plan.years, cheapest: plan.cheapest ?? 'none',
+        });
+      }
+      console.log(
+        `  ${p.lastName.padEnd(14)} ${p.position.padEnd(3)} rival ${s.gate.rival.teamName.split(' ').pop()?.padEnd(11)} `
+        + `${formatMoney(s.gate.rival.offer.apy)}/${s.gate.rival.offer.years}yr/${Math.round(s.gate.rival.offer.guaranteePct * 100)}% `
+        + `scores ${String(rivalScore).padStart(3)} — ${anyOutbid} of ${gridPoints} grid offers lose to it`,
+      );
+    }
+
+    console.log(`\n  ${contests} of the top 40 free agents have a live rival; ${rivalWins} of those can actually lose the man.`);
+
+    // NOT JUST RAW SALARY, stated as a measurement rather than a hope. At
+    // least one player in the sample has to be winnable by adding guaranteed
+    // money or a year at a salary that loses on its own, or the package route
+    // the app owner asked for does not exist in practice.
+    const packageWins = beatCosts.filter((b) => b.gtd !== null || b.yrs !== null);
+    comparisons++;
+    if (contests > 0 && packageWins.length === 0) {
+      fail('no contested free agent could be won by anything except salary — the package route does not exist');
+    }
+    console.log(`  Of ${beatCosts.length} losing openings, ${packageWins.length} can be won without touching salary.`);
+    for (const b of beatCosts.slice(0, 8)) {
+      console.log(
+        `    ${b.name.padEnd(14)} you ${String(b.you).padStart(3)} vs rival ${String(b.rival).padStart(3)} — `
+        + `salary ${b.apy === null ? 'no' : formatMoney(b.apy)}, guarantee ${b.gtd === null ? 'no' : `${Math.round(b.gtd * 100)}%`}, `
+        + `term ${b.yrs === null ? 'no' : `${b.yrs}yr`} (cheapest: ${b.cheapest})`,
+      );
+    }
   }
 
   console.log(`\n${comparisons.toLocaleString()} comparisons, ${failures} disagreement${failures === 1 ? '' : 's'}.`);

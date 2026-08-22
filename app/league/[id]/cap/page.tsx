@@ -438,7 +438,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
                       </Link>
                       {c.key === 'cap' && <Tooltip placement="bottom" text={tip('capHit')} />}
                       {c.key === 'savings' && (
-                        <Tooltip placement="bottom" text={tip('capSavingsOnCut')} />
+                        <Tooltip placement="bottom" align="end" text={tip('capSavingsOnCut')} />
                       )}
                     </span>
                   </th>

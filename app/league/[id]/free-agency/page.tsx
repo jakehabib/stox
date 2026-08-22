@@ -119,6 +119,14 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
     return { p, view, market, verdict };
   });
 
+  // What the rating column is actually showing. It used to key off
+  // `settings.scoutingEnabled`, which is a LEAGUE-WIDE switch and still true —
+  // it governs the draft board. With fog scoped to prospects this pool is
+  // never fogged, so that heading claimed "Scouted" over a column of exact
+  // ratings and pointed the glossary at the wrong entry. Ask the views what
+  // they actually returned instead of asking a setting what it permits.
+  const fogged = rows.some((r) => !r.view.revealed);
+
   const sortKey: SortKey = (['pos', 'age', 'ovr', 'market'] as SortKey[]).includes(searchParams.sort as SortKey)
     ? (searchParams.sort as SortKey) : 'ovr';
   const dir = searchParams.dir === 'asc' ? 1 : -1;
@@ -252,10 +260,10 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
               <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
               <th>
                 <span className="inline-flex items-center gap-1">
-                  <a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                  <a href={sortHref('ovr')} className="hover:text-chalk">{fogged ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a>
                   {/* Downward. The panel is an `overflow-x-auto` scroller, and
                       an auto on one axis clips the other too. */}
-                  <Tooltip placement="bottom" text={settings.scoutingEnabled ? tip('scoutedRange') : tip('overall')} />
+                  <Tooltip placement="bottom" text={fogged ? tip('scoutedRange') : tip('overall')} />
                 </span>
               </th>
               {/* Not sortable, deliberately: the sort keys are a closed set the

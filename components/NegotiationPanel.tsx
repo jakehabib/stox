@@ -356,18 +356,72 @@ export function NegotiationPanel({
             field={MILLIONS_FIELD}
             warn={decision.blocked === 'CAP' ? `Over your room by ${formatMoney(decision.year1CapHit - gate.capSpace)}` : undefined}
           />
-          {/* The one preset worth keeping from the old offer form: the number
-              that actually wins the auction. Everything else about salary is
-              the slider now, but "what does it take to beat them" was a real
-              question the form answered in one click. */}
-          {decision.outbid && !over && (
-            <button
-              type="button"
-              onClick={() => setApy(Math.min(gate.maxSalary, Math.round((gate.competingApy * 1.03) / 100_000) * 100_000))}
-              className="pill border-bad/40 text-bad hover:bg-bad/10"
-            >
-              Beat {gate.competingTeam ? gate.competingTeam.split(' ').pop() : 'their offer'} — {formatMoney(Math.round((gate.competingApy * 1.03) / 100_000) * 100_000)}/yr
-            </button>
+          {/* ==================================================================
+              WHAT WOULD BEAT THEM — a package, not a salary.
+              ==================================================================
+              This used to be one chip that put `competingApy * 1.03` in the
+              salary box, because salary was the only thing the old comparison
+              looked at. The app owner's note is the design: *"you can overcome
+              that score with more guaranteed money/years/salary. so it's not
+              just raw salary"*.
+
+              So there is a chip per dimension, each of them the CHEAPEST move
+              in that dimension alone that both wins the contest and closes him
+              outright — see `beatRival`. A dimension that cannot do it on its
+              own gets no chip rather than a chip that would not work, which is
+              itself information: if only salary is offered, guaranteed money
+              genuinely will not get there for this man.
+
+              The cheapest one is marked, and cheapest is measured in cash
+              committed — which is why guaranteed money usually wins it and why
+              the note underneath says what that actually costs you. A chip
+              that read "free" over a move that quietly triples your dead money
+              would be the same class of half-truth this whole pass removes. */}
+          {beat && !over && (
+            <div className="space-y-1.5">
+              <div className="label-sm text-[10px] text-bad">
+                {gate.rival ? `Beating ${gate.rival.teamName}` : 'Beating their offer'} — any one of these closes it
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {beat.apy !== null && (
+                  <button
+                    type="button"
+                    onClick={() => { clearStaleResult(); setApy(beat.apy!); }}
+                    className={`pill hover:bg-bad/10 ${beat.cheapest === 'APY' ? 'border-bad text-bad' : 'border-line text-muted'}`}
+                  >
+                    Salary → {formatMoney(beat.apy)}/yr
+                  </button>
+                )}
+                {beat.guaranteePct !== null && (
+                  <button
+                    type="button"
+                    onClick={() => { clearStaleResult(); setGuaranteePct(beat.guaranteePct!); }}
+                    className={`pill hover:bg-bad/10 ${beat.cheapest === 'GUARANTEE' ? 'border-bad text-bad' : 'border-line text-muted'}`}
+                  >
+                    Guarantee → {Math.round(beat.guaranteePct * 100)}%
+                  </button>
+                )}
+                {beat.years !== null && (
+                  <button
+                    type="button"
+                    onClick={() => { clearStaleResult(); setYears(beat.years!); }}
+                    className={`pill hover:bg-bad/10 ${beat.cheapest === 'YEARS' ? 'border-bad text-bad' : 'border-line text-muted'}`}
+                  >
+                    Term → {beat.years} year{beat.years === 1 ? '' : 's'}
+                  </button>
+                )}
+              </div>
+              {beat.apy === null && beat.guaranteePct === null && beat.years === null ? (
+                <p className="text-[11px] text-muted">
+                  Nothing you can move on its own gets there. It will take more than one of them together.
+                </p>
+              ) : beat.cheapest === 'GUARANTEE' ? (
+                <p className="text-[11px] text-muted">
+                  Guaranteeing more commits no extra cash — it becomes signing bonus, which prorates, so it is
+                  dead money if you ever cut him. Cheapest today, not free later.
+                </p>
+              ) : null}
+            </div>
           )}
           <Control
             label={extending ? 'Years added' : 'Years'}
@@ -540,7 +594,7 @@ export function NegotiationPanel({
               : decision.blocked === 'WILLING' ? `He will not sign for ${offer.years} years`
               : decision.blocked ? 'Cannot offer this'
               : decision.signBand === 'YES' ? 'Offer this deal — he signs'
-              : decision.outbid ? `Offer anyway — ${gate.competingTeam ?? 'a rival'} is higher, costs ${decision.maxPatienceCost} patience`
+              : decision.outbid ? `Offer anyway — he prefers the ${gate.rival?.teamName ?? 'rival'} package, costs ${decision.maxPatienceCost} patience`
               // Inside the band the price is stated as what a REFUSAL costs,
               // not as what this offer costs. The real figure is 0 or 1
               // according to the hidden draw, and printing it would put the

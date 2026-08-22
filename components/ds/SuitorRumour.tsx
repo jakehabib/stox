@@ -28,8 +28,10 @@ import { TeamLogo } from '../TeamLogo';
  * interchangeable copy:
  *
  *   FREE AGENT  — they can sign him today. This IS the bid you have to beat,
- *                 and `gate.competingApy` carries it, so the meter refuses to
- *                 promise a signing the auction would lose.
+ *                 and `gate.rival` carries the whole package, so the meter
+ *                 refuses to promise a signing the auction would lose — and
+ *                 refuses it for the right reason, since the player scores
+ *                 their term and guarantee as well as their salary.
  *   FINAL_CALL  — his deal has expired. Nobody may sign a player who is under
  *                 contract to you, so this is never dressed as a bid you can
  *                 lose right now; it is leverage, and it is in his asking
@@ -84,6 +86,16 @@ export function SuitorRumour({ session }: { session: NegotiationSession }) {
         <div className="text-right shrink-0">
           <div className="label-sm text-[10px]">{onTheMarket ? 'Their bid' : 'Would go to'}</div>
           <div className="stat-value text-stat-sm">{formatMoney(suitor.apy)}/yr</div>
+          {/* THE WHOLE PACKAGE, because the player scores the whole package.
+              A rival used to be a headline number and `decideOffer` compared
+              it with your salary; it is an `Offer` now and it is evaluated the
+              way yours is (lib/negotiation.ts, THE CONTEST). Both figures are
+              what their signing would really carry — `suggestedYears` and the
+              share `buildContract` locks in — so a user who wants to know why
+              he prefers them can read it here rather than infer it. */}
+          <div className="text-[10px] text-muted">
+            {suitor.years} yr{suitor.years === 1 ? '' : 's'} · {Math.round(suitor.guaranteePct * 100)}% gtd
+          </div>
         </div>
       </div>
 
@@ -101,7 +113,7 @@ export function SuitorRumour({ session }: { session: NegotiationSession }) {
 
       <p className="text-[11px] text-muted mt-2">
         {onTheMarket
-          ? 'He is on the open market and they can sign him today. This is the bid you have to beat, not a forecast.'
+          ? 'He is on the open market and they can sign him today. This is a real package, not a forecast — and he weighs its years and its guaranteed money the same way he weighs yours.'
           : finalCall
             ? 'They cannot sign him while he is yours — but his deal is up, and one Advance from here he is theirs to bid on. He is negotiating like a man who knows it.'
             : 'They cannot touch him this season. His agent has still done the arithmetic, and it is in his asking price.'}

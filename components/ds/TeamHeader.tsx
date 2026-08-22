@@ -39,10 +39,16 @@ export function TeamHeader({
 
   return (
     <div
-      className="relative overflow-hidden rounded-lg border border-line/70 bg-card border-l-[3px]"
+      className="relative rounded-lg border border-line/70 bg-card border-l-[3px]"
       style={{ ['--team-accent' as never]: primary, ['--team-accent-2' as never]: accent, borderLeftColor: primary }}
     >
-      <TeamLogo seed={teamId} abbr={abbr} size={280} className="watermark-logo -right-16 -top-16" />
+      {/* The clip belongs to the crest, not the card. The watermark hangs off
+          the top-right corner and has to be cut to the rounded rect; clipping
+          the whole card also ate the unit band's tooltips, which open upward
+          out of a strip with ~110px of header above it. */}
+      <div className="absolute inset-0 overflow-hidden rounded-lg pointer-events-none">
+        <TeamLogo seed={teamId} abbr={abbr} size={280} className="watermark-logo -right-16 -top-16" />
+      </div>
       <div className="h-[3px] w-full flex">
         <div className="flex-[5]" style={{ background: 'var(--team-accent)' }} />
         <div className="flex-1" style={{ background: 'var(--team-accent-2)' }} />

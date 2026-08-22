@@ -214,12 +214,33 @@ export function SlotVerdictBadge({ verdict }: { verdict: SlotVerdict }) {
  * the same rows the Depth Chart screen renders and the same order the sim
  * plays — so no two screens can disagree about who is ahead of whom.
  *
- * FOG. Your men are yours and their ratings are exact. His may still be a
- * band, and this must not resolve it into a single confident number. So the
- * verdict is computed at BOTH ends of the band: if it comes out the same at
- * each end the answer is certain and stated flatly, and if it does not, that
- * is reported as the answer — he starts at the top of his range and doesn't at
- * the bottom, with the rating he has to match named so the reader can judge it.
+ * FOG. Your men are yours and their ratings are exact. His may be a band, and
+ * this must not resolve it into a single confident number. So the verdict is
+ * computed at BOTH ends of the band: if it comes out the same at each end the
+ * answer is certain and stated flatly, and if it does not, that is reported as
+ * the answer — he starts at the top of his range and doesn't at the bottom,
+ * with the rating he has to match named so the reader can judge it.
+ *
+ * AS OF THE DRAFT-ONLY FOG SCOPE (see lib/scouting.ts), THE ONLY CALLER —
+ * Free Agency — PASSES AN UNFOGGED RATING, so `fogged` is false there and
+ * every band-shaped branch below is currently unreachable:
+ *
+ *   - the badge renders one signed number, `+12`, never `+12…+12`. A range
+ *     was the thing that made the column unreadable: "+3…+30" spans marginal
+ *     to transformative and tells a GM nothing he can act on, whereas "+12"
+ *     IS the decision. That collapse falls out of `fogged` on its own; there
+ *     is no special case for it and there must not be one.
+ *   - BORDERLINE / "Toss-up" cannot occur. It exists only because a band can
+ *     straddle the starter line, and a point cannot straddle anything.
+ *   - the scout-voice sentence ("your scouts have him between 79 and 87") is
+ *     unreachable with it, which is the point: there is no scout's opinion to
+ *     quote about a man with five years of tape.
+ *
+ * The band branches are KEPT rather than deleted, deliberately. They are the
+ * correct rendering for a prospect, and "would this rookie start for us?" is a
+ * panel the draft board has an obvious use for; wiring one up would need this
+ * file to already know how to say "depends where he really is". Unreachable
+ * from today's one call site is not the same as wrong.
  */
 export function DepthCompare({ position, depth, candidate }: {
   position: string;

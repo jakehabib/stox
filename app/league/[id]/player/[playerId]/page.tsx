@@ -79,6 +79,12 @@ export default async function PlayerPage({
   // GM buys a rank and sees no change on the one screen the rank is about.
   const scoutMods = await loadScoutMods(league.id);
   const view = buildScoutedView({
+    // The card is the one route that serves BOTH populations, so the gate is
+    // read straight off the record: a draft prospect keeps his ranges and his
+    // workout/Full Scout affordances; a professional — yours, another club's,
+    // or a free agent — shows his true ratings. Deliberate scope decision (see
+    // the SCOPE block in lib/scouting.ts), not a fog bug to be restored.
+    isProspect: player.isDraftee,
     position: player.position as any, trueAttrs: readJson(player.trueAttrs, {}), trueOvr: player.trueOvr, potential: player.potential,
     report, settings, isOwnRoster, isUserView: true, dynasty: scoutMods,
   });
@@ -459,8 +465,25 @@ export default async function PlayerPage({
                 <ScoutingRange low={view.ovrLow} high={view.ovrHigh} confidence={view.confidence} label="Scouted OVR" tip={tip('scoutedRange')} className="w-full" />
               </div>
             )}
+            {/* Potential follows the same rule as Overall above. A revealed
+                player's potLow and potHigh are both his true ceiling, and
+                feeding those to ScoutingRange drew a range widget reading
+                "97-97" with a "Confidence: HIGH" caption under it — a
+                measurement UI dressing up a number that was never measured
+                (README principle 6). Now the certain case says the number
+                plainly and only a prospect gets the band. */}
             <div className="panel p-3">
-              <ScoutingRange low={view.potLow} high={view.potHigh} confidence={view.confidence} label="Potential" tip={tip('potential')} className="w-full" />
+              {view.revealed ? (
+                <>
+                  <div className="label-sm inline-flex items-center gap-1.5">
+                    Potential
+                    <Tooltip text={tip('potential')} />
+                  </div>
+                  <div className={`stat-value text-stat-md leading-none mt-1 ${ratingColor(player.potential)}`}>{player.potential}</div>
+                </>
+              ) : (
+                <ScoutingRange low={view.potLow} high={view.potHigh} confidence={view.confidence} label="Potential" tip={tip('potential')} className="w-full" />
+              )}
             </div>
           </div>
         </div>
@@ -718,13 +741,21 @@ export default async function PlayerPage({
                 { label: '3-Cone', value: `${combineTesting.threeCone.toFixed(2)}s`, key: 'threeCone', tip: tip('combineThreeCone') },
                 { label: 'Shuttle', value: `${combineTesting.shuttle.toFixed(2)}s`, key: 'shuttle', tip: tip('combineShuttle') },
                 { label: 'Bench', value: combineTesting.benchReps !== null ? `${combineTesting.benchReps}` : '—', key: 'benchReps', tip: tip('combineBench') },
-              ] as { label: string; value: string; key: CombineMeasurable; tip: string }[]).map((m) => {
+              ] as { label: string; value: string; key: CombineMeasurable; tip: string }[]).map((m, i, all) => {
                 const rank = combineRanks[m.key];
                 return (
                   <div key={m.label} className="px-3 py-3 text-center">
                     <div className="label-sm inline-flex items-center gap-1">
                       {m.label}
-                      <Tooltip placement="bottom" text={m.tip} />
+                      {/* The end tiles open INWARD. A centred bubble on the
+                          first or last of six is half outside the panel, and
+                          `panel overflow-hidden` cuts sideways exactly as
+                          readily as it cuts upward. */}
+                      <Tooltip
+                        placement="bottom"
+                        align={i === 0 ? 'start' : i === all.length - 1 ? 'end' : 'center'}
+                        text={m.tip}
+                      />
                     </div>
                     <div className="stat-value text-stat-sm leading-none mt-1.5">{m.value}</div>
                     {/* Public combine data, same as the numbers above it — never fogged, so this

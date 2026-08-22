@@ -4,9 +4,18 @@
  * renders fine directly inside Server Components. Keyboard-reachable via
  * the button's own tab stop, not just mouse hover.
  */
-export function Tooltip({ text, className = '', placement = 'top' }: {
+export function Tooltip({ text, className = '', placement = 'top', align = 'center' }: {
   text: string;
   className?: string;
+  /**
+   * Which edge the bubble lines up with. Centred by default, which is right
+   * almost everywhere — but a trigger sitting near the edge of a clipping box
+   * (the first or last cell of a panel, the last column of a table) puts half
+   * a 18rem bubble outside it, and the same overflow rule that eats a badly
+   * placed bubble vertically eats it sideways. `start` pins the bubble's left
+   * edge to the trigger, `end` its right edge, so it opens INWARD.
+   */
+  align?: 'center' | 'start' | 'end';
   /**
    * Which side the bubble opens on. Defaults to 'top', but a trigger inside a
    * scroll container — a sticky table header being the usual case — must open
@@ -41,10 +50,11 @@ export function Tooltip({ text, className = '', placement = 'top' }: {
           it. */}
       <span
         role="tooltip"
-        className={`pointer-events-none absolute z-50 left-1/2 -translate-x-1/2 w-72 rounded-md border border-line
+        className={`pointer-events-none absolute z-50 w-72 rounded-md border border-line
                    bg-surface px-2.5 py-1.5 text-xs leading-snug text-chalk shadow-card opacity-0 scale-95 transition-all duration-100
                    group-hover:opacity-100 group-hover:scale-100 group-focus-within:opacity-100 group-focus-within:scale-100
-                   ${placement === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}`}
+                   ${placement === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}
+                   ${align === 'start' ? 'left-0' : align === 'end' ? 'right-0' : 'left-1/2 -translate-x-1/2'}`}
       >
         {text}
       </span>

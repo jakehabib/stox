@@ -149,9 +149,12 @@ export default async function RosterPage({ params, searchParams }: { params: { i
   });
   const teamColor = generateTeamLogoParams(team.abbr).primary;
 
-  // Own roster is fully revealed unless the settings specifically fog it —
-  // the header should say what's actually shown, not always claim "Scouted".
-  const ovrLabel = settings.scoutingEnabled && settings.fogOnOwnRoster ? 'Scouted OVR' : 'OVR';
+  // The header should say what's actually SHOWN, not what the settings would
+  // permit. Fog is scoped to draft prospects now (see lib/scouting.ts), so no
+  // signed player on this page is ever fogged and this reads "OVR" — but ask
+  // the views rather than hard-coding it, so the label cannot drift away from
+  // the column the way the free-agency one did.
+  const ovrLabel = rows.some((r) => !r.view.revealed) ? 'Scouted OVR' : 'OVR';
 
   const sortHref = (key: SortKey) => {
     const nextDir = sortKey === key && dir === -1 ? 'asc' : 'desc';
