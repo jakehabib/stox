@@ -189,6 +189,57 @@ export function computeOverall(pos: Position, attrs: AttrMap): number {
 export const UNCOACHED_ATTR_FRACTION = 0.85;
 
 /**
+ * [TUNE] The same question asked about a CONVERSION rather than a generated
+ * player, and answered differently on purpose: 1.0, so an allowed move costs
+ * nothing.
+ *
+ * The owner's call — *"maybe the best option is to not penalize"* — after
+ * noting that a linebacker and an edge rusher are different jobs. Measured,
+ * they are not different jobs to this model at all, and the split is worth
+ * writing down because it is the opposite of what everyone assumed. Mean
+ * rating change over 600 synthetic players per pair, decomposed:
+ *
+ *                      re-weighting alone   with the 0.85 fill
+ *     LT -> RT                   -0.0               -0.0
+ *     EDGE -> DT                  0.0                0.0
+ *     CB -> S                     0.0                0.0
+ *     S  -> CB                   -0.0               -1.7
+ *     LB -> EDGE                 -0.2               -5.9
+ *     EDGE -> LB                 +0.1               -5.5
+ *
+ * Re-weighting — grading him by the new job's priorities instead of the old
+ * one's — costs essentially NOTHING on every move this menu offers. The entire
+ * apparent penalty was the fill: EDGE weights `passRush` and `runStop`, which
+ * a linebacker has never been graded on, and CB weights `press`, which a
+ * safety has never been graded on. Nothing else differs. So the six points
+ * were never a judgement about a linebacker's ability to rush the passer; they
+ * were the arbitrary assumption that a man is at 85% of himself at anything
+ * nobody has measured him doing.
+ *
+ * At 1.0 every allowed move lands within 0.1 of level. That is the honest
+ * reading of the model rather than a thumb on the scale: these positions
+ * weight the same traits, so a pro asked to do the adjacent job is the player
+ * his traits say he is.
+ *
+ * It stays SEPARATE from UNCOACHED_ATTR_FRACTION above rather than replacing
+ * it, because they answer different questions. Generation is describing a man
+ * at something his position never asks of him and which does not count toward
+ * his grade; this is describing a man taking on a job that now does. Setting
+ * generation to 1.0 too would flatten every player in the league toward his
+ * own overall.
+ *
+ * ---------------------------------------------------------------------------
+ * THE INVARIANT THIS CREATES, ASSERTED BELOW
+ * ---------------------------------------------------------------------------
+ * A free conversion between two positions on DIFFERENT trade-value tiers is an
+ * arbitrage: buy the cheap label, convert, sell the dear one. That was already
+ * live at 5.5x before the tiers were grouped. So any two positions this menu
+ * connects must price the same, and `assertConversionTiersAgree` fails the
+ * build if they ever drift apart.
+ */
+export const CONVERSION_ATTR_FRACTION = 1.0;
+
+/**
  * Which positions a player may be moved to. A menu, deliberately NOT a cost
  * model — there is not a number in it, because the numbers come from
  * POSITION_WEIGHTS and nowhere else.
@@ -209,18 +260,31 @@ export const UNCOACHED_ATTR_FRACTION = 0.85;
  *        the one exception: `C` weights `football_iq` and no other lineman
  *        does, so moving to centre charges for the calls automatically.
  *   EDGE <-> DT — the big end who reduces inside on passing downs.
- *   EDGE <-> LB — the owner's second case; the 3-4 outside backer.
- *   LB <-> S — the big-nickel box safety, the most common cross-training in
- *        the modern game and the one our own nickel base (lib/lineup.ts:
- *        two linebackers, five defensive backs) makes most necessary.
- *   CB <-> S — the owner's third case.
- *   WR <-> TE, WR <-> RB — the big slot and the receiving back.
+ *   EDGE <-> LB — the 3-4 outside backer.
+ *   CB <-> S — the third case.
+ *
+ * ADJACENT ONLY, and the owner drew the line himself: *"lets only allow
+ * position changes in adjacent spots.... O lineman to O line. Linebackers to
+ * only edge. safeties and CBs"*. So LB <-> S, WR <-> TE and WR <-> RB are
+ * gone. They were defensible on football grounds — the big-nickel box safety
+ * and the big slot are real jobs — but a menu that offers every plausible
+ * cross-training turns a depth chart into a set of interchangeable parts, and
+ * the point of positions is that they are not.
+ *
+ * EVERY move this menu offers is free — see CONVERSION_ATTR_FRACTION for the
+ * measurement showing the cost was never a judgement about football, and the
+ * owner's ruling that it should not be charged. That makes the menu itself the
+ * only thing standing between a GM and an arbitrage, so what it connects has
+ * to price identically. assertConversionTiersAgree() below is the check;
+ * it is called from wherever TRADE_VALUE_TIER is consumed (this file cannot
+ * import it — lib/tuning.ts is upstream of here and the cycle would break the
+ * build).
  *
  * DT <-> LB is deliberately absent even though EDGE bridges them: a 320-lb
  * nose tackle is not a linebacker, the weight vectors overlap enough that the
  * engine would only charge him about nine points for it, and this game does
  * not model body type in a rating. Where the engine cannot see the objection,
- * the menu makes it. QB, K and P have no relatives for the same reason.
+ * the menu makes it. QB, K, P, RB, WR and TE have no relatives at all.
  */
 export const RELATED_POSITIONS: Partial<Record<Position, Position[]>> = {
   LT: ['RT', 'LG', 'RG', 'C'],
@@ -230,12 +294,9 @@ export const RELATED_POSITIONS: Partial<Record<Position, Position[]>> = {
   C:  ['LG', 'RG', 'LT', 'RT'],
   EDGE: ['DT', 'LB'],
   DT: ['EDGE'],
-  LB: ['EDGE', 'S'],
-  S: ['LB', 'CB'],
+  LB: ['EDGE'],
+  S: ['CB'],
   CB: ['S'],
-  WR: ['TE', 'RB'],
-  TE: ['WR'],
-  RB: ['WR'],
 };
 
 /**
@@ -249,6 +310,34 @@ for (const [from, tos] of Object.entries(RELATED_POSITIONS)) {
   for (const to of tos ?? []) {
     if (!RELATED_POSITIONS[to]?.includes(from as Position)) {
       throw new Error(`lib/ratings.ts: RELATED_POSITIONS is asymmetric — ${from} -> ${to} has no return leg.`);
+    }
+  }
+}
+
+/**
+ * A CONVERSION MAY NOT CHANGE WHAT A MAN IS WORTH.
+ *
+ * Conversions are free (CONVERSION_ATTR_FRACTION) and reversible, so if two
+ * positions this menu connects price differently, the difference is money for
+ * nothing: buy the cheap label, convert, sell the dear one. It was live and
+ * measured at 5.5x — the same 84-rated man was 46 points as a right tackle and
+ * 251 as a left tackle, for a move costing 0.0 rating.
+ *
+ * Checked rather than trusted, like the eleven-man lineup sums in
+ * lib/lineup.ts and the symmetry check above, because it couples two tables in
+ * two files that nobody edits together. Adding one adjacency, or re-tiering one
+ * position, is all it would take.
+ */
+export function assertConversionTiersAgree(tierOf: (p: Position) => string): void {
+  for (const [from, tos] of Object.entries(RELATED_POSITIONS)) {
+    for (const to of tos ?? []) {
+      if (tierOf(from as Position) !== tierOf(to)) {
+        throw new Error(
+          `lib/ratings.ts: ${from} and ${to} can be converted between at no cost but price on different `
+          + `trade tiers (${tierOf(from as Position)} vs ${tierOf(to)}) — that is a free arbitrage. `
+          + `Put them on the same TRADE_VALUE_TIER, or remove the adjacency.`,
+        );
+      }
     }
   }
 }
@@ -268,7 +357,7 @@ export function canChangePositionTo(from: string, to: string): boolean {
  *
  * Nothing is ever removed and nothing existing is ever changed — only the
  * keys the new job weights and he has never had are filled in, at
- * UNCOACHED_ATTR_FRACTION of his overall. Keeping the old position's
+ * CONVERSION_ATTR_FRACTION of his overall. Keeping the old position's
  * attributes is what makes the move reversible at no cost, and they are not
  * dead weight: `computeOverall` simply does not weight them any more, and if
  * he moves back they are still exactly where he left them.
@@ -280,7 +369,7 @@ export function convertedAttributes(
 ): { attrs: AttrMap; learned: string[] } {
   const out: AttrMap = { ...attrs };
   const learned: string[] = [];
-  const seed = Math.max(20, Math.min(99, Math.round(trueOvr * UNCOACHED_ATTR_FRACTION)));
+  const seed = Math.max(20, Math.min(99, Math.round(trueOvr * CONVERSION_ATTR_FRACTION)));
   for (const key of attrsForPosition(to)) {
     if (out[key] != null) continue;
     out[key] = seed;
