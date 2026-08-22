@@ -9,10 +9,12 @@ import { DeltaChip, useDeltaWatch } from './ds/DeltaChip';
 
 /**
  * One upgrade, as a row: name, rank pips, what it does at the rank you own
- * (or would own next), price, button. Deliberately NOT a node in a branching
- * tree — there are no prerequisites in this system, so drawing connectors
- * between things that do not gate each other would be decoration pretending
- * to be structure.
+ * (or would own next), price, button. Deliberately NOT a node in a drawn
+ * tree. This once claimed there are no prerequisites in this system, which is
+ * no longer true — a skill can name the one above it in `requires`. But that
+ * chain runs straight down a single column, so the row above a locked row IS
+ * its prerequisite, and a connector would decorate a relationship the
+ * position already states. The lock state on the button is what carries it.
  *
  * Spending a skill point is a permanent choice and used to read as a
  * re-render: the pip was simply filled the next time the page painted, and the

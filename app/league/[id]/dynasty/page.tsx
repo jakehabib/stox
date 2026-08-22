@@ -20,9 +20,13 @@ import { tip } from '@/lib/glossary';
 /**
  * THE DYNASTY SCREEN.
  *
- * Three columns, one row per upgrade. Not a branching RPG tree — there are no
- * prerequisites in this system, so there is nothing for connector lines to
- * describe. It uses the same furniture as every other front-office screen
+ * Three columns, one row per upgrade, read top to bottom. This comment used
+ * to say there are no prerequisites in this system and therefore nothing for
+ * connector lines to describe; that stopped being true when the branches were
+ * chained (`requires` in lib/dynasty.ts). The layout still holds, for a
+ * different reason: within a column each entry names the one above it, so the
+ * gating IS the reading order and a connector would draw a line the eye
+ * already follows. It uses the same furniture as every other front-office screen
  * (PageMasthead, .panel, .label-sm, .stat-value) precisely so it reads as
  * part of the same product rather than a bolted-on meta-game.
  *
@@ -144,9 +148,9 @@ export default async function DynastyPage({ params }: { params: { id: string } }
           <>
             Your record as a general manager, turned into a career track. XP comes from what the club achieves with
             you in the chair — wins, playoff runs, titles, awards, picks that hit — never from repeating an action, and
-            never from a season decided before you were hired. Skill points buy what a front office can actually buy: a
-            clearer read on the draft board, coaching that develops your players faster, and a cap staff who can tell
-            what a signing really takes.
+            never from a season decided before you were hired. Every level you gain banks one skill point, and points
+            buy what a front office can actually buy: a clearer read on the draft board, coaching that develops your
+            players faster, and a cap staff who can tell what a signing really takes.
           </>
         }
         facts={[
@@ -154,7 +158,11 @@ export default async function DynastyPage({ params }: { params: { id: string } }
           { label: 'Total XP', tip: tip('gmXp'), value: xpLabel(state.level.xp), detail: `Since ${state.tenureStartYear}` },
           { label: 'Skill Points', tip: tip('skillPoints'), value: String(state.pointsAvailable), detail: `${state.pointsSpent} spent · ${state.pointsEarned} earned`, color: state.pointsAvailable > 0 ? 'text-accent' : undefined },
           { label: 'Record', value: `${state.breakdown.wins}-${state.breakdown.losses}`, detail: `${state.breakdown.seasons} completed season${state.breakdown.seasons === 1 ? '' : 's'}` },
-          { label: 'Next Point', value: state.nextPointAtLevel ? `Lv ${state.nextPointAtLevel}` : '—', detail: state.nextPointAtLevel ? `${state.nextPointAtLevel - state.level.level} level${state.nextPointAtLevel - state.level.level === 1 ? '' : 's'} away` : 'Ladder complete' },
+          // One point per level gained, so the next one is always the next
+          // level — the fact stays because the detail line is now where the
+          // rule is stated, and a GM should not have to infer it from a
+          // counter that happens to tick every time.
+          { label: 'Next Point', value: state.nextPointAtLevel ? `Lv ${state.nextPointAtLevel}` : '—', detail: state.nextPointAtLevel ? 'Every level banks one' : 'Maximum level' },
         ]}
       />
 

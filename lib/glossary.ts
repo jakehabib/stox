@@ -574,7 +574,7 @@ export const GLOSSARY = {
   gmLevel: {
     term: 'Dynasty level',
     definition: 'Your standing as a general manager, earned from what the club achieves while you are in the chair — nothing from before you were hired counts toward it.',
-    why: 'The first level costs about a good half-season; level 20 is around three titles\' worth of work.',
+    why: 'The first level costs about a good half-season; level 20 is around three titles\' worth of work. Every one of them, from the second onward, is worth a skill point.',
   },
   gmXp: {
     term: 'XP',
@@ -583,13 +583,13 @@ export const GLOSSARY = {
   },
   skillPoints: {
     term: 'Skill points',
-    definition: 'What a Dynasty level buys. They pay for information and tools — never for better players.',
-    why: 'There are about ten to earn by level 30 against twenty needed to fill the tree, so you are choosing what kind of GM you are rather than eventually having everything.',
+    definition: 'One for every Dynasty level you gain — no exceptions and nothing to roll. They pay for information and tools, never for better players.',
+    why: 'Filling all three branches outright costs 32, which is most of a career, so for a long time you are choosing what kind of GM you are rather than eventually having everything.',
   },
   skillTree: {
     term: 'Skill branches',
-    definition: 'Three lines of upgrade — scouting, negotiation and player development. No prerequisites; spend where you like.',
-    why: 'Nothing in here touches a rating, a player\'s development or a game result. A level 50 GM and a level 1 GM play the same football; the level 50 one just sees more of it.',
+    definition: 'Three lines of upgrade — draft, negotiation and player development. Each branch is a chain: the cheapest ability in it has to be bought before the next one unlocks.',
+    why: 'Nothing in here touches a rating directly, a game result, or what a rival will accept in a trade. The one edge it does buy is your own coaching staff — up to 15% faster development — which is a front-office job, not a thumb on the scoreboard.',
   },
   gmBadge: {
     term: 'GM badge',

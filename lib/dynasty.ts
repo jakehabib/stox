@@ -130,13 +130,53 @@ export const DYNASTY = {
   MAX_LEVEL: 50,
 
   /**
-   * [TUNE] Skill points are NOT one per level. These are the levels that
-   * grant one; past the end of the list, one every SKILL_POINT_EVERY_AFTER
-   * levels. Ten points by level 30 against twenty points to buy every rank
-   * in the tree, so specialising is forced rather than encouraged.
+   * [TUNE] ONE POINT PER LEVEL GAINED. The app owner, 2026-08: *"any time you
+   * level up you should have a dynasty point. not random"*.
+   *
+   * What it replaced was a ladder — SKILL_POINT_LEVELS [2,4,6,9,12,15,18,22,
+   * 26,30], one point at each of those levels and one every 5 after — so
+   * seven of the first ten level-ups paid nothing and a GM could not tell
+   * from the screen whether the next one would. Not random, but unreadable
+   * from the inside, which is the same complaint.
+   *
+   * The new contract is the whole rule: points earned == levels gained ==
+   * level - 1. A GM at level 7 has levelled up six times and has six points.
+   * Level 1 is where every save starts with no XP, so it pays nothing; the
+   * first point still lands at level 2, exactly as the old ladder's first
+   * rung did.
+   *
+   * MULTI-LEVEL JUMPS ARE THE NORMAL CASE, not an edge one. A championship
+   * pays 560 XP in the single click that ends the season, which carries a new
+   * GM from level 1 to level 4 at once, and lib/season.ts can advance several
+   * weeks in one action. Because `earned` is a pure function of level and not
+   * an increment, three levels gained hands over exactly three points with no
+   * loop to get wrong.
+   *
+   * EXACTLY-ONCE IS FREE, for the same reason. There is no grant event to
+   * fire twice: nothing anywhere writes a point balance (see the file header,
+   * and DynastyProfile in the schema — `skills` is the only point-related
+   * column and only a purchase writes it). Running buildDynastyState twice,
+   * reloading the page, or replaying a week produces the same number, so this
+   * needs neither the updateMany compare-and-set the workout ledger uses nor
+   * lib/season.ts's withRoundLock. Adding one would be inventing a race to
+   * defend against.
+   *
+   * MIGRATION: DELIBERATELY NONE, AND NOTHING IS OWED. Existing saves have no
+   * banked balance to reconcile — `pointsAvailable = earned - spent`, both
+   * derived — so every save re-levels onto this rule the instant the code
+   * ships. The direction is safe to leave unguarded because the new rule pays
+   * at least as much as the old one at EVERY level (level - 1 >= the ladder's
+   * count, for L in 1..50; measured, not assumed — scripts/_dynastypoints.ts
+   * checks all 50). No save can come out of this owing points it already
+   * spent, so no refund pass, no clawback, no stranded tree.
+   *
+   * BALANCE, HONESTLY: the tree costs 32 points to fill outright. Under the
+   * ladder that was unreachable — it capped at 14 by level 50 — so "you must
+   * specialise" was enforced by never paying out enough. Now the tree fills
+   * at level 33, which is a long career and still leaves the first two
+   * decades of one a genuine choice about what kind of GM you are.
    */
-  SKILL_POINT_LEVELS: [2, 4, 6, 9, 12, 15, 18, 22, 26, 30],
-  SKILL_POINT_EVERY_AFTER: 5,
+  POINTS_PER_LEVEL: 1,
 
   /**
    * [TUNE] FULL SCOUT — the per-season allowance of perfect evaluations.
@@ -576,22 +616,24 @@ export function levelFromXp(xp: number): LevelProgress {
   };
 }
 
-/** Total skill points granted by reaching `level`. */
+/**
+ * Total skill points granted by reaching `level`: one per level GAINED, so
+ * level 1 (where every save starts) pays nothing and level 7 has six.
+ *
+ * This is the whole grant. It is a function, not an event, which is what
+ * makes a two-level jump pay two and a re-run pay nothing extra — see
+ * DYNASTY.POINTS_PER_LEVEL for why that matters and what it replaced.
+ * Clamped at both ends so a caller handing over a junk level (a stored rank
+ * row, a level parsed from a URL) can never mint points.
+ */
 export function skillPointsAtLevel(level: number): number {
-  let points = 0;
-  for (const l of DYNASTY.SKILL_POINT_LEVELS) if (level >= l) points++;
-  const last = DYNASTY.SKILL_POINT_LEVELS[DYNASTY.SKILL_POINT_LEVELS.length - 1] ?? 0;
-  if (level > last) points += Math.floor((level - last) / DYNASTY.SKILL_POINT_EVERY_AFTER);
-  return points;
+  const capped = clamp(Math.floor(level), 1, DYNASTY.MAX_LEVEL);
+  return (capped - 1) * DYNASTY.POINTS_PER_LEVEL;
 }
 
-/** The next level that grants a skill point, or null past the ladder's practical end. */
+/** The next level that grants a skill point — always the next one — or null at MAX_LEVEL. */
 export function nextSkillPointLevel(level: number): number | null {
-  for (const l of DYNASTY.SKILL_POINT_LEVELS) if (l > level) return l;
-  const last = DYNASTY.SKILL_POINT_LEVELS[DYNASTY.SKILL_POINT_LEVELS.length - 1] ?? 0;
-  const steps = Math.floor((level - last) / DYNASTY.SKILL_POINT_EVERY_AFTER) + 1;
-  const next = last + steps * DYNASTY.SKILL_POINT_EVERY_AFTER;
-  return next <= DYNASTY.MAX_LEVEL ? next : null;
+  return level >= DYNASTY.MAX_LEVEL ? null : Math.floor(level) + 1;
 }
 
 // ---------------------------------------------------------------------------

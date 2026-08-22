@@ -1650,7 +1650,15 @@ async function progressAllPlayers(leagueId: string, rng: Rng, retirementEnabled:
   if (survivorIds.length > 0) {
     await prisma.player.updateMany({
       where: { id: { in: survivorIds } },
-      data: { age: { increment: 1 }, experience: { increment: 1 }, fatigue: 0, injuryWeeks: 0 },
+      // `injuryType: null` alongside the zeroed clock, because the two are one
+      // fact and were being cleared separately. This wrote injuryWeeks: 0 and
+      // left the label behind, so a man who ended the season with a torn
+      // hamstring carried "Hamstring" into the new one with nothing counting
+      // down. Nothing rendered it — every reader gates on injuryWeeks > 0 —
+      // which is precisely why it survived: a dangling label is invisible
+      // right up until the day something reads the label first.
+      // recoverFatigueAndInjuries clears both together; so does this now.
+      data: { age: { increment: 1 }, experience: { increment: 1 }, fatigue: 0, injuryWeeks: 0, injuryType: null },
     });
   }
   return retiringIds.length;
