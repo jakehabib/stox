@@ -138,7 +138,7 @@ async function assetValues(
    */
   spread: { side: 'receive' | 'send'; poach: number; haircut: number; badContractTax: number },
 ): Promise<AssetSide> {
-  const each: { label: string; value: number }[] = [];
+  const each: { label: string; value: number; isPlayer: boolean }[] = [];
   const weighted: { text: string; weight: number }[] = [];
   for (const a of assets) {
     if (a.type === 'PLAYER') {
@@ -158,13 +158,14 @@ async function assetValues(
         const deficit = v.contractMult < 1 ? v.total * (1 / v.contractMult - 1) : 0;
         value = Math.max(1, value - deficit * spread.badContractTax);
       }
-      each.push({ label: `${p.firstName} ${p.lastName}`, value });
+      each.push({ label: `${p.firstName} ${p.lastName}`, value, isPlayer: true });
       for (const r of v.reasons) weighted.push({ text: `${p.firstName} ${p.lastName}: ${r.text}`, weight: r.weight });
     } else {
       const pick = await prisma.draftPick.findUniqueOrThrow({ where: { id: a.id } });
       each.push({
         label: `${pick.year} Round ${pick.round}`,
         value: pickValue(pick.round, effectiveSlot(pick, imminentYear, projectedOrder), profile, pick.year, currentYear, imminentYear),
+        isPlayer: false,
       });
     }
   }
@@ -191,7 +192,7 @@ interface AssetSide {
   total: number;
   reasons: string[];
   /** The single most valuable asset on this side, which is what the headline rule tests. */
-  best: { label: string; value: number } | null;
+  best: { label: string; value: number; isPlayer: boolean } | null;
   /** How many assets here are worth a first-round pick or more — the headline rule's second clause. */
   premiumCount: number;
 }
@@ -205,7 +206,7 @@ interface AssetSide {
  * value: a package can clear the ratio comfortably and still be six backups,
  * and the answer to six backups is not "we need a bit more".
  */
-function headlineShortfall(receive: AssetSide, send: AssetSide): { wanted: number; best: number; name: string } | null {
+function headlineShortfall(receive: AssetSide, send: AssetSide): { wanted: number; best: number; name: string; isPlayer: boolean } | null {
   const pillar = send.best;
   if (!pillar || pillar.value < TRADE_VALUE.PACKAGE.HEADLINE_THRESHOLD) return null;
   // Either one piece is big enough on its own...
@@ -214,7 +215,7 @@ function headlineShortfall(receive: AssetSide, send: AssetSide): { wanted: numbe
   if (best >= wanted) return null;
   // ...or enough of the package is first-round quality (see premiumCount).
   if (receive.premiumCount >= TRADE_VALUE.PACKAGE.HEADLINE_PREMIUM_COUNT) return null;
-  return { wanted, best, name: pillar.label };
+  return { wanted, best, name: pillar.label, isPlayer: pillar.isPlayer };
 }
 
 /**
@@ -405,20 +406,57 @@ export async function evaluateTrade(opts: {
   }
 
   /**
-   * The package-quality test sits between the cap gate and the value
-   * comparison, and it can only ever REFUSE — never accept. A pile of depth
-   * that clears the ratio is still a pile of depth, and the reason has to say
-   * so rather than asking for more of the same, which is what "we're 12%
-   * short" would send a user off to do.
+   * The package-quality test explains a refusal. IT NO LONGER CAUSES ONE.
+   *
+   * It used to sit here as a hard veto, and the app owner caught what that
+   * does: a meter reading 102% — over the club's own line — above the words
+   * TURNED DOWN. That is the same defect as a green "he will sign this" over
+   * a dead button, which this codebase fixed on the negotiation panel the
+   * same day. A number the game shows as the answer cannot be overruled by a
+   * rule the number knows nothing about.
+   *
+   * And the veto was very nearly redundant. CONCENTRATION already discounts a
+   * pile — the second asset counts 0.95, the fourth 0.70, the rest 0.55 — and
+   * `total` is computed AFTER that weighting, so the junk-pile case this rule
+   * was written for is already refused on value: the audit's own "four
+   * quarters for a dollar" probe (five starters plus a 2nd, 3rd and 4th for a
+   * 99 receiver) scores 0.52, less than half the bar, before this test runs
+   * at all. What was left was a second penalty on top of the first, and the
+   * only offers it could actually change were ones that had already cleared
+   * the line — which is exactly the frustrating case, and it lands hardest on
+   * a rebuilder trying to turn real players into picks.
+   *
+   * Gated to offers that have NOT cleared the bar, it keeps everything it was
+   * good for: a pile of depth still gets a reason that names the shape of the
+   * problem instead of "we're 12% short", which would send a user off to add
+   * more of the same. It just cannot contradict the meter any more.
    */
-  const headline = headlineShortfall(receive, send);
+  const headline = ratio < requiredRatio ? headlineShortfall(receive, send) : null;
   if (headline) {
     return {
       accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy,
       counter: {
-        message: `${headline.name} is a cornerstone for us — we're not moving him for depth. `
-          + `Whatever the totals say, at least one piece coming back has to be a real asset in its own right, `
-          + `and the best you've offered is worth about ${Math.round((headline.best / Math.max(headline.wanted, 1)) * 100)}% of what that would take.`,
+        /*
+         * TWO PERCENTAGES ON ONE CARD HAD TO STOP LOOKING LIKE ONE.
+         *
+         * The owner's screenshot: the meter read 68% and this sentence read
+         * "91% of what that would take". Both were true and they measure
+         * different things — the meter is the whole offer against the club's
+         * bar, this is the BEST SINGLE PIECE against the cornerstone bar — but
+         * nothing said so, and "whatever the totals say" actively implied the
+         * totals were fine when they were 32% short. So the piece figure now
+         * says what it is counting, and when the value is short as well, the
+         * sentence says that too instead of sending the user off to fix the
+         * wrong problem.
+         *
+         * And it said "we're not moving HIM" about a 2027 first-round pick.
+         */
+        message: `${headline.name} is a cornerstone for us — we're not moving ${headline.isPlayer ? 'him' : 'it'} for depth. `
+          + `At least one piece coming back has to be a real asset in its own right, and the best single piece `
+          + `you've offered is worth about ${Math.round((headline.best / Math.max(headline.wanted, 1)) * 100)}% of what that alone would take.`
+          + (ratio < requiredRatio
+            ? ` The overall value is short too — the meter is what to watch for that.`
+            : ` The totals themselves are fine; it is the shape of the offer we can't take.`),
       },
     };
   }
