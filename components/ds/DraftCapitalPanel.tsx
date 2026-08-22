@@ -22,6 +22,13 @@ export interface DraftCapitalPick {
   projectedOverall?: number;
   /** The slot half of the projection, for the same wording the trade screen uses. */
   projectedSlot?: number;
+  /**
+   * Which standings the projection is off, and whether that season is still
+   * being played. Once the whistle has gone the projection stops being a guess
+   * — it is the same computation over the same frozen records that
+   * reseedDraftOrder will run — and the wording has to stop guessing with it.
+   */
+  projectedFrom?: { season: number; live: boolean };
   /** The size of the round the projected slot is one of — the "of 32" in the trade screen's phrase. */
   roundSize?: number;
   /** Set when the pick was acquired in a trade — the club it originally belonged to. */
@@ -49,8 +56,10 @@ export interface DraftCapitalYear {
   year: number;
   /** The order for this year is reseeded and final — show real numbers, no projection language. */
   settled: boolean;
-  /** A live projection exists for this year (current draft, real standings behind it). */
+  /** A projection exists for this year (the next draft, with standings behind it). */
   projected: boolean;
+  /** What that projection is off — see DraftCapitalPick.projectedFrom. */
+  projectedFrom?: { season: number; live: boolean };
   /**
    * The next draft that will actually run. It is itemised pick by pick even
    * when it has no selection numbers yet, because it is the one a GM is
@@ -108,7 +117,14 @@ function doubledRounds(picks: DraftCapitalPick[]): string[] {
 
 function statusLabel(y: DraftCapitalYear): string {
   if (y.settled) return 'order set';
-  if (y.projected) return 'if the season ended today';
+  // A projection off a season still being played is a guess and says so. One
+  // off a season already in the books is not: those records are frozen, and
+  // the reseed at the end of free agency runs this same sort over these same
+  // rows. Calling that "if the season ended today" in the re-sign window is
+  // the page telling a GM to wait for a year he has finished playing.
+  if (y.projected) {
+    return y.projectedFrom && !y.projectedFrom.live ? `off the ${y.projectedFrom.season} finish` : 'if the season ended today';
+  }
   return y.orderFromSeason ? `order set after ${y.orderFromSeason}` : 'order set when the draft opens';
 }
 
@@ -145,7 +161,7 @@ const isItemised = (y: DraftCapitalYear) => y.settled || y.projected || y.upcomi
  * that came in from another club. Two years out there is nothing to plan
  * against yet, and the trade hub summarises them the same way.
  */
-export function DraftCapitalPanel({ years, nextUp, liveOrder }: {
+export function DraftCapitalPanel({ years, nextUp, liveOrder, orderFrom }: {
   years: DraftCapitalYear[];
   /** Live draft only — the club's next unused pick and how far away it is. */
   nextUp?: { picksAway: number; round: number; overall: number; onTheClock: boolean };
@@ -154,9 +170,12 @@ export function DraftCapitalPanel({ years, nextUp, liveOrder }: {
    * this club first, then anybody whose pick it holds. Every projected
    * selection in the panel is one of these slots plus a round, so this is the
    * part that moves — a pick acquired from a club that then wins six straight
-   * is a different asset by December. Only passed while a projection is live.
+   * is a different asset by December. Only passed while the panel is actually
+   * carrying a projection; `orderFrom` says which season it is off.
    */
   liveOrder?: { teamId: string; abbr: string; slot: number; outOf: number; record: string; isMine: boolean }[];
+  /** Which season those places and records are, and whether it is still being played. */
+  orderFrom?: { season: number; live: boolean };
 }) {
   // What you can still spend. A pick already used is history, and counting it
   // as capital is how the header ends up disagreeing with the panel under it.
@@ -229,10 +248,16 @@ export function DraftCapitalPanel({ years, nextUp, liveOrder }: {
                 <div className="py-2.5">
                   {/* No "if the season ended today" caption here: the ladder
                       beside this one already carries it, and the same six words
-                      twice on one row reads as a stutter. */}
+                      twice on one row reads as a stutter. The heading does say
+                      WHICH standings these are, because after the final whistle
+                      "standings now" would be 32 clubs at 0-0-0. */}
                   <div className="flex items-baseline justify-between gap-2 pb-1 border-b border-line/40">
-                    <span className="font-display font-bold uppercase tracking-wide text-sm text-chalk">Live Order</span>
-                    <span className="text-[10px] uppercase tracking-wider text-muted">standings now</span>
+                    <span className="font-display font-bold uppercase tracking-wide text-sm text-chalk">
+                      {orderFrom && !orderFrom.live ? 'Draft Order' : 'Live Order'}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wider text-muted">
+                      {orderFrom && !orderFrom.live ? `${orderFrom.season} final` : 'standings now'}
+                    </span>
                   </div>
                   {liveOrder.map((a) => (
                     <div key={a.teamId} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-1">
@@ -363,7 +388,11 @@ function HeldRow({ pick }: { pick: DraftCapitalPick }) {
         // different numbers.
         <span
           className="inline-flex items-baseline gap-1"
-          title={`Projected pick ${pick.projectedSlot} of ${pick.roundSize} in round ${pick.round} — #${pick.projectedOverall} overall — if the season ended today`}
+          title={`Projected pick ${pick.projectedSlot} of ${pick.roundSize} in round ${pick.round} — #${pick.projectedOverall} overall — ${
+            pick.projectedFrom && !pick.projectedFrom.live
+              ? `off the ${pick.projectedFrom.season} final standings, which is what the order is set from when the draft opens`
+              : 'if the season ended today'
+          }`}
         >
           <span className="text-[10px] text-accent2 uppercase tracking-wider">proj.</span>
           <span className="stat-value text-stat-sm text-accent2">#{pick.projectedOverall}</span>

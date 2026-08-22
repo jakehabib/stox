@@ -1,7 +1,7 @@
 import { prisma } from './db';
 import { readJson, writeJson } from './json';
 import { playerValueDetailed, pickValue, leagueScarcity, RosterPlayer } from './ai/gm';
-import { projectedDraftOrder, imminentDraftYear } from './draft';
+import { draftOrderContext, type DraftOrderContext } from './draft';
 import { CapMode, GmProfile } from './types';
 import { TradeAsset } from './trade';
 
@@ -40,8 +40,7 @@ async function snapshotAssets(
   currentYear: number,
   capMode: CapMode,
   scarcity: Record<string, number>,
-  projectedOrder: Map<string, number>,
-  imminentYear: number | null,
+  draft: DraftOrderContext,
 ): Promise<TradeAssetSnapshot[]> {
   const out: TradeAssetSnapshot[] = [];
   for (const a of assets) {
@@ -51,7 +50,16 @@ async function snapshotAssets(
       out.push({ type: 'PLAYER', id: p.id, label: `${p.firstName} ${p.lastName}`, position: p.position, value: v.total });
     } else {
       const pick = await prisma.draftPick.findUniqueOrThrow({ where: { id: a.id } });
-      const slot = imminentYear !== null && pick.year === imminentYear ? (projectedOrder.get(pick.originalTeamId) ?? pick.slot) : pick.slot;
+      // What the pick was on the day, in the same order of precedence the AI
+      // prices by (see effectiveSlot in lib/trade.ts): the real seeded slot
+      // where the draft's order already exists — a snapshot of a deal made
+      // mid-draft has to say what the selection WAS — otherwise the projection
+      // off the original club's record, otherwise the stored placeholder.
+      const slot = draft.seededYear !== null && pick.year === draft.seededYear
+        ? pick.slot
+        : draft.imminentYear !== null && pick.year === draft.imminentYear
+          ? (draft.projection?.order.get(pick.originalTeamId) ?? pick.slot)
+          : pick.slot;
       const value = pickValue(pick.round, slot, NEUTRAL_PROFILE, pick.year, currentYear);
       out.push({ type: 'PICK', id: pick.id, label: `${pick.year} Round ${pick.round}`, value });
     }
@@ -65,15 +73,14 @@ export async function recordTrade(opts: {
   teamAId: string; teamBId: string; teamAAbbr: string; teamBAbbr: string;
   aToB: TradeAsset[]; bToA: TradeAsset[]; capMode: CapMode;
 }) {
-  const [allPlayers, projectedOrder, imminentYear] = await Promise.all([
+  const [allPlayers, draft] = await Promise.all([
     prisma.player.findMany({ where: { leagueId: opts.leagueId, status: 'ACTIVE' }, select: { position: true, trueOvr: true } }),
-    projectedDraftOrder(opts.leagueId),
-    imminentDraftYear(opts.leagueId),
+    draftOrderContext(opts.leagueId),
   ]);
   const scarcity = leagueScarcity(allPlayers);
   const [aToB, bToA] = await Promise.all([
-    snapshotAssets(opts.aToB, opts.seasonYear, opts.capMode, scarcity, projectedOrder, imminentYear),
-    snapshotAssets(opts.bToA, opts.seasonYear, opts.capMode, scarcity, projectedOrder, imminentYear),
+    snapshotAssets(opts.aToB, opts.seasonYear, opts.capMode, scarcity, draft),
+    snapshotAssets(opts.bToA, opts.seasonYear, opts.capMode, scarcity, draft),
   ]);
 
   await prisma.tradeRecord.create({

@@ -9,7 +9,7 @@ import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE } from '@/lib/tuning';
 import { bandCutoffs, consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
-import { imminentDraftYear, projectedDraftOrder, draftIsStarted } from '@/lib/draft';
+import { draftOrderContext, pickNumbers, projectionAppliesTo, draftIsStarted } from '@/lib/draft';
 import { needSeverity, teamNeeds } from '@/lib/ai/gm';
 import { loadWorkoutSlots } from '@/lib/workouts';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -95,11 +95,6 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // in every phase, not just during a live rookie draft.
   const allTeams = await prisma.team.findMany({ where: { leagueId: league.id } });
   const teamById = new Map(allTeams.map((t) => [t.id, t]));
-  // Whether there is anything to project a draft order FROM. Every club sits
-  // at 0-0-0 from RESET_STANDINGS until week 1 kicks off (see lib/season.ts),
-  // and standingsOrder would then be ranking 32 identical records by nothing
-  // at all — so no number is offered rather than a fabricated one.
-  const standingsPlayed = allTeams.some((t) => t.wins + t.losses + t.ties > 0);
   const upcomingPicks = state && totalPicks > 0
     ? Array.from({ length: Math.min(32, totalPicks - state.pickIndex) }, (_, i) => {
         const idx = state.pickIndex + i;
@@ -114,7 +109,11 @@ export default async function DraftPage({ params, searchParams }: { params: { id
 
   // Picks for the NEXT draft, not the current season year — once a draft has
   // happened, seasonYear and the upcoming draft year diverge (see lib/draft.ts).
-  const upcomingDraftYear = await imminentDraftYear(league.id);
+  // The context also carries which draft's stored slots are real and which
+  // standings any projection is off, so this page and the trade screen put the
+  // same number on the same pick.
+  const draftOrder = await draftOrderContext(league.id);
+  const upcomingDraftYear = draftOrder.imminentYear;
 
   const shortlistEntries = await prisma.shortlistEntry.findMany({ where: { teamId: team.id }, select: { playerId: true } });
   const shortlistIds = new Set(shortlistEntries.map((s) => s.playerId));
@@ -421,10 +420,10 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // index in the team list) right up until reseedDraftOrder() rewrites it from
   // final standings on the way out of free agency — so it is a real selection
   // number only in the DRAFT phase, for that year's draft. Everywhere else the
-  // current draft's picks carry a live "if the season ended today" projection
-  // instead, off the ORIGINAL club's record, and a further-future year gets no
-  // number at all because there are no standings to project it from.
-  const projectedOrder = await projectedDraftOrder(league.id);
+  // next draft's picks carry a projection instead, off the ORIGINAL club's
+  // record, and a further-future year gets no number at all because there are
+  // no standings to project it from. Every one of those calls is pickNumbers'
+  // (lib/draft.ts), not this page's.
   const myPickRows = upcomingDraftYear === null ? [] : await prisma.draftPick.findMany({
     where: {
       leagueId: league.id,
@@ -435,30 +434,46 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     orderBy: [{ year: 'asc' }, { round: 'asc' }],
   });
   const overallOf = (round: number, slot: number) => (round - 1) * roundSize + slot;
-  // The one year whose order has actually been reseeded: the draft that is
-  // open right now. reseedDraftOrder(leagueId, seasonYear) runs immediately
-  // before startRookieDraft, so DRAFT phase — and only DRAFT phase — means the
-  // stored slots for league.seasonYear are the real running order.
-  const settledYear = league.phase === 'DRAFT' ? league.seasonYear : null;
+  // The one year whose order has actually been reseeded: see seededDraftYear
+  // in lib/draft.ts, which walks the phase machine and says why the phase —
+  // not the year, and not DraftState — is the honest test.
+  const settledYear = draftOrder.seededYear;
 
   const capitalYears = new Map<number, DraftCapitalYear>();
   const yearBucket = (year: number) => {
     let y = capitalYears.get(year);
     if (!y) {
       const settled = year === settledYear;
-      // Three things have to be true before a projected number is honest: it
-      // is the next draft, that draft is the one THIS season's standings will
-      // seed (seasonYear rolls forward mid-offseason, so after RESET_STANDINGS
-      // the imminent draft is already the one this table no longer describes),
-      // and some football has actually been played.
-      const projected = !settled
-        && year === upcomingDraftYear
-        && year === league.seasonYear + 1
-        && standingsPlayed;
+      // A PROJECTION IS FOR THE NEXT DRAFT THAT HAS NO ORDER YET. Nothing more.
+      //
+      // This used to add `year === league.seasonYear + 1`, and that clause is
+      // what put a bare row of numberless chips in front of the app owner:
+      // *"it still doesnt show my projected draft picks too"*. RESET_STANDINGS
+      // bumps seasonYear partway through the offseason, so from the re-sign
+      // window on, the upcoming draft's year EQUALS seasonYear and the whole
+      // conjunction went false — exactly the trap imminentDraftYear documents.
+      // It also required live wins on the team rows, which that same step
+      // zeroes, so it was asking about a season nobody was playing.
+      //
+      // projectionAppliesTo answers both properly, off real state: is there a
+      // ranking on file, and is it the season that will actually seed THIS
+      // draft (see lib/draft.ts). It is also the exact test pickNumbers runs
+      // per pick, so a year can never be headed "off the 2028 finish" over a
+      // column of blanks, or "order set when the draft opens" over a column of
+      // numbers. And settled and projected can never both fire — `!settled` —
+      // while for the imminent draft they are only both silent when the season
+      // that sets its order has genuinely not been played.
+      const projected = !settled && projectionAppliesTo(year, draftOrder);
       y = {
         year,
         settled,
         projected,
+        // Which standings the projection is off, so the year heading can say
+        // "off the 2028 finish" instead of asking a GM in the re-sign window
+        // to imagine a season he has already played ending today.
+        projectedFrom: projected && draftOrder.projection
+          ? { season: draftOrder.projection.season, live: draftOrder.projection.live }
+          : undefined,
         // The draft being planned for gets a row per pick whether or not it has
         // numbers yet — see DraftCapitalYear.upcoming.
         upcoming: year === upcomingDraftYear,
@@ -484,20 +499,23 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       ? { name: `${p.player.firstName} ${p.player.lastName}`, position: p.player.position }
       : undefined;
     if (p.ownerTeamId === team.id) {
-      const projSlot = bucket.projected ? projectedOrder.get(p.originalTeamId) : undefined;
+      // One call decides which number this pick may wear, here and on the
+      // trade screen both. Never the club's rank stamped on every round.
+      const numbers = pickNumbers(p, draftOrder);
       const origin = p.originalTeamId === team.id ? undefined : teamById.get(p.originalTeamId);
       // Selections between the pick on the clock and this one. Only a rookie
       // draft has DraftPick rows to be on the clock with.
-      const away = draftLive && !isFantasy && p.year === league.seasonYear && !p.used && bucket.settled
-        ? overallOf(p.round, p.slot) - 1 - state!.pickIndex
+      const away = draftLive && !isFantasy && p.year === league.seasonYear && !p.used && numbers.overall !== undefined
+        ? numbers.overall - 1 - state!.pickIndex
         : undefined;
       const pick: DraftCapitalPick = {
         id: p.id,
         year: p.year,
         round: p.round,
-        overall: bucket.settled ? overallOf(p.round, p.slot) : undefined,
-        projectedSlot: projSlot,
-        projectedOverall: projSlot === undefined ? undefined : overallOf(p.round, projSlot),
+        overall: numbers.overall,
+        projectedSlot: numbers.projectedSlot,
+        projectedOverall: numbers.projectedOverall,
+        projectedFrom: numbers.projectedFrom,
         roundSize,
         from: origin ? { teamId: origin.id, abbr: origin.abbr } : undefined,
         picksAway: away !== undefined && away >= 0 ? away : undefined,
@@ -506,16 +524,16 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       bucket.picks.push(pick);
     } else if (p.originalTeamId === team.id) {
       const holder = teamById.get(p.ownerTeamId);
-      // Projected off THIS club's own record, because it is this club's pick —
-      // which is exactly what makes it worth showing: a first traded away in
-      // August is a different asset in November.
-      const projSlot = bucket.projected ? projectedOrder.get(p.originalTeamId) : undefined;
+      // Same call, and it reads THIS club's own record because it is this
+      // club's pick — which is exactly what makes it worth showing: a first
+      // traded away in August is a different asset in November.
+      const numbers = pickNumbers(p, draftOrder);
       const forfeit: DraftCapitalForfeit = {
         id: p.id,
         year: p.year,
         round: p.round,
-        overall: bucket.settled ? overallOf(p.round, p.slot) : undefined,
-        projectedOverall: projSlot === undefined ? undefined : overallOf(p.round, projSlot),
+        overall: numbers.overall,
+        projectedOverall: numbers.projectedOverall,
         to: { teamId: holder?.id ?? p.ownerTeamId, abbr: holder?.abbr ?? '???' },
         spentOn,
       };
@@ -523,37 +541,50 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     }
   }
 
-  // The club's own place in the live order, which every projected number on
-  // the panel is derived from: slot + (round - 1) * 32. Shown only when a year
-  // on the panel is actually carrying that projection.
-  const ownProjectedSlot = projectedOrder.get(team.id);
+  // The club's own place in the projected order, which every projected number
+  // on the panel is derived from: slot + (round - 1) * 32. Shown only when a
+  // year on the panel is actually carrying that projection.
+  const projection = draftOrder.projection;
+  const ownProjectedSlot = projection?.order.get(team.id);
   const capitalList = [...capitalYears.values()].sort((a, b) => a.year - b.year);
   for (const y of capitalList) {
     y.picks.sort((a, b) => a.round - b.round || (a.overall ?? a.projectedOverall ?? 0) - (b.overall ?? b.projectedOverall ?? 0));
     y.forfeited.sort((a, b) => a.round - b.round);
   }
-  // The clubs whose live records are setting every projected number on the
-  // panel: this one, plus whoever a projected pick was acquired from. Each
-  // slot is the one projectedDraftOrder() returned — the same map the numbers
-  // above were built from, never a second computation of it.
+  // The clubs whose records are setting every projected number on the panel:
+  // this one, plus whoever a projected pick was acquired from. Each slot is
+  // the one the projection returned — the same map the numbers above were
+  // built from, never a second computation of it.
   const projectedYears = capitalList.filter((y) => y.projected);
+  // THE RECORD BESIDE A CLUB MUST BE THE RECORD THE RANKING CAME FROM. Once
+  // RESET_STANDINGS has wiped the live rows every club reads 0-0-0, so during
+  // the offseason the standings on this row are read out of TeamSeasonRecord
+  // for the season the projection actually ranked — the same rows
+  // reseedDraftOrder will use.
+  const orderRecords = projection && !projection.live && projectedYears.length > 0
+    ? new Map((await prisma.teamSeasonRecord.findMany({
+        where: { leagueId: league.id, year: projection.season },
+        select: { teamId: true, wins: true, losses: true, ties: true },
+      })).map((r) => [r.teamId, r]))
+    : null;
   const liveOrderTeamIds = [
     ...new Set([
       ...(ownProjectedSlot !== undefined ? [team.id] : []),
       ...projectedYears.flatMap((y) => y.picks.map((p) => p.from?.teamId).filter((id): id is string => !!id)),
     ]),
   ];
-  const capitalLiveOrder = projectedYears.length === 0 ? undefined : liveOrderTeamIds
+  const capitalLiveOrder = projectedYears.length === 0 || !projection ? undefined : liveOrderTeamIds
     .map((id) => {
       const club = teamById.get(id);
-      const slot = projectedOrder.get(id);
+      const slot = projection.order.get(id);
       if (!club || slot === undefined) return null;
+      const frozen = orderRecords?.get(id);
       return {
         teamId: id,
         abbr: club.abbr,
         slot,
-        outOf: projectedOrder.size,
-        record: `${club.wins}-${club.losses}-${club.ties}`,
+        outOf: projection.order.size,
+        record: frozen ? `${frozen.wins}-${frozen.losses}-${frozen.ties}` : `${club.wins}-${club.losses}-${club.ties}`,
         isMine: id === team.id,
       };
     })
@@ -587,7 +618,46 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   const lastDraftRow = await prisma.draftPick.findFirst({
     where: { leagueId: league.id, used: true }, orderBy: { year: 'desc' }, select: { year: true },
   });
-  const recapYear = lastDraftRow && !(draftLive && lastDraftRow.year === league.seasonYear) ? lastDraftRow.year : null;
+  /**
+   * AND ONLY UNTIL THE NEXT CLASS IS ON THE BOARD.
+   *
+   * `lastDraftRow` on its own is just "the most recent draft that ever
+   * happened", so a recap moved in and stayed: the app owner, in the 2029
+   * re-sign window, looking at a 2028 DRAFT RECAP — *"im also in the 2029
+   * draft and its still showing last year's stuff. that should be cleared when
+   * the new class comes in"*. That is the real-football rule, and it is a rule
+   * about the class, not about the calendar.
+   *
+   * So the test is the class itself. A class generated during season S is
+   * drafted in the draft of S + 1 (addDraftClass stamps `draftYear: seasonYear`
+   * at week 1 of the season so it can be scouted all year) — the same
+   * off-by-one the leftovers query above works around — so the class for the
+   * next draft is `upcomingDraftYear - 1`, and if any of it is still flagged
+   * isDraftee it is on the board waiting to be picked.
+   *
+   * Why the rows and not the step: ADD_DRAFT_CLASS is where the GM is TOLD the
+   * board is there, but the players were minted a season earlier at PRESEASON.
+   * Reading the rows means the answer is the same on both sides of that step —
+   * and the same at every step of the offseason, so a save stranded mid-
+   * offseason by an older one-step-per-press build reads exactly what a save
+   * advancing under this one reads, with no window where a stale recap slips
+   * back in.
+   *
+   * And it cannot swallow the recap that matters. The advance out of DRAFT
+   * clears every isDraftee flag in the league (see lib/season.ts), so from the
+   * last selection until the coming preseason mints the next class nothing
+   * matches here and the draft that just finished is on screen — which is the
+   * one window the recap is the whole reason to be on this page. The new class
+   * arriving is what retires it.
+   */
+  const nextClassOnBoard = upcomingDraftYear !== null && (await prisma.player.count({
+    where: { leagueId: league.id, isDraftee: true, draftYear: upcomingDraftYear - 1 },
+  })) > 0;
+  const recapYear = lastDraftRow
+    && !(draftLive && lastDraftRow.year === league.seasonYear)
+    && !nextClassOnBoard
+    ? lastDraftRow.year
+    : null;
   const recapPickRows = recapYear === null ? [] : await prisma.draftPick.findMany({
     where: { leagueId: league.id, year: recapYear, used: true, playerId: { not: null } },
     include: {
@@ -1241,7 +1311,12 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   const capitalPanelNode = (
     <>
       {capitalList.length > 0 && (
-        <DraftCapitalPanel years={capitalList} nextUp={nextUp} liveOrder={capitalLiveOrder} />
+        <DraftCapitalPanel
+          years={capitalList}
+          nextUp={nextUp}
+          liveOrder={capitalLiveOrder}
+          orderFrom={projection ? { season: projection.season, live: projection.live } : undefined}
+        />
       )}
     </>
   );
@@ -1678,8 +1753,17 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           title={state
             ? `Pick ${state.pickIndex + 1} of ${totalPicks}`
             : draftJustFinished ? `${recapYear} Draft Complete` : `${upcomingDraftYear ?? league.seasonYear} Draft Class`}
+          // WHAT STANDS WHERE LAST YEAR'S RECAP USED TO. Once the new class is
+          // on the board the page is about the draft that has NOT happened
+          // yet, and it already holds the two things that answers: the class
+          // itself, and Your Picks — which now carries a real selection number
+          // for every pick (see the capital panel above). This line points at
+          // them, and changes when the draft stops being a thing next season
+          // and becomes the next thing on the calendar.
           subtitle={state || draftJustFinished
             ? undefined
+            : upcomingDraftYear !== null && upcomingDraftYear === league.seasonYear
+            ? 'The season is in the books and the class is graded — your selections and where they land are below. The draft opens when free agency closes.'
             : 'The incoming class is browsable all season — scout them now, the draft opens after free agency.'}
           facts={[
             {

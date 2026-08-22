@@ -7,7 +7,7 @@ import { capHit, tradeCapEffect, formatMoney } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { readJson } from '@/lib/json';
 import { isTradeDeadlinePassed } from '@/lib/trade';
-import { projectedDraftOrder, imminentDraftYear } from '@/lib/draft';
+import { draftOrderContext, pickNumbers, type DraftOrderContext } from '@/lib/draft';
 import { REPLACEMENT_LEVEL } from '@/lib/sim/units';
 import type { TradeAsset } from '@/lib/trade';
 import { buildTradeRetrospectives, type TradeAssetSnapshot } from '@/lib/tradeRetro';
@@ -40,7 +40,12 @@ export default async function TradePage({ params, searchParams }: { params: { id
   const partnerId = searchParams.with || reviewPartnerId || otherTeams[0]?.id;
 
   const deadlinePassed = settings.tradeDeadlineEnabled && isTradeDeadlinePassed(league.phase, league.week, settings.tradeDeadlineWeek);
-  const [projectedOrder, imminentYear] = await Promise.all([projectedDraftOrder(league.id), imminentDraftYear(league.id)]);
+  // Everything a pick chip needs to carry an honest number: which draft is
+  // next, which draft's stored slots are the real running order, and the
+  // standings behind any projection. One read, so the board, the deal sheet
+  // and the recap cannot disagree about the same pick. See lib/draft.ts.
+  const draftOrder = await draftOrderContext(league.id);
+  const imminentYear = draftOrder.imminentYear;
 
   const [myRoster, myPicks, partnerRoster, partnerPicks, pendingOffers, capSummary, partnerCapSummary, retrospectives] = await Promise.all([
     prisma.player.findMany({ where: { teamId: team.id }, include: { contract: true }, orderBy: { trueOvr: 'desc' } }),
@@ -88,19 +93,30 @@ export default async function TradePage({ params, searchParams }: { params: { id
   // including the user's own, since the partner may be holding YOUR pick.
   const clubById = new Map([team, ...otherTeams].map((t) => [t.id, { abbr: t.abbr, name: `${t.city} ${t.nickname}` }]));
 
-  // Only the next draft that hasn't happened yet gets a live projection — a
-  // further-future year has no standings to project from at all. This is
-  // deliberately keyed off imminentDraftYear rather than league.seasonYear;
-  // see lib/draft.ts for why the two aren't always the same thing.
+  // THE NUMBER ON A CHIP IS THE NUMBER THE DRAFT RUNS ON.
+  //
+  // This used to stamp the ORIGINAL club's standings rank onto every pick it
+  // owned, in every round — so a club's R1, R4, R5 and R7 all read "#1", and
+  // during a live draft, where RESET_STANDINGS has left every club 0-0-0 and
+  // the sort degenerates to database row order, "#1" meant nothing whatsoever.
+  // The app owner, mid-draft with the 32nd selection: *"it is pick 32 but
+  // counting as #1 overall because its the current pick. these should be
+  // locked to their value"*.
+  //
+  // pickNumbers gives each pick its OWN number, per round: the seeded slot
+  // once the order exists (which is what currentPick() puts clubs on the clock
+  // by), a per-pick projection before that, and nothing at all for a year with
+  // no standings behind it. Nothing here decides any of that — one function
+  // decides it for this page, the deal sheet, the recap and the AI's price.
   const toPickP = (p: (typeof myPicks)[number]) => ({
-    id: p.id, year: p.year, round: p.round, slot: p.slot,
-    projectedSlot: p.year === imminentYear ? projectedOrder.get(p.originalTeamId) : undefined,
+    id: p.id, year: p.year, round: p.round,
+    ...pickNumbers(p, draftOrder),
     via: p.originalTeamId === p.ownerTeamId ? undefined : clubById.get(p.originalTeamId)?.abbr,
   });
 
   const lastTrade = await buildTradeRecap({
     leagueId: league.id, myTeamId: team.id, myRoster, seasonYear: league.seasonYear, clubById,
-    imminentYear, projectedOrder,
+    draftOrder,
   });
 
   return (
@@ -188,9 +204,8 @@ async function buildTradeRecap(opts: {
   myRoster: RosterPlayer[];
   seasonYear: number;
   clubById: Map<string, { abbr: string; name: string }>;
-  /** The next draft that will actually run, and where each club would pick in it — the same two the pick board is drawn from. */
-  imminentYear: number | null;
-  projectedOrder: Map<string, number>;
+  /** Exactly what the pick board is drawn from, so a pick reads the same in both places. */
+  draftOrder: DraftOrderContext;
 }): Promise<TradeRecapData | null> {
   const record = await prisma.tradeRecord.findFirst({
     where: { leagueId: opts.leagueId, OR: [{ teamAId: opts.myTeamId }, { teamBId: opts.myTeamId }] },
@@ -207,17 +222,18 @@ async function buildTradeRecap(opts: {
     for (const s of snapshots) {
       if (s.type === 'PICK') {
         // Re-read rather than parsing the snapshot's label, so the recap wears
-        // exactly the pick board's chip. Same projection rule as the board,
-        // off the same map: only the next draft has standings behind it, and
-        // it is read against the ORIGINAL club, which is whose record decides
-        // where the pick lands.
+        // exactly the pick board's chip — through the same pickNumbers call the
+        // board uses, so a pick that reads "#32" on the board cannot read
+        // anything else here a second later.
         const pick = await prisma.draftPick.findUnique({ where: { id: s.id } });
+        const numbers = pick ? pickNumbers(pick, opts.draftOrder) : null;
         out.push({
           kind: 'PICK',
           label: pick ? `${pick.year} R${pick.round}` : s.label,
           round: pick?.round,
           year: pick?.year,
-          projectedSlot: pick && pick.year === opts.imminentYear ? opts.projectedOrder.get(pick.originalTeamId) : undefined,
+          overall: numbers?.overall,
+          projectedOverall: numbers?.projectedOverall,
         });
         continue;
       }

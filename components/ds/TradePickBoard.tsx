@@ -3,19 +3,74 @@
 import { Tooltip } from '../Tooltip';
 import { tip } from '@/lib/glossary';
 
+/**
+ * A pick as this board draws it. The number fields come straight off
+ * `pickNumbers` (lib/draft.ts) and are never merged: `overall`/`slot` are the
+ * selection this pick IS, present only once that draft's order has been
+ * seeded, and the projected pair is where it would land if the order were set
+ * off today's standings. A pick can carry one pair or neither, never both — a
+ * projection printed beside a real number would be the screen arguing with the
+ * draft it is describing.
+ */
 export interface PickAsset {
   id: string;
   year: number;
   round: number;
-  slot: number;
-  /**
-   * Where this pick would land if the season ended today. Only ever set for
-   * the next draft — a further-out year has no standings to project from, so
-   * those chips deliberately show no slot rather than a made-up one.
-   */
+  /** Real in-round slot (1..roundSize). Only when the order for that year is seeded. */
+  slot?: number;
+  /** Real overall selection number, derived from that same slot. */
+  overall?: number;
+  /** Projected in-round slot. Only ever the next draft — a further-out year has no standings behind it. */
   projectedSlot?: number;
+  /** Projected overall, from that same projected slot. */
+  projectedOverall?: number;
+  /** Which standings the projection is off, and whether that season is still being played. */
+  projectedFrom?: { season: number; live: boolean };
+  /** Picks per round — the "of 32" in a slot. */
+  roundSize?: number;
   /** Club the pick originally belonged to, when that isn't the club holding it now. */
   via?: string;
+}
+
+/** The selection a chip prints, and the sentence that explains it. Both off the same number. */
+function pickReading(p: PickAsset): { number?: number; real: boolean; title: string } {
+  const of = p.roundSize ? ` of ${p.roundSize}` : '';
+  if (p.overall !== undefined) {
+    return {
+      number: p.overall,
+      real: true,
+      title: `Round ${p.round}, pick ${p.slot}${of} — #${p.overall} overall. The order for this draft is set.`,
+    };
+  }
+  if (p.projectedOverall !== undefined) {
+    const from = p.projectedFrom?.live === false
+      ? `off the ${p.projectedFrom.season} final standings — the order is stamped on when the draft opens`
+      : 'if the season ended today';
+    return {
+      number: p.projectedOverall,
+      real: false,
+      title: `Projected round ${p.round}, pick ${p.projectedSlot}${of} — #${p.projectedOverall} overall, ${from}.`,
+    };
+  }
+  return { real: false, title: `${p.year} round ${p.round} — the order for that draft does not exist yet.` };
+}
+
+/** Earliest selection first where both are known — the order the picks would be made in. */
+const selectionRank = (p: PickAsset) => p.overall ?? p.projectedOverall ?? Number.MAX_SAFE_INTEGER;
+
+/** What the numbers on a year's row mean, in one sentence. */
+function yearNumbering(yearPicks: PickAsset[]): string {
+  if (yearPicks.some((p) => p.overall !== undefined)) {
+    return 'This draft is on the board — every number here is the selection that pick actually is, and it does not move again.';
+  }
+  const from = yearPicks.find((p) => p.projectedFrom)?.projectedFrom;
+  if (from && !from.live) {
+    return `The next draft to actually run. Its order comes off the ${from.season} final standings, which are in the books — these are the selections it opens with.`;
+  }
+  if (from) {
+    return 'The next draft to actually run, so these picks carry where they would land if the season ended today. Later years have no standings behind them yet.';
+  }
+  return 'The next draft to actually run. No season has been played to set its order yet, so these picks carry no selection number.';
 }
 
 /**
@@ -25,8 +80,8 @@ export interface PickAsset {
  * conspicuously absent — that colour means "in the deal" on this screen, and
  * a second-rounder must never be mistaken for a selected one.
  *
- * No number goes on a chip beyond its round and, where one exists, its
- * projected slot. The AI's value points for a pick sit behind the Trade Intel
+ * No number goes on a chip beyond its round and its selection number, real or
+ * projected. The AI's value points for a pick sit behind the Trade Intel
  * upgrade (see TradeVerdict), so printing them here would give away the one
  * thing that upgrade sells.
  */
@@ -68,12 +123,16 @@ function PickChip({ pick, selected, showSlot, showVia, compact, onToggle }: {
   pick: PickAsset; selected: boolean; showSlot: boolean; showVia: boolean; compact?: boolean; onToggle: (id: string) => void;
 }) {
   const tier = pickTier(pick.round);
+  const reading = pickReading(pick);
   return (
     <button
       type="button"
       onClick={() => onToggle(pick.id)}
       aria-pressed={selected}
-      aria-label={`${pick.year} round ${pick.round}${pick.via ? ` via ${pick.via}` : ''}${pick.projectedSlot ? `, projected pick ${pick.projectedSlot}` : ''}`}
+      title={reading.title}
+      aria-label={`${pick.year} round ${pick.round}${pick.via ? ` via ${pick.via}` : ''}${
+        reading.number === undefined ? '' : reading.real ? `, pick ${reading.number} overall` : `, projected pick ${reading.number} overall`
+      }`}
       className={`relative overflow-hidden rounded-md border text-left transition-colors ${
         compact ? 'px-2 pt-1 pb-1.5' : 'w-full px-1.5 pt-1 pb-1.5'
       } ${selected ? 'border-accent bg-accent/20' : `${tier.edge} ${tier.wash} hover:bg-raised`}`}
@@ -81,12 +140,20 @@ function PickChip({ pick, selected, showSlot, showVia, compact, onToggle }: {
       <div className={`stat-value leading-none ${compact ? 'text-[13px]' : 'text-[15px]'} ${selected ? 'text-accent' : tier.text}`}>
         R{pick.round}
       </div>
-      {/* Reserved per YEAR rather than per chip: a row where nothing carries a
-          projection stays compact instead of holding open a line for a number
-          that year can never have. */}
+      {/* THE SELECTION, AS AN OVERALL NUMBER. Overall rather than in-round
+          because that is the number a GM trades in — "it is pick 32", not
+          "the 32nd of the first" — and because #32 and #128 can never be
+          mistaken for each other the way two "#32"s in different rounds can.
+          A real one is printed in chalk, a projection in the same accent the
+          rest of the app uses for "this hasn't happened yet"; the title on the
+          chip says which it is in words, off the same number.
+
+          Reserved per YEAR rather than per chip: a row where nothing carries a
+          number stays compact instead of holding open a line for a number that
+          year can never have. */}
       {showSlot && (
-        <div className="mt-1 font-mono text-[10px] leading-none text-chalk/80 min-h-[10px]">
-          {pick.projectedSlot ? `#${pick.projectedSlot}` : ''}
+        <div className={`mt-1 font-mono text-[10px] leading-none min-h-[10px] ${reading.real ? 'text-chalk/80' : 'text-accent2/80'}`}>
+          {reading.number === undefined ? '' : `#${reading.number}`}
         </div>
       )}
       {showVia && (
@@ -206,7 +273,7 @@ export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle
           {years.map((year) => {
             const yearPicks = picks.filter((p) => p.year === year);
             const isNext = year === imminentYear;
-            const showSlot = yearPicks.some((p) => p.projectedSlot);
+            const showSlot = yearPicks.some((p) => p.overall !== undefined || p.projectedOverall !== undefined);
             const showVia = yearPicks.some((p) => p.via);
             const ladder = yearPicks.length > 0 && earnsLadder(yearPicks, rounds, isNext);
             return (
@@ -216,7 +283,13 @@ export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle
                   {isNext && (
                     <div className="mt-1 inline-flex items-center gap-1 text-[9px] leading-none text-accent2 uppercase tracking-wide">
                       Next
-                      <Tooltip text="The next draft to actually run, so these picks carry where they would land if the season ended today. Later years have no standings behind them yet." />
+                      {/* What the numbers on this row ARE, which changes as the
+                          calendar turns: a guess off an unfinished season, the
+                          finished season the order will be stamped from, or —
+                          once it has been — the selections themselves. Read off
+                          the picks rather than passed in, so the sentence and
+                          the chips can never describe different states. */}
+                      <Tooltip text={yearNumbering(yearPicks)} />
                     </div>
                   )}
                 </div>
@@ -235,7 +308,7 @@ export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle
                       // stacked cell reads in the order the picks would be made.
                       const inRound = yearPicks
                         .filter((p) => p.round === i + 1)
-                        .sort((a, b) => (a.projectedSlot ?? 99) - (b.projectedSlot ?? 99));
+                        .sort((a, b) => selectionRank(a) - selectionRank(b));
                       if (inRound.length === 0) {
                         return (
                           <div
@@ -274,7 +347,7 @@ export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle
                   <div className="flex-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 min-h-[26px]">
                     {yearPicks
                       .slice()
-                      .sort((a, b) => a.round - b.round || (a.projectedSlot ?? 99) - (b.projectedSlot ?? 99))
+                      .sort((a, b) => a.round - b.round || selectionRank(a) - selectionRank(b))
                       .map((p) => (
                         <PickChip
                           key={p.id}

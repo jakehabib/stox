@@ -871,7 +871,7 @@ async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng, kin
   return board[0].p;
 }
 
-/** Worst record first, tie-broken by point differential — the real draft-order rule, used both to actually reseed and to project it live mid-season. */
+/** Worst record first, tie-broken by point differential — the real draft-order rule, used to reseed the order for real and to project it (see projectionFor) from whichever standings exist. */
 function standingsOrder<T extends { id: string; wins: number; losses: number; ties: number; pointsFor: number; pointsAgnst: number }>(teams: T[]): T[] {
   return [...teams].sort((a, b) => {
     const pctA = a.wins / Math.max(1, a.wins + a.losses + a.ties);
@@ -931,18 +931,86 @@ export async function reseedDraftOrder(leagueId: string, seasonYear: number) {
 }
 
 /**
- * "If the season ended right now" draft order, by originalTeamId — the same
- * worst-first rule reseedDraftOrder applies at year's end, computed live
- * from whatever wins/losses/points exist at this exact moment. Lets the
- * trade screen show (and price) a current-year pick's likely slot well
- * before the real reseed happens, instead of the meaningless placeholder
- * DraftPick.slot carries until then (it's only ever set once, right before
- * that year's draft).
+ * WHERE EACH CLUB WOULD PICK, AND WHAT THAT NUMBER IS ACTUALLY MADE OF.
+ *
+ * `order` maps a club id to its place in round one (1 = first overall), which
+ * is also its place in every other round — the same worst-first rule
+ * reseedDraftOrder applies for real. `season` names the season the ranking
+ * came from and `live` says whether that season is still being played, and
+ * both exist because a screen that prints the number has to be able to say
+ * where it came from without guessing.
+ */
+export interface DraftOrderProjection {
+  order: Map<string, number>;
+  /** The season whose results this ranking is. */
+  season: number;
+  /** True while that season is still under way — "if the season ended today". */
+  live: boolean;
+}
+
+/**
+ * The projection, from whichever standings actually exist right now.
+ *
+ * THE LIVE TEAM ROWS ARE ONLY HALF THE CALENDAR. `Team.wins/losses/pointsFor/
+ * pointsAgnst` are the season in progress, and RESET_STANDINGS zeroes all four
+ * partway through the offseason (see lib/season.ts) — every club sits at
+ * 0-0-0 from there until week 1 kicks off again. Ranking 32 identical records
+ * returns 0 from every comparison in `standingsOrder` and leaves Array.sort
+ * holding database row order, which is exactly the bug commit c6cad32 found in
+ * the real draft order and the same one that put "#1" on every chip of the
+ * trade screen months later.
+ *
+ * So once the rows are wiped this reads TeamSeasonRecord for the season that
+ * was actually played — the identical source, for the identical year, that
+ * reseedDraftOrder itself uses. That is worth stating plainly: between the
+ * final whistle and the reseed at the end of free agency, this is not a guess
+ * at all. It is the same computation over the same frozen rows, so the number
+ * a GM reads in the re-sign window is the number the draft will run on.
+ *
+ * Null means there is genuinely nothing to say: a brand-new league before its
+ * first kickoff, or a save whose season records are incomplete. Every club
+ * must be present or the sort compares a real record against a missing one,
+ * which is the bug wearing a smaller hat (reseedDraftOrder takes the same
+ * precaution for the same reason).
+ */
+async function projectionFor(leagueId: string, seasonYear: number): Promise<DraftOrderProjection | null> {
+  const teams = await prisma.team.findMany({ where: { leagueId } });
+  if (teams.length === 0) return null;
+  const rank = (sorted: { id: string }[]) => new Map(sorted.map((t, i) => [t.id, i + 1]));
+
+  if (teams.some((t) => t.wins + t.losses + t.ties > 0)) {
+    return { order: rank(standingsOrder(teams)), season: seasonYear, live: true };
+  }
+
+  // Rows wiped: the season that was played is the one before the league year
+  // that just opened, because the seasonYear bump lives in RESET_STANDINGS
+  // alongside the wipe.
+  const played = seasonYear - 1;
+  const records = await prisma.teamSeasonRecord.findMany({
+    where: { leagueId, year: played },
+    select: { teamId: true, wins: true, losses: true, ties: true, pointsFor: true, pointsAgnst: true },
+  });
+  const byTeam = new Map(records.map((r) => [r.teamId, r]));
+  if (!teams.every((t) => byTeam.has(t.id))) return null;
+  return { order: rank(standingsOrder(teams.map((t) => ({ ...t, ...byTeam.get(t.id)! })))), season: played, live: false };
+}
+
+/** The projection on its own, for a caller that already knows which league it is asking about. */
+export async function draftOrderProjection(leagueId: string): Promise<DraftOrderProjection | null> {
+  const league = await prisma.league.findUnique({ where: { id: leagueId }, select: { seasonYear: true } });
+  if (!league) return null;
+  return projectionFor(leagueId, league.seasonYear);
+}
+
+/**
+ * The projected order as a bare map, for callers that only need the ranking
+ * and already know which season they are asking about — the end-of-season
+ * report, which writes "you pick 7th" on the night the last game is played.
+ * Anything that has to LABEL the number wants draftOrderProjection, which also
+ * says which season it came from and whether that season is still running.
  */
 export async function projectedDraftOrder(leagueId: string): Promise<Map<string, number>> {
-  const teams = await prisma.team.findMany({ where: { leagueId } });
-  const order = standingsOrder(teams);
-  return new Map(order.map((t, i) => [t.id, i + 1]));
+  return (await draftOrderProjection(leagueId))?.order ?? new Map();
 }
 
 /**
@@ -959,6 +1027,152 @@ export async function projectedDraftOrder(leagueId: string): Promise<Map<string,
 export async function imminentDraftYear(leagueId: string): Promise<number | null> {
   const next = await prisma.draftPick.findFirst({ where: { leagueId, used: false }, orderBy: { year: 'asc' }, select: { year: true } });
   return next?.year ?? null;
+}
+
+/**
+ * THE ONE DRAFT YEAR WHOSE `DraftPick.slot` IS A REAL SELECTION NUMBER.
+ *
+ * Every pick row is created with a placeholder slot (the club's index in the
+ * generation loop) and keeps it until reseedDraftOrder rewrites the whole year
+ * from the finished season's records. That reseed runs in exactly one place:
+ * the advance out of the last week of free agency, immediately before
+ * startRookieDraft flips the league into the DRAFT phase (lib/season.ts). Two
+ * statements, one line apart, with nothing between them a page can render.
+ *
+ * So `phase === 'DRAFT'` is the test, and `league.seasonYear` is the year it
+ * applies to. Walking the phase machine:
+ *
+ *   PRESEASON..PLAYOFFS   The upcoming draft is seasonYear + 1 and its slots
+ *                         are placeholders. Not DRAFT: null. Correct.
+ *   OFFSEASON, RESIGN,    RESET_STANDINGS has bumped seasonYear so the
+ *   FREE_AGENCY           upcoming draft now WEARS this year's number, but the
+ *                         reseed has still not run. Not DRAFT: null. This is
+ *                         the case a "year === seasonYear" test alone gets
+ *                         wrong, and the reason the answer is the phase.
+ *   DRAFT                 reseedDraftOrder(leagueId, seasonYear) has just run
+ *                         over every round of that year. Real, and it stays
+ *                         real for the whole draft — a pick does not stop
+ *                         being #32 because the clock reached #31.
+ *   PRESEASON after it    The draft is over; the imminent draft is next year's
+ *                         placeholders again. Not DRAFT: null. Correct.
+ *   FANTASY_DRAFT         A blank-roster draft of veterans with no DraftPick
+ *                         rows at all. Not DRAFT: null. Correct.
+ *
+ * Deliberately NOT keyed off DraftState: that row lingers, complete, from last
+ * year's draft for most of the following season (see the draft page), so its
+ * existence says nothing about whether any slot is real.
+ */
+export function seededDraftYear(league: { phase: string; seasonYear: number }): number | null {
+  return league.phase === 'DRAFT' ? league.seasonYear : null;
+}
+
+/** Everything a screen needs to put an honest number on a pick, read once. */
+export interface DraftOrderContext {
+  /** The next draft that will actually run. */
+  imminentYear: number | null;
+  /** The draft year whose stored slots are the real running order, or null. */
+  seededYear: number | null;
+  /** Where each club would pick, and what that is made of. Null when nothing has been played. */
+  projection: DraftOrderProjection | null;
+  /** Picks per round — the "of 32" in a slot, and the multiplier behind an overall number. */
+  roundSize: number;
+}
+
+export async function draftOrderContext(leagueId: string): Promise<DraftOrderContext> {
+  const league = await prisma.league.findUnique({ where: { id: leagueId }, select: { seasonYear: true, phase: true } });
+  const [imminentYear, projection] = await Promise.all([
+    imminentDraftYear(leagueId),
+    league ? projectionFor(leagueId, league.seasonYear) : Promise.resolve(null),
+  ]);
+  return {
+    imminentYear,
+    seededYear: league ? seededDraftYear(league) : null,
+    projection,
+    roundSize: LEAGUE.TEAM_COUNT,
+  };
+}
+
+/**
+ * The numbers one pick is allowed to wear, and the single place that decision
+ * is made.
+ *
+ * A SELECTION NUMBER IS EITHER REAL OR PROJECTED, NEVER BOTH, AND NEVER THE
+ * CLUB'S RANK STAMPED ON EVERY ROUND. The trade screen used to hand every pick
+ * a club owned the club's own standings rank — so a rebuild's R1, R4, R5 and
+ * R7 all printed "#1", and during a live draft (records wiped, sort degenerate)
+ * "#1" meant nothing but "first row back from the database". The app owner,
+ * holding the 32nd selection of the draft: *"it is pick 32 but counting as #1
+ * overall because its the current pick. these should be locked to their value"*.
+ *
+ * Once the order is seeded the pick's OWN slot is what the draft runs on —
+ * currentPick() resolves the club on the clock by (round, slot) — so that is
+ * what gets shown, per round, and no projection is offered beside it. Before
+ * the reseed there is no real number to show and the projection is the honest
+ * read; it is applied per pick off the ORIGINAL club, whose record is what
+ * decides where that pick lands. A year further out gets neither, because
+ * there are no standings behind it to project from.
+ *
+ * `overall` is derived here, from the same slot the chip shows, so a chip
+ * reading "#32" can never sit over a tooltip reading "#1 overall".
+ */
+export interface PickNumbers {
+  /** Real in-round selection number. Only when that draft's order is seeded. */
+  slot?: number;
+  /** Real overall selection number, from the same slot. */
+  overall?: number;
+  /** Projected in-round slot. Only for the imminent draft, before it is seeded. */
+  projectedSlot?: number;
+  /** Projected overall, from the same projected slot. */
+  projectedOverall?: number;
+  /** Where the projection came from, for anything that has to say so in words. */
+  projectedFrom?: { season: number; live: boolean };
+  roundSize: number;
+}
+
+export function pickNumbers(
+  pick: { year: number; round: number; slot: number; originalTeamId: string },
+  ctx: DraftOrderContext,
+): PickNumbers {
+  const overallOf = (slot: number) => (pick.round - 1) * ctx.roundSize + slot;
+  if (ctx.seededYear !== null && pick.year === ctx.seededYear) {
+    return { slot: pick.slot, overall: overallOf(pick.slot), roundSize: ctx.roundSize };
+  }
+  if (projectionAppliesTo(pick.year, ctx) && ctx.projection) {
+    const slot = ctx.projection.order.get(pick.originalTeamId);
+    if (slot !== undefined) {
+      return {
+        projectedSlot: slot,
+        projectedOverall: overallOf(slot),
+        projectedFrom: { season: ctx.projection.season, live: ctx.projection.live },
+        roundSize: ctx.roundSize,
+      };
+    }
+  }
+  return { roundSize: ctx.roundSize };
+}
+
+/**
+ * Does the projection on hand actually describe this draft?
+ *
+ * A PROJECTION HAS TO BE OFF THE SEASON THAT WILL ACTUALLY SEED THAT DRAFT.
+ * Draft year Y is seeded by the season played in Y - 1 (reseedDraftOrder reads
+ * exactly that), so the ranking on hand only describes this draft when its
+ * season is Y - 1. It usually is — during the season, for next spring's draft,
+ * and off the finished season all through the offseason — but between a draft
+ * ending and the next kickoff the imminent draft has jumped a year ahead of the
+ * last season on file, and pinning a two-year-old finish to it would be a
+ * number with nothing behind it. Those picks print no number at all, and the
+ * panel says the order lands after the season that sets it.
+ *
+ * Exported so the year heading and the chips under it are answering the same
+ * question: a year labelled with a projection whose picks all print blank is
+ * the same disagreement in a different place.
+ */
+export function projectionAppliesTo(year: number, ctx: DraftOrderContext): boolean {
+  return ctx.projection !== null
+    && ctx.imminentYear !== null
+    && year === ctx.imminentYear
+    && ctx.projection.season === year - 1;
 }
 
 /**

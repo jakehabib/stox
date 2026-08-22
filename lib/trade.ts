@@ -3,7 +3,7 @@ import { Rng } from './rng';
 import { AI, LEAGUE, TRADE_VALUE, PICK_VALUE_CHART } from './tuning';
 import { parseSettings } from './settings';
 import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, rosterFit, philosophySummary, leagueScarcity, RosterPlayer } from './ai/gm';
-import { projectedDraftOrder, imminentDraftYear } from './draft';
+import { draftOrderContext, type DraftOrderContext } from './draft';
 import { CapMode } from './types';
 import { recordTrade } from './tradeRetro';
 import { unamortizedBonus, formatMoney } from './cap';
@@ -86,16 +86,33 @@ export interface TradeEvaluation {
 const FUTURE_SLOT_REGRESSION = 0.65;
 
 /**
- * DraftPick.slot only ever reflects real standings for a year that's
- * already been reseeded (right before that year's own draft) — before that
- * it's just the placeholder assigned at generation time, unrelated to
- * performance. For the NEXT draft that hasn't happened yet, use the live
- * "if the season ended today" projection instead, so a 0-5 team's 1st
- * actually prices like a 1st, not whatever arbitrary slot it was created
- * with. Every year after that, regress that same projection toward the
- * middle of the round — see FUTURE_SLOT_REGRESSION — because a club's
- * standing decays toward average as you look further out, but does not get
- * there in one season.
+ * WHAT SELECTION THE AI IS ACTUALLY BUYING — the in-round slot pickValue
+ * prices off, which is the same number the screen shows the GM.
+ *
+ * THE SEEDED ORDER WINS OVER EVERY PROJECTION. Once reseedDraftOrder has run
+ * for that year (see seededDraftYear), DraftPick.slot is the running order the
+ * room is being conducted by, per round. Pricing a projection against it was
+ * not merely stale but backwards: during a live draft RESET_STANDINGS has
+ * already wiped the live rows, so the projection collapsed to database row
+ * order and the club holding the 32nd selection was charged for the 1st —
+ * a Jimmy Johnson gap of 3000 points against 590 on the exact same pick the
+ * board was calling #32.
+ *
+ * Before the reseed the stored slot is only the placeholder assigned at
+ * generation time, unrelated to performance, so the projection is the honest
+ * read: a 0-5 club's first prices like a first. Every year after the next one,
+ * that same projection regresses toward the middle of the round — see
+ * FUTURE_SLOT_REGRESSION — because a club's standing decays toward average as
+ * you look further out, but does not get there in one season.
+ *
+ * A NOTE ON WHY THIS IS NOT pickNumbers(). The screen refuses to print a
+ * number it cannot source, so in the gap between a draft ending and the next
+ * kickoff — where the imminent draft has jumped a year ahead of the last
+ * season on file — a chip shows nothing. A valuation cannot refuse: every
+ * asset in a proposal has to have a price. So where the screen goes quiet this
+ * still leans on the most recent finish, which is a stale read of a club but a
+ * far better one than the generation-time placeholder it would otherwise use.
+ * The two agree exactly wherever a number is shown at all.
  *
  * "The next draft" is deliberately identified by `imminentYear` (the
  * smallest year with any unused pick), not by comparing `pick.year` to
@@ -105,9 +122,11 @@ const FUTURE_SLOT_REGRESSION = 0.65;
  * the offseason, before that draft actually runs — so which one is "this
  * season's pick" depends on where in the phase machine the league sits.
  */
-function effectiveSlot(pick: { year: number; slot: number; originalTeamId: string }, imminentYear: number | null, projectedOrder: Map<string, number>): number {
+function effectiveSlot(pick: { year: number; slot: number; originalTeamId: string }, draft: DraftOrderContext): number {
+  if (draft.seededYear !== null && pick.year === draft.seededYear) return pick.slot;
+  const imminentYear = draft.imminentYear;
   if (imminentYear === null) return pick.slot;
-  const projected = projectedOrder.get(pick.originalTeamId) ?? pick.slot;
+  const projected = draft.projection?.order.get(pick.originalTeamId) ?? pick.slot;
   if (pick.year === imminentYear) return projected;
   if (pick.year < imminentYear) return pick.slot;
   const middle = Math.ceil(LEAGUE.TEAM_COUNT / 2);
@@ -124,8 +143,8 @@ async function assetValues(
   currentYear: number,
   /** Seed prefix for per-asset valuation noise — see the block in evaluateTrade. */
   noisePrefix: string,
-  projectedOrder: Map<string, number>,
-  imminentYear: number | null,
+  /** Which draft is next, which one's slots are real, and the standings behind any projection. */
+  draft: DraftOrderContext,
   capMode: CapMode,
   scarcity: Record<string, number>,
   /** The AI club's roster and live cap space — what turns "how good is he" into "what does he do to US". */
@@ -164,7 +183,7 @@ async function assetValues(
       const pick = await prisma.draftPick.findUniqueOrThrow({ where: { id: a.id } });
       each.push({
         label: `${pick.year} Round ${pick.round}`,
-        value: pickValue(pick.round, effectiveSlot(pick, imminentYear, projectedOrder), profile, pick.year, currentYear, imminentYear),
+        value: pickValue(pick.round, effectiveSlot(pick, draft), profile, pick.year, currentYear, draft.imminentYear),
         isPlayer: false,
       });
     }
@@ -304,7 +323,7 @@ export async function evaluateTrade(opts: {
    */
   const profile = parseGmProfile(team.gmProfile, new Rng(`gm-${opts.aiTeamId}-${league.seasonYear}`));
 
-  const [roster, allPlayers, projectedOrder, imminentYear, capSummary] = await Promise.all([
+  const [roster, allPlayers, draft, capSummary] = await Promise.all([
     prisma.player.findMany({
       where: { teamId: opts.aiTeamId },
       select: { id: true, position: true, trueOvr: true, age: true, potential: true },
@@ -312,8 +331,7 @@ export async function evaluateTrade(opts: {
     // One league-wide fetch reused for scarcity across every asset in this
     // trade, not queried per player — see leagueScarcity()'s cost note.
     prisma.player.findMany({ where: { leagueId: team.leagueId, status: 'ACTIVE' }, select: { position: true, trueOvr: true } }),
-    projectedDraftOrder(team.leagueId),
-    imminentDraftYear(team.leagueId),
+    draftOrderContext(team.leagueId),
     capMode === 'OFF' ? Promise.resolve(null) : teamCapSummary(opts.aiTeamId, league.seasonYear, capMode),
   ]);
   const needs = teamNeeds(roster as RosterPlayer[]);
@@ -325,8 +343,8 @@ export async function evaluateTrade(opts: {
 
   // opts.give flows TO the AI => that's what the AI receives.
   // opts.get flows FROM the AI => that's what the AI sends away.
-  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, projectedOrder, imminentYear, capMode, scarcity, club, { side: 'receive', ...spread });
-  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, projectedOrder, imminentYear, capMode, scarcity, club, { side: 'send', ...spread });
+  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, draft, capMode, scarcity, club, { side: 'receive', ...spread });
+  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, draft, capMode, scarcity, club, { side: 'send', ...spread });
   const sendValue = send.total;
   const receiveValue = receive.total;
   const philosophy = philosophySummary(profile);
@@ -903,9 +921,9 @@ export async function maybeGenerateAiTradeOffer(leagueId: string, userTeamId: st
   // roughly covers what it's asking — keeps the ask honest rather than
   // reaching for the user's best future first-rounder every time.
   const currentYear = league.seasonYear;
-  const [projectedOrder, imminentYear] = await Promise.all([projectedDraftOrder(leagueId), imminentDraftYear(leagueId)]);
+  const draft = await draftOrderContext(leagueId);
   const priced = userPicks
-    .map((p) => ({ pick: p, value: pickValue(p.round, effectiveSlot(p, imminentYear, projectedOrder), profile, p.year, currentYear, imminentYear) }))
+    .map((p) => ({ pick: p, value: pickValue(p.round, effectiveSlot(p, draft), profile, p.year, currentYear, draft.imminentYear) }))
     .filter((x) => x.value >= askValue * 0.8)
     .sort((a, b) => a.value - b.value);
   const askPick = priced[0]?.pick ?? userPicks[userPicks.length - 1];

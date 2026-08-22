@@ -17,8 +17,14 @@ export interface TradeRecapAsset {
   /** Picks: the round and year, so the card can draw the board's own chip rather than a word. */
   round?: number;
   year?: number;
-  /** Only ever set for a pick in the next draft to actually run — a later year has no standings to project from. */
-  projectedSlot?: number;
+  /**
+   * The selection, when the pick has one. Real once that draft's order is
+   * seeded, projected while it is still the next draft to run, absent for a
+   * year with no standings behind it — the same three states, off the same
+   * `pickNumbers` call, as the board this card sits under.
+   */
+  overall?: number;
+  projectedOverall?: number;
   /**
    * What his arrival or departure does to YOUR depth chart. Every field is
    * rosterFit's (lib/ai/gm.ts) — the same reading that prices a trade — taken
@@ -123,8 +129,10 @@ function AssetRow({ asset, direction }: { asset: TradeRecapAsset; direction: 'IN
       <div className="min-w-0">
         <div className="text-sm text-chalk truncate">
           {asset.kind === 'PICK' ? (asset.year ?? asset.label) : asset.label}
-          {asset.kind === 'PICK' && asset.projectedSlot ? (
-            <span className="text-muted font-mono text-[11px]"> · proj. #{asset.projectedSlot}</span>
+          {asset.kind === 'PICK' && asset.overall !== undefined ? (
+            <span className="text-chalk font-mono text-[11px]"> · #{asset.overall} overall</span>
+          ) : asset.kind === 'PICK' && asset.projectedOverall !== undefined ? (
+            <span className="text-muted font-mono text-[11px]"> · proj. #{asset.projectedOverall} overall</span>
           ) : null}
         </div>
         {line && <div className="text-[11px] text-muted mt-0.5">{line}</div>}

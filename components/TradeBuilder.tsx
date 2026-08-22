@@ -13,7 +13,7 @@ import { TeamLogo } from './TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { Tooltip } from './Tooltip';
 import { positionBadgeClass } from './ds/positionColor';
-import { TradePickBoard, pickTier } from './ds/TradePickBoard';
+import { TradePickBoard, pickTier, type PickAsset } from './ds/TradePickBoard';
 import { TradeVerdict, AcceptanceMeter } from './ds/TradeVerdict';
 import { TradeRecapCard, type TradeRecapData } from './ds/TradeRecapCard';
 import { IconSwap } from './ds/icons';
@@ -32,12 +32,12 @@ interface RosterP {
   /** Parsed Player.seasonStats — kept as an object (not the raw JSON string) so every row can render production without re-parsing on each sort/filter pass. */
   seasonStats: Record<string, number>;
 }
-/** projectedSlot: where this pick would land "if the season ended today" — only ever set for a current-year pick, since a future year has no standings yet to project from. */
-interface Pick {
-  id: string; year: number; round: number; slot: number; projectedSlot?: number;
-  /** Club it originally belonged to, when that isn't the club holding it — a pick that changed hands is not the same object as one a club has always owned. */
-  via?: string;
-}
+/**
+ * Exactly what the board draws, because it IS what the board draws: the deal
+ * sheet and the pick board must never put two different numbers on one pick.
+ * Every number on it comes off `pickNumbers` (lib/draft.ts) — see PickAsset.
+ */
+type Pick = PickAsset;
 interface Team { id: string; name: string; abbr: string; philosophy?: PhilosophySummary }
 
 /** What the server actions take: an asset by id and kind, nothing else. */
@@ -52,7 +52,7 @@ interface DealItem {
   ovr?: number;
   /** Picks: the round, so the sheet tiers a first away from a seventh exactly as the board does. */
   round?: number;
-  /** Cap consequence for THIS side of the deal, or a pick's projected slot / origin. */
+  /** Cap consequence for THIS side of the deal, or a pick's selection number / origin. */
   sub?: string;
 }
 
@@ -739,9 +739,17 @@ function dealItems(selected: Set<string>, roster: RosterP[], picks: Pick[], side
     }
     const pick = picks.find((x) => x.id === id);
     if (pick) {
+      // The sheet has room for the whole phrase the chip only has room to
+      // abbreviate, and the selection is the first thing about a pick that
+      // matters — the club it came via is the fallback, not the headline.
+      const where = pick.overall !== undefined
+        ? `#${pick.overall} overall`
+        : pick.projectedOverall !== undefined
+        ? `proj. #${pick.projectedOverall}`
+        : undefined;
       chosenPicks.push({
         id, kind: 'PICK', label: `${pick.year} R${pick.round}`, round: pick.round,
-        sub: pick.projectedSlot ? `#${pick.projectedSlot}` : pick.via ? `via ${pick.via}` : undefined,
+        sub: where ?? (pick.via ? `via ${pick.via}` : undefined),
       });
     }
   }
