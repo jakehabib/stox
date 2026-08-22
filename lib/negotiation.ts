@@ -1510,7 +1510,16 @@ export function decideOffer(
   // touches nothing the hidden draw is seeded on.
   const rival = evaluateRival(ctx, gate);
   const rivalInterest = rival?.interest ?? null;
-  const outbid = !blocked && rival !== null && !winsContest(evaluation.interest, rival.interest);
+  const playerBand = signBandFor(ctx, evaluation.interest);
+  // A CONTEST IS BETWEEN TWO OFFERS HE WOULD TAKE. If yours is below the band
+  // — an insult, or under his guarantee floor, or simply not enough — then
+  // losing an auction is not what is wrong with it, and saying so would push
+  // the user at the rival's number when the answer is that he has refused the
+  // deal itself. His own refusal takes precedence, which is also what
+  // `underGuaranteed`'s "no salary closes this" claim requires: a band reading
+  // LOSING would imply money could fix it.
+  const outbid = !blocked && playerBand !== 'NO' && rival !== null
+    && !winsContest(evaluation.interest, rival.interest);
 
   // The three regions, and the hidden draw that resolves the middle one. See
   // the "HE MIGHT SIGN HERE" block above: same seed on both sides of the
@@ -1522,7 +1531,6 @@ export function decideOffer(
   // over a screen also saying he is signing somewhere else. The band is what
   // HAPPENS, so when the rival's package reads better to him, the band says
   // so and the meter has nothing left to contradict.
-  const playerBand = signBandFor(ctx, evaluation.interest);
   const signBand: SignBand = outbid ? 'LOSING' : playerBand;
   const wouldSign = playerBand === 'YES'
     || (playerBand === 'MAYBE' && acceptanceRoll(ctx, offer) < maybeChance(ctx, evaluation.interest));

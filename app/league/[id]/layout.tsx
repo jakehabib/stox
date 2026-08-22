@@ -35,7 +35,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // capComplianceReport wraps teamCapSummary and short-circuits the extra
   // roster scan when the team is compliant, so this is no more work than
   // the plain summary this used to call, and never two of them.
-  const [compliance, workouts, tickerTx, powerItems] = await Promise.all([
+  const [compliance, workouts, tickerTx, powerItems, wireTeamRows] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : capComplianceReport(userTeam.id, league.seasonYear, ctx.settings.capMode),
     // Private workouts are the ONLY scarce thing left in scouting — the
     // consensus board is free and the shortlist costs nothing to work — which
@@ -87,6 +87,9 @@ export default async function LeagueLayout({ children, params }: { children: Rea
     // trade or a firing. A failure here must not 500 every league page, so it
     // degrades to no items.
     powerRankingWireItems(params.id, league).catch(() => []),
+    // Id -> abbr for the wire strip. 32 rows of two columns, on a layout that
+    // already runs four queries; the crest is what turns a name into news.
+    prisma.team.findMany({ where: { leagueId: league.id }, select: { id: true, abbr: true } }),
   ]);
 
   // Write this week's ranking down once, the first time any league page is
@@ -108,7 +111,14 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // Injuries outnumber every other event type by an order of magnitude, so a
   // straight "most recent 14" is a wall of identical injury lines. Round-robin
   // across categories instead — recency still orders within each category.
-  const byCategory = new Map<string, { category: ReturnType<typeof transactionCategory>; headline: string }[]>();
+  // WHOSE NEWS IT IS. The strip read "SIGNING Signed Stellan Millsap /
+  // LEAGUE Released Cassius Sinclair" — a name and a verb, with no club
+  // anywhere, which the app owner called out: "these aren't really useful.
+  // they aren't showing the teams even". Every one of these rows has carried
+  // a teamId all along; only the render dropped it. The crest is identity
+  // (README design principle 2), so it goes in rather than more text.
+  const wireTeams = new Map(wireTeamRows.map((t) => [t.id, t.abbr]));
+  const byCategory = new Map<string, { category: ReturnType<typeof transactionCategory>; headline: string; teamAbbr?: string }[]>();
   // Breaking news only. Round-robin alone still admitted injury reports and
   // "pacing the league" filler, which is what made the ticker read as a wall
   // of identical lines late in a season — one lane counted fourteen items in
@@ -117,7 +127,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   for (const t of wireEligible.filter((x) => isBreakingNews(x.type, x.headline))) {
     const cat = transactionCategory(t.type, t.headline);
     if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat)!.push({ category: cat, headline: t.headline });
+    byCategory.get(cat)!.push({ category: cat, headline: t.headline, teamAbbr: t.teamId ? wireTeams.get(t.teamId) : undefined });
   }
   // Capped, never padded. If four things have happened this season, the wire
   // carries four; if nothing has, it does not render at all (the component
@@ -140,7 +150,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   if (powerItems.length > 0) {
     byCategory.set('POWER', powerItems.map((p) => ({ category: p.category, headline: p.headline })));
   }
-  const tickerItems: { category: ReturnType<typeof transactionCategory>; headline: string }[] = [];
+  const tickerItems: { category: ReturnType<typeof transactionCategory>; headline: string; teamAbbr?: string }[] = [];
   for (let round = 0; round < PER_CATEGORY_CAP && tickerItems.length < 14; round++) {
     let added = false;
     for (const [, rows] of byCategory) {

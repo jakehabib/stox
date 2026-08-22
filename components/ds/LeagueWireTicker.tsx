@@ -1,6 +1,15 @@
 import { CATEGORY_COLOR, type NewsCategory } from './NewsRow';
+import { TeamLogo } from '../TeamLogo';
 
-interface TickerItem { category: NewsCategory; headline: string }
+interface TickerItem {
+  category: NewsCategory;
+  headline: string;
+  /**
+   * The club the row is about. Optional because a few genuinely league-wide
+   * rows have no club — the All-Star announcement, a power-rankings note.
+   */
+  teamAbbr?: string;
+}
 
 /**
  * Ambient, passive flavor only — a scrolling strip of things that already
@@ -28,7 +37,19 @@ export function LeagueWireTicker({ items }: { items: TickerItem[] }) {
       <div className="relative z-[9] w-8 shrink-0 -ml-px bg-gradient-to-r from-surface to-transparent pointer-events-none" />
       <div className="ticker-track flex items-center whitespace-nowrap py-1.5 -ml-8 pl-8">
         {loop.map((item, i) => (
+          // The crest, then the kicker, then the line. "Signed Stellan
+          // Millsap" with no club is a name and a verb; with the crest it is
+          // news about somebody. Rows that genuinely belong to no club just
+          // start at the kicker.
           <span key={i} className="inline-flex items-center gap-1.5 px-4 shrink-0">
+            {item.teamAbbr && (
+              // aria-hidden on the crest: the abbreviation is the very next
+              // node, so without it a screen reader says "TAM TAM".
+              <>
+                <span aria-hidden><TeamLogo seed={item.teamAbbr} abbr={item.teamAbbr} size={14} /></span>
+                <span className="font-semibold text-chalk/80">{item.teamAbbr}</span>
+              </>
+            )}
             <span className={`font-semibold ${CATEGORY_COLOR[item.category]}`}>{item.category}</span>
             <span className="text-muted">{item.headline}</span>
           </span>

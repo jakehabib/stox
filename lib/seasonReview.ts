@@ -941,23 +941,34 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
   }
 
   // --- Available, or not ---------------------------------------------------
-  if (sh.missed >= MISSED_GAMES_BAR && sh.graded.length >= 5 && sh.pct >= 50) {
+  if (sh.missed >= MISSED_GAMES_BAR && sh.graded.length >= 6 && sh.pct >= 50) {
     const hurt = p.injuries.slice().sort((a, b) => b.weeks - a.weeks)[0];
     // Always "the hamstring strain", never "a" — the engine's injury names run
     // from "Hamstring strain" to "MCL sprain" to "Torn ACL", and no indefinite
     // article is right for all three. The definite one is right for all three.
     const cause = hurt ? `the ${softenInjury(hurt.type)} in week ${hurt.week}` : null;
-    const whole: (() => string)[] = sh.fullYear ? [
-      () => `${p.gp} of our ${team.teamGames}${cause ? ` — ${cause} took the rest` : ''}. In the ones he played: ${spoken(pos, p.stats)}.`,
-      () => `We got ${p.gp} games out of him and wanted ${team.teamGames}. ${capitalise(spoken(pos, p.stats))}${cause ? `, with ${cause} in the middle of it` : ''}.`,
+    // "and that took the rest of it" is a claim about WHY he was missing, and
+    // it is only true when this injury actually ran to the end of the schedule
+    // and he never came back. An earlier draft attached it to a week-15 tear on
+    // a man who had already missed two games in October, which the box scores
+    // flatly contradict. Where it is not true the injury is still named — it is
+    // simply named as one of the reasons rather than as the reason.
+    const ranOut = hurt != null
+      && hurt.week + hurt.weeks > team.lastWeek
+      && !p.weeks.some((w) => w.week > hurt.week);
+    const whole: (() => string)[] = sh.fullYear && ranOut && cause ? [
+      () => `${p.gp} of our ${team.teamGames} — ${cause} took the rest of it. In the ones he played: ${spoken(pos, p.stats)}.`,
+      () => `${capitalise(cause)} ended his year in ${p.gp} games. What we had until then was ${spoken(pos, p.stats)}.`,
+    ] : sh.fullYear ? [
+      () => `${p.gp} of our ${team.teamGames}${cause ? `, ${cause} among the reasons` : ''}. In the ones he played: ${spoken(pos, p.stats)}.`,
     ] : [];
     out.push({
       kind: 'MISSED_TIME', shape: sh, margin: (sh.missed - MISSED_GAMES_BAR) / 4,
       line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
       write: (v) => v.pick([
         ...whole,
-        () => `${capitalise(count(sh.missed, 'game'))} on the sideline${cause ? `, starting with ${cause}` : ''}. He was good when he was out there — ${spoken(pos, p.stats)} — which is the frustrating half of it.`,
-        () => `${cause ? `${capitalise(cause)} cost us ${count(sh.missed, 'game')} of him` : `${capitalise(count(sh.missed, 'game'))} unavailable`}. What we did get was ${spoken(pos, p.stats)} in ${p.gp}.`,
+        () => `${capitalise(count(sh.missed, 'game'))} on the sideline${cause ? `, ${cause} the worst of it` : ''}. He was good when he was out there — ${spoken(pos, p.stats)} — which is the frustrating half.`,
+        () => `We had him for ${count(p.gp, 'game')} and lost him for ${count(sh.missed, 'other', 'others')}${cause ? ` (${softenInjury(hurt!.type)}, week ${hurt!.week})` : ''}. Those ${p.gp} came to ${spoken(pos, p.stats)}.`,
       ])(),
     });
   }
@@ -1137,6 +1148,38 @@ export function buildReview(input: ReviewInput): SeasonReview {
 // Loading it out of the database
 // ---------------------------------------------------------------------------
 
+/** How far a club got, in the order the rounds are played. */
+const ROUND_ORDER = ['WILDCARD', 'DIVISIONAL', 'CONFERENCE', 'FINAL'];
+
+/**
+ * Record, points and ending, summed off the club's own games. Self-consistent
+ * by construction: the sentence the recap opens with is built from the same
+ * rows every other number in it comes from.
+ */
+function seasonShape(
+  games: { kind: string; homeTeamId: string; homeScore: number; awayScore: number }[],
+  teamId: string,
+): Pick<ReviewTeamYear, 'wins' | 'losses' | 'ties' | 'pointsFor' | 'pointsAgnst' | 'playoffResult'> {
+  let wins = 0, losses = 0, ties = 0, pointsFor = 0, pointsAgnst = 0;
+  let deepest = -1, wonFinal = false;
+  for (const g of games) {
+    const home = g.homeTeamId === teamId;
+    const mine = home ? g.homeScore : g.awayScore;
+    const theirs = home ? g.awayScore : g.homeScore;
+    if (g.kind === 'REGULAR') {
+      pointsFor += mine; pointsAgnst += theirs;
+      if (mine > theirs) wins++; else if (mine < theirs) losses++; else ties++;
+      continue;
+    }
+    const round = ROUND_ORDER.indexOf(g.kind);
+    if (round > deepest) { deepest = round; wonFinal = g.kind === 'FINAL' && mine > theirs; }
+  }
+  const playoffResult = deepest < 0 ? 'MISSED'
+    : deepest === 3 ? (wonFinal ? 'CHAMPION' : 'RUNNER_UP')
+    : ROUND_ORDER[deepest];
+  return { wins, losses, ties, pointsFor, pointsAgnst, playoffResult };
+}
+
 /** Percentile of `v` within `pool`, or null when the pool is too small to mean anything. */
 function percentileIn(pool: number[], v: number): number | null {
   if (pool.length < 12) return null;
@@ -1159,12 +1202,11 @@ export async function buildSeasonReview(
   teamId: string,
   seasonYear: number,
 ): Promise<SeasonReview | null> {
-  const [team, record, games, leagueRow] = await Promise.all([
+  const [team, games, leagueRow] = await Promise.all([
     prisma.team.findUnique({ where: { id: teamId }, select: { abbr: true } }),
-    prisma.teamSeasonRecord.findUnique({ where: { teamId_year: { teamId, year: seasonYear } } }),
     prisma.game.findMany({
       where: { leagueId, seasonYear, played: true, OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }] },
-      select: { week: true, kind: true, homeTeamId: true, boxScore: true },
+      select: { week: true, kind: true, homeTeamId: true, homeScore: true, awayScore: true, boxScore: true },
       orderBy: { week: 'asc' },
     }),
     prisma.league.findUnique({ where: { id: leagueId }, select: { settings: true } }),
@@ -1304,16 +1346,17 @@ export async function buildSeasonReview(
     });
   }
 
+  // The club's own year, counted off its own games rather than read out of
+  // TeamSeasonRecord. Two reasons, and the second one is the real one: the
+  // record row can be absent for a season a save simmed through, and it can
+  // disagree with the schedule (this database holds 15-2 clubs filed as having
+  // missed the postseason). A recap whose opening sentence argues with the
+  // games underneath it is worse than no opening sentence.
   return buildReview({
     team: {
       seasonYear,
       teamAbbr: team.abbr,
-      wins: record?.wins ?? 0,
-      losses: record?.losses ?? 0,
-      ties: record?.ties ?? 0,
-      pointsFor: record?.pointsFor ?? 0,
-      pointsAgnst: record?.pointsAgnst ?? 0,
-      playoffResult: record?.playoffResult ?? 'MISSED',
+      ...seasonShape(games, teamId),
       teamGames,
       lastWeek: lastWeek || 17,
     },

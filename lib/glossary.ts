@@ -302,7 +302,7 @@ export const GLOSSARY = {
   consensusBoard: {
     term: 'Consensus board',
     definition: 'How the league as a whole rates this draft class. Free, public, and identical for every front office.',
-    why: 'Your edge is not having it — everyone does. Your edge is knowing where it is wrong, and it is wrong in named, visible ways: it over-trusts a stopwatch, it takes a big programme at its word, it marks down anyone unfinished or medically flagged.',
+    why: 'Your edge is not having it — everyone does. It is knowing where it is wrong, and it is wrong in named, visible ways: it over-trusts a stopwatch, takes a big programme at its word, and marks down anyone unfinished or flagged.',
   },
   boardGrade: {
     term: 'Board grade',
@@ -316,12 +316,12 @@ export const GLOSSARY = {
   positionalValue: {
     term: 'Positional value',
     definition: 'How much a position is worth relative to its raw rating. A quarterback, edge rusher or left tackle is worth more than an equally-good running back, because the job decides more games.',
-    why: 'It is why a lower-graded prospect can sit above a higher-graded one on the board, and why an evenly-rated running back is the cheapest player in football to sign.',
+    why: 'It is why a lower-graded prospect sits above a higher-graded one on the board, and why an evenly-rated running back is the cheapest player in football to sign.',
   },
   pickValue: {
     term: 'Pick value',
     definition: 'What a draft pick is worth in trade. The curve is steep at the top — the first pick is worth far more than the fifth, and a whole late round is worth less than one early selection.',
-    why: 'Picks in future years are discounted, which is why a rebuilding club will take three next-year picks for one this year and a contender will do the exact opposite.',
+    why: 'Future years are discounted, which is why a rebuilding club takes three next-year picks for one this year and a contender does the opposite.',
   },
   draftHitRate: {
     term: 'Draft hit rate',
@@ -414,7 +414,7 @@ export const GLOSSARY = {
   teamOverall: {
     term: 'Team overall',
     definition: 'One number for how good a roster is — the players who actually take the field at each unit, weighted by how much that unit decides games.',
-    why: 'It counts starters, not squad size: you are not worse at receiver for carrying a seventh one. Quarterback carries about a fifth of it on its own, which is roughly what the position is worth in the sport.',
+    why: 'It counts starters, not squad size — you are not worse at receiver for carrying a seventh one. Quarterback alone is worth about a fifth of it.',
   },
   unitRating: {
     term: 'Unit rating',
@@ -444,7 +444,7 @@ export const GLOSSARY = {
   srs: {
     term: 'Adjusted margin (SRS)',
     definition: 'Average scoring margin corrected for the strength of the teams that produced it, so beating good clubs counts for more than beating bad ones.',
-    why: 'Roughly twenty points covers the whole span from the best team in the league to the worst, so a ten-point gap makes the weaker side about a one-in-four proposition. Any single blowout is capped at three scores — one wild Sunday cannot carry a season.',
+    why: 'Twenty points covers the span from the best team in the league to the worst, so a ten-point gap makes the weaker side about a one-in-four shot. No single game counts for more than three scores.',
   },
   strengthOfSchedule: {
     term: 'Strength of schedule',
@@ -546,7 +546,7 @@ export const GLOSSARY = {
   dynastyScore: {
     term: 'Dynasty score',
     definition: 'One number for a franchise\'s whole body of work — titles, playoff runs, win rate, draft record, cap discipline, individual awards and league records held.',
-    why: 'Championships dominate it, at 25 points each against 5 for a playoff trip. Everything on the list is visible in the breakdown, so a club can always see exactly why its number is what it is.',
+    why: 'Championships dominate it, at 25 points each against 5 for a playoff trip. The breakdown is on the row, so a club can see exactly why its number is what it is.',
   },
   gmLevel: {
     term: 'Dynasty level',
