@@ -67,11 +67,11 @@ function chipsFor(row: FeedRow): Chip[] {
 /**
  * EVERY PICK, NEWEST FIRST, WITH THE ONE THING THAT MAKES IT LAND.
  *
- * What the draft page shows today is the transaction headline — a line of grey
- * text per pick, in the order they were written. That tells you a name and a
- * club. It does not tell you the thing you are actually watching for: that the
- * man you had sixth just went thirty-first, that the club two picks ahead of
- * you took the tackle, that the run is on.
+ * What this replaced was the transaction headline — a line of grey text per
+ * pick, in the order they were written. That tells you a name and a club. It
+ * does not tell you the thing you are actually watching for: that the man you
+ * had sixth just went thirty-first, that the club two picks ahead of you took
+ * the tackle, that the run is on.
  *
  * So every row carries the pick AND what it did to your draft. The chips are
  * capped at two — this is a feed to be scanned during a five-second clock, not

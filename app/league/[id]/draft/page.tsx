@@ -1179,25 +1179,21 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       {broadcast && (
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
           <div className="xl:col-span-8 space-y-5">
-            {selection ? (
-              <TheSelection data={selection} />
-            ) : (
-              <div className="panel p-6">
-                <h2 className="section-title">Nobody Is Off The Board Yet</h2>
-                <p className="text-sm text-muted mt-2 max-w-xl">
-                  The first name in the {league.seasonYear} draft goes in on the next clock. Until then the
-                  board below is the whole class, exactly as your department left it.
-                </p>
-              </div>
-            )}
+            {/* Before the first card goes in there is no pick to put on screen
+                and no run to detect, and the feed beside this says so already.
+                Two panels apologising for an empty draft is one more than the
+                moment deserves — the war room simply takes the width. */}
+            {selection && <TheSelection data={selection} />}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
-              <RunWatch
-                entries={runEntries}
-                windowSize={runWindow.length || RUN_WINDOW}
-                order={windowPositions}
-                complete={bcastComplete}
-              />
+            <div className={`grid grid-cols-1 gap-5 items-stretch ${madePicks.length > 0 ? 'lg:grid-cols-2' : ''}`}>
+              {madePicks.length > 0 && (
+                <RunWatch
+                  entries={runEntries}
+                  windowSize={runWindow.length || RUN_WINDOW}
+                  order={windowPositions}
+                  complete={bcastComplete}
+                />
+              )}
               <WarRoomPanel
                 picks={warRoomPicks}
                 needs={needList}
@@ -1280,16 +1276,23 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             window's own sentence now sit directly above the men a slot would
             be spent on, and the row control appears in the column on the
             right whenever the window is open. */}
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 -mt-1">
-          <span className="label-sm">Private Workouts</span>
-          <span className={`text-sm font-semibold ${workoutSlots.remaining === 0 ? 'text-muted' : 'text-gold'}`}>
-            {workoutSlots.remaining} of {workoutSlots.max} left
-          </span>
-          <span className="text-xs text-muted">{workoutSlots.windowLabel}</span>
-          {workoutSlots.open && workoutSlots.remaining > 0 && (
-            <span className="text-xs text-muted">Fly a man in from his row.</span>
-          )}
-        </div>
+        {/* Not in the war room. The panel above is already speaking about
+            unspent workouts there, in its own words and at the moment they
+            stop being spendable, and a second line under the board repeating
+            the ledger in different language would be the page arguing with
+            itself on the one screen where the point is urgency. */}
+        {!warRoom && (
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 -mt-1">
+            <span className="label-sm">Private Workouts</span>
+            <span className={`text-sm font-semibold ${workoutSlots.remaining === 0 ? 'text-muted' : 'text-gold'}`}>
+              {workoutSlots.remaining} of {workoutSlots.max} left
+            </span>
+            <span className="text-xs text-muted">{workoutSlots.windowLabel}</span>
+            {workoutSlots.open && workoutSlots.remaining > 0 && (
+              <span className="text-xs text-muted">Fly a man in from his row.</span>
+            )}
+          </div>
+        )}
 
         {/* Capped and scrolled. During a draft this table sits under a whole
             broadcast and eighty rows would push the page to four screens; out

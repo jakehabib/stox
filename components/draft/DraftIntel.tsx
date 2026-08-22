@@ -25,8 +25,9 @@ export interface RunEntry {
  *
  * Six receivers in eleven picks is not trivia — it is the room telling you
  * that the eighth-best receiver is about to be taken at a first-round price
- * and the second-best guard is about to fall to you. Nothing on the draft page
- * says it today; you would have to read twelve transaction headlines and count.
+ * and the second-best guard is about to fall to you. Nothing said it before
+ * this panel existed; you would have read twelve transaction headlines and
+ * counted.
  *
  * A run only earns a line when it is a run (three at one position inside the
  * window). Below that the panel says the quiet thing outright rather than
@@ -142,10 +143,13 @@ export interface PositionStock {
 /**
  * WHAT IS LEFT, BY POSITION — the answer to "should I reach for a tackle."
  *
- * Measured against the board's own day-two line rather than the whole class,
- * because the whole class always has forty tackles in it and that number
- * answers nothing. Two tackles left with a day-two grade and four rounds to go
- * is the fact that makes a GM take one early.
+ * The caller decides what pool is counted and says so in `tierLabel`. While a
+ * draft is running that pool is the board's own day-two line, not the whole
+ * class: the class always has forty tackles in it and that number answers
+ * nothing, whereas two tackles left with a day-two grade and four rounds to go
+ * is the fact that makes a GM take one early. Once every pick is in, that tier
+ * is empty by definition and the caller widens the pool to the whole class —
+ * which is the list priority free agency is about to be worked from.
  */
 export function BoardDepletion({ stock, tierLabel }: { stock: PositionStock[]; tierLabel: string }) {
   const widest = Math.max(1, ...stock.map((s) => s.gone + s.left));

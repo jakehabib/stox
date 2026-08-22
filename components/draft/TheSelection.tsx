@@ -60,9 +60,9 @@ export interface SelectionCardData {
 /**
  * THE PICK THAT IS ON SCREEN RIGHT NOW.
  *
- * The draft page has a selection card and it is a good one, but it fires for
- * exactly one pick a year — the GM's own. Every other name in the draft
- * arrives as a row of grey text at the bottom of the page reading "Kansas City
+ * The page already had a selection card and it is a good one, but it fires for
+ * exactly one pick a year — the GM's own (DraftMoment). Every other name in the
+ * draft used to arrive as a row of grey text at the bottom reading "Kansas City
  * selects...". This is the same ceremony extended to all 224 of them, because
  * the other clubs' picks are the part of draft day you actually watch.
  *
