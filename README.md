@@ -1860,3 +1860,36 @@ ever force-pushed over, so every state below still exists in git history).
   everyone else. Clubs reading as below par went from 3–7% to 27–54%, and an 83
   quarterback fetches a first from 7 clubs where it fetched one from a single
   club. Commit `b7cf876`.
+- **2026-08-22 — The next draft is itemised pick by pick.** YOUR PICKS
+  collapsed any draft without selection numbers into one line — "7 picks —
+  R1–R7" — which hides the two things you plan around: that a round is doubled
+  up and that a round is gone. The qualifier for a ladder was numbers; it is
+  now imminence. The imminent draft gets a row per pick whether or not its
+  order has been seeded; drafts beyond it keep the dense summary the trade hub
+  uses. A row with no selection number prints none rather than a dash. Commit
+  `876b0a0`.
+- **2026-08-22 — A linebacker is not an edge rusher.** `TRADE_VALUE_TIER`
+  priced EDGE, DT and LB identically while the pay table beside it priced an
+  off-ball linebacker at 0.73 against an edge rusher's 1.47. LB drops to MID:
+  an 84 LB costs a second rather than a first, and a 92 LB that was not for
+  sale at any package comes back a first. The split made
+  `assertNoProfitableConversion` load-bearing for the first time (proved
+  non-vacuous three ways) and exposed a second defect: `potential` was left
+  untouched on a position change, and since the market prices rating AND
+  ceiling that refunded ~63% of the conversion charge immediately —
+  progression returned the rest within two seasons. The ceiling now moves with
+  the rating by the same signed delta; the runway is preserved exactly and the
+  move stays reversible. Profitable conversions 227 → 6,055 (split alone) →
+  763 (ceiling travelling). The offensive line stays PREMIUM deliberately:
+  LT/LG/C/RG/RT weight the identical five attributes, so any split there is
+  profitable at 61 OVR. Commit `3fd5382`.
+- **2026-08-22 — Three screens that hid their own answer.** A prospect's card
+  had a shortlist control nobody could find (a bare star captioned "Star to
+  have him watched", inside the scouting band, gone once he was fully
+  revealed) — it is now a named pill in the hero beside his name, on any
+  draftee. Free agency's depth comparison listed five men and not one dollar
+  while its sibling on the re-sign screen has always shown the money; it now
+  carries cap hit, years left, and what the position already costs you.
+  And arriving from a negotiation — free agency's Negotiate, or the new link
+  out of the re-sign row — opens the card on the contract rather than on his
+  receiving numbers. Commit `418edea`.
