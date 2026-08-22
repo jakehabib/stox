@@ -246,8 +246,22 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
             Cap Management
             <Tooltip text={tip('deadMoney')} />
           </div>
-          <div className="text-sm text-muted">Average dead money per season</div>
-          <div className="stat-value text-stat-md mt-1">{formatMoney(s.avgDeadMoneyPerYear)}</div>
+          {/* "$0 a season" over an empty ledger is a compliment nobody
+              earned. Nothing on record is a different statement from a clean
+              sheet, and the tile says which one it is looking at. */}
+          {s.deadMoneyYears > 0 ? (
+            <>
+              <div className="text-sm text-muted">
+                Dead money per season, across {s.deadMoneyYears} year{s.deadMoneyYears === 1 ? '' : 's'} on the books
+              </div>
+              <div className="stat-value text-stat-md mt-1">{formatMoney(s.avgDeadMoneyPerYear)}</div>
+            </>
+          ) : (
+            <>
+              <div className="text-sm text-muted">Dead money per season</div>
+              <div className="stat-value text-stat-md mt-1 text-muted">None on the books</div>
+            </>
+          )}
         </div>
         <div className="panel p-4">
           <div className="label-sm mb-3">Best Season</div>

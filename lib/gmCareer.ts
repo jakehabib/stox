@@ -68,6 +68,12 @@ export interface GmCareerSummary {
   draftHits: number;
   draftHitRate: number | null;
   avgDeadMoneyPerYear: number;
+  /**
+   * Seasons the cap ledger actually holds a charge for. 0 means nothing is on
+   * record — which is NOT the same as a clean sheet, and is why the average
+   * above must never be read without it.
+   */
+  deadMoneyYears: number;
   tagsUsed: number;
   /**
    * The best player this GM has drafted — highest current rating out of the
@@ -223,22 +229,41 @@ export async function buildGmCareerSummary(
   // Below 5 picks the hit rate is too noisy to badge off of either way.
   const draftHitRate = draftPicksMade >= 5 ? draftHits / draftPicksMade : null;
 
+  /**
+   * DIVIDED BY THE YEARS THE LEDGER ACTUALLY COVERS, NOT BY THE TENURE.
+   *
+   * `expireStaleCapCharges` (lib/season.ts) deletes every CapCharge dated
+   * before the current season, so this table is a live sheet a year or two
+   * deep — never a career's worth. Dividing it by `tenureYears` therefore
+   * spread one year of dead money across ten and called the answer an
+   * average, which is how a long tenure earned "Cap Wizard" almost by
+   * standing still. Same defect, same week, as the dynasty score's
+   * cap-discipline term.
+   *
+   * `deadMoneyYears` travels with it because an EMPTY ledger is not a clean
+   * sheet, it is no evidence — and 188 of 197 user clubs in this database
+   * have one. Zero-over-zero read as "$0 a year", which is the badge's whole
+   * threshold, so the compliment was unconditional for anybody two seasons
+   * in. Anything that judges a GM on this has to check there is something to
+   * judge; see computeBadges.
+   */
   const deadMoneyByYear = new Map<number, number>();
   for (const c of capCharges) deadMoneyByYear.set(c.year, (deadMoneyByYear.get(c.year) ?? 0) + c.amount);
+  const deadMoneyYears = deadMoneyByYear.size;
   const avgDeadMoneyPerYear =
-    tenureYears > 0 ? [...deadMoneyByYear.values()].reduce((a, b) => a + b, 0) / tenureYears : 0;
+    deadMoneyYears > 0 ? [...deadMoneyByYear.values()].reduce((a, b) => a + b, 0) / deadMoneyYears : 0;
 
   const awards: GmAward[] = awardTx.map((t) => ({ label: AWARD_LABEL[t.type] ?? t.type, detail: t.headline, year: t.seasonYear }));
 
   const badges = computeBadges({
     tenureYears, wins, losses, championships, playoffAppearances, trades,
-    draftHitRate, draftPicksMade, avgDeadMoneyPerYear, tagsUsed: tagCount, awardsCount: awards.length,
+    draftHitRate, draftPicksMade, avgDeadMoneyPerYear, deadMoneyYears, tagsUsed: tagCount, awardsCount: awards.length,
     allStarPlayers: allStars.players, allStarSelections: allStars.selections,
   });
 
   return {
     tenureYears, firstYear, wins, losses, ties, playoffAppearances, championships, runnerUps, bestSeason,
-    trades, draftPicksMade, draftHits, draftHitRate, avgDeadMoneyPerYear, tagsUsed: tagCount, signaturePick, awards,
+    trades, draftPicksMade, draftHits, draftHitRate, avgDeadMoneyPerYear, deadMoneyYears, tagsUsed: tagCount, signaturePick, awards,
     allStars, badges,
   };
 }
@@ -246,6 +271,8 @@ export async function buildGmCareerSummary(
 function computeBadges(s: {
   tenureYears: number; wins: number; losses: number; championships: number; playoffAppearances: number;
   trades: number; draftHitRate: number | null; draftPicksMade: number; avgDeadMoneyPerYear: number;
+  /** Seasons the cap ledger actually covers. Zero is no evidence, not a clean sheet. */
+  deadMoneyYears: number;
   tagsUsed: number; awardsCount: number; allStarPlayers: number; allStarSelections: number;
 }): GmBadge[] {
   const badges: GmBadge[] = [];
@@ -270,7 +297,10 @@ function computeBadges(s: {
     }
   }
 
-  if (s.tenureYears >= 2) {
+  // Two years of tenure is not two years of evidence. An empty ledger averages
+  // to $0, which clears the Cap Wizard bar without a single decision behind
+  // it, so the badge asks for seasons that actually carry a charge.
+  if (s.tenureYears >= 2 && s.deadMoneyYears >= 2) {
     if (s.avgDeadMoneyPerYear < 3_000_000) {
       badges.push({ icon: '🧮', title: 'Cap Wizard', blurb: `Averaging under $3M in dead money a year — a clean cap sheet.` });
     } else if (s.avgDeadMoneyPerYear > 15_000_000) {
