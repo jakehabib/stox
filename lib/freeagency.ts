@@ -268,7 +268,40 @@ export async function signFreeAgent(opts: {
     // yearsUnsigned resets the moment somebody signs him — it only counts
     // CONSECUTIVE years on the street (see progressFreeAgents in
     // lib/development.ts, which rolls attrition off it).
-    await tx.player.update({ where: { id: playerId }, data: { teamId, status: 'ACTIVE', yearsUnsigned: 0 } });
+    /**
+     * HE HAS TO STILL BE A FREE AGENT, AND THIS IS THE ONLY PLACE THAT CAN
+     * PROVE IT.
+     *
+     * This was `player.update` by id, which signs whoever the id names — and
+     * the very next line deletes his existing contract. Pointed at a man on
+     * another club's roster it took him for nothing: no dead money, no CUT,
+     * nothing on the wire, the old club simply lost him. The negotiation
+     * fingerprint is not a guard against this, it is a one-click delay: it
+     * refuses once and hands back a FRESH session, which the panel adopts, so
+     * the second click goes through. Measured: 3 of 3 rostered players taken
+     * that way, and the same defect aimed at your own club wrote two SIGN rows
+     * for one man, the second tearing up the deal from seconds earlier.
+     *
+     * The WHERE is the free-agent pool's own definition (see the queries
+     * above: FREE_AGENT / no team / not a draftee), so this claim is exactly
+     * "is he still one of the men the market says are available", answered
+     * atomically at the moment of the write rather than read minutes earlier
+     * on a page that has since gone stale.
+     */
+    const claimed = await tx.player.updateMany({
+      where: { id: playerId, leagueId: opts.leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+      data: { teamId, status: 'ACTIVE', yearsUnsigned: 0 },
+    });
+    if (claimed.count === 0) {
+      const now = await tx.player.findUnique({
+        where: { id: playerId },
+        select: { firstName: true, lastName: true, team: { select: { city: true, nickname: true } } },
+      });
+      const name = now ? `${now.firstName} ${now.lastName}` : 'That player';
+      throw new Error(now?.team
+        ? `${name} signed with the ${now.team.city} ${now.team.nickname} while you were deciding.`
+        : `${name} is no longer a free agent.`);
+    }
     await tx.contract.deleteMany({ where: { playerId } });
     // Signing ENDS every negotiation about him, including the ones he is not
     // party to. This is one of the two things that reset persisted patience

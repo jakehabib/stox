@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { assertLeagueOwner, assertTeamOwner } from '@/lib/owner';
+import { assertLeagueOwner, assertTeamOwner, assertPlayerOnUserTeam, userTeamId } from '@/lib/owner';
 import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFranchiseTag, fillRosterForTeam, resolveNegotiationSession, negotiateOffer } from '@/lib/freeagency';
 import { decideOffer, type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer } from '@/lib/negotiation';
 import { parseSettings } from '@/lib/settings';
@@ -14,12 +14,28 @@ import { readJson, writeJson } from '@/lib/json';
 import { AttrMap, positionMove, canChangePositionTo, relatedPositions } from '@/lib/ratings';
 import { canonicalPosition, Position } from '@/lib/tuning';
 
-export async function cutPlayerAction(leagueId: string, playerId: string) {
+/**
+ * Releasing a player is a foreseeable failure — he is already gone, somebody
+ * clicked twice, a second tab got there first — and this used to let those
+ * escape as a raw throw. Neither consumer showed anything: the Re-sign row
+ * awaits it with no catch (an unhandled rejection), and CutButton's
+ * ActionButton catches, returns to idle and says nothing at all, so the user
+ * pressed Release, watched the button reset, and was told nothing. Its
+ * neighbours applyFranchiseTagAction and restructureContractAction already
+ * return {ok, message}; this now matches them.
+ */
+export async function cutPlayerAction(leagueId: string, playerId: string): Promise<{ ok: boolean; message: string }> {
   await assertLeagueOwner(leagueId);
-  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  const settings = parseSettings(league.settings);
-  await cutPlayerLib({ leagueId, playerId, capMode: settings.capMode, seasonYear: league.seasonYear, week: league.week });
+  try {
+    await assertPlayerOnUserTeam(leagueId, playerId);
+    const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+    const settings = parseSettings(league.settings);
+    await cutPlayerLib({ leagueId, playerId, capMode: settings.capMode, seasonYear: league.seasonYear, week: league.week });
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'That release could not be completed.' };
+  }
   revalidatePath(`/league/${leagueId}`, 'layout');
+  return { ok: true, message: 'Released.' };
 }
 
 export interface CutImpact {
@@ -104,9 +120,13 @@ export async function fillRosterAction(leagueId: string, teamId: string) {
  * one thing that would kill the feel this feature exists for.
  */
 export async function openNegotiationAction(
-  leagueId: string, playerId: string, teamId: string,
+  leagueId: string, playerId: string, _teamId: string,
 ): Promise<NegotiationSession> {
   await assertLeagueOwner(leagueId);
+  // WHICH CLUB IS SIGNING HIM IS NOT THE CLIENT'S TO SAY. This took a teamId
+  // off the wire and opened talks on behalf of whatever club it named. The
+  // parameter is kept so the call sites don't change, and ignored.
+  const teamId = await userTeamId(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   return resolveNegotiationSession({
@@ -130,10 +150,12 @@ export async function openNegotiationAction(
  * about.
  */
 export async function submitOfferAction(
-  leagueId: string, playerId: string, teamId: string,
+  leagueId: string, playerId: string, _teamId: string,
   offer: Offer, structure: DealStructure, fingerprint: string,
 ): Promise<NegotiationOutcome> {
   await assertLeagueOwner(leagueId);
+  // Derived, never accepted — see openNegotiationAction above.
+  const teamId = await userTeamId(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const outcome = await negotiateOffer({
@@ -187,6 +209,8 @@ export async function submitOfferAction(
 
 export async function applyFranchiseTagAction(leagueId: string, playerId: string) {
   await assertLeagueOwner(leagueId);
+  try { await assertPlayerOnUserTeam(leagueId, playerId); }
+  catch (err) { return { ok: false, message: err instanceof Error ? err.message : 'Not your player.' }; }
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   if (!settings.franchiseTagEnabled) return { ok: false, message: 'Franchise tags are disabled in league settings.' };
@@ -202,6 +226,8 @@ export async function applyFranchiseTagAction(leagueId: string, playerId: string
 
 export async function restructureContractAction(leagueId: string, playerId: string, convertAmount: number, addVoidYears: number) {
   await assertLeagueOwner(leagueId);
+  try { await assertPlayerOnUserTeam(leagueId, playerId); }
+  catch (err) { return { ok: false, message: err instanceof Error ? err.message : 'Not your player.' }; }
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   try {

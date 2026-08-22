@@ -37,6 +37,7 @@ export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: 
   const [confirming, setConfirming] = useState(false);
   const [impact, setImpact] = useState<CutImpact | null>(null);
   const [loading, setLoading] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
   const router = useRouter();
 
   const beginConfirm = async () => {
@@ -116,6 +117,8 @@ export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: 
         <p className="text-xs text-warn">You are still over the salary cap after this move.</p>
       )}
 
+      {failure && <p className="text-xs text-bad">{failure}</p>}
+
       <div className="flex gap-2">
         <ActionButton
           className="btn-danger flex-1"
@@ -127,11 +130,15 @@ export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: 
           // fills the navigation that was happening anyway.
           doneLabel={impact && impact.capEnabled && impact.savings > 0 ? `Released — ${formatMoney(impact.savings)} freed` : 'Released'}
           onAction={async () => {
-            await cutPlayerAction(leagueId, playerId);
+            // Returning false suppresses the success beat — a refusal must not
+            // be dressed as an achievement — and the message goes on screen
+            // instead of vanishing into ActionButton's catch.
+            const result = await cutPlayerAction(leagueId, playerId);
+            if (!result.ok) { setFailure(result.message); return false; }
             router.push(`/league/${leagueId}/roster`);
           }}
         />
-        <button onClick={() => { setConfirming(false); setImpact(null); }} className="btn-ghost">Cancel</button>
+        <button onClick={() => { setConfirming(false); setImpact(null); setFailure(null); }} className="btn-ghost">Cancel</button>
       </div>
     </div>
   );

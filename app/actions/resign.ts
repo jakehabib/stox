@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { assertLeagueOwner } from '@/lib/owner';
+import { assertLeagueOwner, assertPlayerOnUserTeam } from '@/lib/owner';
 import { parseSettings } from '@/lib/settings';
 import { resignDecisionsForTeam } from '@/lib/season';
 import { Rng } from '@/lib/rng';
@@ -63,6 +63,7 @@ export async function openResignNegotiationAction(
   leagueId: string, playerId: string,
 ): Promise<NegotiationSession> {
   await assertLeagueOwner(leagueId);
+  await assertPlayerOnUserTeam(leagueId, playerId);
   await assertResignable(playerId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
@@ -83,6 +84,7 @@ export async function submitResignOfferAction(
   offer: Offer, structure: DealStructure, fingerprint: string,
 ): Promise<NegotiationOutcome> {
   await assertLeagueOwner(leagueId);
+  await assertPlayerOnUserTeam(leagueId, playerId);
   await assertResignable(playerId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);

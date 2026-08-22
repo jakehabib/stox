@@ -116,8 +116,13 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   };
 
   const notResign = () => {
+    setTagMessage(null);
     startTransition(async () => {
-      await cutPlayerAction(leagueId, playerId);
+      // A release can legitimately fail — he is already gone, or a second tab
+      // got there first. This used to await a promise that threw and say
+      // nothing at all, which read as the button doing nothing.
+      const result = await cutPlayerAction(leagueId, playerId);
+      if (!result.ok) { setTagMessage(result.message); return; }
       router.refresh();
     });
   };

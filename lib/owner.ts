@@ -192,6 +192,51 @@ export async function assertTeamOwner(teamId: string): Promise<void> {
   await assertLeagueOwner(team.leagueId);
 }
 
+/**
+ * OWNING THE SAVE IS NOT OWNING THE PLAYER.
+ *
+ * assertLeagueOwner proves the caller may act on THIS league. It says nothing
+ * about which player id they then passed, and a Server Action is a POST — the
+ * hidden button on the screen protects nothing. Six contract actions stopped
+ * at the league check, so from a save he legitimately owned a caller could cut
+ * a rival club's best player, franchise-tag him, restructure his deal, or
+ * extend him: measured, a 99 receiver on Baltimore was extended, his bonus
+ * rewritten from $11.0M to $50.7M, and then released outright.
+ *
+ * The codebase already stated this standard — openExtensionNegotiationAction
+ * checks `player.teamId !== team.id` and lib/extension.ts's header says a
+ * hidden button protects nothing. It was simply only half kept: the "open
+ * talks" side checked, and the "submit the deal" side did not.
+ *
+ * Returns the user's team id so callers that need it stop taking it from the
+ * client.
+ */
+export async function assertPlayerOnUserTeam(leagueId: string, playerId: string): Promise<string> {
+  const [player, team] = await Promise.all([
+    prisma.player.findUnique({
+      where: { id: playerId },
+      select: { leagueId: true, teamId: true, firstName: true, lastName: true },
+    }),
+    prisma.team.findFirst({ where: { leagueId, isUser: true }, select: { id: true } }),
+  ]);
+  if (!team) throw new Error('League not found.');
+  // A player from another league is reported the same way as one on a rival
+  // roster, for the reason assertLeagueOwner gives about not confirming ids.
+  if (!player || player.leagueId !== leagueId || player.teamId !== team.id) {
+    throw new Error(player && player.leagueId === leagueId
+      ? `${player.firstName} ${player.lastName} plays for another club — that is not your call to make.`
+      : 'That player is not on your roster.');
+  }
+  return team.id;
+}
+
+/** The user's own club in this save. For actions that were taking it from the client. */
+export async function userTeamId(leagueId: string): Promise<string> {
+  const team = await prisma.team.findFirst({ where: { leagueId, isUser: true }, select: { id: true } });
+  if (!team) throw new Error('League not found.');
+  return team.id;
+}
+
 /** The saves this viewer may see, newest first, with the user's team joined. */
 export async function listOwnedLeagues() {
   return prisma.league.findMany({
