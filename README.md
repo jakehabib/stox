@@ -1893,3 +1893,79 @@ ever force-pushed over, so every state below still exists in git history).
   And arriving from a negotiation — free agency's Negotiate, or the new link
   out of the re-sign row — opens the card on the contract rather than on his
   receiving numbers. Commit `418edea`.
+- **2026-08-22 — Draft day waits for you, and one pick means one pick.** Three
+  linked defects. The draft used to begin the instant free agency closed, with
+  no gate — the app owner: *"it autostarted without me knowing"*. There is a
+  war room now, and nothing goes on the clock until he sends it; if he has
+  private workouts unspent, the Start button becomes a two-step that says so,
+  because that window shuts when the commissioner reaches the podium. Second,
+  `draftPlayerAction` ran every intervening AI selection in one server call, so
+  making a pick jumped the board straight to your next turn — measured on a
+  live save, one click consumed 32 selections. It makes one pick now and the
+  ticker paces the rest. Third, that ticker moved from 3 seconds to 5. The
+  migration backfills `started` on every existing DraftState, which matters:
+  55 rows, 16 of them mid-draft, would otherwise have frozen. Commit
+  `2583b79`.
+- **2026-08-22 — Guaranteed money binds.** The negotiation slider moved a
+  number that then bound nobody: cutting a player charged only the unamortised
+  signing bonus, so guaranteed salary was a promise the cap never enforced.
+  It is dead money now, and the cut confirmation splits the bill into the bonus
+  you already paid and the salary you guaranteed — different mistakes, and one
+  line saying "$23.0M dead" made a GM guess which. Commit `555558d`.
+- **2026-08-22 — A club short of a rookie contract waived its best player.**
+  `autoClearCapRoom` paid a shortfall by releasing whoever freed the most
+  money, which is always the best man on the roster. Measured across one
+  league's draft: a $0.73M bill cost a 92 WR, a $0.99M bill a 24-year-old 95
+  DT, a $1.28M bill an 83 QB. It pays with the least football value now.
+  Post-draft pools holding a 90+ free agent went from nine across three
+  leagues to zero across seven. The market itself was never broken — tracked
+  through all four waves, the top of the pool signs 40/40, 60/60, 25/25, most
+  in week one. Commit `7d0376d`.
+- **2026-08-22 — Zero tooltips on the analytics page became 75.** 53 distinct
+  terms, every drive measure and per-play rate mapped onto the definitions the
+  app already owned rather than second ones. Every benchmark quoted in a
+  definition was measured off a real save, not imported from real football.
+  Commit `5673946`.
+- **2026-08-22 — Draft Day is the draft page.** Built first as a route beside
+  the board so it could be judged, then merged in: the broadcast hero with the
+  running order, the selection feed with the chips that make a pick land
+  (board rank, picks early, our need, our shortlist, "3rd EDGE gone", "We had
+  him #17"), run watch, board depletion by position, Our Board against The
+  Room, and an OURS column on the big board. The feed is a capped ticker
+  rather than a growing document — the completed-draft page went from a
+  three-screen scroll to a stable height, and the scouting hub from 21,317px
+  to 1,870px. Private workouts are on the board itself now, with the remaining
+  count and the window's own sentence in the same place. Everything the old
+  page did survives. One real bug found on the way: the consensus pool was
+  keyed off the UPCOMING draft year, which rolls forward the instant the last
+  card goes in, so a completed draft re-ranked the 176 undrafted leftovers as
+  though they were the class. Commits `cd689c3`, `3077e61`, `302be2d`,
+  `cf380ad`.
+- **2026-08-22 — The offseason roadmap says how far through a stage you are.**
+  Two of the five stages take several clicks of Advance and the roadmap gave
+  no sign of it. "Week 1 of 4" in free agency, "Step 3 of 5" in housekeeping,
+  with the current stage's bar subdivided into its own advances. Only the
+  stages that ARE sequences get a counter — re-sign is a single window, and
+  counting to a total the game does not have would be its own small lie.
+  Commit `d3614e5`.
+- **2026-08-22 — Contract moves named where people look for them.** The player
+  card's contract tab now names restructure, extension and release in the
+  place a GM goes looking for them. Commit `7353d76`.
+- **2026-08-22 — The GM card, and retrospectives on the career page.** A
+  shareable card sized for a screenshot: career record as the hero, dynasty
+  level, rings, draft hit rate, All-Stars, signature pick, best deal. No
+  export and no share integration — the artefact is a screenshot. Best Deal
+  states by how much he won it, using the retrospective grader's own figure
+  rather than a second calculation, and only CLAIMS a deal the verdict below
+  calls a win. The career page also carries best-and-worst deals across the
+  whole tenure, ranked on the same number the verdicts are written from. The
+  entry point shipped as a grey button in a corner and nobody could find it;
+  it is the page's action now. Commits `a05840d`, `11082d0`, `de77d17`,
+  `54e1e60`.
+- **2026-08-22 — Four comments that described policies the code does not
+  have.** A stale comment is the same defect as a wrong number, so: the cap
+  clearer no longer "releases the fewest" veterans; `leagueMeanShare` averages
+  all thirty-two clubs and never did average "the other 31"; the league-wide
+  rating spread is 18–40 per unit, not the "about seven points" two files
+  argued from; and the blowout margin sits nearer the top tenth than the
+  claimed top 15%. Comments only. Commit `7583e65`.
