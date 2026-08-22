@@ -1,0 +1,106 @@
+'use client';
+
+import { useState } from 'react';
+
+export type PlayerCardView = 'stats' | 'contract';
+
+/**
+ * THE PLAYER CARD'S TWO FACES.
+ *
+ * The card used to be a hero followed by eight sections, with the contract at
+ * the bottom of them. The app owner's ruling after seeing the mockup: *"i like
+ * it - lets ship it"* — one card, stats by default, the whole contract one
+ * click away on the same object.
+ *
+ * What this component owns is only the FRAME: the team-tinted hero ground, the
+ * band under it, and which pane is showing. It holds no data, no money and no
+ * arithmetic — everything inside arrives as already-rendered nodes from the
+ * server component, so the cap maths, the fog and the ownership gating all
+ * stay on the server where they are enforced. That is also why the ledger and
+ * the stat table cost the client bundle nothing.
+ *
+ * THE BAND IS THE SWITCH. The two money cells (this year's cap hit, years
+ * left) sit at the left and the two tabs take every pixel they don't, at
+ * display size, with the accent underline this app already uses to mark the
+ * live section in its top nav. It reads as navigation because it is
+ * navigation.
+ *
+ * State rather than a URL, deliberately, and the opposite of StatScopeToggle's
+ * decision: Regular/Playoffs changes which numbers the SERVER must fetch, so
+ * it belongs in the address. Both halves of this switch are already rendered
+ * by the time the card paints, so a navigation would buy nothing and would
+ * cost the reader his scroll position. Both panes stay mounted and the
+ * inactive one is hidden, so flipping never re-lays-out the page under him.
+ *
+ * `contract` is optional and that is the draft-prospect case: a prospect
+ * cannot be signed, so rather than offer a tab onto an empty box, he gets no
+ * tabs at all and his band is the scouting strip.
+ */
+export function PlayerCardTabs({ teamColor, hero, summary, stats, contract }: {
+  /** The club's primary; undefined for a free agent, who gets no tint. */
+  teamColor?: string;
+  hero: React.ReactNode;
+  /** The band's cells — rendered by the page, so their tooltips stay server-side. */
+  summary: React.ReactNode;
+  stats: React.ReactNode;
+  /** Omitted for a draft prospect: no contract, no tab, no empty box. */
+  contract?: React.ReactNode;
+}) {
+  const [view, setView] = useState<PlayerCardView>('stats');
+  const tabbed = contract != null;
+
+  const tab = (id: PlayerCardView, label: string, first: boolean) => (
+    <button
+      type="button" role="tab" aria-selected={view === id}
+      onClick={() => setView(id)}
+      className={`relative flex-1 flex items-center justify-center px-6 py-4 font-display font-bold uppercase
+                  tracking-[0.14em] text-lg transition-colors ${first ? '' : 'border-l border-line/40'} ${
+        view === id ? 'text-chalk bg-chalk/[0.05]' : 'text-muted hover:text-chalk hover:bg-raised/40'
+      }`}
+    >
+      {label}
+      <span
+        aria-hidden="true"
+        className={`absolute inset-x-0 bottom-0 h-[3px] ${view === id ? 'bg-accent' : 'bg-transparent'}`}
+      />
+    </button>
+  );
+
+  return (
+    <div
+      className="relative rounded-lg border border-line/70 bg-card/40"
+      style={{ ['--team-accent' as never]: teamColor }}
+    >
+      {/* No `overflow-hidden` on this card: the radius already cuts the tint,
+          and clipping the card clips every tooltip that opens upward out of
+          the band and the ledger. */}
+      <div
+        className="rounded-t-lg"
+        style={{
+          background: teamColor
+            ? `radial-gradient(ellipse 90% 130% at 0% 50%, color-mix(in srgb, ${teamColor} 20%, transparent), transparent 70%)`
+            : undefined,
+        }}
+      >
+        {hero}
+      </div>
+
+      <div className="relative border-t border-line/60 bg-ink/30 flex flex-wrap items-stretch">
+        <div className={`flex items-stretch divide-x divide-line/40 ${tabbed ? 'shrink-0' : 'flex-1 flex-wrap'}`}>
+          {summary}
+        </div>
+        {tabbed && (
+          <div role="tablist" aria-label="Player card view" className="flex-1 min-w-[320px] flex items-stretch border-l border-line/60">
+            {tab('stats', 'Stats', true)}
+            {tab('contract', 'Contract', false)}
+          </div>
+        )}
+      </div>
+
+      <div className="relative border-t border-line/60 p-5">
+        <div role={tabbed ? 'tabpanel' : undefined} hidden={tabbed && view !== 'stats'}>{stats}</div>
+        {tabbed && <div role="tabpanel" hidden={view !== 'contract'}>{contract}</div>}
+      </div>
+    </div>
+  );
+}

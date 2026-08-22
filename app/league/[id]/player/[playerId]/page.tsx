@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
@@ -5,14 +6,15 @@ import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
-import { ratingColor, playerLabel, ratingMark, ratingPlateClass, positionMoves, relatedPositions, ATTRIBUTE_BY_KEY, AttrMap } from '@/lib/ratings';
+import { ratingColor, playerLabel, positionMoves, relatedPositions, POSITION_WEIGHTS, ATTRIBUTE_BY_KEY, AttrMap } from '@/lib/ratings';
 import { rankProspectCombine, ordinal, CombineMeasurable } from '@/lib/combineRank';
-import { formatMoney, capHit, marketValue, deadMoneyOnCut } from '@/lib/cap';
+import { formatMoney, capHit, marketValue, proration, prorationYears, restructureContract } from '@/lib/cap';
 import { classifyContractValue } from '@/lib/analytics';
 import { generateScoutingReport } from '@/lib/scoutingProse';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { sortStatEntries, statLabel, headlineColumns } from '@/lib/statLabels';
 import { resolveStartYear } from '@/lib/leagueYear';
+import type { Position } from '@/lib/tuning';
 import {
   loadPlayerSeasons, reconstructPlayerSeasons, withAges, ageBasisYear, buildCareerTable,
 } from '@/lib/playerSeasons';
@@ -28,6 +30,8 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { ScoutingRange } from '@/components/ds/ScoutingRange';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { StatNumber } from '@/components/ds/StatNumber';
+import { RatingBadge } from '@/components/ds/RatingBadge';
+import { PlayerCardTabs } from '@/components/ds/PlayerCardTabs';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { loadWorkoutSlots } from '@/lib/workouts';
@@ -383,7 +387,6 @@ export default async function PlayerPage({
     currentYear: league.seasonYear, titleYears: titleSeasons.map((s) => s.year),
   });
   const market = marketValue({ ovr: view.scoutedOvr, position: player.position as any, age: player.age, potential: player.potential });
-  const releaseCost = deadMoneyOnCut(player.contract, settings.capMode);
   const capTotal = capSummary?.capTotal ?? 0;
   const valueTier = player.contract ? classifyContractValue(market - hit, market) : 'market';
 
@@ -395,8 +398,24 @@ export default async function PlayerPage({
     isDraftee: player.isDraftee,
     view,
   });
-
-  const heroFacts: { label: string; value: string; detail?: string; color?: string; tip?: string }[] = player.isDraftee
+  /**
+   * ===========================================================================
+   * THE BAND UNDER THE HERO — TWO FIGURES, THEN THE WAY THROUGH
+   * ===========================================================================
+   * This strip used to carry five money cells: cap hit, market value, years
+   * left, guaranteed and release cost. Three of them were already printed by
+   * the contract ledger further down the same page, and the app owner's read
+   * of the card that resulted was that the contract arrived too early and too
+   * often. So the band now carries the two figures a GM checks in passing —
+   * what he costs this season, and how long he is under contract — and the
+   * whole deal lives one click away on the Contract tab, which owns the same
+   * band. Nothing is lost: market value moved into that tab's terms row, and
+   * guaranteed and dead-money-if-cut were always the ledger's own columns.
+   *
+   * A draft prospect has no contract to summarise, so his band stays what it
+   * was: the five scouting facts that decide where he goes in the draft.
+   */
+  const bandFacts: { label: string; value: string; detail?: string; color?: string; tip?: string }[] = player.isDraftee
     ? [
         { label: 'Draft Class', value: String(league.seasonYear), detail: player.college },
         { label: 'Projection', value: label.label, detail: 'role this profile suggests', color: label.className, tip: tip('prospectProjection') },
@@ -404,263 +423,237 @@ export default async function PlayerPage({
         ...(collegeProfile ? [{ label: 'Competition', value: `${collegeProfile.competitionGrade}-tier`, detail: 'strength of schedule faced', color: GRADE_CLASS[collegeProfile.competitionGrade], tip: tip('competitionGrade') }] : []),
         { label: 'Measurables', value: `${Math.floor(player.heightIn / 12)}'${player.heightIn % 12}"`, detail: `${player.weightLb} lb` },
       ]
-    : settings.capMode === 'OFF'
-      ? [
-          { label: 'Market Value', value: `${formatMoney(market)}/yr`, detail: 'what the rating is worth', tip: tip('marketValue') },
-          { label: 'Years Left', value: player.contract ? String(player.contract.yearsRemaining) : '—', detail: player.contract ? `expires after ${league.seasonYear + Math.max(0, player.contract.yearsRemaining - 1)}` : 'no contract', tip: tip('expiringContract') },
-        ]
-      : [
-          {
-            label: `Cap Hit ${league.seasonYear}`,
-            value: formatMoney(hit),
-            detail: capTotal > 0 ? `${((hit / capTotal) * 100).toFixed(1)}% of cap` : undefined,
-            tip: tip('capHit'),
-          },
-          {
-            label: 'Market Value',
-            value: `${formatMoney(market)}/yr`,
-            tip: tip('marketValue'),
-            detail: !player.contract
-              ? 'what the rating is worth'
-              : valueTier === 'market'
-                ? 'paid at market rate'
-                : `${valueTier === 'bargain' ? 'surplus +' : 'over by '}${formatMoney(Math.abs(market - hit))}`,
-            // Market-rate stays the default ink — only a deviation big enough to matter earns green/red.
-            color: valueTier === 'bargain' ? 'text-accent' : valueTier === 'overpay' ? 'text-bad' : undefined,
-          },
-          {
-            label: 'Years Left',
-            value: player.contract ? String(player.contract.yearsRemaining) : '—',
-            detail: player.contract ? `expires after ${league.seasonYear + Math.max(0, player.contract.yearsRemaining - 1)}` : 'no contract',
-            tip: tip('expiringContract'),
-          },
-          { label: 'Guaranteed', value: player.contract ? formatMoney(player.contract.guaranteed) : '—', tip: tip('guaranteedMoney') },
-          {
-            label: 'Release Cost',
-            value: formatMoney(releaseCost),
-            detail: releaseCost > 0 ? 'dead money if cut' : 'clean cut',
-            color: releaseCost > 0 ? 'text-bad' : 'text-accent',
-            tip: tip('deadMoney'),
-          },
-        ];
+    : [
+        // With the cap off there is no cap hit to quote — the ledger says so in
+        // words — and a man with no contract has no charge either. Both of
+        // those cases lead with what the rating is worth instead, which is the
+        // figure this strip carried for them before.
+        settings.capMode !== 'OFF' && player.contract
+          ? {
+              label: `Cap Hit ${league.seasonYear}`,
+              value: formatMoney(hit),
+              detail: capTotal > 0 ? `${((hit / capTotal) * 100).toFixed(1)}% of cap` : undefined,
+              tip: tip('capHit'),
+            }
+          : {
+              label: 'Market Value',
+              value: `${formatMoney(market)}/yr`,
+              detail: 'what the rating is worth',
+              tip: tip('marketValue'),
+            },
+        {
+          label: 'Years Left',
+          value: player.contract ? String(player.contract.yearsRemaining) : '—',
+          detail: player.contract ? `expires after ${league.seasonYear + Math.max(0, player.contract.yearsRemaining - 1)}` : 'no contract',
+          tip: tip('expiringContract'),
+        },
+      ];
 
-  return (
-    <div className="space-y-6 max-w-5xl">
-      {/* Hero — team-tinted card, revealed OVR or a scouted range, never both.
-          No `overflow-hidden` on the card: its only clipping job was the tint
-          gradient, which a border-radius already cuts on its own, and clipping
-          the card also clipped the fact strip's tooltips — they open upward
-          out of a band with barely 100px of hero above it. */}
-      <div
-        className="relative rounded-lg border border-line/70"
-        style={{
-          ['--team-accent' as never]: jerseyColor,
-          background: jerseyColor ? `radial-gradient(ellipse 90% 130% at 0% 50%, color-mix(in srgb, ${jerseyColor} 20%, transparent), transparent 70%)` : undefined,
-        }}
-      >
-        <div className="flex flex-wrap items-start gap-6 p-6">
-          <div className="relative shrink-0 rounded-lg p-3" style={{ background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 14%, transparent)` : undefined }}>
-            <PlayerAvatar seed={player.id} age={player.age} size={128} teamColor={jerseyColor} weightLb={player.weightLb} heightIn={player.heightIn} position={player.position} />
-          </div>
+  // --- The deal as signed --------------------------------------------------
+  // Everything below comes out of lib/cap.ts against the stored contract — the
+  // same functions the sim charges. The ledger owns cap hit, remaining value,
+  // guaranteed and dead money; this row owns the terms, and the two never
+  // print the same figure twice.
+  const contractBases = player.contract ? readJson<number[]>(player.contract.baseSalaries, []) : [];
+  const contractTotal = player.contract
+    ? contractBases.reduce((a, b) => a + b, 0) + player.contract.signingBonus
+    : 0;
+  const bonusPerYear = player.contract ? proration(player.contract) : 0;
+  const bonusThrough = player.contract ? player.contract.signedYear + prorationYears(player.contract) - 1 : 0;
 
-          <div className="flex-1 min-w-[280px]">
-            {/* Everything identifying him on one quiet meta line, so the name
-                below it has the page to itself. */}
-            <div className="label-sm flex items-center gap-2 flex-wrap">
-              <span className={`font-semibold ${positionBadgeClass(player.position)}`}>{player.position}</span>
-              <span>·</span><span>Age {player.age}</span>
-              <span>·</span><span>{player.experience > 0 ? `Year ${player.experience}` : 'Rookie'}</span>
-              <span>·</span>
-              {player.team ? (
-                <span className="flex items-center gap-1.5"><TeamLogo seed={player.team.id} abbr={player.team.abbr} size={14} />{player.team.city} {player.team.nickname}</span>
-              ) : (
-                <span>{player.status === 'FREE_AGENT' ? (player.isDraftee ? 'Draft Prospect' : 'Free Agent') : player.status}</span>
-              )}
-              <span className={`pill text-[10px] border-current ${label.className}`}>{label.label}</span>
-              {/* HIS CARD NEVER SAID HE WAS HURT.
-                  A quarterback out two weeks with a fractured hand showed the
-                  STARTER pill and his depth slot with nothing to indicate he
-                  could not play — while the dashboard, the roster page and the
-                  depth chart all knew. The row was already fetched (`include`
-                  pulls it); nothing rendered it. Availability is the first
-                  thing a GM checks about a player, so it sits in the hero with
-                  the rest of his identity rather than in a panel below. */}
-              {player.injuryWeeks > 0 && (
-                <span className="pill text-[10px] border-bad/50 text-bad bg-bad/10">
-                  {player.injuryType ?? 'Injured'} · out {player.injuryWeeks} wk{player.injuryWeeks === 1 ? '' : 's'}
-                </span>
-              )}
-            </div>
+  /**
+   * What the Restructure button would actually do, from the function the
+   * restructure screen itself calls: convert as much of this year's base as
+   * the rules allow and re-prorate what that creates. Quoted only where the
+   * button is really offered — his own roster, realistic cap, and not in the
+   * last year of the deal, which is the same gate ContractActions applies.
+   */
+  const restructureFrees = (() => {
+    const c = player.contract;
+    if (!c || !isOwnRoster || settings.capMode !== 'REALISTIC' || c.yearsRemaining <= 1) return 0;
+    const next = restructureContract(c, Number.MAX_SAFE_INTEGER, { nowYear: league.seasonYear });
+    return hit - capHit({ ...next, baseSalaries: JSON.stringify(next.baseSalaries) }, settings.capMode);
+  })();
 
-            {/* Split name — given name reads as a kicker over the surname, which
-                is the part that carries on a jersey. */}
-            <div className="mt-2">
-              <div className="font-display font-bold text-xl uppercase tracking-[0.18em] text-muted leading-none">{player.firstName}</div>
-              <div className="font-display font-extrabold text-5xl uppercase tracking-wide leading-[0.95] mt-1">{player.lastName}</div>
-            </div>
+  /**
+   * ATTRIBUTES, ORDERED BY WHAT THEY DECIDE.
+   *
+   * The share is the weight `computeOverall` actually applies — normalised
+   * across the weights present, exactly as that function normalises them — so
+   * the column adds to 100% and can never claim a weight the engine does not
+   * use. It matters that this is computed and not written down: LB's weights
+   * deliberately sum to 1.18 so that adding run defence to the position did
+   * not move every existing linebacker's rating, and a hand-written percentage
+   * table would have been wrong for that position the day it landed.
+   *
+   * The VALUES stay whatever the scouted view handed over. A man the club has
+   * not had in its own building never reaches this code with his true numbers
+   * in hand — `buildScoutedView` is the only source, and the fogged branch
+   * below prints its band, never `actual`.
+   */
+  const positionWeights: AttrMap = POSITION_WEIGHTS[player.position as Position] ?? {};
+  const attrWeightTotal = view.attrs.reduce((a, at) => a + (positionWeights[at.key] ?? 0), 0);
+  const attrRows = view.attrs
+    .map((a) => ({ ...a, share: attrWeightTotal > 0 ? (positionWeights[a.key] ?? 0) / attrWeightTotal : 0 }))
+    .sort((a, b) => b.share - a.share);
 
-            <div className="text-xs text-muted mt-2">
-              {Math.floor(player.heightIn / 12)}'{player.heightIn % 12}" · {player.weightLb} lb · {player.college}
-            </div>
+  const hero = (
+    <div className="flex flex-wrap items-start gap-6 p-6">
+      <div className="relative shrink-0 rounded-lg p-3" style={{ background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 14%, transparent)` : undefined }}>
+        <PlayerAvatar seed={player.id} age={player.age} size={128} teamColor={jerseyColor} weightLb={player.weightLb} heightIn={player.heightIn} position={player.position} />
+      </div>
 
-            {/* WHAT HE HAS WON, BESIDE HIS NAME.
-                The app owner, on the empty band across the middle of this card:
-                *"can we use the space in that box which is blank to show
-                awards? Championships won? etc"*. He is right that it was dead
-                space, and right about what belongs in it — a ring is the first
-                thing a football person wants to know about a player, and it
-                was sitting two thirds of the way down the page in Career &
-                Honors while the hero showed his height twice over.
-
-                A summary, not a duplicate: counts and the most recent year
-                only. The full list — every ring year, every award with its
-                season, the All-Star selections — stays in Career & Honors
-                below, which is the section that exists to carry it. Rendered
-                only when there is something to show, so a rookie's card does
-                not grow an empty row of zeroes. */}
-            {(ringYears.length > 0 || honorAwards.length > 0 || allStarYears.length > 0) && (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                {ringYears.length > 0 && (
-                  <span className="pill border-warn/40 text-warn bg-warn/10 gap-1.5">
-                    {ringYears.length}× Champion
-                    <span className="text-muted font-normal">{ringYears[ringYears.length - 1]}</span>
-                  </span>
-                )}
-                {honorAwards.length > 0 && (
-                  <span className="pill border-accent2/40 text-accent2 bg-accent2/10 gap-1.5">
-                    {honorAwards.length === 1 ? honorAwards[0].label : `${honorAwards.length}× Award winner`}
-                    <span className="text-muted font-normal">{honorAwards[honorAwards.length - 1].year}</span>
-                  </span>
-                )}
-                {allStarYears.length > 0 && (
-                  <span className="pill border-line text-chalk gap-1.5">
-                    {allStarYears.length}× All-Star
-                    <span className="text-muted font-normal">{allStarYears[allStarYears.length - 1]}</span>
-                  </span>
-                )}
-              </div>
-            )}
-
-            {collegeHeadline.length > 0 ? (
-              <div className="mt-5 border-t border-line/50 pt-4">
-                <div className="label-sm text-accent2 mb-2">College — through week {weeksElapsed} of {COLLEGE_WEEKS}</div>
-                <div className="flex items-stretch gap-6 flex-wrap">
-                  {collegeHeadline.map(([lbl, v]) => (
-                    <div key={lbl} className="pr-6 border-r border-line/40 last:border-r-0 last:pr-0">
-                      <div className="label-sm">{lbl}</div>
-                      <div className="stat-value text-stat-md leading-none mt-1">{v.toLocaleString()}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : keyStats.length > 0 ? (
-              /* Regular season, always — the hero is the player's headline
-                 number and the postseason has its own sections below. Said out
-                 loud rather than assumed, because an unlabelled total that
-                 quietly means one of two things is this codebase's most
-                 repeated bug. */
-              <div className="flex items-stretch gap-6 mt-5 border-t border-line/50 pt-4 flex-wrap">
-                <div className="pr-6 border-r border-line/40 self-center">
-                  <div className="label-sm">{league.seasonYear}</div>
-                  <div className="text-xs text-muted mt-1">Regular season</div>
-                </div>
-                {keyStats.map(([k, v]) => (
-                  <div key={k} className="pr-6 border-r border-line/40 last:border-r-0 last:pr-0">
-                    <div className="label-sm">{statLabel(k)}</div>
-                    <div className="stat-value text-stat-md leading-none mt-1">{v}</div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="flex flex-col items-stretch gap-3 shrink-0 w-[200px]">
-            {view.revealed ? (
-              <div
-                className="rounded-lg border-2 px-4 py-3 text-center"
-                style={{ borderColor: 'var(--team-accent, #38bdf8)', background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 16%, transparent)` : undefined }}
-              >
-                <div className="label-sm inline-flex items-center gap-1.5">
-                  Overall
-                  <Tooltip text={tip('overall')} />
-                </div>
-                <div className={`stat-value text-stat-xl leading-none mt-1 ${ratingColor(view.scoutedOvr)}`}>
-                  <span className={ratingPlateClass(view.scoutedOvr) ?? undefined}>{view.scoutedOvr}</span>
-                  {ratingMark(view.scoutedOvr) && <span className="ml-1 text-[0.45em] align-super">{ratingMark(view.scoutedOvr)}</span>}
-                </div>
-              </div>
-            ) : (
-              <div className="panel p-3">
-                <ScoutingRange low={view.ovrLow} high={view.ovrHigh} confidence={view.confidence} label="Scouted OVR" tip={tip('scoutedRange')} className="w-full" />
-              </div>
-            )}
-            {/* Potential follows the same rule as Overall above. A revealed
-                player's potLow and potHigh are both his true ceiling, and
-                feeding those to ScoutingRange drew a range widget reading
-                "97-97" with a "Confidence: HIGH" caption under it — a
-                measurement UI dressing up a number that was never measured
-                (README principle 6). Now the certain case says the number
-                plainly and only a prospect gets the band. */}
-            <div className="panel p-3">
-              {view.potentialRevealed ? (
-                <>
-                  <div className="label-sm inline-flex items-center gap-1.5">
-                    Potential
-                    <Tooltip text={tip('potential')} />
-                  </div>
-                  <div className={`stat-value text-stat-md leading-none mt-1 ${ratingColor(player.potential)}`}>{player.potential}</div>
-                </>
-              ) : view.revealed ? (
-                /* An established pro on somebody else's books: his rating is
-                   exact and his ceiling is not. A ScoutingRange here would put
-                   "Confidence: HIGH" under it and invite the reader to think
-                   the band narrows with work — it does not, ever. So it is a
-                   plain band with a plain reason, in football voice. */
-                <>
-                  <div className="label-sm inline-flex items-center gap-1.5">
-                    Potential
-                    <Tooltip text={tip('potential')} />
-                  </div>
-                  <div className={`stat-value text-stat-md leading-none mt-1 ${ratingColor((view.potLow + view.potHigh) / 2)}`}>
-                    {view.potLow}–{view.potHigh}
-                  </div>
-                  <div className="text-[11px] text-muted mt-1">You would have to coach him to know exactly.</div>
-                </>
-              ) : (
-                <ScoutingRange low={view.potLow} high={view.potHigh} confidence={view.confidence} label="Potential" tip={tip('potential')} className="w-full" />
-              )}
-            </div>
-          </div>
+      <div className="flex-1 min-w-[280px]">
+        {/* Everything identifying him on one quiet meta line, so the name
+            below it has the page to itself. */}
+        <div className="label-sm flex items-center gap-2 flex-wrap">
+          <span className={`font-semibold ${positionBadgeClass(player.position)}`}>{player.position}</span>
+          <span>·</span><span>Age {player.age}</span>
+          <span>·</span><span>{player.experience > 0 ? `Year ${player.experience}` : 'Rookie'}</span>
+          <span>·</span>
+          {player.team ? (
+            <span className="flex items-center gap-1.5"><TeamLogo seed={player.team.id} abbr={player.team.abbr} size={14} />{player.team.city} {player.team.nickname}</span>
+          ) : (
+            <span>{player.status === 'FREE_AGENT' ? (player.isDraftee ? 'Draft Prospect' : 'Free Agent') : player.status}</span>
+          )}
+          <span className={`pill text-[10px] border-current ${label.className}`}>{label.label}</span>
+          {/* Availability is the first thing a GM checks about a player, so it
+              sits in the hero with the rest of his identity rather than in a
+              panel below. */}
+          {player.injuryWeeks > 0 && (
+            <span className="pill text-[10px] border-bad/50 text-bad bg-bad/10">
+              {player.injuryType ?? 'Injured'} · out {player.injuryWeeks} wk{player.injuryWeeks === 1 ? '' : 's'}
+            </span>
+          )}
         </div>
 
-        {/* Fact strip — contract money for a rostered player, scouting-relevant
-            profile for a draftee who doesn't have a contract yet. */}
-        {heroFacts.length > 0 && (
-          <div className="relative border-t border-line/60 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 divide-x divide-line/40 bg-ink/30">
-            {heroFacts.map((f) => (
-              <div key={f.label} className="px-4 py-3">
-                {/* Upward, like the masthead's own strip: this band is inside the
-                    hero's `overflow-hidden`, so a bubble opening below the last
-                    row of the card is clipped to nothing. */}
-                <div className="label-sm inline-flex items-center gap-1.5">
-                  {f.label}
-                  {f.tip && <Tooltip text={f.tip} />}
+        {/* Split name — given name reads as a kicker over the surname, which
+            is the part that carries on a jersey. */}
+        <div className="mt-2">
+          <div className="font-display font-bold text-xl uppercase tracking-[0.18em] text-muted leading-none">{player.firstName}</div>
+          <div className="font-display font-extrabold text-5xl uppercase tracking-wide leading-[0.95] mt-1">{player.lastName}</div>
+        </div>
+
+        <div className="text-xs text-muted mt-2">
+          {Math.floor(player.heightIn / 12)}&apos;{player.heightIn % 12}&quot; · {player.weightLb} lb · {player.college}
+        </div>
+
+        {/* What he has won, beside his name — counts and the most recent year
+            only. The full list stays in Career &amp; Honors below. */}
+        {(ringYears.length > 0 || honorAwards.length > 0 || allStarYears.length > 0) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {ringYears.length > 0 && (
+              <span className="pill border-warn/40 text-warn bg-warn/10 gap-1.5">
+                {ringYears.length}× Champion
+                <span className="text-muted font-normal">{ringYears[ringYears.length - 1]}</span>
+              </span>
+            )}
+            {honorAwards.length > 0 && (
+              <span className="pill border-accent2/40 text-accent2 bg-accent2/10 gap-1.5">
+                {honorAwards.length === 1 ? honorAwards[0].label : `${honorAwards.length}× Award winner`}
+                <span className="text-muted font-normal">{honorAwards[honorAwards.length - 1].year}</span>
+              </span>
+            )}
+            {allStarYears.length > 0 && (
+              <span className="pill border-line text-chalk gap-1.5">
+                {allStarYears.length}× All-Star
+                <span className="text-muted font-normal">{allStarYears[allStarYears.length - 1]}</span>
+              </span>
+            )}
+          </div>
+        )}
+
+        {collegeHeadline.length > 0 ? (
+          <div className="mt-5 border-t border-line/50 pt-4">
+            <div className="label-sm text-accent2 mb-2">College — through week {weeksElapsed} of {COLLEGE_WEEKS}</div>
+            <div className="flex items-stretch gap-6 flex-wrap">
+              {collegeHeadline.map(([lbl, v]) => (
+                <div key={lbl} className="pr-6 border-r border-line/40 last:border-r-0 last:pr-0">
+                  <div className="label-sm">{lbl}</div>
+                  <div className="stat-value text-stat-md leading-none mt-1">{v.toLocaleString()}</div>
                 </div>
-                <div className={`stat-value text-stat-sm leading-none mt-1 ${f.color ?? ''}`}>{f.value}</div>
-                {f.detail && <div className="text-[11px] text-muted mt-1">{f.detail}</div>}
+              ))}
+            </div>
+          </div>
+        ) : keyStats.length > 0 ? (
+          /* Regular season, always — the hero is the player's headline number
+             and the postseason has its own view below. Said out loud rather
+             than assumed, because an unlabelled total that quietly means one
+             of two things is this codebase's most repeated bug. */
+          <div className="flex items-stretch gap-6 mt-5 border-t border-line/50 pt-4 flex-wrap">
+            <div className="pr-6 border-r border-line/40 self-center">
+              <div className="label-sm">{league.seasonYear}</div>
+              <div className="text-xs text-muted mt-1">Regular season</div>
+            </div>
+            {keyStats.map(([k, v]) => (
+              <div key={k} className="pr-6 border-r border-line/40 last:border-r-0 last:pr-0">
+                <div className="label-sm">{statLabel(k)}</div>
+                <div className="stat-value text-stat-md leading-none mt-1">{v}</div>
               </div>
             ))}
           </div>
-        )}
+        ) : null}
       </div>
 
-      {/* The page's marquee block, and deliberately high up: this is the thing
-          the owner asked for, so it sits where a stat page leads rather than
-          under six sections of scouting. It is also the tallest thing here —
-          one row per season the league has actually played, plus at most one
-          "Before <year>" row and the career total, so a young league shows
-          three or four rows and a fifteen-year career shows what a real stat
-          page shows. */}
+      <div className="flex flex-col items-center gap-3 shrink-0 w-[200px]">
+        {view.revealed ? (
+          /* The design system's own rating shape — the notched chip, which
+             carries the tier colour, the 95+ mark and the 99 plate itself. */
+          <RatingBadge value={view.scoutedOvr} label="Overall" size="lg" filled />
+        ) : (
+          <div className="panel p-3 w-full">
+            <ScoutingRange low={view.ovrLow} high={view.ovrHigh} confidence={view.confidence} label="Scouted OVR" tip={tip('scoutedRange')} className="w-full" />
+          </div>
+        )}
+        {/* Potential follows the same rule as Overall: a certain number is said
+            plainly and only a real range gets the band widget. */}
+        <div className="panel p-3 w-full text-center">
+          {view.potentialRevealed ? (
+            <>
+              <div className="label-sm inline-flex items-center gap-1.5">
+                Potential
+                <Tooltip text={tip('potential')} />
+              </div>
+              <div className={`stat-value text-stat-md leading-none mt-1 ${ratingColor(player.potential)}`}>{player.potential}</div>
+            </>
+          ) : view.revealed ? (
+            /* An established pro on somebody else's books: his rating is exact
+               and his ceiling is not. A ScoutingRange here would put
+               "Confidence: HIGH" under it and invite the reader to think the
+               band narrows with work — it does not, ever. */
+            <>
+              <div className="label-sm inline-flex items-center gap-1.5">
+                Potential
+                <Tooltip text={tip('potential')} />
+              </div>
+              <div className={`stat-value text-stat-md leading-none mt-1 ${ratingColor((view.potLow + view.potHigh) / 2)}`}>
+                {view.potLow}–{view.potHigh}
+              </div>
+              <div className="text-[11px] text-muted mt-1">You would have to coach him to know exactly.</div>
+            </>
+          ) : (
+            <ScoutingRange low={view.potLow} high={view.potHigh} confidence={view.confidence} label="Potential" tip={tip('potential')} className="w-full" />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const bandCells = bandFacts.map((f) => (
+    <div key={f.label} className="px-5 py-4">
+      <div className="label-sm inline-flex items-center gap-1.5">
+        {f.label}
+        {f.tip && <Tooltip text={f.tip} />}
+      </div>
+      <div className={`stat-value text-stat-sm leading-none mt-1.5 ${f.color ?? ''}`}>{f.value}</div>
+      {f.detail && <div className="text-[11px] text-muted mt-1">{f.detail}</div>}
+    </div>
+  ));
+
+  const statsPane = (
+    <div className="space-y-6">
+      {/* One row per season the league has actually played, plus at most one
+          "Before <year>" row and the career total. */}
       {careerTable && (
         <div className="section" id="stat-line">
           <SectionHeading
@@ -677,38 +670,85 @@ export default async function PlayerPage({
           <div className="panel overflow-hidden">
             <CareerStatTable position={player.position} table={careerTable} />
           </div>
-          {/* THE TWO RAW STAT PANELS THAT USED TO SIT HERE ARE GONE.
-              The card carried career statistics in three places — the
-              year-by-year table above, a "Career Stats" panel, and the
-              highlights strip inside Career Honors — and the app owner counted
-              them: *"we have career stats in 3 places"*. Worse, two of the
-              three disagreed: the table's CAREER row sums the seasons it
-              shows, INCLUDING the one in progress, while the raw panel read
-              Player.careerStats, which the season roll has not folded the live
-              year into yet. On a quarterback three games into 2026 that read
-              23,497 yards and 96 games against 22,673 and 93 — both labelled
-              career, neither wrong, and nothing on screen explaining the gap.
-
-              They could not simply be deleted while CAREER_COLUMNS omitted
-              stats the engine stores (see lib/statLabels.ts — the defensive
-              rows were dropping sacks, interceptions and pass break-ups).
-              Those columns are complete now, verified against real stored
-              blobs at every position, so the table carries everything these
-              panels did and one number answers the question. */}
         </div>
       )}
 
-      {!player.isDraftee && (
-        <CareerHonors
-          position={player.position}
-          ringYears={ringYears}
-          awards={honorAwards}
-          allStarYears={allStarYears}
-          seasons={player.experience}
-        />
+      {/* A prospect's production is his college tape, and it leads his card the
+          way a professional's season line leads his. */}
+      {collegeProfile && collegeToDate && combineTesting && (
+        <div className="section">
+          <SectionHeading
+            title={`College Profile — ${player.college}`}
+            action={<span className={`text-xs font-medium ${GRADE_CLASS[collegeProfile.competitionGrade]}`}>Competition: {collegeProfile.competitionGrade}-tier</span>}
+          />
+          <div className="panel overflow-hidden">
+            {/* Testing gets its own full-width band of equal tiles — six
+                measurements read as one workout, not a cramped 3x2 grid. */}
+            <div className="px-5 pt-4 pb-3 border-b border-line/60">
+              <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <div className="label-sm inline-flex items-center gap-1.5">
+                  {combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day'} Testing
+                  {/* Downward, every one of these: the testing band is the FIRST
+                      thing in a `panel overflow-hidden`, so an upward bubble
+                      opens straight out of the top of the card and is cut. */}
+                  <Tooltip placement="bottom" text={combineTesting.venue === 'COMBINE' ? tip('combineTesting') : tip('proDay')} />
+                </div>
+                <div className="text-xs text-muted">
+                  {combineTesting.venue === 'COMBINE'
+                    ? 'Measured under standard conditions at the league combine.'
+                    : 'Self-hosted pro day — conditions favor the prospect, so times tend to run a touch fast.'}
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-line/40 border-b border-line/60">
+              {([
+                // Every drill carries its own tip: the whole band is jargon to
+                // anyone who has not sat through a combine broadcast.
+                { label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s`, key: 'fortyYard', tip: tip('combineForty') },
+                { label: 'Vertical', value: `${combineTesting.vertical}"`, key: 'vertical', tip: tip('combineVertical') },
+                { label: 'Broad', value: `${combineTesting.broadJump}"`, key: 'broadJump', tip: tip('combineBroad') },
+                { label: '3-Cone', value: `${combineTesting.threeCone.toFixed(2)}s`, key: 'threeCone', tip: tip('combineThreeCone') },
+                { label: 'Shuttle', value: `${combineTesting.shuttle.toFixed(2)}s`, key: 'shuttle', tip: tip('combineShuttle') },
+                { label: 'Bench', value: combineTesting.benchReps !== null ? `${combineTesting.benchReps}` : '—', key: 'benchReps', tip: tip('combineBench') },
+              ] as { label: string; value: string; key: CombineMeasurable; tip: string }[]).map((m, i, all) => {
+                const rank = combineRanks[m.key];
+                return (
+                  <div key={m.label} className="px-3 py-3 text-center">
+                    <div className="label-sm inline-flex items-center gap-1">
+                      {m.label}
+                      {/* The end tiles open INWARD — a centred bubble on the
+                          first or last of six is half outside the panel. */}
+                      <Tooltip
+                        placement="bottom"
+                        align={i === 0 ? 'start' : i === all.length - 1 ? 'end' : 'center'}
+                        text={m.tip}
+                      />
+                    </div>
+                    <div className="stat-value text-stat-sm leading-none mt-1.5">{m.value}</div>
+                    {/* Public combine data — never fogged, so this shows for
+                        every prospect regardless of scouting confidence. */}
+                    <div className="text-[10px] text-muted mt-1">
+                      {rank ? `${ordinal(rank.rank)} of ${rank.outOf}` : ' '}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="p-5">
+              <div className="label-sm mb-2">College Season — through week {weeksElapsed} of {COLLEGE_WEEKS}</div>
+              <CollegeStatLine position={player.position} stats={collegeToDate} />
+            </div>
+
+            {buzzNote && (
+              <p className="text-xs text-accent2 italic px-5 pb-4 -mt-1">{buzzNote}</p>
+            )}
+          </div>
+        </div>
       )}
 
-
+      {/* The affordances that buy information sit with the numbers they
+          sharpen, rather than in a band of their own further down. */}
       {!view.revealed && (
         <div className="panel border-l-2 border-l-accent2 p-4 flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-[16rem] flex-1">
@@ -719,9 +759,9 @@ export default async function PlayerPage({
             <p className="text-xs text-muted mt-1 max-w-lg">{view.notes}</p>
           </div>
           {userTeam && (
-            // `min-w-0` rather than `shrink-0`: this column holds prose (the
-            // Full Scout and workout explanations), and a column that refuses
-            // to shrink hands its children an unbounded width to overflow into.
+            // `min-w-0` rather than `shrink-0`: this column holds prose, and a
+            // column that refuses to shrink hands its children an unbounded
+            // width to overflow into.
             <div className="flex flex-wrap items-center justify-end gap-2 min-w-0">
               {workoutSlots && (
                 <>
@@ -771,107 +811,201 @@ export default async function PlayerPage({
 
       <div className="section">
         <SectionHeading
+          eyebrow="What his grade is built on"
           title="Attributes"
           tip={!view.revealed ? tip('scoutedRange') : undefined}
-          action={!view.revealed ? <span className="text-xs text-muted">Scouted range shown — true values hidden</span> : undefined}
+          action={
+            !view.revealed
+              ? <span className="text-xs text-muted">Scouted range shown — true values hidden</span>
+              : <span className={`text-xs font-semibold ${positionBadgeClass(player.position)}`}>{player.position} grade</span>
+          }
         />
-        <div className="panel p-5 grid sm:grid-cols-2 gap-x-8 gap-y-3">
-          {view.attrs.map((a) => (
-            <div key={a.key} className="flex items-center gap-3">
-              <span className="text-sm text-muted w-36 shrink-0">{a.label}</span>
-              <div className="flex-1 h-2 bg-raised rounded-full overflow-hidden relative">
-                <div
-                  className="absolute h-full bg-line rounded-full"
-                  style={{ left: `${a.low}%`, width: `${Math.max(2, a.high - a.low)}%` }}
-                />
-                <div className="absolute h-full w-0.5 bg-accent2" style={{ left: `${a.observed}%` }} />
-              </div>
-              <span className={`text-sm font-mono w-14 text-right ${ratingColor(a.observed)}`}>
-                {view.revealed ? a.actual : `${a.low}-${a.high}`}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {collegeProfile && collegeToDate && combineTesting && (
-        <div className="section">
-          <SectionHeading
-            title={`College Profile — ${player.college}`}
-            action={<span className={`text-xs font-medium ${GRADE_CLASS[collegeProfile.competitionGrade]}`}>Competition: {collegeProfile.competitionGrade}-tier</span>}
-          />
-          <div className="panel overflow-hidden">
-            {/* Testing gets its own full-width band of equal tiles — six
-                measurements read as one workout, not a cramped 3x2 grid
-                sharing a column with the season line. */}
-            <div className="px-5 pt-4 pb-3 border-b border-line/60">
-              <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                <div className="label-sm inline-flex items-center gap-1.5">
-                  {combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day'} Testing
-                  {/* Downward, every one of these: the testing band is the FIRST
-                      thing in a `panel overflow-hidden`, so an upward bubble
-                      opens straight out of the top of the card and is cut. */}
-                  <Tooltip placement="bottom" text={combineTesting.venue === 'COMBINE' ? tip('combineTesting') : tip('proDay')} />
-                </div>
-                <div className="text-xs text-muted">
-                  {combineTesting.venue === 'COMBINE'
-                    ? 'Measured under standard conditions at the league combine.'
-                    : 'Self-hosted pro day — conditions favor the prospect, so times tend to run a touch fast.'}
-                </div>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-line/40 border-b border-line/60">
-              {([
-                // Every drill carries its own tip: the whole band is jargon to
-                // anyone who has not sat through a combine broadcast, and
-                // "3-Cone: 6.94s" tells a newcomer precisely nothing.
-                { label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s`, key: 'fortyYard', tip: tip('combineForty') },
-                { label: 'Vertical', value: `${combineTesting.vertical}"`, key: 'vertical', tip: tip('combineVertical') },
-                { label: 'Broad', value: `${combineTesting.broadJump}"`, key: 'broadJump', tip: tip('combineBroad') },
-                { label: '3-Cone', value: `${combineTesting.threeCone.toFixed(2)}s`, key: 'threeCone', tip: tip('combineThreeCone') },
-                { label: 'Shuttle', value: `${combineTesting.shuttle.toFixed(2)}s`, key: 'shuttle', tip: tip('combineShuttle') },
-                { label: 'Bench', value: combineTesting.benchReps !== null ? `${combineTesting.benchReps}` : '—', key: 'benchReps', tip: tip('combineBench') },
-              ] as { label: string; value: string; key: CombineMeasurable; tip: string }[]).map((m, i, all) => {
-                const rank = combineRanks[m.key];
+        {/* Down one column and then down the next, rather than across: the
+            order is the information here, and a row-major grid zig-zags it. */}
+        <div className="panel p-5 grid sm:grid-cols-2 gap-x-8">
+          {[attrRows.slice(0, Math.ceil(attrRows.length / 2)), attrRows.slice(Math.ceil(attrRows.length / 2))].map((col, i) => (
+            <div key={i} className="space-y-3">
+              {col.map((a) => {
+                // A Full Evaluation pins one attribute to its true value; that
+                // one is a number, not a band of zero width, for the same
+                // reason a known potential is not drawn as a range.
+                const exact = view.revealed || a.locked;
                 return (
-                  <div key={m.label} className="px-3 py-3 text-center">
-                    <div className="label-sm inline-flex items-center gap-1">
-                      {m.label}
-                      {/* The end tiles open INWARD. A centred bubble on the
-                          first or last of six is half outside the panel, and
-                          `panel overflow-hidden` cuts sideways exactly as
-                          readily as it cuts upward. */}
-                      <Tooltip
-                        placement="bottom"
-                        align={i === 0 ? 'start' : i === all.length - 1 ? 'end' : 'center'}
-                        text={m.tip}
-                      />
+                  <div key={a.key} className="flex items-center gap-3">
+                    <span className="text-sm text-muted w-32 shrink-0">{a.label}</span>
+                    <div className="flex-1 h-2 bg-raised rounded-full overflow-hidden relative">
+                      {exact ? (
+                        <div
+                          className={`absolute h-full rounded-full ${a.share > 0 ? 'bg-accent2/70' : 'bg-line'}`}
+                          style={{ width: `${a.actual ?? a.observed}%` }}
+                        />
+                      ) : (
+                        <>
+                          <div
+                            className="absolute h-full bg-line rounded-full"
+                            style={{ left: `${a.low}%`, width: `${Math.max(2, a.high - a.low)}%` }}
+                          />
+                          <div className="absolute h-full w-0.5 bg-accent2" style={{ left: `${a.observed}%` }} />
+                        </>
+                      )}
                     </div>
-                    <div className="stat-value text-stat-sm leading-none mt-1.5">{m.value}</div>
-                    {/* Public combine data, same as the numbers above it — never fogged, so this
-                        shows for every prospect regardless of scouting confidence. */}
-                    <div className="text-[10px] text-muted mt-1">
-                      {rank ? `${ordinal(rank.rank)} of ${rank.outOf}` : ' '}
-                    </div>
+                    <span className={`text-sm font-mono w-14 text-right ${ratingColor(a.observed)}`}>
+                      {exact ? a.actual : `${a.low}-${a.high}`}
+                    </span>
+                    <span className="text-xs font-mono w-9 text-right text-muted">
+                      {a.share > 0 ? `${Math.round(a.share * 100)}%` : '—'}
+                    </span>
                   </div>
                 );
               })}
             </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 
-            <div className="p-5">
-              <div className="label-sm mb-2">College Season — through week {weeksElapsed} of {COLLEGE_WEEKS}</div>
-              <CollegeStatLine position={player.position} stats={collegeToDate} />
+  /**
+   * THE CONTRACT TAB. A draft prospect gets none — he cannot be signed, so
+   * rather than a tab onto an empty box he has no tab at all.
+   */
+  const contractPane = player.isDraftee ? undefined : (
+    <div className="section">
+      <SectionHeading
+        eyebrow={player.contract ? `Signed ${player.contract.signedYear}` : undefined}
+        title="Contract"
+        action={
+          <div className="flex items-center gap-2">
+            {player.contract?.isRookieDeal && (
+              <span className="pill border-accent2/30 text-accent2 bg-accent2/10 gap-1.5">
+                Rookie Deal<Tooltip text={tip('rookieDeal')} />
+              </span>
+            )}
+            {player.contract?.isFranchiseTag && (
+              <span className="pill border-warn/30 text-warn bg-warn/10 gap-1.5">
+                Franchise Tag<Tooltip text={tip('franchiseTag')} />
+              </span>
+            )}
+            {player.contract && (
+              <span className="text-xs text-muted">
+                {player.contract.years} year{player.contract.years === 1 ? '' : 's'} · through{' '}
+                {player.contract.signedYear + player.contract.years - 1}
+              </span>
+            )}
+          </div>
+        }
+      />
+      {player.contract ? (
+        <div className="space-y-4">
+          {/* THE DEAL AS SIGNED. Only what the ledger below does not carry, and
+              only what this cap mode actually charges: with the simplified cap
+              there is no bonus proration, so there is no bonus line to quote,
+              and with the cap off there are no cap figures at all. */}
+          {settings.capMode !== 'OFF' && (
+            <div className="panel p-5 grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <StatNumber value={formatMoney(contractTotal)} label="Total value" size="md" tip={tip('apy')} />
+                <div className="text-[11px] text-muted mt-1">
+                  {formatMoney(Math.round(contractTotal / Math.max(1, player.contract.years)))} a year across the deal
+                </div>
+              </div>
+              {settings.capMode === 'REALISTIC' && (
+                <div>
+                  <StatNumber value={formatMoney(player.contract.signingBonus)} label="Signing bonus" size="md" tip={tip('proration')} />
+                  <div className="text-[11px] text-muted mt-1">
+                    {formatMoney(bonusPerYear)} a year on the cap through {bonusThrough}
+                  </div>
+                </div>
+              )}
+              <div>
+                <StatNumber
+                  value={`${formatMoney(market)}/yr`}
+                  label="Market value"
+                  size="md"
+                  tip={tip('marketValue')}
+                  // Market-rate stays the default ink — only a deviation big
+                  // enough to matter earns green or red.
+                  color={valueTier === 'bargain' ? 'text-accent' : valueTier === 'overpay' ? 'text-bad' : 'text-chalk'}
+                />
+                <div className="text-[11px] text-muted mt-1">
+                  {valueTier === 'market'
+                    ? 'paid at market rate'
+                    : `${valueTier === 'bargain' ? 'surplus +' : 'over by '}${formatMoney(Math.abs(market - hit))}`}
+                </div>
+              </div>
             </div>
+          )}
 
-            {buzzNote && (
-              <p className="text-xs text-accent2 italic px-5 pb-4 -mt-1">{buzzNote}</p>
+          <div className="panel p-5 space-y-4">
+            {/* The question this box answers is "what does he cost me for the
+                rest of the deal, and what does it cost to get out" — and that
+                is a per-year table. The dead-money column is what turns it
+                from a statement into a decision. */}
+            <ContractLedger
+              contract={player.contract}
+              capMode={settings.capMode}
+              seasonYear={league.seasonYear}
+            />
+
+            {isOwnRoster && userTeam && (
+              <div className="pt-3 space-y-3 border-t border-line/60">
+                <ContractActions
+                  leagueId={league.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age}
+                  contract={{
+                    years: player.contract.years, yearsRemaining: player.contract.yearsRemaining, signedYear: player.contract.signedYear,
+                    baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
+                    guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
+                  }}
+                  availableSpaceForExtension={capSpace + hit} capSpace={capSpace} capMode={settings.capMode}
+                />
+                {restructureFrees > 0 && (
+                  <p className="text-sm text-muted">
+                    A maximum restructure takes {formatMoney(restructureFrees)} off {league.seasonYear} and moves it into the
+                    {player.contract.yearsRemaining > 2 ? ' years' : ' year'} after it.
+                  </p>
+                )}
+                <CutButton leagueId={league.id} playerId={player.id} />
+              </div>
             )}
           </div>
         </div>
+      ) : player.status === 'FREE_AGENT' && userTeam ? (
+        <div className="panel p-5">
+          <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} />
+        </div>
+      ) : (
+        <div className="panel p-5">
+          <p className="text-sm text-muted">No contract on file.</p>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6 max-w-5xl">
+      {/* ONE CARD, TWO FACES. The hero, the money line and the pane the tabs
+          switch between are a single object; what sits under the card is the
+          context you read it against — what he has won, and who is in front of
+          him on your own depth chart. */}
+      <PlayerCardTabs
+        teamColor={jerseyColor}
+        hero={hero}
+        summary={bandCells}
+        stats={statsPane}
+        contract={contractPane}
+      />
+
+      {!player.isDraftee && (
+        <CareerHonors
+          position={player.position}
+          ringYears={ringYears}
+          awards={honorAwards}
+          allStarYears={allStarYears}
+          seasons={player.experience}
+        />
       )}
 
       <div className="grid sm:grid-cols-2 gap-6">
-
         {userTeam && (
           <div className="section">
             <SectionHeading title={`Your Depth at ${player.position}`} tip={tip('depthChart')} />
@@ -880,28 +1014,24 @@ export default async function PlayerPage({
                 <p className="text-sm text-muted">Nobody rostered at {player.position} right now — a clear need.</p>
               ) : (
                 <div className="space-y-1">
-                  {/* WHO IS STARTING, on this card too.
-                      This panel predates lib/lineup.ts and numbered the list
-                      1, 2, 3, 4 with nobody marked — a third renderer of "your
-                      depth" that had no opinion about who takes the field,
-                      while the Depth Chart screen and the re-sign pop-out both
-                      say ST1/ST2/ST3. The app owner reported the same missing
-                      distinction a third time, on this panel. `startersAt` is
-                      THE definition; nothing here gets its own. */}
+                  {/* `startersAt` is THE definition of who takes the field;
+                      nothing here gets its own. */}
                   {depthChart.map((slot, i) => {
                     const isThisPlayer = slot.playerId === player.id;
                     const starterCount = startersAt(player.position);
                     const starts = i < starterCount;
                     return (
-                      <>
+                      // Keyed on the FRAGMENT, not only on the children inside
+                      // it: a bare <> in a map is an unkeyed list child, which
+                      // React warns about on every render of this panel.
+                      <Fragment key={slot.id}>
                       {i === starterCount && starterCount > 0 && (
-                        <div key={`bench-${slot.id}`} className="flex items-center gap-2 pt-1.5 pb-1">
+                        <div className="flex items-center gap-2 pt-1.5 pb-1">
                           <span className="label-sm text-[10px]">Bench</span>
                           <span className="h-px flex-1 bg-line/70" />
                         </div>
                       )}
                       <Link
-                        key={slot.id}
                         href={`/league/${league.id}/player/${slot.playerId}`}
                         className={`flex items-center gap-3 px-2 py-1.5 -mx-2 rounded-lg text-sm border-l-2 ${
                           starts ? 'bg-chalk/[0.05] border-accent2/70' : 'border-transparent opacity-80'
@@ -914,7 +1044,7 @@ export default async function PlayerPage({
                         <span className={`flex-1 truncate ${isThisPlayer || starts ? 'font-semibold' : ''}`}>{slot.player.firstName} {slot.player.lastName}{isThisPlayer ? ' (this player)' : ''}</span>
                         <span className={`font-mono text-xs ${ratingColor(slot.player.trueOvr)}`}>{slot.player.trueOvr}</span>
                       </Link>
-                      </>
+                      </Fragment>
                     );
                   })}
                 </div>
@@ -924,10 +1054,8 @@ export default async function PlayerPage({
         )}
 
         {/* Directly under the depth panel, deliberately: that list is the
-            evidence this decision is made against — "your left tackle is a
-            61" is half of "move the spare right tackle over" — and a GM
-            should never have to hold a number in his head between two
-            screens to make the call. */}
+            evidence this decision is made against — "your left tackle is a 61"
+            is half of "move the spare right tackle over". */}
         {isOwnRoster && !player.isDraftee && (
           <div className="section">
             <SectionHeading
@@ -945,82 +1073,7 @@ export default async function PlayerPage({
             />
           </div>
         )}
-
       </div>
-
-      {/* CONTRACT SITS LAST, AND THAT IS A REVERSAL.
-          It used to sit directly under the hero, argued for on the grounds
-          that it is the only section on this page that DOES anything. The app
-          owner's read of the finished card: *"contract is the first box....
-          we need to more elegantly present it"*. He is right, and the old
-          argument had it backwards — this card is READ far more often than it
-          is acted on. You open it to find out who somebody is; only sometimes
-          to extend or cut him. So the man comes first, his production second,
-          and the front-office machinery follows underneath.
-
-          Its POSITION is still unconditional — a rostered player and a free
-          agent find it in the same place, because reordering by player state
-          would make the layout unlearnable. Its PRESENCE still is not: a draft
-          prospect cannot be signed, so he gets no empty box.
-
-          Nothing here is trimmed. The ledger keeps its per-year schedule, its
-          void years and its dead-money column. It is moved, not reduced. */}
-      {!player.isDraftee && (
-      <div className="section">
-        <SectionHeading
-          title="Contract"
-          action={
-            <div className="flex gap-1.5">
-              {player.contract?.isRookieDeal && (
-                <span className="pill border-accent2/30 text-accent2 bg-accent2/10 gap-1.5">
-                  Rookie Deal<Tooltip text={tip('rookieDeal')} />
-                </span>
-              )}
-              {player.contract?.isFranchiseTag && (
-                <span className="pill border-warn/30 text-warn bg-warn/10 gap-1.5">
-                  Franchise Tag<Tooltip text={tip('franchiseTag')} />
-                </span>
-              )}
-            </div>
-          }
-        />
-        <div className="panel p-5">
-          {player.contract ? (
-            <div className="space-y-4">
-              {/* One component rather than a headline figure plus two summary
-                  cells: the question this box answers is "what does he cost me
-                  for the rest of the deal, and what does it cost to get out",
-                  and that is a per-year table. Dead-money-if-cut is the column
-                  that turns it from a statement into a decision. */}
-              <ContractLedger
-                contract={player.contract}
-                capMode={settings.capMode}
-                seasonYear={league.seasonYear}
-              />
-
-              {isOwnRoster && userTeam && (
-                <div className="pt-3 space-y-3 border-t border-line/60">
-                  <ContractActions
-                    leagueId={league.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age}
-                    contract={{
-                      years: player.contract.years, yearsRemaining: player.contract.yearsRemaining, signedYear: player.contract.signedYear,
-                      baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
-                      guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
-                    }}
-                    availableSpaceForExtension={capSpace + hit} capSpace={capSpace} capMode={settings.capMode}
-                  />
-                  <CutButton leagueId={league.id} playerId={player.id} />
-                </div>
-              )}
-            </div>
-          ) : player.status === 'FREE_AGENT' && userTeam ? (
-            <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} />
-          ) : (
-            <p className="text-sm text-muted">No contract on file.</p>
-          )}
-        </div>
-      </div>
-      )}
     </div>
   );
 }

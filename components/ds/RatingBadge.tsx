@@ -1,4 +1,4 @@
-import { ratingColor } from '@/lib/ratings';
+import { ratingColor, ratingMark, ratingPlateClass } from '@/lib/ratings';
 
 const SIZE = {
   sm: { box: 'w-12 h-12', text: 'text-stat-sm', flag: 9 },
@@ -46,7 +46,15 @@ export function RatingBadge({ value, label, size = 'md', filled }: {
         }}
       >
         <div className="rating-chip-flag" style={{ borderTopColor: hex }} />
-        <span className={`stat-value ${s.text} ${color}`}>{value}</span>
+        {/* The plate and the mark ride with the number wherever this chip is
+            drawn. They are how the top two steps of the ramp stay legible
+            without colour vision (see ratingTier in lib/ratings.ts) — a 95 and
+            an 89 are both gold, and only the star separates them. Empty for
+            everyone below 95, so no ordinary rating grows an ornament. */}
+        <span className={`stat-value ${s.text} ${color}`}>
+          <span className={ratingPlateClass(value) ?? undefined}>{value}</span>
+          {ratingMark(value) && <span className="ml-1 text-[0.45em] align-super">{ratingMark(value)}</span>}
+        </span>
       </div>
       {label && <span className="label-sm">{label}</span>}
     </div>
