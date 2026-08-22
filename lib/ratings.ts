@@ -256,11 +256,26 @@ export const CONVERSION_ATTR_FRACTION = 0.85;
  * cross-training turns a depth chart into a set of interchangeable parts, and
  * the point of positions is that they are not.
  *
- * EVERY move this menu offers is free — see CONVERSION_ATTR_FRACTION for the
- * measurement showing the cost was never a judgement about football, and the
- * owner's ruling that it should not be charged. That makes the menu itself the
- * only thing standing between a GM and an arbitrage, so what it connects has
- * to price identically. assertNoProfitableConversion() below is the check;
+ * EVERY MOVE THIS MENU OFFERS IS PRICED, and how much lever the pricing has
+ * varies enormously across the menu — which is the fact TRADE_VALUE_TIER has
+ * to be read against. The charge is the uncoached-attribute fill
+ * (CONVERSION_ATTR_FRACTION), so it only bites where the destination weights
+ * something the origin has never been graded on:
+ *
+ *   LB -> EDGE      `passRush`, 0.36 of an edge rusher's overall. The biggest
+ *                   lever on the menu, and the reason LB can price a tier
+ *                   below EDGE without the move paying.
+ *   EDGE -> LB      tackling, coverage and football IQ, 0.46 of 1.18.
+ *   C  -> LT/RT     `footwork`, 0.18/0.16. Small.
+ *   anything -> C   `football_iq`, 0.14. Small.
+ *   S  -> CB        `press`, 0.14. Small.
+ *   LT <-> RT <-> LG <-> RG, and EDGE <-> DT — NOTHING AT ALL. These weight
+ *                   identical attribute sets, so at equal attributes the
+ *                   engine cannot tell the two jobs apart and has no lever
+ *                   whatsoever. Those pairs MUST price identically; there is
+ *                   no conversion cost available to cover a gap.
+ *
+ * assertNoProfitableConversion() below is the check that this stays true;
  * it is called from wherever TRADE_VALUE_TIER is consumed (this file cannot
  * import it — lib/tuning.ts is upstream of here and the cycle would break the
  * build).
@@ -319,11 +334,29 @@ for (const [from, tos] of Object.entries(RELATED_POSITIONS)) {
  * the outcome, so that is what is asserted.
  *
  * The check is real arithmetic, not a table comparison: it converts a player
- * at several ratings and confirms he is worth no more afterwards. Positions
- * whose attribute sets are IDENTICAL (LT and RT weight the same five things)
- * have no lever to charge with, so for those the requirement collapses back
- * to equal tiers — which the failure message says, so nobody has to rediscover
- * why.
+ * at every rating in the band the tier curves are calibrated over and confirms
+ * he is worth no more afterwards. Positions whose attribute sets are IDENTICAL
+ * (LT and RT weight the same five things) have no lever to charge with, so for
+ * those the requirement collapses back to equal tiers — which the failure
+ * message says, so nobody has to rediscover why.
+ *
+ * IT SWEEPS 60..99 RATHER THAN SAMPLING, and that is not belt-and-braces. The
+ * moment LB was priced a tier below EDGE this stopped being a formality and
+ * became the thing holding the split up, and a sampled check is exactly as
+ * strong as its samples. Swept against every single-position retier of the
+ * shipped table, the old four-rating sample ([72, 80, 88, 94]) reports a clean
+ * bill on CB at the QB tier, which is in fact profitable at 73 (S -> CB, 28
+ * points -> 29). 60..99 is the same band TRADE_VALUE.TIER_CURVE claims its
+ * ordering over, it costs about a millisecond at import, and it means the
+ * guard cannot be satisfied by luck.
+ *
+ * A NOTE FOR WHOEVER WEAKENS THIS NEXT. `convertedOvr` is wired to the real
+ * `convertedAttributes`, which itself reads these curves and turns the fill
+ * down until the move stops paying — so the check can only fail where that
+ * fill runs out of room (it seeds a floor of 20, it does not reach zero).
+ * That is a real limit and it is reached: LB at MID passes, LB at MINIMAL
+ * throws at 88 OVR. Verify any change against BOTH of those, or you have
+ * proved only that the code agrees with itself.
  */
 export function assertNoProfitableConversion(
   valueAt: (position: Position, ovr: number) => number,
@@ -331,7 +364,7 @@ export function assertNoProfitableConversion(
 ): void {
   for (const [from, tos] of Object.entries(RELATED_POSITIONS)) {
     for (const to of tos ?? []) {
-      for (const ovr of [72, 80, 88, 94]) {
+      for (let ovr = 60; ovr <= 99; ovr++) {
         const before = valueAt(from as Position, ovr);
         const after = valueAt(to, convertedOvr(from as Position, to, ovr));
         if (after > before + 0.5) {
@@ -477,20 +510,88 @@ export interface PositionMove {
   learned: string[];
   /** His attribute map at the new position, ready to persist. */
   attrs: AttrMap;
+  /**
+   * His CEILING at the new position — present only when the caller supplied
+   * one. See THE CEILING MOVES WITH THE FLOOR below for why it moves at all.
+   */
+  potential?: number;
+  /** potential - his current ceiling. Signed, and equal to `delta` except at the 99 cap. */
+  potentialDelta?: number;
+}
+
+/**
+ * ===========================================================================
+ * THE CEILING MOVES WITH THE FLOOR
+ * ===========================================================================
+ * `potential` used to be deliberately untouched by a conversion, on the
+ * reading that it is "a ceiling on the man, not on the job". Measured, that
+ * reading refunded most of the conversion:
+ *
+ *   The trade market does not price `trueOvr`. It prices
+ *   `effectiveCeiling = trueOvr + (potential - trueOvr) * w` (playerValueDetailed,
+ *   lib/ai/gm.ts), with w between 0.18 and 0.55 depending on the club's
+ *   window. Charge a move to `trueOvr` and leave `potential` where it was and
+ *   the gap between them WIDENS by exactly the charge, so only (1 - w) of it
+ *   reaches the number anybody trades on — 63% refunded at a neutral club.
+ *   Measured over the 22,600 rostered linebackers on this box, that alone
+ *   took LB -> EDGE from 227 profitable conversions to 6,055 the moment LB
+ *   priced a tier below EDGE, with 201 of them clearing +100 points — a
+ *   third-round pick of free money, for a move that also drops his rating
+ *   seven points. Moving the ceiling with him brings it back to 763, of
+ *   which 7 clear +100.
+ *
+ * And progression refunded the rest of it: `progressPlayer` uses `potential`
+ * as a per-attribute attractor over `attrsForPosition(position)` — the NEW
+ * position's attributes after a move — so an untouched ceiling meant a
+ * converted man simply grew back to it in the new job within a couple of
+ * seasons. The cost was a loan, not a price.
+ *
+ * So the ceiling travels with the rating, by the same signed delta. Two
+ * properties make that safe rather than a second penalty bolted on:
+ *
+ *   THE RUNWAY IS PRESERVED EXACTLY. potential - trueOvr is unchanged by the
+ *   move, so a 24-year-old with seven points of growth left still has seven
+ *   points of growth left. What changed is where those seven points start
+ *   from, which is the same thing the rating change already said.
+ *
+ *   IT IS REVERSIBLE, like everything else about a conversion. Moving back
+ *   restores the attribute map exactly, hence the overall exactly, hence a
+ *   delta that is exactly the negative of the first — so the ceiling lands
+ *   back where it began. (The one exception is the 99 cap on a move that
+ *   RAISES a rating; a ceiling clipped at 99 does not come all the way back.)
+ * ===========================================================================
+ */
+function convertedPotential(potential: number, delta: number): number {
+  return Math.max(20, Math.min(99, potential + delta));
 }
 
 /**
  * What he would rate at `to`. THE one function every preview, every AI
  * decision and the commit itself calls, so the number on the card is by
  * construction the number written to the database.
+ *
+ * `potential` is optional because two of the callers genuinely have no
+ * business with it — the import-time arbitrage guard in lib/ai/gm.ts builds a
+ * synthetic man who has none, and the AI's depth-chart planner is asking only
+ * "would he rate higher over there". Everything that WRITES passes it.
  */
 export function positionMove(
-  player: { position: string; trueOvr: number; trueAttrs: AttrMap },
+  player: { position: string; trueOvr: number; trueAttrs: AttrMap; potential?: number },
   to: Position,
 ): PositionMove {
   const { attrs, learned } = convertedAttributes(player.trueAttrs, to, player.trueOvr, canonicalPosition(player.position));
   const ovr = computeOverall(to, attrs);
-  return { position: to, ovr, delta: ovr - player.trueOvr, learned, attrs };
+  const delta = ovr - player.trueOvr;
+  const potential = player.potential === undefined ? undefined : convertedPotential(player.potential, delta);
+  return {
+    position: to,
+    ovr,
+    delta,
+    learned,
+    attrs,
+    potential,
+    potentialDelta: potential === undefined ? undefined : potential - player.potential!,
+  };
 }
 
 /**
@@ -500,7 +601,7 @@ export function positionMove(
  * should be the top row.
  */
 export function positionMoves(
-  player: { position: string; trueOvr: number; trueAttrs: AttrMap },
+  player: { position: string; trueOvr: number; trueAttrs: AttrMap; potential?: number },
 ): PositionMove[] {
   return relatedPositions(player.position)
     .map((to) => positionMove(player, to))

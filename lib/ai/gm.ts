@@ -36,9 +36,36 @@ import { assertNoProfitableConversion, relatedPositions, positionMove, attrsForP
  * is built the way lib/ratings.ts builds one so the two agree on what a
  * conversion costs.
  *
- * As the table stands, every connected pair shares a tier, which satisfies
- * this trivially and by construction — no rating cost can make a same-tier
- * move profitable. The check is here for the day somebody splits them.
+ * THE TABLE IS NO LONGER TRIVIALLY SAFE, so this is no longer a formality.
+ * LB sits a tier below EDGE — off-ball linebacker pay is 0.73 against an edge
+ * rusher's 1.47 and the trade table used to disagree with that — and the only
+ * thing making that legal is that LB -> EDGE genuinely costs a linebacker the
+ * rating, because `passRush` is 0.36 of an edge rusher's overall and he has
+ * never been graded on it. Remove the fill-down in `convertedAttributes` and
+ * this throws at 77 OVR. Price LB at MINIMAL instead and it throws at 88, the
+ * fill having bottomed out (its seed floors at 20, it does not reach zero).
+ * Both were checked; it is the live constraint on that split, not a comment.
+ *
+ * AND IT IS STILL NOT THE WHOLE CONSTRAINT, which is worth knowing before
+ * trusting it too far. `valueAt` here is the raw tier curve, but the number
+ * this file actually trades on is (base + upside) x age x contract x fit, and
+ * `maxOvrAfterConversion` can only equalise the first term. Two things leak
+ * past it, both measured on live rosters: the CEILING (fixed — lib/ratings.ts
+ * now moves `potential` with the rating), and the CONTRACT, which re-prices a
+ * man's existing deal against the destination's MARKET.POSITION_MULT with no
+ * conversion cost able to touch it. The second is why relabelling a left
+ * guard a left tackle — a move that costs almost no rating at all, the two
+ * weighting the identical five attributes, and that passes this assertion
+ * trivially since both are PREMIUM — is profitable for 5,329 of the 9,106
+ * guards on this box, up to +1,039 points. That is the largest free
+ * arbitrage in the game by an order of magnitude, it is driven by
+ * MARKET.POSITION_MULT (LT 1.29 against LG 0.85) rather than by anything in
+ * TRADE_VALUE_TIER, and it is not in this table. Do not read a pass here as
+ * "conversions are safe".
+ *
+ * Every other connected pair still shares a tier, and for the ones with
+ * identical attribute sets (LT/RT/LG/RG, EDGE/DT) it MUST — the engine has no
+ * lever to charge a move it cannot see.
  */
 const tierCurveOf = (pos: Position, ovr: number): number => {
   const c = TRADE_VALUE.TIER_CURVE[TRADE_VALUE_TIER[pos]];

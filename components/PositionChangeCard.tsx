@@ -23,6 +23,10 @@ export interface PositionOption {
   ovr: number;
   /** ovr minus what he rates today. Signed. */
   delta: number;
+  /** His ceiling there. It moves with the rating — see lib/ratings.ts. */
+  potential: number;
+  /** potential minus his ceiling today. Signed, and normally equal to `delta`. */
+  potentialDelta: number;
   /** Human labels for traits this job asks for that nobody has coached him in. */
   learned: string[];
   /** How many start there (lib/lineup.ts). */
@@ -166,6 +170,22 @@ export function PositionChangeCard({ leagueId, playerId, playerName, currentPosi
                       <> — <span className="text-bad">{Math.abs(chosen.delta)} worse</span> than at {currentPosition}.</>
                     )}
                   </p>
+
+                  {/* THE CEILING GOES WITH HIM, and it is said out loud.
+                      A rating that drops and a ceiling that does not is a
+                      cost the game refunds — the market prices a blend of the
+                      two, and progression grows him straight back to an
+                      untouched ceiling in the new job. So it moves by the same
+                      delta (lib/ratings.ts), and the man's RUNWAY is what
+                      stays constant, which is the part a GM actually needs:
+                      he has exactly as much growth left as he had. */}
+                  {chosen.potentialDelta !== 0 && (
+                    <p className="text-xs text-muted">
+                      His ceiling goes with him — <span className="stat-value">{chosen.potential}</span>
+                      {' '}at {chosen.position} rather than {chosen.potential - chosen.potentialDelta}. He has the same
+                      room to grow as he has today; it starts from a different place.
+                    </p>
+                  )}
 
                   {/* This used to read "{position} asks for {traits}, which nobody
                       has ever coached him in" — and it named run defence at a

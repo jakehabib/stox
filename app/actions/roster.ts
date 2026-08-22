@@ -310,19 +310,24 @@ export async function changePositionAction(leagueId: string, playerId: string, n
   }
 
   const move = positionMove(
-    { position: from, trueOvr: player.trueOvr, trueAttrs: readJson<AttrMap>(player.trueAttrs, {}) },
+    { position: from, trueOvr: player.trueOvr, trueAttrs: readJson<AttrMap>(player.trueAttrs, {}), potential: player.potential },
     to as Position,
   );
 
   await prisma.$transaction(async (tx) => {
     await tx.player.update({
       where: { id: player.id },
-      // `potential` is deliberately untouched: it is a ceiling on the man, not
-      // on the job, so a converted player who lands below it now has room to
-      // grow INTO the new position at the next development checkpoint. That is
-      // the right story — he is learning it — and it falls out of
-      // progressPlayer rolling attrsForPosition(position) with no change there.
-      data: { position: to, trueAttrs: writeJson(move.attrs), trueOvr: move.ovr },
+      // `potential` travels with the rating, by the same signed delta — see
+      // THE CEILING MOVES WITH THE FLOOR in lib/ratings.ts. It used to be
+      // deliberately untouched, on the reading that a ceiling belongs to the
+      // man rather than the job; measured, that refunded most of the move.
+      // The trade market prices a blend of rating and ceiling, so leaving the
+      // ceiling put handed back ~63% of the charge immediately, and
+      // progressPlayer — which uses `potential` as an attractor over the NEW
+      // position's attributes — handed back the rest within a couple of
+      // seasons. His RUNWAY (potential - trueOvr) is untouched, so a young
+      // man still has exactly as much growth left as he did.
+      data: { position: to, trueAttrs: writeJson(move.attrs), trueOvr: move.ovr, potential: move.potential },
     });
     // His old slot is now stale by the roster's own reckoning and reconcile
     // drops it; he is re-placed at his new position in the same call.
@@ -338,6 +343,7 @@ export async function changePositionAction(leagueId: string, playerId: string, n
         headline: `${player.firstName} ${player.lastName} moves from ${from} to ${to}`,
         detail: `${player.team?.city ?? ''} ${player.team?.nickname ?? ''}`.trim()
           + ` — ${player.trueOvr} OVR at ${from}, ${move.ovr} at ${to}.`
+          + (move.potentialDelta ? ` Ceiling ${player.potential} to ${move.potential}.` : '')
           + (move.learned.length > 0 ? ` New to the job: ${move.learned.length} untested trait${move.learned.length === 1 ? '' : 's'}.` : ''),
       },
     });

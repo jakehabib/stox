@@ -43,7 +43,7 @@ export async function runAiPositionConversions(
   for (const team of teams) {
     const roster = await prisma.player.findMany({
       where: { teamId: team.id, status: 'ACTIVE' },
-      select: { id: true, firstName: true, lastName: true, position: true, trueOvr: true, trueAttrs: true },
+      select: { id: true, firstName: true, lastName: true, position: true, trueOvr: true, trueAttrs: true, potential: true },
     });
     const plans = planPositionConversions(
       roster.map((p) => ({ id: p.id, position: p.position, trueOvr: p.trueOvr, trueAttrs: readJson<AttrMap>(p.trueAttrs, {}) })),
@@ -54,8 +54,11 @@ export async function runAiPositionConversions(
     for (const plan of plans) {
       const p = byId.get(plan.playerId);
       if (!p) continue;
+      // `potential` goes in so it comes back out moved by the same delta the
+      // rating moved — see THE CEILING MOVES WITH THE FLOOR in lib/ratings.ts.
+      // A CPU club sliding a man along its line has to pay what a user pays.
       const mv = positionMove(
-        { position: plan.from, trueOvr: p.trueOvr, trueAttrs: readJson<AttrMap>(p.trueAttrs, {}) },
+        { position: plan.from, trueOvr: p.trueOvr, trueAttrs: readJson<AttrMap>(p.trueAttrs, {}), potential: p.potential },
         plan.to,
       );
       // `updateMany`, not `update`, and matched on the TEAM as well as the id.
@@ -70,7 +73,7 @@ export async function runAiPositionConversions(
       // league's history would record a change the roster never made.
       const { count } = await prisma.player.updateMany({
         where: { id: p.id, teamId: team.id },
-        data: { position: plan.to, trueAttrs: writeJson(mv.attrs), trueOvr: mv.ovr },
+        data: { position: plan.to, trueAttrs: writeJson(mv.attrs), trueOvr: mv.ovr, potential: mv.potential },
       });
       if (count === 0) continue;
       await prisma.transaction.create({

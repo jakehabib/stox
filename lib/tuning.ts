@@ -1298,47 +1298,90 @@ export const PICK_VALUE_CHART = (overallPick: number): number => {
  * an elite premium-position player."
  *
  * ---------------------------------------------------------------------------
- * A TIER IS A CONVERSION COMPONENT, NOT A POSITION
+ * A TIER IS BOUNDED BY THE CONVERSION MENU, NOT ALWAYS EQUAL ACROSS IT
  * ---------------------------------------------------------------------------
  * The owner's ruling: *"Why would RT be mid and LT be premium? they should be
  * same value. For the most part the position groups should be similar"*.
  *
- * It is also forced, not merely preferred. Since lib/ratings.ts made position
- * changes free (CONVERSION_ATTR_FRACTION), any two positions its menu connects
- * MUST price identically or the difference is money for nothing: buy the cheap
- * label, convert at no cost, sell the dear one. That arbitrage was live and
- * measured at 5.5x — the same 84-rated man was 46 points as a right tackle and
- * 251 as a left tackle. So the unit of tiering is a connected component of
- * RELATED_POSITIONS:
+ * There is a hard constraint underneath that preference. lib/ratings.ts offers
+ * a menu of position changes and they are REVERSIBLE, so if a move to a
+ * position this table pays more for leaves a man worth more, the game is a
+ * money printer: buy the cheap label, convert, sell the dear one. That
+ * arbitrage was live and measured at 5.5x — the same 84-rated man was 46
+ * points as a right tackle and 251 as a left tackle. The connected components
+ * of RELATED_POSITIONS are therefore the things this table has to reason
+ * about:
  *
  *   {LT, LG, C, RG, RT}   {EDGE, DT, LB}   {CB, S}   and six singletons
  *
  * assertNoProfitableConversion() (lib/ratings.ts) fails the build if this
  * table and that menu ever drift into a state where a move PAYS; lib/ai/gm.ts,
- * the only consumer of this table, calls it at module load. Note it asserts
- * the outcome rather than equal tiers — lib/ratings.ts charges a conversion in
- * rating points, so two connected positions may legitimately price apart if
- * the rating cost covers the gap. Equal tiers, as below, satisfies it
- * trivially and is the safest way to satisfy it.
+ * the only consumer of this table, calls it at module load.
  *
- * Note LB rides with EDGE/DT because the menu connects them, not because the
- * off-ball linebacker market deserves premium money — it does not (a good one
- * fetches a second and a fifth). Pricing that component at MID instead would
- * badly underprice edge rushers, who are the second most valuable thing in
- * football; overpricing off-ball linebackers is the cheaper of the two errors.
+ * BUT THE CONSTRAINT IS "NO MOVE MAY PAY", NOT "ONE TIER PER COMPONENT", and
+ * the difference is the whole of the paragraph below. A conversion is charged
+ * in rating points — `convertedAttributes` turns the uncoached-attribute fill
+ * down until the move stops paying — so two connected positions may price
+ * apart exactly as far as that rating cost reaches. Whether it reaches is a
+ * measurement, not a judgement, and it comes out differently for the two
+ * components this used to lump together:
  *
- * Where the components land, against real NFL trade comparables:
+ *   EDGE/DT/LB — SPLITS. A linebacker has never been graded on `passRush`,
+ *                which is 0.36 of an edge rusher's overall, so LB -> EDGE has
+ *                a real lever: measured over 22,600 rostered linebackers it
+ *                costs a mean of 6.2 rating points at 65-69 rising to 11.1 at
+ *                92+, and PREMIUM-over-MID needs 4.36 (the tiers share a
+ *                steepness, so that gap is a constant, not a curve). Feasible
+ *                at every rating from 60 to 99 with room to spare; the fill
+ *                only runs out around MINIMAL, which is where the assertion
+ *                starts firing again. So LB prices at MID and the menu keeps
+ *                the LB -> EDGE move the owner asked for by name.
+ *                THIS DOES NOT HOLD ON ITS OWN. The guard checks the raw tier
+ *                curve; the market prices a blend of rating and CEILING, and
+ *                a conversion that left `potential` alone refunded most of
+ *                itself through it — LB at MID went from 227 profitable
+ *                conversions in 22,600 to 6,055. lib/ratings.ts now moves the
+ *                ceiling with the rating (see THE CEILING MOVES WITH THE
+ *                FLOOR); that brings it back to 763, and it is a load-bearing
+ *                part of this row, not an unrelated tidy-up.
+ *                DT stays with EDGE because it has NO lever — DT and EDGE
+ *                weight the same attributes, so at equal ratings the engine
+ *                cannot tell them apart and has nothing to charge.
+ *   The OL     — DOES NOT SPLIT, however much MARKET.POSITION_MULT wants it
+ *                to (LT 1.29 against LG/RG 0.85). LT, RT, LG and RG weight
+ *                the IDENTICAL five attributes, so a guard and a left tackle
+ *                with the same attributes are literally the same player to
+ *                `computeOverall` and a slide along the line costs a measured
+ *                mean of 0.31 rating points. There is nothing to charge with.
+ *                Putting the interior at MID was tried and the assertion
+ *                fires immediately: LG -> LT at 72 OVR, 23 points -> 48, free.
+ *                The only way to buy that split is to delete guard <-> tackle
+ *                from RELATED_POSITIONS, which deletes the owner's own
+ *                request (*"if someone has two solid RT and a weak LT, they
+ *                can't swap the spare RT over"*), so the line stays PREMIUM.
+ *
+ * That the OL disagreement survives is not a bug being tolerated, it is two
+ * tables measuring two different things: MARKET.POSITION_MULT prices the JOB
+ * (left tackle is a scarcer job than left guard, so it costs more to fill),
+ * and this table prices the MAN (and the ratings model says those two men are
+ * the same man). The EDGE/LB case was the one where the men really are
+ * different — an edge rusher's defining attribute is one a linebacker does
+ * not have — and that is the one that moved.
+ *
+ * Where the tiers land, against real NFL trade comparables:
  *
  *   QB       — its own tier and by a clear margin. Three firsts for a
  *              franchise passer is a real price teams have paid.
- *   PREMIUM  — WR, the offensive line, and the EDGE/DT/LB front. The trenches
+ *   PREMIUM  — WR, the offensive line, and the EDGE/DT front. The trenches
  *              and the receivers: unified OL franchise tag, DE/DT and WR tags
  *              all sit within a few percent of each other at the top of the
  *              non-QB market, and elite ones fetch a genuine first.
- *   MID      — CB/S and TE. Real starters whose trade market is visibly
+ *   MID      — CB/S, TE and LB. Real starters whose trade market is visibly
  *              softer than the trenches: corners have gone for a third
  *              (Sneed) and a third-plus-change (Lattimore), the best tight
- *              ends for a third (Waller).
+ *              ends for a third (Waller), and the off-ball linebacker market
+ *              is the same shape — a good one fetches a second and a fifth
+ *              (Roquan Smith), which is what MID pays at 88.
  *   LOW      — RB. Genuinely devalued in the modern game, and capped: even
  *              the best back in football tops out around second-round money.
  *   MINIMAL  — K/P. Near-worthless in trade without being literally zero,
@@ -1351,12 +1394,15 @@ export type AgeArc = 'QB' | 'SPEED' | 'STURDY' | 'BACK' | 'SPECIALIST';
 
 export const TRADE_VALUE_TIER: Record<Position, TradeValueTier> = {
   QB: 'QB',
-  // one tier per conversion component — see the block above before editing
+  // Bounded by the conversion menu — see the block above before editing. A
+  // split within a component is legal only where the rating cost of the move
+  // covers it; the OL and EDGE<->DT have no lever and must stay level.
   WR: 'PREMIUM',
   LT: 'PREMIUM', LG: 'PREMIUM', C: 'PREMIUM', RG: 'PREMIUM', RT: 'PREMIUM',
-  EDGE: 'PREMIUM', DT: 'PREMIUM', LB: 'PREMIUM',
+  EDGE: 'PREMIUM', DT: 'PREMIUM',
   CB: 'MID', S: 'MID',
   TE: 'MID',
+  LB: 'MID', // paid 0.73 against EDGE 1.47; LB -> EDGE costs the rating to match
   RB: 'LOW',
   K: 'MINIMAL', P: 'MINIMAL',
 };

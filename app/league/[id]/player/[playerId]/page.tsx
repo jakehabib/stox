@@ -273,6 +273,11 @@ export default async function PlayerPage({
     position: player.position,
     trueOvr: player.trueOvr,
     trueAttrs: readJson<AttrMap>(player.trueAttrs, {}),
+    // His ceiling goes in so the preview can state where it lands. The commit
+    // moves it by the same delta as the rating (lib/ratings.ts, THE CEILING
+    // MOVES WITH THE FLOOR), and a ceiling that changed without the card
+    // saying so is exactly the surprise principle 6 exists to prevent.
+    potential: player.potential,
   }).map((mv) => {
     // In depth-chart order, not rating order — the order IS who plays, and a
     // GM who benched a 90 for a rookie meant it.
@@ -289,6 +294,8 @@ export default async function PlayerPage({
       position: mv.position,
       ovr: mv.ovr,
       delta: mv.delta,
+      potential: mv.potential ?? player.potential,
+      potentialDelta: mv.potentialDelta ?? 0,
       // Attribute LABELS, not keys: "Block Shedding" is a football word and
       // `blockShed` is a column name.
       learned: mv.learned.map((k) => ATTRIBUTE_BY_KEY[k]?.label ?? k),
