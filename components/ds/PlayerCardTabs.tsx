@@ -45,7 +45,7 @@ export type PlayerCardView = 'stats' | 'contract';
  * cannot be signed, so rather than offer a tab onto an empty box, he gets no
  * tabs at all and his band is the scouting strip.
  */
-export function PlayerCardTabs({ teamColor, hero, summary, stats, contract, initialView = 'stats' }: {
+export function PlayerCardTabs({ teamColor, hero, summary, stats, contract, initialView = 'stats', contractShortcuts }: {
   /** The club's primary; undefined for a free agent, who gets no tint. */
   teamColor?: string;
   hero: React.ReactNode;
@@ -56,6 +56,15 @@ export function PlayerCardTabs({ teamColor, hero, summary, stats, contract, init
   contract?: React.ReactNode;
   /** Which face the card opens on. Only the arrival — the reader owns it after that. */
   initialView?: PlayerCardView;
+  /**
+   * The moves available on the contract face, named on the stats face so a
+   * GM who has never opened this card knows they exist. Each one only turns
+   * the card over — the actual control, and its confirm step, stay on the
+   * contract side where the money is. The page decides which to offer, since
+   * only it knows whether the man is yours and whether his deal can take an
+   * extension.
+   */
+  contractShortcuts?: { key: string; label: string }[];
 }) {
   // A prospect has no contract pane at all, so an arrival asking for one lands
   // on stats rather than on a tab that does not exist.
@@ -111,7 +120,38 @@ export function PlayerCardTabs({ teamColor, hero, summary, stats, contract, init
       </div>
 
       <div className="relative border-t border-line/60 p-5">
-        <div role={tabbed ? 'tabpanel' : undefined} hidden={tabbed && view !== 'stats'}>{stats}</div>
+        <div role={tabbed ? 'tabpanel' : undefined} hidden={tabbed && view !== 'stats'}>
+          {stats}
+          {/* THE MOVES, NAMED WHERE PEOPLE ARE LOOKING. Extend, restructure
+              and release all live on the contract face and a reader who never
+              turned the card over had no way to know that. The app owner:
+              *"on the stats page IMO we should have a quick link to 'extend',
+              'restructure' and 'release'. they just bring you to the contract
+              screen but for new players they might not be able to find it
+              easy"*. They do exactly that and nothing more — the confirm step
+              on a release belongs beside the dead-money figure it is asking
+              about, not next to his receiving yards. */}
+          {tabbed && contractShortcuts && contractShortcuts.length > 0 && (
+            <div className="mt-6 pt-4 border-t border-line/60 flex flex-wrap items-center gap-2">
+              <span className="label-sm mr-1">His contract</span>
+              {contractShortcuts.map((a) => (
+                <button
+                  key={a.key}
+                  type="button"
+                  onClick={() => setView('contract')}
+                  className={`pill text-xs transition-colors ${
+                    a.key === 'release'
+                      ? 'border-bad/40 text-bad hover:bg-bad/10'
+                      : 'border-line text-muted hover:text-chalk hover:border-muted'
+                  }`}
+                >
+                  {a.label}
+                </button>
+              ))}
+              <span className="text-xs text-muted">— all on the contract side of this card</span>
+            </div>
+          )}
+        </div>
         {tabbed && <div role="tabpanel" hidden={view !== 'contract'}>{contract}</div>}
       </div>
     </div>

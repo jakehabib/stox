@@ -1012,6 +1012,16 @@ export default async function PlayerPage({
         summary={bandCells}
         stats={statsPane}
         contract={contractPane}
+        // Offered only where the move actually exists. A man whose deal is up
+        // is a RE-SIGN, not an extension — ContractActions refuses that at
+        // the entrance, and naming a button here that the contract face then
+        // declines to draw would be the same broken promise one screen
+        // earlier. Restructure needs years left to push money into.
+        contractShortcuts={isOwnRoster && userTeam && player.contract ? [
+          ...(player.contract.yearsRemaining > 1 ? [{ key: 'extend', label: 'Extend' }] : []),
+          ...(restructureFrees > 0 ? [{ key: 'restructure', label: 'Restructure' }] : []),
+          { key: 'release', label: 'Release' },
+        ] : undefined}
         // Arriving from a negotiation opens the card on the money. See the
         // ARRIVING note in PlayerCardTabs — anything but `contract` here, and
         // any route that doesn't set it, still lands on stats.

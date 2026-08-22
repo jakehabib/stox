@@ -27,6 +27,7 @@ export function WorkoutButton({
   leagueId, teamId, playerId, name, meta, avatar,
   remaining, max, open, windowLabel, done, potLow, potHigh, confidence,
   className = 'btn-secondary text-xs',
+  layout = 'card',
 }: {
   leagueId: string; teamId: string; playerId: string;
   name: string;
@@ -43,8 +44,23 @@ export function WorkoutButton({
   potHigh?: number;
   confidence?: number;
   className?: string;
+  /**
+   * How the confirm step is drawn. 'card' is the original: a full
+   * CommitmentCard with the ledger and the explanation, for a surface with a
+   * column of space to give it.
+   *
+   * 'row' is for a table cell on the big board. A CommitmentCard in a table
+   * cell is squeezed to the column's width and turns one row seven hundred
+   * pixels tall — measured, not guessed. So the commit step collapses to the
+   * one thing the card exists to guarantee: the PRICE IS ON THE BUTTON, read
+   * at the moment of the choice rather than found afterwards on a counter in
+   * the header. The paragraph explaining what a workout buys lives on the
+   * column's own tooltip and on the player card, both one click away.
+   */
+  layout?: 'card' | 'row';
 }) {
   const [staged, setStaged] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
@@ -63,6 +79,33 @@ export function WorkoutButton({
       <button type="button" className={className} onClick={() => setStaged(true)} title={windowLabel}>
         Work him out
       </button>
+    );
+  }
+
+  if (layout === 'row') {
+    return (
+      <div className="flex flex-col items-start gap-1 min-w-[9.5rem]">
+        <button
+          type="button"
+          className="btn-primary text-[11px] px-2 py-1 whitespace-nowrap"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError(null);
+            const r = await runWorkoutAction(leagueId, teamId, playerId);
+            setBusy(false);
+            if (!r.ok) { setError(r.message); return; }
+            setStaged(false);
+            router.refresh();
+          }}
+        >
+          {busy ? 'Flying him in…' : `Fly him in — ${remaining} left, then ${remaining - 1}`}
+        </button>
+        <button type="button" className="btn-ghost text-[11px] px-1 py-0.5" disabled={busy} onClick={() => { setError(null); setStaged(false); }}>
+          Not him
+        </button>
+        {error && <p className="text-[11px] text-bad max-w-[12rem] leading-snug">{error}</p>}
+      </div>
     );
   }
 

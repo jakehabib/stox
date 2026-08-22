@@ -483,13 +483,28 @@ export async function autoClearCapRoom(opts: {
     include: { contract: true },
   });
   const candidates = roster
-    .map((p) => ({ p, savings: p.contract ? capSavingsOnCut(p.contract, opts.capMode) : 0 }))
-    .filter((c) => c.savings > 0)
-    .sort((a, b) => b.savings - a.savings || a.p.trueOvr - b.p.trueOvr || a.p.id.localeCompare(b.p.id));
+    .map((p) => ({
+      p,
+      savings: p.contract ? capSavingsOnCut(p.contract, opts.capMode) : 0,
+      // What the other thirty-one clubs would pay him — the football cost of
+      // losing him, which is the thing being minimised here. His cap number
+      // is not that: a star on a rookie deal is cheap and a declining veteran
+      // on a bad one is not.
+      worth: marketValue({
+        ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential,
+      }),
+    }))
+    .filter((c) => c.savings > 0);
 
   const cut = new Set<string>();
-  for (const pick of candidates) {
-    if (remaining <= 0) break;
+  while (remaining > 0) {
+    const left = candidates.filter((c) => !cut.has(c.p.id));
+    if (left.length === 0) break; // nobody left who frees anything — see the caller's escape valve
+    const coversItAlone = left.filter((c) => c.savings >= remaining);
+    const pick = coversItAlone.length > 0
+      ? coversItAlone.sort((a, b) => a.worth - b.worth || a.savings - b.savings || a.p.id.localeCompare(b.p.id))[0]
+      : left.sort((a, b) => b.savings / b.worth - a.savings / a.worth || a.worth - b.worth || a.p.id.localeCompare(b.p.id))[0];
+
     await cutPlayer({
       leagueId: opts.leagueId,
       playerId: pick.p.id,

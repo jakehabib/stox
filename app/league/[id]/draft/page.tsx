@@ -1291,12 +1291,14 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           )}
         </div>
 
-        {/* Capped and scrolled during a live draft, where this table sits under
-            a whole broadcast and eighty rows would push the page to four
-            screens. The sticky header on `.table-clean th` pins to this box
-            rather than the viewport once it is a scroller, which is what makes
-            the cap readable rather than a guessing game. */}
-        <div className={`panel ${broadcast ? 'max-h-[44rem] overflow-y-auto' : 'overflow-hidden'}`}>
+        {/* Capped and scrolled. During a draft this table sits under a whole
+            broadcast and eighty rows would push the page to four screens; out
+            of it, the scouting hub shows three hundred and ran to twenty-one
+            thousand pixels of one table. Nothing is dropped either way — the
+            rows scroll inside the box, and `.table-clean th` is already
+            sticky, so it pins to this container instead of the viewport and
+            the column names stay over the numbers. */}
+        <div className="panel max-h-[44rem] overflow-y-auto">
           <table className="table-clean">
             <thead>
               <tr>
@@ -1343,12 +1345,17 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     <Tooltip placement="bottom" text={tip('prospectProjection')} />
                   </span>
                 </th>
-                <th>
-                  <span className="inline-flex items-center gap-1">
-                    Workout
-                    <Tooltip placement="bottom" align="end" text={`${tip('privateWorkout')} ${workoutSlots.windowLabel}`} />
-                  </span>
-                </th>
+                {/* Only while a slot can actually be spent. Eighty rows of
+                    "Window closed" is not information, and the line above the
+                    table says it once, plainly. */}
+                {workoutSlots.open && (
+                  <th>
+                    <span className="inline-flex items-center gap-1">
+                      Workout
+                      <Tooltip placement="bottom" align="end" text={`${tip('privateWorkout')} ${workoutSlots.windowLabel}`} />
+                    </span>
+                  </th>
+                )}
                 <th></th>
               </tr>
             </thead>
@@ -1375,14 +1382,34 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     </td>
                     <td className="stat-value text-stat-sm text-muted text-right">{read?.rank ?? '—'}</td>
                     <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
-                    <td className="font-medium">
-                      <div className="flex items-center gap-2">
-                        <a href={`/league/${league.id}/player/${p.id}`} className="flex items-center gap-2 hover:text-accent2">
-                          <PlayerAvatar seed={p.id} age={p.age} size={26} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} /> {p.firstName} {p.lastName} <span className="text-xs text-muted">{p.college}</span>
+                    {/* Two deliberate lines rather than one wrapping one: with
+                        the club's own board and the workout control now in the
+                        row, a single flowing line of name + school + band
+                        broke in a different place on every row and the column
+                        read as rubble. */}
+                    <td className="font-medium min-w-[13rem]">
+                      <div className="flex items-center gap-2.5">
+                        <a href={`/league/${league.id}/player/${p.id}`} className="shrink-0">
+                          <PlayerAvatar seed={p.id} age={p.age} size={28} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />
                         </a>
-                        {rankBadge(p.id) && (
-                          <span className={`pill text-[10px] px-1.5 py-0.5 border-current ${rankBadge(p.id)!.className}`}>{rankBadge(p.id)!.label}</span>
-                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <a href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 whitespace-nowrap">
+                              {p.firstName} {p.lastName}
+                            </a>
+                            {rankBadge(p.id) && (
+                              <span className={`pill text-[10px] px-1.5 py-0 border-current shrink-0 ${rankBadge(p.id)!.className}`}>{rankBadge(p.id)!.label}</span>
+                            )}
+                            {/* The workout column disappears with the window,
+                                but the fact that we flew him in does not — it
+                                is part of who he is to this club, and it is
+                                most worth knowing on the clock. */}
+                            {workedOutIds.has(p.id) && (
+                              <span className="text-[10px] text-gold shrink-0" title="We flew him in for a private workout.">✓ worked out</span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted truncate">{p.college}</div>
+                        </div>
                       </div>
                     </td>
                     <td className="text-muted">{p.age}</td>
@@ -1402,21 +1429,21 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                       {read && <div className="text-[10px] text-muted leading-none mt-0.5">{read.bandLabel}</div>}
                     </td>
                     <td><span className={`text-xs font-medium ${label.className}`}>{label.label}</span></td>
-                    <td>
-                      {/* Offered only where a slot can actually be spent, and
-                          still shown for a man already worked out so the board
-                          remembers who we flew in. The window is closed for the
-                          whole of draft day by design (lib/workouts.ts) — the
-                          line above the table says so once rather than eighty
-                          times down this column. */}
-                      {(workoutSlots.open || workedOutIds.has(p.id)) && (
+                    {/* The column exists only while the window is open (see the
+                        header). A man already worked out still renders here —
+                        WorkoutButton refuses a second slot on him and says so —
+                        and carries a ✓ beside his name in every other phase.
+                        No `avatar` or `meta`: the row layout draws no
+                        commitment card, and a second portrait per row for a
+                        card that never appears is three hundred avatars of
+                        wasted work. */}
+                    {workoutSlots.open && (
+                      <td>
                         <WorkoutButton
                           leagueId={league.id}
                           teamId={team.id}
                           playerId={p.id}
                           name={`${p.firstName} ${p.lastName}`}
-                          meta={`${p.position} · ${p.college}${read ? ` · board #${read.rank}` : ''}`}
-                          avatar={<PlayerAvatar seed={p.id} age={p.age} size={40} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />}
                           remaining={workoutSlots.remaining}
                           max={workoutSlots.max}
                           open={workoutSlots.open}
@@ -1425,9 +1452,10 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                           potLow={view.potLow}
                           potHigh={view.potHigh}
                           confidence={view.confidence}
+                          layout="row"
                         />
-                      )}
-                    </td>
+                      </td>
+                    )}
                     <td>
                       {/* Not while the war room is up: the GM is on the clock
                           for pick 1 only once he has actually opened the
