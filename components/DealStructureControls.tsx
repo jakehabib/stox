@@ -2,6 +2,7 @@
 
 import type { DealStructure } from '@/lib/negotiation';
 import { usableVoidYears } from '@/lib/cap';
+import { CAP } from '@/lib/tuning';
 import { CapMode } from '@/lib/types';
 import { Tooltip } from './Tooltip';
 import { tip } from '@/lib/glossary';
@@ -115,14 +116,15 @@ export function DealStructureControls({ structure, onChange, capMode, contractYe
                   <Tooltip align="start" text={tip('voidYears')} />
                 </label>
                 <span className={`stat-value text-stat-sm ${room === 0 ? 'text-muted' : ''}`}>
-                  {room === 0 ? 'Not available' : shown === 0 ? 'None' : `+${shown}`}
+                  {room === 0 ? `None — ${contractYears}yr deal` : shown === 0 ? 'None' : `+${shown}`}
                 </span>
               </div>
               {room === 0 ? (
                 <p className="text-xs text-muted mt-1.5">
-                  A signing bonus spreads over five years at most, and {contractYears} year
-                  {contractYears === 1 ? '' : 's'} already uses that up — void years would have nothing
-                  left to spread. Shorten the deal to open them up.
+                  A signing bonus spreads over {CAP.MAX_PRORATION_YEARS} years at most, and this deal already
+                  runs {contractYears} — so there is nothing further to spread it over. Void years are a
+                  short-deal tool: drop to {CAP.MAX_PRORATION_YEARS - 1} years to open up one,
+                  {' '}{CAP.MAX_PRORATION_YEARS - 2} to open up two.
                 </p>
               ) : (
                 <>
