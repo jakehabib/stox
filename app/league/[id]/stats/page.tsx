@@ -537,7 +537,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
               {teamRows.map(({ t, wins, losses, ties, pf, pa, offYards, diff }) => (
                 <tr key={t.id}>
                   <td>
-                    <Link href={t.id === userTeam?.id ? `/league/${league.id}/roster` : `/league/${league.id}/history?team=${t.id}#franchise`} className="hover:text-accent2 flex items-center gap-2 font-medium">
+                    <Link href={t.id === userTeam?.id ? `/league/${league.id}/roster` : `/league/${league.id}/team/${t.id}`} className="hover:text-accent2 flex items-center gap-2 font-medium">
                       <TeamLogo seed={t.id} abbr={t.abbr} size={22} /> {t.city} {t.nickname}
                     </Link>
                   </td>

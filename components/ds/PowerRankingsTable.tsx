@@ -15,7 +15,7 @@ import { Tooltip } from '../Tooltip';
  */
 
 function teamHref(leagueId: string, r: PowerRow): string {
-  return r.isUser ? `/league/${leagueId}/roster` : `/league/${leagueId}/history?team=${r.teamId}#franchise`;
+  return r.isUser ? `/league/${leagueId}/roster` : `/league/${leagueId}/team/${r.teamId}`;
 }
 
 /**

@@ -18,7 +18,7 @@ import { tip } from '@/lib/glossary';
  * name goes; the user's own row still leads to their roster.
  */
 function teamHref(leagueId: string, t: StandingsRow): string {
-  return t.isUser ? `/league/${leagueId}/roster` : `/league/${leagueId}/history?team=${t.id}#franchise`;
+  return t.isUser ? `/league/${leagueId}/roster` : `/league/${leagueId}/team/${t.id}`;
 }
 
 function TeamCell({ leagueId, t }: { leagueId: string; t: StandingsRow }) {
