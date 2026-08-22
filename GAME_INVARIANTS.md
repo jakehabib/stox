@@ -2,9 +2,11 @@
 
 Rules about league state that must always hold, in any league, at any point in
 its simulated history. These aren't aspirations — every rule below is
-mechanically checked by `lib/invariants.ts`, and the harness in
-`scripts/simHealth.ts` runs that check after every phase transition across
-many simulated leagues and seasons.
+mechanically checked. Almost all of them live in `lib/invariants.ts`, and the
+harness in `scripts/simHealth.ts` runs that check after every phase transition
+across many simulated leagues and seasons. A rule that is a property of the
+ARITHMETIC rather than of stored state cannot be read off a snapshot, so it
+carries its own standalone harness instead and names it (INV-21).
 
 **Any change that touches core simulation logic (season flow, the draft,
 trades, free agency, contracts/cap) should run `npm run sim:health` before
@@ -98,6 +100,49 @@ other — `lib/invariants.ts` reports violations by ID.
   exceed what a roster is able to shed. That is the same case the
   advancement compliance block treats as unfixable and lets through, rather
   than trapping the user forever.
+- **INV-21 — a restructure moves money, it never creates or destroys any.**
+  Not a snapshot rule, so it is not in `lib/invariants.ts`: it is a property
+  of the arithmetic, checked by its own permanent harness,
+  `scripts/checkRestructure.ts` (`npx tsx scripts/checkRestructure.ts`, exits
+  non-zero on failure), swept across contract lengths 1-7, every year of each
+  deal already played, four bonus sizes, void years 0-3 and every conversion
+  amount from zero to past the league-minimum floor. Four clauses:
+  - **A ZERO-DOLLAR RESTRUCTURE IS A NO-OP.** Convert nothing and this year's
+    cap hit, every remaining year's cap hit, and the dead money on a cut are
+    all unchanged. Cheap to state, needs no expected values, and it is the
+    clause that failed: `restructureContract` rebased a deal onto the years
+    LEFT while carrying the FULL original signing bonus, so every dollar
+    already amortised was charged a second time — a 5-year, $25.0M-bonus deal
+    two seasons in went from $15.0M to $18.3M on a conversion of nothing, and
+    $35.0M of cap was charged against a $25.0M bonus.
+  - **TOTAL CHARGED EQUALS MONEY PAID.** Proration billed across a deal's
+    whole life — the seasons played on the original plus the whole
+    restructured remainder — equals the signing bonus actually handed over
+    plus whatever base salary was converted into it. Holds however many times
+    a deal is restructured: kicking the can every March on a 7-year deal used
+    to charge $291.2M against $130.8M paid.
+  - **WHAT THIS YEAR FREES, THE LATER YEARS REPAY, EXACTLY** — void years
+    included, since bonus prorated across them is charged in one lump when
+    the real deal ends. This is the sentence the restructure panel prints, so
+    it is a promise to the user and not only to the ledger.
+  - **THE GUARANTEE STAYS IN THE SAME FRAME AS THE BONUS.** `guaranteed` is
+    stored bonus-inclusive and is only ever read by subtracting the bonus back
+    out (`guaranteedBaseByYear`), so any path that rewrites one must rewrite
+    the other in the same transaction. `signExtension` and `executeTrade` do;
+    the restructure write did not, which left `guaranteed - signingBonus`
+    re-reading as salary still owed and put a measured $10.3M of invented dead
+    money on a 5-year deal.
+
+  **The one documented exception, asserted rather than ignored.** A deal
+  longer than `CAP.MAX_PRORATION_YEARS` stops amortising its bonus in year
+  five while the contract runs on, so partway through it has more years left
+  than bonus years left. A rebased contract's proration window is
+  `min(years + void, 5)` counted from year zero, so a window SHORTER than the
+  years left cannot be expressed and the carried money spreads over five years
+  instead of three. Total and payback still hold exactly; only the per-year
+  shape drifts, and only past the window. Do not "fix" that by carrying enough
+  bonus to hold the per-year figure steady — that is exactly the double-charge
+  above.
 
 ## Games
 
@@ -239,3 +284,22 @@ seasons deep each, landing at **0 violations**.
    progression/aging gap rather than a contract one, so it was left alone
    here, but it is what makes the free agent list unreadable late in a
    dynasty.
+6. **The franchise tag deletes a contract without booking its unamortised
+   bonus (INV-21, second clause).** `applyFranchiseTag` in `lib/freeagency.ts`
+   runs `contract.deleteMany` and writes a fresh one-year row; nothing books a
+   `CapCharge` for the bonus the old deal had not finished amortising. The
+   re-sign screen offers the tag at `yearsRemaining <= 1`, and a man with one
+   year left still carries a year of proration — so tagging him makes it
+   vanish, where cutting him would charge it and trading him would accelerate
+   it onto the club. Every other path off a contract answers for that money;
+   this one hands out free cap relief. The replace branch of `extendContract`
+   has a smaller version of the same hole: it only runs at
+   `yearsRemaining === 0`, where all that is left to lose is whatever the void
+   years still hold.
+7. **The restructure wire entry quotes the amount REQUESTED, not the amount
+   converted.** `restructureContract`'s transaction detail is built from
+   `opts.convertAmount`; the pure function clamps that against the
+   league-minimum floor. A probe asking to convert $999,999,999 left
+   "Converted $1000.0M of base salary to bonus" on the league wire against a
+   conversion of a few million. The same rows carry `playerId: null`, so
+   nothing on the wire links a restructure back to the man it happened to.

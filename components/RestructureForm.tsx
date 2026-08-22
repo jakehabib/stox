@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { restructureContractAction } from '@/app/actions/roster';
-import { formatMoney, capHit, capHitSchedule, deadMoneyOnCut, restructureContract as computeRestructure, usableVoidYears } from '@/lib/cap';
+import { formatMoney, capHit, capHitSchedule, deadMoneyOnCut, proration, prorationYears, restructureContract as computeRestructure, usableVoidYears } from '@/lib/cap';
 import { CAP } from '@/lib/tuning';
 
 /**
@@ -81,6 +81,27 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
     // year already elapsed, so index 0 is this season for both shapes.
     const oldSchedule = capHitSchedule(contract, 'REALISTIC');
     const newSchedule = capHitSchedule(nextShaped, 'REALISTIC');
+    /*
+     * WHAT LANDS ON THE VOID YEARS IS PART OF "LATER", AND THIS USED TO LOSE IT.
+     *
+     * `capHitSchedule` covers the seasons he plays and nothing else, which is
+     * right — a void year is not a season. But bonus prorated across void
+     * years is charged all the same, in one lump the moment the real deal
+     * ends, and adding void years here is precisely how a user pushes money
+     * onto them. Counted only through the schedule, the payback line lost
+     * every dollar that landed out there. Measured, converting $15.0M of a
+     * $20.0M base on a 2-year deal with +2 void years: $11.3M borrowed from
+     * this season, $3.75M claimed as the payback, and $7.50M of the bill —
+     * two thirds of it — not mentioned at all.
+     *
+     * With this term the two are one arithmetic identity — what this season
+     * frees, the years after it repay, exactly — which is what the sentence
+     * under the table has always claimed and can now be held to. Asserted
+     * permanently as R-7 in scripts/checkRestructure.ts.
+     */
+    const onVoidYears = (c: Parameters<typeof proration>[0]) =>
+      proration(c) * Math.max(0, prorationYears(c) - c.years);
+    const voidLanding = onVoidYears(nextShaped) - onVoidYears(contract);
     return {
       oldHit,
       newHit,
@@ -90,7 +111,12 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
       oldSchedule,
       newSchedule,
       /** Extra cap charged in future years to buy this year's relief. */
-      futureCost: newSchedule.slice(1).reduce((a, b) => a + b, 0) - oldSchedule.slice(1).reduce((a, b) => a + b, 0),
+      futureCost: newSchedule.slice(1).reduce((a, b) => a + b, 0) - oldSchedule.slice(1).reduce((a, b) => a + b, 0)
+        + voidLanding,
+      /** How much of that payback waits on the void years instead of a season. */
+      voidLanding,
+      /** The league year the void-year charge arrives in — the deal's last real year plus one. */
+      voidLandingYear: nowYear + contract.yearsRemaining,
     };
   }, [convert, submittedVoidYears]);
 
@@ -174,10 +200,20 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
 
       <div className="card-pad !p-3 rounded-lg bg-raised space-y-1.5 text-sm">
         <div className="flex justify-between"><span className="text-muted">This year's cap hit</span><span className="font-mono">{formatMoney(preview.oldHit)} → <span className="text-accent font-semibold">{formatMoney(preview.newHit)}</span></span></div>
-        {/* Past the five-year proration window a conversion CREATES proration
-            where there was none, so the move costs this year rather than
-            freeing it. The row used to read "Cap space freed up  -$3.78M",
-            which is two contradictory statements on one line. */}
+        {/* This row used to read "Cap space freed up  -$3.78M" — two
+            contradictory statements on one line — because a restructure could
+            genuinely COST this year's cap: the rebase carried the whole
+            original signing bonus onto the years left and re-prorated money
+            that had already been charged, and late in a bonus-heavy deal that
+            inflation outran the relief the conversion bought.
+
+            It carries only the UNAMORTISED bonus now, so the arithmetic is
+            `converted - converted/yearsLeft` and cannot come out below zero;
+            the worst a restructure does is nothing at all, in the last year of
+            a deal, where there is no later year to push into. The negative
+            wording is kept rather than deleted because the row must never be
+            the thing that lies if that ever stops being true — a label that
+            reads the sign it is given costs nothing to keep honest. */}
         <div className="flex justify-between"><span className="text-muted">{preview.capFreed >= 0 ? 'Cap space freed up' : 'Cap space this costs you'}</span><span className={`font-mono font-semibold ${preview.capFreed >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(Math.abs(preview.capFreed))}</span></div>
         <div className="flex justify-between pt-1 border-t border-line/60"><span className="text-muted">Your cap space after</span><span className="font-mono font-semibold text-accent">{formatMoney(capSpace + preview.capFreed)}</span></div>
         <div className="flex justify-between"><span className="text-muted">Dead money if cut</span><span className="font-mono">{formatMoney(preview.oldDead)} → <span className="text-bad font-semibold">{formatMoney(preview.newDead)}</span></span></div>
@@ -205,7 +241,11 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
       {preview.futureCost > 0 && (
         <p className="text-xs text-warn">
           You are borrowing {formatMoney(preview.capFreed)} from this season and paying back {formatMoney(preview.futureCost)}
-          {' '}across the later years of the deal. That money does not disappear — it just moves.
+          {' '}across the later years of the deal
+          {preview.voidLanding > 0
+            ? `, ${formatMoney(preview.voidLanding)} of it landing in one go in ${preview.voidLandingYear} when the void years come due`
+            : ''}
+          . That money does not disappear — it just moves.
         </p>
       )}
 

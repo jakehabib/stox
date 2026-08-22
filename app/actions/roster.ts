@@ -7,7 +7,7 @@ import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFr
 import { decideOffer, type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer } from '@/lib/negotiation';
 import { parseSettings } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
-import { capHit, deadMoneyOnCut, capSavingsOnCut, unamortizedBonus, guaranteedSalaryOwed } from '@/lib/cap';
+import { capHit, deadMoneyOnCut, capSavingsOnCut, unamortizedBonus, guaranteedSalaryOwed, restructureContract as computeRestructure } from '@/lib/cap';
 import { autoDepthChart, reconcileDepthChart } from '@/lib/gen/league';
 import { Rng } from '@/lib/rng';
 import { readJson, writeJson } from '@/lib/json';
@@ -243,6 +243,38 @@ export async function applyFranchiseTagAction(leagueId: string, playerId: string
   }
 }
 
+/**
+ * ===========================================================================
+ * RESTRUCTURE, AND THE TWO THINGS THE REBASE MADE THIS ACTION RESPONSIBLE FOR
+ * ===========================================================================
+ * A restructure rewrites the contract onto the years that are LEFT and carries
+ * the UNAMORTISED signing bonus across (lib/cap.ts `restructureContract`, and
+ * the block over it for why carrying the whole bonus billed the same money
+ * twice). Two consequences land here rather than in the math.
+ *
+ * 1. A CONVERSION OF NOTHING IS NOT A RESTRUCTURE. No year of a deal may pay
+ *    below the league minimum, so a request is clamped to the room above that
+ *    floor and can come back as zero. The library refuses a request "too small
+ *    to change anything" by checking whether the signing bonus moved — a test
+ *    that only worked while the bonus was carried whole. The rebase moves it on
+ *    its own now (a zero-dollar restructure drops it to the unamortised
+ *    figure), so that test would wave through a move that converts nothing,
+ *    write a rebased row and report cap relief that did not happen. The pure
+ *    function reports what it actually converted; this refuses on that.
+ *
+ * 2. `guaranteed` HAS TO TRAVEL WITH THE BONUS. It is stored bonus-inclusive,
+ *    and everything that reads it subtracts the bonus back out to find the
+ *    guaranteed BASE salary still owed (lib/cap.ts `guaranteedBaseByYear`).
+ *    Store a rebased bonus beside the OLD guarantee figure and the gap between
+ *    them re-reads as salary the club still owes, on a schedule that no longer
+ *    contains the years it was promised for — dead money conjured out of an
+ *    accounting move, and money the player already collected demanded back on
+ *    the club's behalf. `signExtension` writes both halves in one transaction
+ *    for this reason; the restructure path writes the bonus and leaves the
+ *    guarantee behind, so it is restated here, from the same call the library
+ *    made. It belongs inside that transaction and should move there.
+ * ===========================================================================
+ */
 export async function restructureContractAction(leagueId: string, playerId: string, convertAmount: number, addVoidYears: number) {
   await assertLeagueOwner(leagueId);
   try { await assertPlayerOnUserTeam(leagueId, playerId); }
@@ -250,9 +282,26 @@ export async function restructureContractAction(leagueId: string, playerId: stri
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   try {
+    const before = await prisma.contract.findUnique({ where: { playerId } });
+    // The same call, on the same row, with the same arguments the library is
+    // about to make — so the figure refused on and the figure stored can never
+    // be a different restructure from the one that actually ran.
+    const shaped = before
+      ? computeRestructure(before, convertAmount, { addVoidYears, nowYear: league.seasonYear })
+      : null;
+    if (shaped && shaped.converted <= 0) {
+      return {
+        ok: false,
+        message: 'There is nothing to convert — his base salary this year is already at the league minimum, and no deal may pay below it.',
+      };
+    }
+
     const result = await restructureContract({
       leagueId, playerId, convertAmount, addVoidYears, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week,
     });
+    if (shaped) {
+      await prisma.contract.update({ where: { playerId }, data: { guaranteed: shaped.guaranteed } });
+    }
     revalidatePath(`/league/${leagueId}`, 'layout');
     return { ok: true, message: `Restructured — new cap hit this year: $${(result.newCapHit / 1_000_000).toFixed(2)}M.` };
   } catch (err) {

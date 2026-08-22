@@ -372,7 +372,18 @@ export function buildExtension(opts: {
   }
   // Bonus money already paid but not yet charged to a cap. It does not
   // disappear because a new deal was signed on top of it.
-  const carriedBonus = Math.round(proration(opts.current) * opts.current.yearsRemaining);
+  //
+  // `unamortizedBonus`, not `proration x yearsRemaining` — the two are the
+  // same number only while the deal fits inside the proration window, and
+  // this counted the wrong one in both directions the moment it did not.
+  // Years left is not bonus years left: a 7-year deal two seasons in has 5
+  // years to run and only 3 of bonus window, so it carried 5 years of
+  // proration off a bonus with 3 left and charged the difference a second
+  // time — the same double-charge `restructureContract` above carried. A
+  // deal with void years fails the other way: 3 real years plus 2 void, one
+  // played, has 4 years of window left and carried only 2, quietly writing
+  // off bonus that must still be paid for and would still accelerate on a cut.
+  const carriedBonus = unamortizedBonus(opts.current, 'REALISTIC');
 
   const addYears = Math.max(1, Math.round(opts.addYears));
   const fresh = buildContract({
@@ -413,18 +424,64 @@ export function buildExtension(opts: {
 }
 
 /**
- * Restructure a contract: convert part of the CURRENT year's base salary
- * into signing bonus, which lowers this year's cap hit but raises every
- * future year's (via a bigger prorated bonus) — the classic real-NFL move.
- * Rebases the deal as if freshly re-signed for exactly the years left, so
- * the combined (old + newly converted) bonus reprorates cleanly over what
- * actually remains, optionally stretched further with fresh void years.
+ * ===========================================================================
+ * A RESTRUCTURE MOVES MONEY. IT MAY NOT CREATE ANY.
+ * ===========================================================================
+ * Convert part of the CURRENT year's base salary into signing bonus: this
+ * year's cap hit falls, every later year's rises, and the dead money on a
+ * cut goes up. The classic real-NFL move, and a real decision because of
+ * that last clause.
+ *
+ * It rebases the deal as if freshly re-signed for exactly the years left, so
+ * the bonus reprorates over what actually remains rather than over seasons
+ * already played, optionally stretched further with fresh void years.
+ *
+ * WHAT MAY BE CARRIED ACROSS THAT REBASE IS THE UNAMORTISED BONUS, NOT THE
+ * WHOLE ONE. This carried `c.signingBonus + converted` — the full original
+ * cheque — onto a schedule covering only the years that are left, so every
+ * dollar already charged to a past season was charged again. The proof is a
+ * conversion of ZERO dollars, which must by definition change nothing:
+ *
+ *     5yr deal, $25.0M bonus ($5.00M/yr), 2 years played, 3 remaining
+ *     BEFORE   proration $5.00M/yr   unamortised $15.0M   capHit $15.0M
+ *     AFTER    $25.0M over 3yr    -> $8.33M/yr           capHit $18.3M
+ *     EXPECTED $15.0M over 3yr    -> $5.00M/yr           capHit $15.0M
+ *
+ * Charged over the life of that deal: $5.00M + $5.00M in the seasons played,
+ * then $8.33M x 3 = $35.0M against a $25.0M bonus. $10.0M billed twice, and
+ * worse the further into the deal you are — a move whose entire purpose is
+ * relief quietly inflated every year it touched. `unamortizedBonus` is the
+ * money that has NOT yet hit a cap, and it is the only part a rebase is
+ * entitled to re-spread.
+ *
+ * THE INVARIANT THAT NOW GUARDS IT, checked permanently by
+ * scripts/checkRestructure.ts: a zero-dollar restructure is a no-op — same
+ * cap hit this year, same figure in every remaining year, same dead money —
+ * and total proration charged across a deal's whole life equals the bonus
+ * actually paid, however many times it is restructured.
+ *
+ * THE ONE SHAPE THAT CANNOT HOLD BOTH, stated plainly because it is real: a
+ * deal longer than CAP.MAX_PRORATION_YEARS. Its bonus stops amortising in
+ * year five while the contract runs on, so partway through it has more years
+ * left than it has bonus years left — a 7-year deal two seasons in has 5
+ * years to run and 3 years of window. A rebased contract's window is
+ * `min(years + void, 5)` counted from year 0, so a window SHORTER than the
+ * years left is not expressible, and the carried money spreads over 5 years
+ * instead of 3. The total stays exactly right; the shape shifts a little
+ * money later. Conservation is the invariant that must not bend — carrying
+ * enough bonus to hold the per-year figure steady instead is precisely the
+ * double-charge above — so this is the side the model errs on, and only for
+ * deals past the proration window. Real accounting keeps the old bonus on
+ * its own original schedule and prorates only the converted money afresh;
+ * one `signingBonus` column cannot express two schedules, which is the same
+ * documented simplification `buildExtension` carries.
+ * ===========================================================================
  */
 export function restructureContract(
   c: ContractLike,
   convertAmount: number,
   opts: { addVoidYears?: number; nowYear: number },
-): { years: number; yearsRemaining: number; signedYear: number; baseSalaries: number[]; signingBonus: number; voidYears: number; guaranteed: number } {
+): { years: number; yearsRemaining: number; signedYear: number; baseSalaries: number[]; signingBonus: number; voidYears: number; guaranteed: number; converted: number } {
   const bases = readJson<number[]>(c.baseSalaries, []);
   const yearIdx = Math.max(0, c.years - c.yearsRemaining);
   const currentBase = bases[yearIdx] ?? 0;
@@ -433,12 +490,16 @@ export function restructureContract(
   const remainingBases = bases.slice(yearIdx);
   remainingBases[0] = currentBase - converted;
 
+  // Bonus money paid but not yet charged to any cap. See the block above:
+  // this, and not `c.signingBonus`, is what survives the rebase.
+  const carriedBonus = unamortizedBonus(c, 'REALISTIC');
+
   return {
     years: c.yearsRemaining,
     yearsRemaining: c.yearsRemaining,
     signedYear: opts.nowYear,
     baseSalaries: remainingBases,
-    signingBonus: c.signingBonus + converted,
+    signingBonus: carriedBonus + converted,
     // ADD, as the option name says. This used to assign, which silently DELETED
     // void years a deal already carried: restructuring a 3+2 deal with the void
     // slider left at zero shortened its proration window from five years to
@@ -451,12 +512,37 @@ export function restructureContract(
     // already collected — a man three years into a deal would come out of a
     // restructure owed his year-one guarantee all over again.
     //
+    // It is built on `carriedBonus` for the same reason the bonus itself is,
+    // and this is not a smaller promise to the player. `guaranteed` is stored
+    // bonus-INCLUSIVE, and the only thing anything ever does with it is
+    // subtract the bonus back out to find the guaranteed BASE salary
+    // (guaranteedBaseByYear). The two fields therefore have to describe the
+    // same frame: pair a full original bonus with an unamortised one here and
+    // the difference between them re-reads as guaranteed salary still owed,
+    // which lands on the cap as dead money — the identical double-charge, just
+    // arriving through the other column. lib/trade.ts restates `guaranteed`
+    // against a zeroed bonus for exactly this reason.
+    //
     // The converted salary joins the bonus, and is guaranteed by being paid
     // now rather than owed later; whatever guaranteed salary the conversion
-    // did not swallow is still owed on top of it.
+    // did not swallow is still owed on top of it. So a conversion out of
+    // already-guaranteed salary leaves dead money untouched, and a conversion
+    // out of salary the club could have walked away from raises it by exactly
+    // the amount converted. That is the trap the panel warns about, priced.
     guaranteed:
-      c.signingBonus + converted
+      carriedBonus + converted
       + Math.max(0, guaranteedSalaryOwed(c, 'REALISTIC') - Math.min(converted, guaranteedBaseByYear(c)[yearIdx] ?? 0)),
+    /**
+     * What was ACTUALLY converted after the league-minimum floor clamped the
+     * request — which is no longer something a caller can infer by comparing
+     * signing bonuses. It used to be: the old bonus was carried whole, so
+     * `signingBonus` moved if and only if `converted` was non-zero, and
+     * lib/freeagency.ts's restructure refuses a request "too small to change
+     * anything" on that test. The rebase now changes `signingBonus` on its
+     * own — a zero-dollar restructure drops it to the unamortised figure — so
+     * that test would pass a request that moves nothing. Callers gate on this.
+     */
+    converted,
   };
 }
 
