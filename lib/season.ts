@@ -844,12 +844,22 @@ async function updateStandings(tx: typeof prisma, homeId: string, awayId: string
   await apply(awayId, awayScore, homeScore, awayScore > homeScore, tied, sameDiv, sameConf);
 }
 
-async function recoverFatigueAndInjuries(leagueId: string) {
+/**
+ * A week off the treatment table: fatigue comes down, every injury clock ticks
+ * one week, and a clock that reaches zero clears the injury outright.
+ *
+ * `client` is the ordinary prisma client for the regular season and a
+ * transaction client in the postseason, where this runs inside the same
+ * exactly-once lock that builds the next round — see withRoundLock. It has no
+ * guard of its own and never has had: run twice, everyone in the league heals
+ * twice as fast, and nothing on any screen says so.
+ */
+async function recoverFatigueAndInjuries(leagueId: string, client: Prisma.TransactionClient | typeof prisma = prisma) {
   const { SIM } = await import('./tuning');
   // Was one findMany + one sequential awaited UPDATE per active player in the
   // whole league (~1,700 round trips for a 32-team league) every single
   // week. A single bulk statement does the same work in one round trip.
-  await prisma.$executeRaw`
+  await client.$executeRaw`
     UPDATE "Player"
     SET "fatigue" = GREATEST("fatigue" - ${SIM.FATIGUE_RECOVERY}, 0),
         "injuryWeeks" = GREATEST("injuryWeeks" - 1, 0),
@@ -1130,6 +1140,35 @@ async function applyAwardDevelopmentBump(playerId: string) {
  * migration would FAIL to apply against any live save that already carries a
  * duplicated bracket from this very bug, which is precisely the population it
  * would be protecting.
+ *
+ * THE OTHER THING THAT HAPPENS BETWEEN TWO PLAYOFF ROUNDS IS A WEEK PASSING,
+ * and until now nothing in the postseason knew that. recoverFatigueAndInjuries
+ * was called from exactly one place, simulateWeek, on the REGULAR path — so an
+ * injury clock stopped dead the moment the regular season ended. The app owner:
+ * *"i just had an injury occur at week 17, i simmed 2 weeks while on that
+ * player's card and the injury remained until round 2 of playoffs"*, and then
+ * *"simmed again, still 2 weeks"*. He was reading it correctly: the number
+ * never moved, so a man hurt in December was out for the whole run however
+ * short his injury was, and the postseason was the one part of the game where
+ * injury LENGTH meant nothing at all. Fatigue was the quieter half of the same
+ * omission — four rounds of football with no recovery, accumulating hardest on
+ * the club that keeps winning.
+ *
+ * So the recovery rides along INSIDE this lock, which is the only
+ * exactly-once-per-round guarantee the postseason has. It is league-wide,
+ * unguarded and unwitnessed — nothing on any screen would show it having run
+ * twice — and the round-builder's own `already > 0` test is exactly the answer:
+ * whichever advance actually builds the next round is the one that ran the
+ * week, and a second click that finds the bracket already there heals nobody.
+ *
+ * AFTER THE ROUND'S GAMES, NOT BEFORE, which is where the regular season puts
+ * it too (see simulateWeek) and is the football answer as well as the
+ * mechanical one: a man carried off in the wild-card round has the following
+ * week to get right, exactly as he would in November, and a one-week injury
+ * sustained in January costs him one January game rather than the season. It
+ * does NOT run after the final, and that is deliberate — there is no next round
+ * to be fit for, and the PROGRESS step a click later zeroes fatigue and injury
+ * clocks outright for everyone who comes back next year.
  * ===========================================================================
  */
 async function withRoundLock(leagueId: string, kind: string, seasonYear: number, build: (tx: Prisma.TransactionClient) => Promise<void>) {
@@ -1139,6 +1178,8 @@ async function withRoundLock(leagueId: string, kind: string, seasonYear: number,
     await tx.league.update({ where: { id: leagueId }, data: { week: league.week } });
     const already = await tx.game.count({ where: { leagueId, seasonYear, kind } });
     if (already > 0) return;
+    // The week between the round just played and the one being built.
+    await recoverFatigueAndInjuries(leagueId, tx);
     await build(tx);
   });
 }
