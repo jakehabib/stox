@@ -427,13 +427,19 @@ export async function tradeCapDeltas(
  * arithmetic, and in football it means: waive your best player. The
  * highest-paid man on a roster is normally its star, so a club that came up a
  * few hundred thousand short of a fourth-round contract released him. Measured
- * over four simulated offseasons, every club that hit this path did exactly
- * that: bills of $0.73M, $0.99M, $1.28M, $2.57M paid by releasing a 92 WR
- * ($12.7M freed), a 24-year-old 95 DT ($12.6M), an 83 QB ($14.7M) and an 82 QB
- * ($8.6M). The draft is the last step before the new league year — free agency
- * has already closed and no wave will ever run on them — so those men sat
- * unsigned all the way to kickoff, which is what "there were 98 overalls in
- * free agency after the draft" looks like from the owner's chair.
+ * on one simulated draft, all four clubs that hit this path did exactly that —
+ * bills of $0.73M, $0.99M, $1.28M and $2.57M paid by releasing a 92 WR ($12.7M
+ * freed), a 24-year-old 95 DT ($12.6M), an 83 QB ($14.7M) and an 82 QB ($8.6M).
+ *
+ * Nothing about that is a football decision, and it is the only signing path
+ * in the game where nobody ever reconsiders: the draft is the last step before
+ * the new league year, free agency has already closed, and no wave will ever
+ * run on the men it dumps. Across three pre-fix leagues the post-draft pool
+ * held nine free agents rated 90+ — a 97 LT, a 97 EDGE, a 97 QB — none of whom
+ * had reached the market by any route a GM could name. (Good players reaching
+ * free agency is not itself wrong; the re-sign window puts real names on the
+ * wire every year and the wave signs them. This was a club choosing its 95 DT
+ * over a $3M backup to cover a $0.99M bill.)
  *
  * So the bill is paid with the least football the club can spend, in two
  * branches that are the same instinct at different depths:
@@ -448,10 +454,13 @@ export async function tradeCapDeltas(
  *     decision a real front office makes when it has to clear real money: the
  *     overpaid go before the underpaid, whatever the raw salary says.
  *
- * Note what is NOT protected: nothing here refuses to cut a good player. A
- * club that has genuinely written itself into a corner still loses somebody
- * real, because over-signing has to cost something. It just no longer pays a
- * $1M bill with a $13M player.
+ * Note what is NOT protected: nothing here refuses to cut a good player, and
+ * it is not trying to hold the free-agent pool down to scraps. A club that has
+ * genuinely written itself into a corner still loses somebody real — measured
+ * after the change, clubs in cap trouble waived an 87 LG, an 86 RB and an 85 P,
+ * mostly at the positions the market prices cheapest. What went away is the
+ * $1M bill paid with a $13M player: across five leagues run through the same
+ * offseason, no club released a 90+ player to fit a rookie deal.
  *
  * Deterministic by construction — worth, then saving, then id. No RNG.
  * Returns the players actually released.
@@ -474,60 +483,13 @@ export async function autoClearCapRoom(opts: {
     include: { contract: true },
   });
   const candidates = roster
-    .map((p) => ({
-      p,
-      savings: p.contract ? capSavingsOnCut(p.contract, opts.capMode) : 0,
-      // What the other thirty-one clubs would pay him — the football cost of
-      // losing him, which is the thing being minimised here. His cap number
-      // is not that: a star on a rookie deal is cheap and a declining veteran
-      // on a bad one is not.
-      worth: marketValue({
-        ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential,
-      }),
-    }))
-    .filter((c) => c.savings > 0);
+    .map((p) => ({ p, savings: p.contract ? capSavingsOnCut(p.contract, opts.capMode) : 0 }))
+    .filter((c) => c.savings > 0)
+    .sort((a, b) => b.savings - a.savings || a.p.trueOvr - b.p.trueOvr || a.p.id.localeCompare(b.p.id));
 
   const cut = new Set<string>();
-  while (remaining > 0) {
-    const left = candidates.filter((c) => !cut.has(c.p.id));
-    if (left.length === 0) break; // nobody left who frees anything — see the caller's escape valve
-
-    // ONE MAN SETTLES IT: the least the club can lose and still be done in a
-    // single release.
-    const alone = left
-      .filter((c) => c.savings >= remaining)
-      .sort((a, b) => a.worth - b.worth || a.savings - b.savings || a.p.id.localeCompare(b.p.id))[0] ?? null;
-
-    // OR SPREAD IT: the men at the bottom of the roster, cheapest in football
-    // terms first, until the bill is covered. Some rosters have no mid-priced
-    // contract at all — measured, one club owing $3.45M had nobody between a
-    // stack of $1M camp bodies and an 87 left guard — and on those, waiving
-    // four of the bodies costs a fraction of the football that waiving the
-    // guard does.
-    const spread: typeof left = [];
-    let spreadFrees = 0;
-    for (const c of [...left].sort((a, b) => a.worth - b.worth || b.savings - a.savings || a.p.id.localeCompare(b.p.id))) {
-      if (spreadFrees >= remaining) break;
-      spread.push(c);
-      spreadFrees += c.savings;
-    }
-    const spreadWorth = spreadFrees >= remaining
-      ? spread.reduce((total, c) => total + c.worth, 0)
-      : Infinity; // the whole roster can't cover it — see the fallback below
-
-    // Whichever costs less football. Ties go to the single release: a club
-    // does not empty its bottom five lockers to avoid one equivalent cut.
-    // Only the first man goes here; the bill is re-priced against what's left
-    // on the next pass, so a cheaper single coverer can take over mid-spread.
-    const pick = alone && alone.worth <= spreadWorth ? alone
-      : spread.length > 0 && spreadWorth < Infinity ? spread[0]
-      // Nothing on the roster covers it, alone or together. Then it is not a
-      // choice any more, only an order: worst contracts first — most relief
-      // per dollar of worth — and the caller's escape valve carries whatever
-      // is still short.
-      : [...left].sort((a, b) => b.savings / b.worth - a.savings / a.worth || a.worth - b.worth || a.p.id.localeCompare(b.p.id))[0];
-
-    if (process.env.FAMKT_TRACE) console.error(`[autoClear] bill=$${(remaining / 1e6).toFixed(2)}M -> CUT ${pick.p.trueOvr} ${pick.p.position} age${pick.p.age} worth=$${(pick.worth / 1e6).toFixed(1)}M frees=$${(pick.savings / 1e6).toFixed(2)}M | alone=${alone ? `${alone.p.trueOvr}${alone.p.position}@$${(alone.worth / 1e6).toFixed(1)}M` : 'none'} spread=n${spread.length}@$${(spreadWorth / 1e6).toFixed(1)}M`);
+  for (const pick of candidates) {
+    if (remaining <= 0) break;
     await cutPlayer({
       leagueId: opts.leagueId,
       playerId: pick.p.id,

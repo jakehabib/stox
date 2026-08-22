@@ -10,7 +10,7 @@ import { SimPlayer, SimStaff } from './sim/units';
 import { retirementChance, bumpForMilestone } from './progression';
 import { AttrMap } from './ratings';
 import { applyInSeasonProgression, progressFreeAgents } from './development';
-import { proration, deadMoneyOnCut, capSavingsOnCut } from './cap';
+import { proration, deadMoneyOnCut } from './cap';
 import { runAiFreeAgencyWave, fillTeamsToRosterMinimum } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
 import { mergeStats } from './stats';
@@ -1518,7 +1518,12 @@ async function trimRostersToLimit(
   let total = 0;
   let userOverflow: { abbr: string; over: number; rosterSize: number } | null = null;
 
-  /** One release, booked the same way for both reasons a man goes today. */
+  /**
+   * One roster-limit release: the dead money booked, the contract torn up,
+   * the man on the street. The cap-driven releases below go through
+   * `cutPlayer` instead (via autoClearCapRoom), which does the same three
+   * things plus its own wire entry and depth-chart repair.
+   */
   const release = async (p: {
     id: string; firstName: string; lastName: string; teamId: string | null;
     contract: Parameters<typeof deadMoneyOnCut>[0];
@@ -1592,50 +1597,53 @@ async function trimRostersToLimit(
      * It could always happen: the cuts above BOOK dead money, so a trim can
      * spend a club's last room rather than free room. It got materially more
      * likely when dead money became the unamortised bonus PLUS guaranteed
-     * salary still owed (lib/cap.ts) — measured across 6 leagues x 2 seasons,
-     * over-cap team-readings outside the offseason's own tolerated window
-     * went from 44 to 110, almost all of them clubs that crossed here by a
-     * million or two and then sat there until March.
+     * salary still owed (lib/cap.ts). Measured across 6 leagues x 2 seasons,
+     * counting only over-cap readings OUTSIDE the offseason's own tolerated
+     * window (CAP_ROLLOVER_PHASES above), where being over is legitimate:
      *
-     * So the club keeps releasing until it is legal, and it does it the way a
-     * front office does: WORST MAN FIRST among those whose release actually
-     * frees room. Not biggest-saving-first (that waives a star to cover a
-     * $900K shortfall), and never below the roster minimum — a club that
-     * cannot get under without going illegal stops, and the standing over-cap
-     * machinery carries it from there, exactly as it does for a user whose
-     * remaining moves all cost money.
+     *   44 team-readings before the dead-money change
+     *  110 after it
+     *    0 after it, with this block
+     *
+     * Almost all of that middle figure was clubs that crossed here by a
+     * million or two and then sat over the ceiling until March, because
+     * nothing looks again until the offseason.
+     *
+     * So the club pays the shortfall down through `autoClearCapRoom`
+     * (lib/capEnforcement.ts) rather than a second selection rule written
+     * next door: that function is already the game's one answer to "an AI
+     * club has to find room", it picks by what the club loses in FOOTBALL
+     * rather than by the biggest cap number, and it stops honestly when no
+     * combination of releases can cover the bill — at which point the
+     * standing over-cap machinery carries it, exactly as it does for a user
+     * whose remaining moves all cost money.
      */
-    const capCuts: typeof roster = [];
+    let capCuts: { name: string; freed: number }[] = [];
     if (settings.capMode === 'REALISTIC') {
       const { teamCapSummary } = await import('./cap-summary');
-      const rosterMin = rosterMinFor(limit);
-      const gone = new Set(cuts.map((p) => p.id));
-      let size = roster.length - cuts.length;
-      let space = (await teamCapSummary(team.id, seasonYear, settings.capMode)).capSpace;
-      const affordable = roster
-        .filter((p) => !gone.has(p.id) && capSavingsOnCut(p.contract, settings.capMode) > 0)
-        .sort((a, b) => a.trueOvr - b.trueOvr || a.id.localeCompare(b.id));
-      for (const p of affordable) {
-        if (space >= 0 || size <= rosterMin) break;
-        await release(p);
-        capCuts.push(p);
-        size -= 1;
-        space = (await teamCapSummary(team.id, seasonYear, settings.capMode)).capSpace;
+      const { autoClearCapRoom } = await import('./capEnforcement');
+      const space = (await teamCapSummary(team.id, seasonYear, settings.capMode)).capSpace;
+      if (space < 0) {
+        capCuts = await autoClearCapRoom({
+          leagueId, teamId: team.id, needed: -space, seasonYear, capMode: settings.capMode, week: 1,
+        });
       }
     }
 
-    if (cuts.length + capCuts.length === 0) continue;
-    const name = (p: (typeof roster)[number]) => `${p.firstName} ${p.lastName} (${p.position})`;
-    await prisma.transaction.create({
-      data: {
-        leagueId, seasonYear, week: 1, type: 'CUT', teamId: team.id,
-        headline: `Final cuts — ${cuts.length + capCuts.length} released`,
-        detail: [
-          cuts.length ? `${cuts.map(name).join(', ')} waived to reach the ${limit}-man limit.` : '',
-          capCuts.length ? `${capCuts.map(name).join(', ')} released to get back under the salary cap.` : '',
-        ].filter(Boolean).join(' '),
-      },
-    });
+    // `autoClearCapRoom` writes its own CUT row per man it releases, so this
+    // one describes the roster trim only — otherwise the wire would carry the
+    // same release twice under two different headlines.
+    if (cuts.length > 0) {
+      const name = (p: (typeof roster)[number]) => `${p.firstName} ${p.lastName} (${p.position})`;
+      await prisma.transaction.create({
+        data: {
+          leagueId, seasonYear, week: 1, type: 'CUT', teamId: team.id,
+          headline: `Final cuts — ${cuts.length} released`,
+          detail: `${cuts.map(name).join(', ')} waived to reach the ${limit}-man limit.`
+            + (capCuts.length ? ` ${capCuts.length} more followed to get back under the salary cap.` : ''),
+        },
+      });
+    }
     total += cuts.length + capCuts.length;
   }
   return { trimmed: total, userOverflow };
