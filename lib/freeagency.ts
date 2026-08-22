@@ -9,8 +9,9 @@ import { loadScoutMods } from './dynasty';
 import {
   buildNegotiationContext, contractShapeFor, decideOffer, sessionFingerprint,
   DEFAULT_STRUCTURE, RESIGN_LEVERAGE, extensionLeverage, clampOffer,
-  type DealStructure, type NegotiationGate, type NegotiationMode, type NegotiationOutcome,
-  type NegotiationSession, type Offer, type ResignWindow, type Suitor,
+  evaluateOffer, rivalView, winsContest,
+  type DealStructure, type NegotiationContext, type NegotiationGate, type NegotiationMode,
+  type NegotiationOutcome, type NegotiationSession, type Offer, type ResignWindow, type Suitor,
 } from './negotiation';
 import { maxOffer, parseGmProfile, teamNeeds, RosterPlayer } from './ai/gm';
 import { teamCapSummary } from './cap-summary';
@@ -205,6 +206,19 @@ export async function leadingCompetingBid(
         teamName: `${team.city} ${team.nickname}`,
         teamAbbr: team.abbr,
         apy: Math.round(offer),
+        // THE REST OF THEIR PACKAGE, and it is not decoration: the player
+        // SCORES a rival's offer now rather than having its headline compared
+        // with yours (lib/negotiation.ts, THE CONTEST). So the term and the
+        // guarantee have to be the ones this club would really put on paper,
+        // which is why both are read off the signing path rather than chosen
+        // here — `suggestedYears` is what every AI signing passes to
+        // `signFreeAgent` (the wave, `loseToCompetingBid` and
+        // `signFreeAgentWithCompetition` all do), and AI_GUARANTEE_PCT is the
+        // share `buildContract` locks in when they call it with no override.
+        // If the wave ever structures its deals differently, both move here
+        // with it or the rumour stops being checkable.
+        years: suggestedYears(player.trueOvr, player.age),
+        guaranteePct: AI_GUARANTEE_PCT,
         capSpace: summary.capSpace,
         need: needs[player.position] ?? 0,
         starterOvr: atPosition[0]?.trueOvr ?? null,
@@ -607,17 +621,42 @@ export async function signFreeAgentWithCompetition(opts: {
   leagueId: string; playerId: string; teamId: string; apy: number; years: number;
   seasonYear: number; settings: LeagueSettings; week: number;
   escalation?: number; voidYears?: number; bonusPct?: number; guaranteedPct?: number;
+  /**
+   * The man, as `decideOffer` was just holding him. THE SAME CONTEST HAS TO
+   * BE RUN HERE, and it did not used to be: this line was
+   * `competing.apy > opts.apy`, the identical raw dollar comparison the
+   * negotiation panel has just stopped making. Left as it was, a deal the
+   * meter had legitimately won on guaranteed money or on term would reach the
+   * signing path and be thrown out at the door for paying less per year —
+   * the same contradiction, one screen further on, and far harder to see
+   * because it only fires on the offers the new model exists to allow.
+   *
+   * Optional so a caller with no negotiation behind it (there is none today)
+   * still gets the old, blunter protection rather than none.
+   */
+  ctx?: NegotiationContext;
 }) {
   const capMode = opts.settings.capMode;
   const competing = await leadingCompetingBid(opts.leagueId, opts.playerId, opts.teamId, opts.seasonYear, opts.settings);
-  if (competing && competing.apy > opts.apy) {
+  const yours: Offer = { apy: opts.apy, years: opts.years, guaranteePct: opts.guaranteedPct ?? 0 };
+  const theirs: Offer = competing
+    ? { apy: competing.apy, years: competing.years, guaranteePct: competing.guaranteePct }
+    : yours;
+  const lost = competing !== null && (opts.ctx
+    ? !winsContest(
+        evaluateOffer(opts.ctx, yours).interest,
+        evaluateOffer(rivalView(opts.ctx), theirs).interest,
+      )
+    : competing.apy > opts.apy);
+  if (competing && lost) {
     const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId } });
     await signFreeAgent({
       leagueId: opts.leagueId, playerId: opts.playerId, teamId: competing.teamId,
       apy: competing.apy, years: suggestedYears(player.trueOvr, player.age),
+      guaranteedPct: AI_GUARANTEE_PCT,
       seasonYear: opts.seasonYear, capMode, week: opts.week,
     }).catch(() => { /* rival couldn't actually close it either — player just stays in free agency */ });
-    throw new Error(`Outbid — the ${competing.teamName} swooped in at ~$${(competing.apy / 1_000_000).toFixed(1)}M/yr before you closed the deal.`);
+    throw new Error(`Outbid — the ${competing.teamName} swooped in with ~$${(competing.apy / 1_000_000).toFixed(1)}M/yr over ${competing.years} year${competing.years === 1 ? '' : 's'} before you closed the deal.`);
   }
   return signFreeAgent({ ...opts, capMode });
 }
@@ -697,6 +736,25 @@ export async function cutPlayer(opts: {
  * not survive this line would be a rumour about nothing.
  */
 export const MARKET_FLOOR = 0.85;
+
+/**
+ * The share of a deal an AI club guarantees, 0..1.
+ *
+ * Not a tuning knob invented for the negotiation panel — it is
+ * `buildContract`'s own default, which is what every AI signing in this file
+ * takes because none of them pass `guaranteedPct`. It is named and exported
+ * here because a rival's guarantee is now a term the PLAYER SCORES: a
+ * business-first man weights guaranteed money at 0.18 and a ring-chaser at
+ * 0.30, so what a rival locks in decides contests. A constant the panel
+ * invented would be the lying metric README design principle 6 rules out;
+ * this one is checkable against the contract the wave actually writes, and
+ * scripts/checkNegotiationAgreement.ts checks it.
+ *
+ * When AI clubs start structuring deals differently from one another, this is
+ * the single place that changes, and `leadingCompetingBid` follows it for
+ * free.
+ */
+export const AI_GUARANTEE_PCT = 0.45;
 
 /**
  * ---------------------------------------------------------------------------
@@ -1173,7 +1231,7 @@ export async function resolveNegotiationSession(opts: {
   // (RESIGN_LEVERAGE.WALK_YEAR); once his deal has actually expired and he is
   // one Advance from the open market it is very nearly a bid
   // (RESIGN_LEVERAGE.FINAL_CALL). Hence: it moves his ASKING PRICE and his
-  // patience, and it never touches `gate.competingApy`, because you cannot be
+  // patience, and it never touches `gate.rival`, because you cannot be
   // outbid today by a team that cannot sign him today. Claiming otherwise
   // would be exactly the lying metric the README forbids.
   const controlYears = player.contract?.yearsRemaining ?? 0;
@@ -1257,8 +1315,16 @@ export async function resolveNegotiationSession(opts: {
     // panel says a club will go to $18M, the salary slider has to reach $18M.
     maxSalary: Math.max(ceilingFloor, suitor ? Math.round(suitor.apy * 1.15) : 0),
     maxYears,
-    competingApy: competing?.apy ?? 0,
-    competingTeam: competing?.teamName ?? null,
+    // THE BID, WHOLE. It used to be a number and a name, which is all the old
+    // dollar comparison in `decideOffer` could use; the player scores the
+    // package now, so the package travels. Still null on both incumbent
+    // screens for the reason above — nobody may bid on a man under contract.
+    rival: competing
+      ? {
+          teamName: competing.teamName,
+          offer: { apy: competing.apy, years: competing.years, guaranteePct: competing.guaranteePct },
+        }
+      : null,
   };
 
   return { ctx, gate, patienceSpent: await readPatienceSpent(teamId, playerId, seasonYear), suitor };
@@ -1446,6 +1512,9 @@ export async function negotiateOffer(opts: {
           leagueId, playerId, teamId, apy: offer.apy, years: offer.years, seasonYear,
           settings, week, escalation: structure.escalation, voidYears: structure.voidYears,
           bonusPct: shape.bonusPct, guaranteedPct: shape.guaranteedPct,
+          // The same man the meter was just drawn from, so the last-second
+          // re-check is the same contest and not a second, blunter one.
+          ctx: session.ctx,
         });
       }
     } catch (err) {
@@ -1482,8 +1551,13 @@ export async function negotiateOffer(opts: {
           capSpaceAfter: capAfter,
           // You only beat somebody if somebody was actually bidding and you
           // went past them. Both figures are off the gate the meter used.
-          beat: session.gate.competingApy > 0 && offer.apy > session.gate.competingApy && session.gate.competingTeam
-            ? { teamName: session.gate.competingTeam, apy: session.gate.competingApy }
+          // You only beat somebody if somebody was actually bidding and the
+          // man chose you over them — which is what `decision.outbid` being
+          // false means now that a rival is a package rather than a number.
+          // The old test was `offer.apy > competingApy`, so a deal won on
+          // guaranteed money reported no rival beaten at all.
+          beat: session.gate.rival && !decision.outbid
+            ? { teamName: session.gate.rival.teamName, apy: session.gate.rival.offer.apy }
             : null,
         }
       : undefined;
@@ -1552,7 +1626,7 @@ export async function negotiateOffer(opts: {
     message: walkedAway
       ? `${session.ctx.playerName} has ended talks. He will test the market.`
       : decision.outbid
-        ? `They shopped it — ${session.gate.competingTeam ?? 'another club'} is still at ${formatMoney(session.gate.competingApy)}/yr and he is not signing for less.`
+        ? `They shopped it — ${session.gate.rival?.teamName ?? 'another club'} still have the better package on the table and he is taking theirs over this.`
         : decision.evaluation.insulting
           ? `${decision.evaluation.headline} That one cost you.`
           : decision.evaluation.headline,
@@ -1577,6 +1651,11 @@ async function loseToCompetingBid(opts: {
     await signFreeAgent({
       leagueId: opts.leagueId, playerId: opts.playerId, teamId: competing.teamId,
       apy: competing.apy, years: suggestedYears(player.trueOvr, player.age),
+      // Stated rather than defaulted: this is the deal the panel promised he
+      // would get if he walked, so it is written with the share the panel
+      // quoted. Same value `buildContract` would have used anyway — the point
+      // is that changing one now changes both.
+      guaranteedPct: AI_GUARANTEE_PCT,
       seasonYear: opts.seasonYear, capMode, week: opts.week,
     });
   } catch {

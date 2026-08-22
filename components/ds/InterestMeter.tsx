@@ -12,6 +12,11 @@ const VERDICT_STYLE: Record<Verdict, { label: string; text: string; bar: string 
   // whole of the mechanic, and two greens would have buried it.
   MAYBE:       { label: 'Might sign',  text: 'text-accent2', bar: 'bg-accent2' },
   CLOSE:       { label: 'Close',       text: 'text-gold',    bar: 'bg-gold' },
+  // He likes your package; somebody else's reads better to him. Its own state
+  // rather than a shade of Cold, because nothing is wrong with the offer —
+  // the offer is losing, which is a different thing to fix and fixable in
+  // three different dimensions. See THE CONTEST in lib/negotiation.ts.
+  OUTBID:      { label: 'Losing out',  text: 'text-bad',     bar: 'bg-bad' },
   CONSIDERING: { label: 'Considering', text: 'text-warn',    bar: 'bg-warn' },
   COLD:        { label: 'Cold',        text: 'text-muted',   bar: 'bg-muted' },
   INSULTED:    { label: 'Insulted',    text: 'text-bad',     bar: 'bg-bad' },
@@ -42,7 +47,7 @@ const THRESHOLDS = [45, 72, 90];
  * duration tokens collapse to 1ms so it simply does not happen. Nothing here
  * gates input; there is no input to gate.
  */
-export function InterestMeter({ interest, verdict, headline, maybeBand }: {
+export function InterestMeter({ interest, verdict, headline, maybeBand, rival }: {
   interest: number;
   verdict: Verdict;
   headline: string;
@@ -56,6 +61,19 @@ export function InterestMeter({ interest, verdict, headline, maybeBand }: {
    * scouting department has bought you.
    */
   maybeBand?: { lo: number; hi: number } | null;
+  /**
+   * Where the rival's package sits ON THE SAME TRACK, because it is the same
+   * scale — `decideOffer` scores their offer with the same evaluation it
+   * scores yours with (lib/negotiation.ts, THE CONTEST).
+   *
+   * Drawn rather than described for the reason the threshold marks are drawn:
+   * the player's hidden number stays hidden, but the CONTEST is not hidden,
+   * and a bar the user has to clear is enormously easier to read as a line on
+   * the track than as a sentence underneath. It also makes the fix visible in
+   * whichever dimension the user reaches for — drag guarantee and your bar
+   * moves past their mark exactly as it would if you had dragged salary.
+   */
+  rival?: { interest: number; label: string } | null;
 }) {
   const style = VERDICT_STYLE[verdict];
   const [flare, setFlare] = useState<number | null>(null);
@@ -102,6 +120,13 @@ export function InterestMeter({ interest, verdict, headline, maybeBand }: {
             style={{ left: `${t}%`, transition: 'background-color var(--dur-tick) var(--ease-out)' }}
           />
         ))}
+        {rival && (
+          <div
+            className="absolute inset-y-0 z-20 w-0.5 bg-chalk"
+            style={{ left: `${Math.max(0, Math.min(100, rival.interest))}%` }}
+            title={`${rival.label} — how their package reads to him on this same scale. Clear this and he is yours.`}
+          />
+        )}
         <div
           className={`h-full ${style.bar}`}
           style={{
@@ -110,6 +135,12 @@ export function InterestMeter({ interest, verdict, headline, maybeBand }: {
           }}
         />
       </div>
+
+      {rival && (
+        <div className="mt-1 text-[10px] label-sm text-muted" style={{ paddingLeft: `${Math.max(0, Math.min(88, rival.interest))}%` }}>
+          {rival.label} · {rival.interest}
+        </div>
+      )}
 
       <div className="flex items-baseline justify-between gap-3 mt-1.5">
         <span className={`text-sm ${style.text}`}>{headline}</span>

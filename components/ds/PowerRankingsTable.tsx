@@ -164,7 +164,8 @@ export function PowerRankingsCapsule({ leagueId, board, take = 5 }: { leagueId: 
         <div>
           <div className="label-sm inline-flex items-center gap-1.5">
             {board.weekLabel} Power Rankings
-            <Tooltip text={tip('powerRanking')} />
+            {/* Panel header — downward, into the five rows below it. */}
+            <Tooltip placement="bottom" text={tip('powerRanking')} />
           </div>
           <div className="text-xs text-muted mt-0.5">
             Record, opponent-adjusted margin, roster rating and recent form — so it can, and does, disagree with the table below.

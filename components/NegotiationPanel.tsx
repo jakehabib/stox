@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   decideOffer, sessionFingerprint, PERSONALITY_BLURB, PERSONALITY_LABEL,
-  DEFAULT_STRUCTURE, ACCEPT_INTEREST, clampOffer,
+  DEFAULT_STRUCTURE, ACCEPT_INTEREST, clampOffer, beatRival,
   type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer, type Verdict,
 } from '@/lib/negotiation';
 import { formatMoney } from '@/lib/cap';
@@ -241,13 +241,30 @@ export function NegotiationPanel({
     ? 'COLD'
     : decision.signBand === 'YES' ? 'ACCEPT'
     : decision.signBand === 'MAYBE' ? 'MAYBE'
+    // LOSING is not a shade of the player's opinion — it is what happens. The
+    // meter used to read "Will sign" over a red rival banner because the two
+    // were computed by different code (lib/negotiation.ts, THE CONTEST); the
+    // band carries the contest now, so there is one answer and this line
+    // cannot disagree with the sentence underneath it.
+    : decision.signBand === 'LOSING' ? 'OUTBID'
     : ev.verdict;
 
   const shownHeadline = gone && result?.lostTo
     ? `He signed with the ${result.lostTo.teamName}.`
     : walkedAway ? 'His agent is no longer taking your calls.'
+    : decision.signBand === 'LOSING' && gate.rival
+      ? `He would take the ${gate.rival.teamName} deal over this one.`
     : decision.signBand === 'MAYBE' ? 'He might sign here. His agent is not saying.'
     : ev.headline;
+
+  // WHAT WOULD BEAT THEM, in each dimension separately — the package route the
+  // app owner asked for: *"you can overcome that score with more guaranteed
+  // money/years/salary. so it's not just raw salary"*. Memoised because it
+  // costs roughly a hundred evaluations and the offer moves on every drag.
+  const beat = useMemo(
+    () => (decision.signBand === 'LOSING' && !over ? beatRival(ctx, offer, gate) : null),
+    [ctx, gate, offer, decision.signBand, over],
+  );
 
   // The term he will not go past, stated beside the control that sets it
   // rather than sprung on somebody who has already chosen one.
@@ -312,6 +329,12 @@ export function NegotiationPanel({
           verdict={shownVerdict}
           headline={shownHeadline}
           maybeBand={talksDead ? null : { lo: bandLo, hi: bandHi }}
+          // The rival on the same track, at the number the same evaluation
+          // gave their package. This is the mark to clear, and it moves for
+          // salary, term and guarantee alike.
+          rival={talksDead || decision.rivalInterest === null || !gate.rival
+            ? null
+            : { interest: decision.rivalInterest, label: gate.rival.teamName.split(' ').pop() ?? 'Rival' }}
         />
 
         <div className="space-y-4">

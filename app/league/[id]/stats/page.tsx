@@ -107,7 +107,9 @@ function EfficiencyKey({ terms }: { terms: { label: string; term: GlossaryKey }[
       {terms.map((t) => (
         <span key={t.term} className="inline-flex items-center gap-1 text-xs text-muted">
           {t.label}
-          <Tooltip text={tip(t.term)} />
+          {/* The key sits at the top of the panel, so downward — the table
+              underneath is what the bubble opens over. */}
+          <Tooltip placement="bottom" text={tip(t.term)} />
         </span>
       ))}
     </div>
@@ -360,7 +362,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
               <div className="px-4 py-3 border-b border-line/70">
                 <div className="label-sm inline-flex items-center gap-1.5">
                   Luck Table — Actual vs. Expected
-                  <Tooltip text={tip('pythagoreanWins')} />
+                  <Tooltip placement="bottom" text={tip('pythagoreanWins')} />
                 </div>
                 <div className="text-xs text-muted mt-0.5">
                   Every team sorted by how far their record sits above or below what their scoring earned. Top of the list has been winning

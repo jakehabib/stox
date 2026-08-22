@@ -89,6 +89,12 @@ export default async function RosterPage({ params, searchParams }: { params: { i
   const scoutMods = await loadScoutMods(league.id);
 
   const rows = players.map((p) => {
+    // NO `isProspect` HERE, ON PURPOSE. These are your own signed players, and
+    // a roster page that reads as guesswork about your own men is the exact
+    // failure fog was cut back to avoid (see the SCOPE block in
+    // lib/scouting.ts). `fogOnOwnRoster` already defaulted false, so this
+    // screen was unfogged before the scope change too — the call stays routed
+    // through buildScoutedView so one function still owns the answer.
     const view = buildScoutedView({
       position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
       report: reportMap.get(p.id), settings, isOwnRoster: true, isUserView: true, dynasty: scoutMods,

@@ -492,7 +492,8 @@ function ContractValueList({ title, hint, rows, leagueId, positive }: {
       <div className="px-4 py-3 border-b border-line/70">
         <div className="label-sm inline-flex items-center gap-1.5">
           {title}
-          <Tooltip text={tip('marketValue')} />
+          {/* Panel header, so downward — nothing above it inside the card. */}
+          <Tooltip placement="bottom" text={tip('marketValue')} />
         </div>
         <div className="text-xs text-muted mt-0.5">{hint}</div>
       </div>

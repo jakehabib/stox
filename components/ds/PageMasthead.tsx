@@ -40,7 +40,7 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
 
   return (
     <div
-      className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
+      className="relative rounded-lg border-2 shadow-elevated"
       style={{
         ['--team-accent' as never]: accent,
         borderColor: accent ? 'var(--team-accent)' : undefined,
@@ -49,18 +49,26 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
           : undefined,
       }}
     >
-      {/* Stadium-light hash texture — the same device the Draft Day and Cap
-          heroes already use, so this reads as the same family. */}
-      <div
-        className="absolute inset-0 opacity-[0.05] pointer-events-none"
-        style={{
-          backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)',
-          color: accent ?? '#f4f6fa',
-        }}
-      />
-      {teamId && teamAbbr && (
-        <TeamLogo seed={teamId} abbr={teamAbbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
-      )}
+      {/* THE CLIP LIVES ON THE DECORATIONS, NOT ON THE CARD.
+          The watermark crest hangs off the top-right corner and the hash
+          texture runs to the edges, so both have to be cut to the rounded
+          rect — but putting `overflow-hidden` on the card itself also cut the
+          fact strip's tooltips, which open upward out of a band that has only
+          ~100px of masthead above it. Same pixels, one layer lower. */}
+      <div className="absolute inset-0 overflow-hidden rounded-lg pointer-events-none">
+        {/* Stadium-light hash texture — the same device the Draft Day and Cap
+            heroes already use, so this reads as the same family. */}
+        <div
+          className="absolute inset-0 opacity-[0.05]"
+          style={{
+            backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)',
+            color: accent ?? '#f4f6fa',
+          }}
+        />
+        {teamId && teamAbbr && (
+          <TeamLogo seed={teamId} abbr={teamAbbr} size={220} className="watermark-logo opacity-[0.06] -right-14 -top-14" />
+        )}
+      </div>
 
       <div className="relative flex flex-wrap items-center justify-between gap-4 px-6 py-5">
         <div className="min-w-0">

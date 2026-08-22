@@ -137,32 +137,29 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
       </div>
 
       <div className="mt-5">
-        <div className="label-sm mb-2">Cap hit, every year left</div>
+        {/* The Bonus and Dead-if-cut columns are the two nobody can decode, and
+            both explanations belong HERE rather than in the header row: that
+            row is inside an `overflow-x-auto` scroller whose height is the
+            table's own, so on a one-year deal a bubble has room neither above
+            it nor below. Outside the scroller, nothing clips them. */}
+        <div className="label-sm mb-2 inline-flex items-center gap-2">
+          Cap hit, every year left
+          <span className="inline-flex items-center gap-1 normal-case tracking-normal">
+            Bonus<Tooltip text={tip('proration')} />
+          </span>
+          <span className="inline-flex items-center gap-1 normal-case tracking-normal">
+            Dead if cut<Tooltip text={tip('deadMoney')} />
+          </span>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-separate border-spacing-0">
             <thead>
               <tr>
                 <th className="label-sm text-left py-1.5 pr-3 border-b border-line">Year</th>
                 {realistic && <th className="label-sm text-right py-1.5 px-3 border-b border-line">Base</th>}
-                {realistic && (
-                  <th className="label-sm text-right py-1.5 px-3 border-b border-line">
-                    <span className="inline-flex items-center gap-1">
-                      Bonus
-                      {/* Downward: the table lives in an `overflow-x-auto`
-                          scroller, and CSS clips BOTH axes the moment one
-                          stops being visible — an upward bubble here renders
-                          perfectly and is invisible. */}
-                      <Tooltip placement="bottom" text={tip('proration')} />
-                    </span>
-                  </th>
-                )}
+                {realistic && <th className="label-sm text-right py-1.5 px-3 border-b border-line">Bonus</th>}
                 <th className="label-sm text-right py-1.5 px-3 border-b border-line">Cap hit</th>
-                <th className="label-sm text-right py-1.5 pl-3 border-b border-line">
-                  <span className="inline-flex items-center gap-1">
-                    Dead if cut
-                    <Tooltip placement="bottom" text={tip('deadMoney')} />
-                  </span>
-                </th>
+                <th className="label-sm text-right py-1.5 pl-3 border-b border-line">Dead if cut</th>
               </tr>
             </thead>
             <tbody>

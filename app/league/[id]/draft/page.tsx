@@ -107,6 +107,11 @@ export default async function DraftPage({ params, searchParams }: { params: { id
 
   const rows = pool.map((p) => {
     const view = buildScoutedView({
+      // KEEPS ITS FOG. This is the draft board — the one screen where "we
+      // don't know yet" is the whole story, so every range on it is earned.
+      // `where` above already filters to isDraftee, so this is true for every
+      // row; read off the record anyway so the claim is checkable, not assumed.
+      isProspect: p.isDraftee,
       position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
       report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
     });

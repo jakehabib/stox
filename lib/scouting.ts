@@ -34,9 +34,29 @@ import type { DynastyScoutMods } from './dynasty';
  *
  * The one sanctioned hole in the fog is ScoutingReport.fullyRevealed, set
  * only by the Dynasty "Full Scout" ability. That collapses a player to his
- * true ratings. NOTHING ELSE MAY DO THAT: for every other player, at every
+ * true ratings. NOTHING ELSE MAY DO THAT: for every fogged player, at every
  * confidence level and every skill rank, potential comes back as a genuine
  * range (see DYNASTY.MIN_BAND_HALF_WIDTH, the floor that guarantees it).
+ *
+ * ---------------------------------------------------------------------------
+ * SCOPE: FOG APPLIES TO DRAFT PROSPECTS ONLY.  <-- deliberate, not a regression
+ * ---------------------------------------------------------------------------
+ * Fog is a COST. It is paid on every screen it touches, in readability: a
+ * column of "71-79" is harder to read, sort and trust than a column of
+ * numbers. It only earns that cost where "we didn't know" is a real football
+ * story — and that is the draft, and only the draft. A free agent with five
+ * seasons of production behind him is not a mystery; you can watch the tape.
+ * Your own left tackle is not a mystery to you at all. Uncertainty about men
+ * who have never played a professional down IS the drama; uncertainty about
+ * men whose careers are on film is just a worse spreadsheet.
+ *
+ * So `isProspect` gates the whole system, and it DEFAULTS TO FALSE. A call
+ * site that says nothing gets true ratings. The draft-facing call sites pass
+ * `isProspect: player.isDraftee` and keep every range they had.
+ *
+ * The machinery below is untouched and still exact — this is one boolean at
+ * the top of one function, so pointing it at another surface later is a
+ * one-line change rather than an archaeology project.
  * ===========================================================================
  */
 
@@ -141,6 +161,16 @@ export function buildScoutedView(args: {
     fullyRevealed?: boolean | null;
   } | null;
   settings: LeagueSettings;
+  /**
+   * THE SCOPE GATE. True only for a draft prospect (Player.isDraftee).
+   *
+   * Defaults to false, which returns the player's TRUE ratings — established
+   * professionals are not fogged anywhere in this game (see the SCOPE block at
+   * the top of this file). This is a deliberate design decision, not an
+   * oversight: do not "fix" a screen that stopped showing ranges by flipping
+   * this on for it.
+   */
+  isProspect?: boolean;
   /** True for players on the viewing team (they get a confidence floor). */
   isOwnRoster?: boolean;
   isUserView?: boolean;
@@ -154,8 +184,13 @@ export function buildScoutedView(args: {
   const { position, trueAttrs, trueOvr, settings } = args;
 
   const fullScouted = args.report?.fullyRevealed === true;
+  // `!args.isProspect` is the scope gate, and it sits FIRST because it is the
+  // cheapest and the most common answer: almost everybody this function is
+  // asked about is an established pro, and established pros are never fogged.
+  const notAProspect = !args.isProspect;
   const fullyRevealed =
     fullScouted ||
+    notAProspect ||
     settings.revealTrueRatings ||
     !settings.scoutingEnabled ||
     (args.isOwnRoster && !settings.fogOnOwnRoster);
@@ -171,7 +206,11 @@ export function buildScoutedView(args: {
       revealed: true,
       notes: fullScouted
         ? 'Full Scout: your staff dropped everything and put a complete, exact file together on this player.'
-        : 'Full ratings visible (scouting fog disabled for this player).',
+        : notAProspect
+          // He has played. There is film, there are snap counts, there are
+          // five years of Sundays — nobody in this building is guessing.
+          ? 'Established professional — his tape and his production speak for themselves. No projection required.'
+          : 'Full ratings visible (scouting fog disabled for this player).',
       attrs: attrsForPosition(position).map((key) => ({
         key,
         label: ATTRIBUTE_BY_KEY[key]?.label ?? key,

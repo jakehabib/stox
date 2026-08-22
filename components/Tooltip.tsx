@@ -25,6 +25,11 @@ export function Tooltip({ text, className = '', placement = 'top' }: {
       >
         ?
       </button>
+      {/* Width is not cosmetic either. A glossary entry is a definition plus,
+          usually, a sentence on what good and bad look like — at 14rem that
+          wrapped to a dozen lines and the bubble grew taller than the card it
+          was opening inside, which is a clipping bug wearing a copy costume.
+          18rem keeps a two-sentence tip to five or six lines. */}
       {/* Placement is not cosmetic. This bubble is absolutely positioned, so any
           ancestor with a clipping overflow cuts it off — and `overflow-x: auto`
           counts, because CSS computes the other axis to `auto` the moment one
@@ -36,7 +41,7 @@ export function Tooltip({ text, className = '', placement = 'top' }: {
           it. */}
       <span
         role="tooltip"
-        className={`pointer-events-none absolute z-50 left-1/2 -translate-x-1/2 w-56 rounded-md border border-line
+        className={`pointer-events-none absolute z-50 left-1/2 -translate-x-1/2 w-72 rounded-md border border-line
                    bg-surface px-2.5 py-1.5 text-xs leading-snug text-chalk shadow-card opacity-0 scale-95 transition-all duration-100
                    group-hover:opacity-100 group-hover:scale-100 group-focus-within:opacity-100 group-focus-within:scale-100
                    ${placement === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}`}

@@ -470,13 +470,26 @@ function headlineNumber(position: string, s: SeasonStats): string {
  * the Week Report's Voice class, and it exists for the same reason: two rows
  * built on one template is the tell that ends the illusion.
  */
+export interface Picker { pick<T>(pool: T[]): T }
+
 class Voice {
-  private queues = new Map<unknown[], unknown[]>();
+  private queues = new Map<string, unknown[]>();
   constructor(private rng: Rng) {}
-  pick<T>(pool: T[]): T {
-    let q = this.queues.get(pool) as T[] | undefined;
-    if (!q || q.length === 0) { q = this.rng.shuffle(pool); this.queues.set(pool, q); }
-    return q.pop()!;
+  /**
+   * A picker bound to one kind of read. Keying the rotation on the KIND rather
+   * than on the array is what makes it work at all here: the sentence pools are
+   * built fresh inside each candidate, so an identity-keyed queue would hand
+   * every instance the same shuffled first draw and the anti-repeat would do
+   * nothing. Bound this way, two men earning the same verdict in one recap are
+   * guaranteed different sentences, and the seed moves the whole rotation from
+   * one season to the next.
+   */
+  scoped(key: string): Picker {
+    return { pick: <T,>(pool: T[]): T => {
+      let q = this.queues.get(key) as T[] | undefined;
+      if (!q || q.length === 0) { q = this.rng.shuffle(pool); this.queues.set(key, q); }
+      return q.pop()!;
+    } };
   }
 }
 
@@ -572,7 +585,7 @@ interface Candidate {
   /** How far past the bar, in the bar's own units. Scaled into `strength` below. */
   margin: number;
   /** Everything the sentence pool needs, already computed. */
-  write: (v: Voice) => string;
+  write: (v: Picker) => string;
   line: SeasonStats;
   scope: 'REGULAR' | 'PLAYOFFS';
   games: number;
@@ -646,4 +659,573 @@ function rateHeadline(position: string, s: SeasonStats, gp: number): string {
     case 'K': return `${r(s.fgm ?? 0)} field goals a game`;
     default: return statLine(pos, s);
   }
+}
+
+// ---------------------------------------------------------------------------
+// The reads
+// ---------------------------------------------------------------------------
+//
+// Every pool below holds sentences of DIFFERENT SHAPE, not one sentence with a
+// swappable tail. The Week Report had to fix four rows ending in the same four
+// words; the failure mode here is subtler and worse, because a recap is read
+// once a year and a reader who sees the same frame in 2029 that he read in
+// 2028 has caught the whole thing out at once. So the figures move around the
+// sentence: sometimes they open it, sometimes they land after a colon,
+// sometimes they arrive as the second half of a contrast.
+//
+// Nothing in any pool asserts anything the box scores did not record. There is
+// no "he was pressing", no "the coaching staff lost him", no "the leg is
+// gone" — the simulation models none of that.
+
+function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
+  const out: Candidate[] = [];
+  const p = sh.p;
+  const pos = canonicalPosition(p.position);
+  const mid = Math.ceil(team.lastWeek / 2);
+  const enoughSeason = sh.graded.length >= MIN_SEASON_WEEKS;
+  const bothHalves = sh.first.length >= MIN_HALF_WEEKS && sh.second.length >= MIN_HALF_WEEKS && sh.t !== null;
+  const tBar = SPLIT_T[pos] ?? 1.8;
+
+  // --- Trajectory ----------------------------------------------------------
+  if (bothHalves) {
+    const t = sh.t!;
+    const fS = sh.firstStats, sS = sh.secondStats;
+    const fG = sh.first.length, sG = sh.second.length;
+    if (t >= tBar && sh.firstPct <= 30 && sh.secondPct >= 55) {
+      out.push({
+        kind: 'SLOW_START', shape: sh, margin: (t - tBar) / tBar,
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => v.pick([
+          () => `Through week ${mid} it was ${spoken(pos, fS)}, and the year looked gone. After it: ${spoken(pos, sS)}.`,
+          () => `${capitalise(spoken(pos, fS))} in his first ${fG} games — then ${spoken(pos, sS)} in the ${sG} that followed.`,
+          () => `The opening half of his year was a genuine problem: ${spoken(pos, fS)} through week ${mid}. He closed it out with ${spoken(pos, sS)}.`,
+          () => `He started the season with ${spoken(pos, fS)} and ended it with ${spoken(pos, sS)}. By December nobody was talking about the start.`,
+        ])(),
+      });
+    } else if (t >= tBar && sh.secondPct >= 75 && sh.firstPct > 30) {
+      out.push({
+        kind: 'SURGED', shape: sh, margin: (t - tBar) / tBar,
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => v.pick([
+          () => `He was fine and no more than fine until about week ${mid} — ${spoken(pos, fS)} — and then went and put up ${spoken(pos, sS)}.`,
+          () => `${capitalise(spoken(pos, fS))} through the first ${fG}. Over the last ${sG}: ${spoken(pos, sS)}.`,
+          () => `Something turned around the halfway mark. ${capitalise(spoken(pos, fS))} before it, ${spoken(pos, sS)} after.`,
+        ])(),
+      });
+    } else if (t <= -tBar && sh.firstPct >= 60 && sh.secondPct <= 40) {
+      out.push({
+        kind: 'FADED', shape: sh, margin: (-t - tBar) / tBar,
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => v.pick([
+          () => `${capitalise(spoken(pos, fS))} through week ${mid}, and then ${spoken(pos, sS)} the rest of the way.`,
+          () => `For half a season he was one of the best things about us: ${spoken(pos, fS)} in ${fG} games. The other ${sG} came to ${spoken(pos, sS)}.`,
+          () => `Through week ${mid} — ${spoken(pos, fS)}. From there it fell away to ${spoken(pos, sS)}.`,
+          () => `He gave us ${spoken(pos, fS)} early. Whatever that was, it was not there for the run-in: ${spoken(pos, sS)} after week ${mid}.`,
+        ])(),
+      });
+    }
+  }
+
+  // --- Paid for it / not paid for it ---------------------------------------
+  if (enoughSeason && p.payPct !== null && p.apy !== null) {
+    const gap = p.payPct - sh.pct;
+    if (p.payPct >= PAY_HIGH && gap >= PAY_GAP_UNDER) {
+      const money = MONEY(p.apy);
+      out.push({
+        kind: 'OVERPAID', shape: sh, margin: (gap - PAY_GAP_UNDER) / 30,
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => v.pick([
+          () => `${money} a year buys a ${singular(pos)} near the top of the league. ${capitalise(spoken(pos, p.stats))} across ${p.gp} games is a long way from it.`,
+          () => `We are paying him like a top-${Math.max(1, Math.round(100 - p.payPct!))}% ${singular(pos)} and he played the year like a spare part — ${spoken(pos, p.stats)}.`,
+          () => `${capitalise(spoken(pos, p.stats))} in ${p.gp} games, at ${money} a year. That is money doing nothing for us.`,
+          () => `Only ${Math.max(1, Math.round(100 - p.payPct!))}% of ${plural(pos)} in this league cost more than his ${money}. Very few of them produced less than ${spoken(pos, p.stats)}.`,
+        ])(),
+      });
+    } else if (p.payPct <= PAY_LOW && gap <= PAY_GAP_OVER) {
+      const money = MONEY(p.apy);
+      out.push({
+        kind: 'BARGAIN', shape: sh, margin: (PAY_GAP_OVER - gap) / 30,
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => v.pick([
+          () => `${capitalise(spoken(pos, p.stats))}, on ${money} a year. There is not a cheaper way to get that.`,
+          () => `He is the ${Math.round(p.payPct!)}th percentile of ${singular(pos)} pay in this league at ${money}, and he played nothing like it: ${spoken(pos, p.stats)}.`,
+          () => `${money} a year. ${capitalise(spoken(pos, p.stats))}. Somebody is going to notice that before we want them to.`,
+        ])(),
+      });
+    }
+  }
+
+  // --- Against what we think he is -----------------------------------------
+  if (enoughSeason && p.ratingPct !== null && p.rating !== null) {
+    const gap = p.ratingPct - sh.pct;
+    if (p.ratingPct >= RATE_HIGH && gap >= RATE_GAP_UNDER) {
+      out.push({
+        kind: 'BELOW_RATING', shape: sh, margin: (gap - RATE_GAP_UNDER) / 30,
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => v.pick([
+          () => `A ${p.rating} on our own board, and a year that came out ${spoken(pos, p.stats)}. One of those two numbers is lying.`,
+          () => `On paper he is one of the better ${plural(pos)} we have. On the field this year he was ${spoken(pos, p.stats)} in ${p.gp} games.`,
+          () => `We rate him ${p.rating}. The season says ${spoken(pos, p.stats)}, and the season is the part that counted.`,
+        ])(),
+      });
+    } else if (p.ratingPct <= RATE_LOW && gap <= RATE_GAP_OVER) {
+      out.push({
+        kind: 'ABOVE_RATING', shape: sh, margin: (RATE_GAP_OVER - gap) / 30,
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => v.pick([
+          () => `Nothing on his file says he should have done this: ${spoken(pos, p.stats)} from a ${p.rating}.`,
+          () => `He is a ${p.rating} in our own building and he outplayed every bit of it — ${spoken(pos, p.stats)} in ${p.gp} games.`,
+          () => `${capitalise(spoken(pos, p.stats))}, out of a man we have graded at ${p.rating}. We should ask why we have him that low.`,
+        ])(),
+      });
+    }
+  }
+
+  // --- His own career ------------------------------------------------------
+  const solidPrior = p.prior.filter((s) => s.gp >= MIN_SEASON_WEEKS);
+  if (enoughSeason && sh.z !== null && solidPrior.length >= 2) {
+    const bestPrior = solidPrior.reduce((a, b) => (b.z > a.z ? b : a));
+    const worstPrior = solidPrior.reduce((a, b) => (b.z < a.z ? b : a));
+    const bestBar = CAREER_BEST_MARGIN[pos] ?? 0.3;
+    const worstBar = CAREER_WORST_MARGIN[pos] ?? 0.3;
+    const overBest = sh.z - bestPrior.z;
+    const underWorst = worstPrior.z - sh.z;
+
+    if (overBest >= bestBar && sh.pct >= SOLID_SEASON) {
+      const years = solidPrior.length + 1;
+      out.push({
+        kind: 'CAREER_YEAR', shape: sh, margin: (overBest - bestBar) / Math.max(0.1, bestBar),
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => v.pick([
+          () => `Nothing on his record touches this. ${capitalise(spoken(pos, p.stats))}, past the ${bestPrior.seasonYear} he had been measured by — ${headlineNumber(pos, bestPrior.stats)}.`,
+          () => `${capitalise(spoken(pos, p.stats))}: the best football of his career, and not by a small margin. His ${bestPrior.seasonYear} came to ${headlineNumber(pos, bestPrior.stats)}.`,
+          () => `${years} seasons on the books now and this is the one. ${capitalise(spoken(pos, p.stats))}, against ${headlineNumber(pos, bestPrior.stats)} in ${bestPrior.seasonYear}.`,
+          () => `He is ${p.age} and he has never played like this — ${spoken(pos, p.stats)}, clear of the ${bestPrior.seasonYear} that used to be his best.`,
+        ])(),
+      });
+    }
+    if (underWorst >= worstBar && sh.pct <= ORDINARY_CEILING) {
+      const declineByAge = p.age >= 30;
+      out.push({
+        kind: declineByAge ? 'AGE_DECLINE' : 'CAREER_WORST',
+        shape: sh, margin: (underWorst - worstBar) / Math.max(0.1, worstBar),
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => (declineByAge
+          ? v.pick([
+            () => `At ${p.age} the numbers have moved and they have not moved back: ${spoken(pos, p.stats)}, under a floor he set in ${worstPrior.seasonYear} with ${headlineNumber(pos, worstPrior.stats)}.`,
+            () => `${capitalise(spoken(pos, p.stats))} at ${p.age}. Even his ${worstPrior.seasonYear} — ${headlineNumber(pos, worstPrior.stats)} — was better than that.`,
+            () => `This is the thinnest year of his career and he is ${p.age}, which is the part that decides what we do next. ${capitalise(spoken(pos, p.stats))} in ${p.gp} games.`,
+          ])
+          : v.pick([
+            () => `The leanest season on his record: ${spoken(pos, p.stats)}, below the ${worstPrior.seasonYear} that had been his worst (${headlineNumber(pos, worstPrior.stats)}).`,
+            () => `${capitalise(spoken(pos, p.stats))} in ${p.gp} games. He has never given us less than that, ${worstPrior.seasonYear} included.`,
+            () => `Every year he has played beats this one. ${capitalise(spoken(pos, p.stats))}, against ${headlineNumber(pos, worstPrior.stats)} in ${worstPrior.seasonYear}.`,
+          ]))(),
+      });
+    }
+  }
+
+  // --- Arriving ------------------------------------------------------------
+  if (enoughSeason && p.experience === 0 && sh.pct >= GOOD_SEASON) {
+    const origin = p.draftRound === null ? 'Undrafted' : `A round ${p.draftRound} pick`;
+    out.push({
+      kind: 'ROOKIE_ARRIVAL', shape: sh, margin: (sh.pct - GOOD_SEASON) / 15,
+      line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+      write: (v) => v.pick([
+        () => `${origin}, and already one of the better ${plural(pos)} in the league by what he actually did: ${spoken(pos, p.stats)} across ${p.gp} games.`,
+        () => `${capitalise(spoken(pos, p.stats))} in his first season. ${origin === 'Undrafted' ? 'Nobody drafted him.' : `${origin}.`}`,
+        () => `He did not spend the year learning. ${capitalise(spoken(pos, p.stats))} as a rookie, in ${p.gp} games.`,
+      ])(),
+    });
+  }
+  if (enoughSeason && p.experience === 1 && sh.z !== null && sh.pct >= 70 && solidPrior.length === 1) {
+    const rookieYear = solidPrior[0];
+    const jump = sh.z - rookieYear.z;
+    const bar = CAREER_BEST_MARGIN[pos] ?? 0.3;
+    if (jump >= bar) {
+      out.push({
+        kind: 'SECOND_YEAR_LEAP', shape: sh, margin: (jump - bar) / Math.max(0.1, bar),
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => v.pick([
+          () => `Second year, different player: ${spoken(pos, p.stats)}, against ${headlineNumber(pos, rookieYear.stats)} as a rookie.`,
+          () => `He went from ${headlineNumber(pos, rookieYear.stats)} in ${rookieYear.seasonYear} to ${spoken(pos, p.stats)}. That is the jump you hope for and rarely get.`,
+          () => `${capitalise(spoken(pos, p.stats))} in year two. His rookie season was ${headlineNumber(pos, rookieYear.stats)}.`,
+        ])(),
+      });
+    }
+  }
+
+  // --- Available, or not ---------------------------------------------------
+  if (sh.missed >= MISSED_GAMES_BAR && sh.graded.length >= 4 && sh.pct >= 40) {
+    const hurt = p.injuries.slice().sort((a, b) => b.weeks - a.weeks)[0];
+    const cause = hurt ? `${hurt.type.toLowerCase()} in week ${hurt.week}` : null;
+    out.push({
+      kind: 'MISSED_TIME', shape: sh, margin: (sh.missed - MISSED_GAMES_BAR) / 4,
+      line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+      write: (v) => v.pick([
+        () => `${p.gp} of our ${team.teamGames}${cause ? ` — the ${cause} took the rest` : ''}. In the ones he played: ${spoken(pos, p.stats)}.`,
+        () => `${capitalise(count(sh.missed, 'game'))} missed${cause ? `, starting with a ${cause}` : ''}. He was good when he was out there — ${spoken(pos, p.stats)} — which is the frustrating half of it.`,
+        () => `We got ${p.gp} games out of him and wanted ${team.teamGames}. ${capitalise(spoken(pos, p.stats))}${cause ? `, with a ${cause} in the middle of it` : ''}.`,
+      ])(),
+    });
+  }
+  if (sh.graded.length >= 12 && sh.pct >= SOLID_SEASON) {
+    const worst = sh.graded.reduce((a, b) => (b.grade! < a.grade! ? b : a));
+    if (worst.grade! >= 50) {
+      out.push({
+        kind: 'NEVER_A_BAD_WEEK', shape: sh, margin: (worst.grade! - 50) / 20,
+        line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+        write: (v) => v.pick([
+          () => `${p.gp} games and not one of them a write-off. His quietest afternoon of the year was week ${worst.week} — ${spoken(pos, worst.stats)} — and that still beat half the ${plural(pos)} in the league.`,
+          () => `You could set your watch by him. ${capitalise(spoken(pos, p.stats))} on the year, and his worst single game (week ${worst.week}, ${spoken(pos, worst.stats)}) was still an above-average one.`,
+          () => `Nothing spectacular and nothing wasted: ${spoken(pos, p.stats)}, and no week all season where he was below what the job asks.`,
+        ])(),
+      });
+    }
+  }
+
+  // --- One afternoon -------------------------------------------------------
+  if (enoughSeason && sh.bestGrade >= 98 && sh.pct <= ORDINARY_CEILING) {
+    const rest = subtract(p.stats, sh.best.stats);
+    const restGames = p.gp - 1;
+    out.push({
+      kind: 'ONE_BIG_DAY', shape: sh, margin: (sh.bestGrade - 98) / 2,
+      line: sh.best.stats, scope: 'REGULAR', games: 1, pct: null,
+      write: (v) => v.pick([
+        () => `Week ${sh.best.week} was most of his season: ${spoken(pos, sh.best.stats)}. The other ${restGames} games came to ${spoken(pos, rest)}.`,
+        () => `One afternoon carried the whole year. ${capitalise(spoken(pos, sh.best.stats))} in week ${sh.best.week}, and ${spoken(pos, rest)} across the ${restGames} either side of it.`,
+        () => `He had a week ${sh.best.week} — ${spoken(pos, sh.best.stats)} — and then he had ${restGames} other games that came to ${spoken(pos, rest)}.`,
+      ])(),
+    });
+  }
+
+  // --- January -------------------------------------------------------------
+  if (enoughSeason && sh.playoffGraded.length >= 3 && sh.playoffPct !== null) {
+    const delta = sh.playoffPct - sh.pct;
+    const pg = sh.playoffGraded.length;
+    if (delta >= 60 && sh.playoffPct >= 75) {
+      out.push({
+        kind: 'ROSE_IN_JANUARY', shape: sh, margin: (delta - 60) / 25,
+        line: p.playoffStats, scope: 'PLAYOFFS', games: p.playoffGp, pct: sh.playoffPct,
+        write: (v) => v.pick([
+          () => `${rateHeadline(pos, p.stats, p.gp)} over the regular season. In the ${count(pg, 'postseason game')}: ${spoken(pos, p.playoffStats)}.`,
+          () => `He saved it for January. ${capitalise(spoken(pos, p.playoffStats))} in ${count(pg, 'playoff game')}, off a regular season that read ${rateHeadline(pos, p.stats, p.gp)}.`,
+          () => `Whatever the regular season was, the postseason was ${spoken(pos, p.playoffStats)} in ${count(pg, 'game')}.`,
+        ])(),
+      });
+    } else if (delta <= -60 && sh.playoffPct <= 30) {
+      out.push({
+        kind: 'VANISHED_IN_JANUARY', shape: sh, margin: (-delta - 60) / 25,
+        line: p.playoffStats, scope: 'PLAYOFFS', games: p.playoffGp, pct: sh.playoffPct,
+        write: (v) => v.pick([
+          () => `${rateHeadline(pos, p.stats, p.gp)} for four months, and then ${spoken(pos, p.playoffStats)} across ${count(pg, 'postseason game')}.`,
+          () => `The postseason got none of it. ${capitalise(count(pg, 'game'))}, ${spoken(pos, p.playoffStats)}, off a regular season worth ${rateHeadline(pos, p.stats, p.gp)}.`,
+          () => `He was there all year and gone in January — ${spoken(pos, p.playoffStats)} in ${count(pg, 'playoff game')}.`,
+        ])(),
+      });
+    }
+  }
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Assembly
+// ---------------------------------------------------------------------------
+
+/** [TUNE] Nobody reads twelve of these. Six is a page, not a wall. */
+const MAX_STORIES = 6;
+/** [TUNE] No single verdict owns a season. */
+const MAX_PER_KIND = 2;
+const MAX_PER_FAMILY = 3;
+
+const RESULT_PHRASE: Record<string, string> = {
+  CHAMPION: 'a championship at the end of it',
+  RUNNER_UP: 'and a defeat in the final',
+  CONFERENCE: 'and a conference championship game we did not win',
+  DIVISIONAL: 'and an exit in the divisional round',
+  WILDCARD: 'and a wild card weekend that ended early',
+  MISSED: 'and no January football',
+};
+
+function buildOpener(t: ReviewTeamYear, v: Voice): string {
+  const rec = `${t.wins}-${t.losses}${t.ties ? `-${t.ties}` : ''}`;
+  const tail = RESULT_PHRASE[t.playoffResult] ?? 'and that was the year';
+  const diff = t.pointsFor - t.pointsAgnst;
+  const p = v.scoped('opener');
+  return p.pick([
+    () => `${rec}, ${t.pointsFor} points scored and ${t.pointsAgnst} given up, ${tail}. Here is what the year did to the people in it.`,
+    () => `We finished ${rec} ${tail}. ${diff >= 0 ? `We outscored the schedule by ${diff}` : `The schedule outscored us by ${-diff}`}. What follows is the part that was about individuals.`,
+    () => `${t.seasonYear}: ${rec}, ${tail}. ${t.pointsFor} for, ${t.pointsAgnst} against. These are the men the season happened to.`,
+    () => `The books close at ${rec}, ${tail}. ${diff >= 0 ? `Plus ${diff}` : `Minus ${-diff}`} on the scoreboard across ${t.teamGames} games, and the following worth saying out loud.`,
+  ])();
+}
+
+function buildQuiet(t: ReviewTeamYear, v: Voice): string {
+  const p = v.scoped('quiet');
+  return p.pick([
+    () => `Nobody's year needs explaining this time. It was ${t.wins}-${t.losses}, everyone was roughly what they have been, and that is the whole report.`,
+    () => `A season without a single individual story worth telling. Some years are like that, and a ${t.wins}-${t.losses} one is allowed to be.`,
+    () => `No breakouts, no collapses, nobody who played a level away from himself. ${t.wins}-${t.losses}, and the roster is exactly where we left it.`,
+  ])();
+}
+
+/**
+ * The whole recap, from data that is already in hand. Pure — no database, no
+ * clock, no randomness that is not seeded — so the calibration harness can run
+ * it over thousands of club-seasons and get the same sentences the screen gets.
+ */
+export function buildReview(input: ReviewInput): SeasonReview {
+  const voice = new Voice(new Rng(`review:${input.seed}`));
+  const team = input.team;
+
+  const pool: { c: Candidate; score: number }[] = [];
+  for (const p of input.players) {
+    const sh = shapeOf(p, team);
+    if (!sh) continue;
+    let best: { c: Candidate; score: number } | null = null;
+    for (const c of candidates(sh, team)) {
+      // One man, one story, and the strongest one. `margin` is already in
+      // units of "how far past its own measured bar", so the bonus is
+      // comparable across kinds that are measured on entirely different scales.
+      const score = KIND_PRIORITY[c.kind] + Math.min(1.5, Math.max(0, c.margin)) * 14;
+      if (!best || score > best.score) best = { c, score };
+    }
+    if (best) pool.push(best);
+  }
+
+  pool.sort((a, b) => b.score - a.score || a.c.shape.p.playerId.localeCompare(b.c.shape.p.playerId));
+
+  const perKind = new Map<StoryKind, number>();
+  const perFamily = new Map<StoryFamily, number>();
+  const chosen: Candidate[] = [];
+  for (const { c } of pool) {
+    if (chosen.length >= MAX_STORIES) break;
+    const family = FAMILY_OF[c.kind];
+    if ((perKind.get(c.kind) ?? 0) >= MAX_PER_KIND) continue;
+    if ((perFamily.get(family) ?? 0) >= MAX_PER_FAMILY) continue;
+    perKind.set(c.kind, (perKind.get(c.kind) ?? 0) + 1);
+    perFamily.set(family, (perFamily.get(family) ?? 0) + 1);
+    chosen.push(c);
+  }
+
+  const stories: Story[] = chosen.map((c) => {
+    const p = c.shape.p;
+    return {
+      kind: c.kind,
+      family: FAMILY_OF[c.kind],
+      tone: TONE_OF[c.kind],
+      playerId: p.playerId,
+      name: p.name,
+      position: canonicalPosition(p.position),
+      age: p.age,
+      heightIn: p.heightIn,
+      weightLb: p.weightLb,
+      rookie: p.experience === 0,
+      text: c.write(voice.scoped(c.kind)),
+      line: statLine(p.position, c.line),
+      scope: c.scope,
+      games: c.games,
+      pct: c.pct,
+      strength: c.margin,
+    };
+  });
+
+  return {
+    seasonYear: team.seasonYear,
+    opener: buildOpener(team, voice),
+    stories,
+    quiet: stories.length === 0 ? buildQuiet(team, voice) : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Loading it out of the database
+// ---------------------------------------------------------------------------
+
+/** Percentile of `v` within `pool`, or null when the pool is too small to mean anything. */
+function percentileIn(pool: number[], v: number): number | null {
+  if (pool.length < 12) return null;
+  return (100 * pool.filter((x) => x < v).length) / pool.length;
+}
+
+/**
+ * Read time, not write time. Nothing here is persisted and nothing in
+ * lib/season.ts has to run for it to work, which means the recap is available
+ * on saves that already exist — every number it rests on was written into a
+ * Game row the day the game was played.
+ *
+ * Cost is one club's season of box scores (about twenty games, ~90KB), one
+ * roster-wide pass over the league for the pay and rating yardsticks, and an
+ * indexed read of the players' completed seasons. Measured on a five-season
+ * save: see docs — it is in the same class as the dashboard's other panels.
+ */
+export async function buildSeasonReview(
+  leagueId: string,
+  teamId: string,
+  seasonYear: number,
+): Promise<SeasonReview | null> {
+  const [team, record, games, leagueRow] = await Promise.all([
+    prisma.team.findUnique({ where: { id: teamId }, select: { abbr: true } }),
+    prisma.teamSeasonRecord.findUnique({ where: { teamId_year: { teamId, year: seasonYear } } }),
+    prisma.game.findMany({
+      where: { leagueId, seasonYear, played: true, OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }] },
+      select: { week: true, kind: true, homeTeamId: true, boxScore: true },
+      orderBy: { week: 'asc' },
+    }),
+    prisma.league.findUnique({ where: { id: leagueId }, select: { settings: true } }),
+  ]);
+  if (!team || games.length === 0) return null;
+
+  const settings = readJson<{ scoutingEnabled?: boolean; fogOnOwnRoster?: boolean }>(leagueRow?.settings ?? null, {});
+  // A rating may only be spoken about when the save already shows it on the
+  // roster page. On a fogged save the whole scouting system exists to keep that
+  // number away from the player, and a recap is not a hole to leak it through.
+  const ratingsVisible = !(settings.scoutingEnabled !== false && settings.fogOnOwnRoster === true);
+
+  interface Acc {
+    position: string;
+    weeks: ReviewWeek[]; playoffWeeks: ReviewWeek[];
+    stats: SeasonStats; playoffStats: SeasonStats;
+    gp: number; playoffGp: number;
+    injuries: { week: number; weeks: number; type: string }[];
+    name: string;
+  }
+  const acc = new Map<string, Acc>();
+  let teamGames = 0;
+  let lastWeek = 0;
+
+  for (const g of games) {
+    const box = readJson<BoxScore | null>(g.boxScore, null);
+    if (!box?.lines) continue;
+    const side = g.homeTeamId === teamId ? 'home' : 'away';
+    const regular = g.kind === 'REGULAR';
+    if (regular) { teamGames += 1; lastWeek = Math.max(lastWeek, g.week); }
+    for (const l of box.lines[side] ?? []) {
+      let a = acc.get(l.playerId);
+      if (!a) {
+        a = {
+          position: String(l.position), name: l.name,
+          weeks: [], playoffWeeks: [], stats: {}, playoffStats: {},
+          gp: 0, playoffGp: 0, injuries: [],
+        };
+        acc.set(l.playerId, a);
+      }
+      const graded = playedEnough(a.position, l.stats) ? gradeLine(a.position, l.stats) : null;
+      const entry: ReviewWeek = { week: g.week, stats: l.stats, grade: graded ? graded.score : null };
+      if (regular) { a.weeks.push(entry); a.stats = mergeStats(a.stats, l.stats); a.gp += 1; }
+      else { a.playoffWeeks.push(entry); a.playoffStats = mergeStats(a.playoffStats, l.stats); a.playoffGp += 1; }
+    }
+    for (const inj of box.injuries ?? []) {
+      const a = acc.get(inj.playerId);
+      if (a && inj.teamId === teamId) a.injuries.push({ week: g.week, weeks: inj.weeks, type: inj.type });
+    }
+  }
+  if (teamGames === 0) return null;
+
+  const ids = [...acc.keys()];
+  const [roster, leaguePlayers, priorRows] = await Promise.all([
+    prisma.player.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true, firstName: true, lastName: true, age: true, experience: true,
+        heightIn: true, weightLb: true, draftRound: true, trueOvr: true, position: true,
+        contract: { select: { years: true, baseSalaries: true, signingBonus: true, signedYear: true } },
+      },
+    }),
+    prisma.player.findMany({
+      where: { leagueId },
+      select: { position: true, trueOvr: true, contract: { select: { years: true, baseSalaries: true, signingBonus: true } } },
+    }),
+    prisma.playerSeason.findMany({
+      where: { playerId: { in: ids }, seasonYear: { lt: seasonYear } },
+      select: { playerId: true, seasonYear: true, teamAbbr: true, gp: true, stats: true },
+    }),
+  ]);
+
+  // The yardsticks for pay and rating: every player at the same position in
+  // this league. Annual value rather than this year's cap hit, because the
+  // ledger has already been stepped onto the NEXT league year by the time this
+  // panel is on screen (see ageContractsForYear in lib/season.ts) and annual
+  // value does not move when it does.
+  const apyOf = (c: { years: number; baseSalaries: string; signingBonus: number } | null): number | null => {
+    if (!c) return null;
+    const bases = readJson<number[]>(c.baseSalaries, []);
+    if (bases.length === 0 && c.signingBonus === 0) return null;
+    return (bases.reduce((a, b) => a + b, 0) + c.signingBonus) / Math.max(1, c.years);
+  };
+  const payPool = new Map<string, number[]>();
+  const ratePool = new Map<string, number[]>();
+  for (const lp of leaguePlayers) {
+    const pos = canonicalPosition(lp.position);
+    (ratePool.get(pos) ?? ratePool.set(pos, []).get(pos)!).push(lp.trueOvr);
+    const apy = apyOf(lp.contract);
+    if (apy !== null) (payPool.get(pos) ?? payPool.set(pos, []).get(pos)!).push(apy);
+  }
+
+  const priorByPlayer = new Map<string, typeof priorRows>();
+  for (const r of priorRows) (priorByPlayer.get(r.playerId) ?? priorByPlayer.set(r.playerId, []).get(r.playerId)!).push(r);
+
+  const rosterById = new Map(roster.map((r) => [r.id, r]));
+  const players: ReviewPlayer[] = [];
+  for (const [playerId, a] of acc) {
+    const r = rosterById.get(playerId);
+    if (!r) continue; // a box score can name a player the table no longer has
+    const pos = canonicalPosition(a.position);
+    const apy = apyOf(r.contract);
+    // Only a deal that actually covered the season under review may be talked
+    // about as this season's pay. Anything signed afterwards is next year's
+    // problem and says nothing about the year that just finished.
+    const coversYear = r.contract != null && r.contract.signedYear <= seasonYear;
+    const prior = (priorByPlayer.get(playerId) ?? [])
+      .map((row) => {
+        const stats = readJson<SeasonStats>(row.stats, {});
+        const z = seasonZ(pos, stats, row.gp);
+        return z === null ? null : { seasonYear: row.seasonYear, teamAbbr: row.teamAbbr, gp: row.gp, z, stats };
+      })
+      .filter((x): x is PriorSeason => x !== null)
+      .sort((x, y) => x.seasonYear - y.seasonYear);
+
+    players.push({
+      playerId,
+      name: `${r.firstName} ${r.lastName}`,
+      position: pos,
+      age: r.age,
+      experience: r.experience,
+      draftRound: r.draftRound,
+      heightIn: r.heightIn,
+      weightLb: r.weightLb,
+      weeks: a.weeks.sort((x, y) => x.week - y.week),
+      stats: a.stats,
+      gp: a.gp,
+      playoffWeeks: a.playoffWeeks.sort((x, y) => x.week - y.week),
+      playoffStats: a.playoffStats,
+      playoffGp: a.playoffGp,
+      prior,
+      payPct: apy !== null && coversYear ? percentileIn(payPool.get(pos) ?? [], apy) : null,
+      apy: coversYear ? apy : null,
+      ratingPct: ratingsVisible ? percentileIn(ratePool.get(pos) ?? [], r.trueOvr) : null,
+      rating: ratingsVisible ? r.trueOvr : null,
+      injuries: a.injuries.sort((x, y) => x.week - y.week),
+    });
+  }
+
+  return buildReview({
+    team: {
+      seasonYear,
+      teamAbbr: team.abbr,
+      wins: record?.wins ?? 0,
+      losses: record?.losses ?? 0,
+      ties: record?.ties ?? 0,
+      pointsFor: record?.pointsFor ?? 0,
+      pointsAgnst: record?.pointsAgnst ?? 0,
+      playoffResult: record?.playoffResult ?? 'MISSED',
+      teamGames,
+      lastWeek: lastWeek || 17,
+    },
+    players,
+    // Seeded on the club and the year alone: the same season re-renders to the
+    // same recap forever, including after a reload or a redeploy.
+    seed: `${leagueId}|${teamId}|${seasonYear}`,
+  });
 }

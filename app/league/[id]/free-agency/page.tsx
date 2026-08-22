@@ -86,6 +86,13 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   const capSummary = settings.capMode === 'OFF' ? null : await teamCapSummary(team.id, league.seasonYear, settings.capMode);
   const scoutMods = await loadScoutMods(league.id);
 
+  // NO `isProspect` HERE, ON PURPOSE. Fog was cut back to draft prospects only
+  // (see the SCOPE block in lib/scouting.ts): every man in this pool has played
+  // professional football, so you can watch the tape and there is nothing to
+  // guess at. buildScoutedView therefore comes back `revealed`, quoting his
+  // true rating, and the `view.revealed` branches further down render the exact
+  // number rather than a band. Do NOT add `isProspect: true` to "fix" the
+  // missing ranges — their absence is the feature.
   const topView = topAvailable ? buildScoutedView({
     position: topAvailable.position as any, trueAttrs: readJson(topAvailable.trueAttrs, {}), trueOvr: topAvailable.trueOvr, potential: topAvailable.potential,
     report: reportMap.get(topAvailable.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
@@ -103,8 +110,11 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
       report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
     });
     const market = marketValue({ ovr: view.scoutedOvr, position: p.position as any, age: p.age });
-    // The scouted BAND, never the true rating — the verdict has to be as
-    // uncertain as the file it is drawn from.
+    // Still the BAND rather than p.trueOvr, and still routed through the view:
+    // slotVerdict must never be handed a number this page's reader cannot see.
+    // For a free agent the band is now a point (low === high === truth), so the
+    // verdict comes back unfogged and states a plain "STARTER" / "DEPTH" —
+    // which is the right answer about a man with a professional career on film.
     const verdict = slotVerdict(p.position, depthAt(p.position), { ovrLow: view.ovrLow, ovrHigh: view.ovrHigh, revealed: view.revealed });
     return { p, view, market, verdict };
   });

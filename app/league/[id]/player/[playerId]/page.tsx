@@ -362,9 +362,13 @@ export default async function PlayerPage({
 
   return (
     <div className="space-y-6 max-w-5xl">
-      {/* Hero — team-tinted card, revealed OVR or a scouted range, never both. */}
+      {/* Hero — team-tinted card, revealed OVR or a scouted range, never both.
+          No `overflow-hidden` on the card: its only clipping job was the tint
+          gradient, which a border-radius already cuts on its own, and clipping
+          the card also clipped the fact strip's tooltips — they open upward
+          out of a band with barely 100px of hero above it. */}
       <div
-        className="relative overflow-hidden rounded-lg border border-line/70"
+        className="relative rounded-lg border border-line/70"
         style={{
           ['--team-accent' as never]: jerseyColor,
           background: jerseyColor ? `radial-gradient(ellipse 90% 130% at 0% 50%, color-mix(in srgb, ${jerseyColor} 20%, transparent), transparent 70%)` : undefined,
@@ -691,7 +695,10 @@ export default async function PlayerPage({
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
                 <div className="label-sm inline-flex items-center gap-1.5">
                   {combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day'} Testing
-                  <Tooltip text={combineTesting.venue === 'COMBINE' ? tip('combineTesting') : tip('proDay')} />
+                  {/* Downward, every one of these: the testing band is the FIRST
+                      thing in a `panel overflow-hidden`, so an upward bubble
+                      opens straight out of the top of the card and is cut. */}
+                  <Tooltip placement="bottom" text={combineTesting.venue === 'COMBINE' ? tip('combineTesting') : tip('proDay')} />
                 </div>
                 <div className="text-xs text-muted">
                   {combineTesting.venue === 'COMBINE'
@@ -717,7 +724,7 @@ export default async function PlayerPage({
                   <div key={m.label} className="px-3 py-3 text-center">
                     <div className="label-sm inline-flex items-center gap-1">
                       {m.label}
-                      <Tooltip text={m.tip} />
+                      <Tooltip placement="bottom" text={m.tip} />
                     </div>
                     <div className="stat-value text-stat-sm leading-none mt-1.5">{m.value}</div>
                     {/* Public combine data, same as the numbers above it — never fogged, so this

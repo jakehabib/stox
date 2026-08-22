@@ -59,7 +59,21 @@ export const PERSONALITY_BLURB: Record<Personality, string> = {
   PROVE_IT: 'He thinks he is worth more than his tape says. Short deal, big number, and he will bet on next year.',
 };
 
-export type Verdict = 'ACCEPT' | 'CLOSE' | 'CONSIDERING' | 'COLD' | 'MAYBE' | 'INSULTED';
+/**
+ * What the panel says about an offer.
+ *
+ * Two of these are DISPLAY states that `evaluateOffer` never returns, and
+ * both exist for the same reason: the evaluation answers "what does he think
+ * of this package", which is not the whole of "what happens if you offer it".
+ *
+ *   MAYBE  — inside the sign band. The evaluation would read ACCEPT or CLOSE;
+ *            the band is what stops the meter promising an answer the hidden
+ *            draw has not given yet.
+ *   OUTBID — he likes your package and likes somebody else's more. Produced
+ *            only by `decideOffer`, which is the only thing that knows a
+ *            rival exists.
+ */
+export type Verdict = 'ACCEPT' | 'CLOSE' | 'CONSIDERING' | 'COLD' | 'MAYBE' | 'OUTBID' | 'INSULTED';
 
 /**
  * Which of the three contract screens this negotiation is.
@@ -115,8 +129,28 @@ export interface Suitor {
   teamId: string;
   teamName: string;
   teamAbbr: string;
-  /** What they would actually put on him. Their real bid, not a guess. */
+  /**
+   * WHAT THEY WOULD ACTUALLY PUT ON HIM — the whole package, not a headline.
+   *
+   * A rival used to be a single number, and `decideOffer` used to compare it
+   * with your salary and nothing else. That is the bug the app owner reported:
+   * *"it says he WILL SIGN for X amount, but because another team is bidding,
+   * he wont... maybe instead of a set $ amount, another team has a higher
+   * trade score. but you can overcome that score with more guaranteed
+   * money/years/salary. so it's not just raw salary"*.
+   *
+   * So a rival bid is an `Offer` like yours and it is SCORED like yours. All
+   * three fields are what the simulation would really write if he signed
+   * there: `apy` is `maxOffer` at the stable `fa-bid-<player>-<team>` seed,
+   * `years` is the `suggestedYears` every AI signing uses, and `guaranteePct`
+   * is the share `buildContract` locks in when the wave calls it. Nothing
+   * here is invented for the panel — see lib/freeagency.ts.
+   */
   apy: number;
+  /** Term their signing would actually carry. `suggestedYears`, same as the wave. */
+  years: number;
+  /** Share of it guaranteed, 0..1. What the wave's own contract builder locks in. */
+  guaranteePct: number;
   /** Their room this league year, off teamCapSummary. */
   capSpace: number;
   /** Their need at his position, 0..1, off teamNeeds — the same score the AI bids on. */
@@ -219,6 +253,34 @@ export interface NegotiationContext {
    * supposed to have to probe for.
    */
   loyaltyDiscount: number;
+  /**
+   * ===========================================================================
+   * THE PART OF HIS PRICE THAT IS ABOUT *YOUR* CLUB
+   * ===========================================================================
+   * 0..1, and it can be NEGATIVE — a share of his asking price, positive when
+   * your club is cheaper for him than a neutral one and negative when it is
+   * dearer. Three things go in, and all three are already modelled:
+   * `loyaltyDiscount` (he is yours and would rather stay), the extension
+   * control discount (you own his next few seasons), and a WINNER's read on
+   * your roster (a ring-chaser charges a rebuild a premium).
+   *
+   * It exists because the rival's package has to be scored on the same scale
+   * as yours, and scoring it against `reservationApy` would hand the rival
+   * YOUR discount: a hometown discount that a club in another state also gets
+   * is not a hometown discount. So the rival is priced at
+   * `reservationApy / (1 - clubDiscount)` — the neutral number, what he would
+   * charge a league-average club — and the incumbent's edge in the contest
+   * falls straight out of the price rather than out of a second loyalty term
+   * bolted on beside it. See `rivalView`.
+   *
+   * Neutral rather than club-specific on the rival's side on purpose: we know
+   * the suitor's cap room and its need (they are on `Suitor`), but "how much
+   * would a ring-chaser knock off for THEIR roster" is a claim about a club
+   * the panel is not showing a record for, and the honest default for a club
+   * you are not being shown is the league average.
+   * ===========================================================================
+   */
+  clubDiscount: number;
 }
 
 export interface Offer {
@@ -349,7 +411,6 @@ export function buildNegotiationContext(opts: {
         + (personality === 'LOYAL' ? LOYALTY_WANTS_TO_STAY : 0))
       * (mode === 'EXTENSION' ? 1 : LOYALTY_WINDOW[resignWindow ?? 'FINAL_CALL'])
     : 0;
-  multiplier -= loyaltyDiscount;
   // YEARS OF CONTROL ARE LEVERAGE, and they are the only leverage an
   // extension gives you. A man with three seasons still owed cannot go
   // anywhere, cannot be bid on, and knows it; a man with one is nearly a free
@@ -359,9 +420,15 @@ export function buildNegotiationContext(opts: {
   const controlDiscount = mode === 'EXTENSION'
     ? Math.min(CONTROL_DISCOUNT_CAP, Math.max(0, (opts.controlYears ?? 0) - 1) * CONTROL_DISCOUNT_PER_YEAR)
     : 0;
-  multiplier -= controlDiscount;
   // Ring-chasers discount a contender and charge a rebuild a premium.
-  if (personality === 'WINNER') multiplier -= (opts.teamStrength - 0.5) * 0.20;
+  const winnerAdjustment = personality === 'WINNER' ? (opts.teamStrength - 0.5) * 0.20 : 0;
+  // EVERY TERM ABOVE IS ABOUT THIS CLUB, and it is summed rather than applied
+  // one at a time because the rival now has to be priced WITHOUT it — see
+  // `clubDiscount` on the context and `rivalView` below. Subtracting them
+  // separately, as this did, made "what would he charge somebody else" a
+  // number nothing could reconstruct.
+  const clubDiscount = loyaltyDiscount + controlDiscount + winnerAdjustment;
+  multiplier -= clubDiscount;
   // He thinks he is better than his tape. That costs money.
   if (personality === 'PROVE_IT') multiplier += 0.10;
   // Mercenaries simply hold the line, and rival interest hardens everyone.
@@ -413,6 +480,7 @@ export function buildNegotiationContext(opts: {
     bandHalfWidth: bandHalfWidthFor(opts.scoutConfidence ?? 100),
     resignWindow,
     loyaltyDiscount,
+    clubDiscount,
   };
 }
 
@@ -545,7 +613,7 @@ const CONTROL_DISCOUNT_CAP = 0.10;
  * with two seasons still owed a rival club is a rumour his agent files away,
  * with four it is barely worth mentioning. Same shape as RESIGN_LEVERAGE and
  * for the same reason — nobody may bid on a man under contract, so this can
- * only ever move his asking price, never `gate.competingApy`.
+ * only ever move his asking price, never `gate.rival`.
  */
 export function extensionLeverage(controlYears: number): number {
   return RESIGN_LEVERAGE.WALK_YEAR / Math.max(1, controlYears);
@@ -846,7 +914,17 @@ export function minimumAcceptableApy(ctx: NegotiationContext, years: number, gua
  * survive: the answer is a pure function of facts already in the database.
  * ===========================================================================
  */
-export type SignBand = 'NO' | 'MAYBE' | 'YES';
+/**
+ * The regions the panel draws.
+ *
+ * NO / MAYBE / YES are about the PLAYER and come out of `signBandFor`.
+ * LOSING is about the CONTEST and is produced only by `decideOffer`, which is
+ * the only thing that knows a rival exists — see THE CONTEST below. It is in
+ * this union rather than in a second flag beside it because it is the same
+ * question: what happens if you offer this. A screen that drew a band from
+ * one answer and a warning from another is exactly the bug this replaces.
+ */
+export type SignBand = 'NO' | 'MAYBE' | 'YES' | 'LOSING';
 
 /** The interest at which he used to flip from no to yes. Now the centre of the band. */
 /**
@@ -891,6 +969,9 @@ export function bandHalfWidthFor(scoutConfidence: number): number {
  * is on the context and read in several places.
  */
 export function signBandFor(ctx: NegotiationContext, interest: number): SignBand {
+  // Never returns LOSING: it does not take a gate and therefore cannot know
+  // there is anybody else at the table. `decideOffer` overrides it.
+
   if (interest >= ACCEPT_INTEREST) return 'YES';
   if (interest >= ACCEPT_INTEREST - ctx.bandHalfWidth) return 'MAYBE';
   return 'NO';
@@ -938,9 +1019,273 @@ export interface NegotiationGate {
    * refusal, in his voice, and not the rulebook's.
    */
   maxYears: number;
-  /** Leading rival offer, 0 when nobody else is bidding. */
-  competingApy: number;
-  competingTeam: string | null;
+  /**
+   * The club bidding against you today, with the PACKAGE it is offering —
+   * null when nobody is. Only ever populated on the open market: nobody may
+   * sign a player who is under contract to you, so a re-sign or an extension
+   * gate carries null here and the suitor's pressure reaches those tables as
+   * asking price and patience instead (RESIGN_LEVERAGE, extensionLeverage).
+   *
+   * It is an `Offer`, not a number, because the player scores it the way he
+   * scores yours. See `Suitor` and `rivalView`.
+   */
+  rival: RivalBid | null;
+}
+
+/** A rival's live bid: who, and exactly what they are putting on the table. */
+export interface RivalBid {
+  teamName: string;
+  offer: Offer;
+}
+
+/**
+ * ===========================================================================
+ * THE CONTEST — one decision, not two
+ * ===========================================================================
+ * The app owner, looking at a live panel that showed a red "Washington
+ * Sentinels is in the mix at ~$12.7M/yr — you have to beat that", a "Beat
+ * Sentinels — $13.1M/yr" chip, and directly underneath both of them an
+ * interest meter reading 95 · WILL SIGN · "Dante Boone will sign this.":
+ *
+ *   *"this also contradicts itself as a bug. it says he WILL SIGN for X
+ *   amount, but because another team is bidding, he wont. that should talk
+ *   with each other, maybe instead of a set $ amount, another team has a
+ *   higher trade score. but you can overcome that score with more guaranteed
+ *   money/years/salary. so it's not just raw salary"*
+ *
+ * He is describing a defect with a precise shape, and the shape is the point.
+ * The old line was:
+ *
+ *     const outbid = !blocked && gate.competingApy > offer.apy;
+ *
+ * A raw dollar comparison computed entirely independently of the meter. The
+ * evaluation weighed salary, term, guarantee and personality and reached 95;
+ * then a separate line compared two APY numbers and said he was going
+ * elsewhere. Neither knew the other existed, so the panel printed both. That
+ * is the same failure as a table contradicting its own footnote, and README
+ * design principle 6 rules it out.
+ *
+ * WHAT REPLACES IT. A rival's bid is a PACKAGE the player scores, exactly the
+ * way he scores yours:
+ *
+ *   1. `gate.rival.offer` is a real `Offer` — apy, years, guaranteePct — built
+ *      in lib/freeagency.ts out of the same wave logic that would actually
+ *      sign him (`maxOffer` at the `fa-bid-` seed, `suggestedYears`, the share
+ *      `buildContract` locks in). Not invented in the panel, and not invented
+ *      here.
+ *   2. It goes through `evaluateOffer` and comes back as interest on the SAME
+ *      0-100 scale as yours.
+ *   3. You keep him when your interest clears his. One comparison, one
+ *      answer, and the meter and the rival warning are now literally the same
+ *      computation — so they cannot disagree.
+ *
+ * WHY IT IS NOT LITERALLY `evaluateOffer(ctx, rivalOffer)`. `ctx.reservationApy`
+ * is HIS PRICE FOR YOU. It already carries the hometown discount, the years of
+ * control you hold and a ring-chaser's read on your roster (`clubDiscount`).
+ * Handing the rival that same price would hand the rival your hometown
+ * discount, which is the one thing a hometown discount cannot be. So the rival
+ * is scored against the neutral price — `rivalView` below — and the incumbent's
+ * edge in the contest is nothing more than the discount that was already on
+ * the context. There is exactly one loyalty concept in this file and this is
+ * it.
+ *
+ * AND IT MAY NOT BECOME A NEW SOURCE OF VARIANCE. Everything here is
+ * deterministic: the rival's package is a fact of the session (and is
+ * fingerprinted, so a bid that moved under the user refuses rather than
+ * re-prices), and none of it touches `acceptanceRoll`, whose seed is still the
+ * player, the league year and your offer and nothing else. Read the "HE MIGHT
+ * SIGN HERE" block above: a rival that entered the seed would make the hidden
+ * draw re-rollable by waiting for the market to move, which is precisely what
+ * that block exists to prevent.
+ * ===========================================================================
+ */
+
+/**
+ * [TUNE] How much better your package has to read than the rival's, in
+ * interest points, before he actually chooses you.
+ *
+ * Small and non-zero. Non-zero because a tie is not a win: changing clubs is
+ * a real event and a man does not do it — or refuse to do it — over a
+ * rounding error, so somebody has to hold the tie and the club with the deal
+ * on the table does. Small because the substantive edge is already in the
+ * PRICE (`clubDiscount`), and stacking a second, invisible loyalty bonus on
+ * top of it would make the contest unlosable for reasons the panel could not
+ * state.
+ *
+ * Around here a point of interest is worth roughly 0.6% of his asking price,
+ * so this is a fraction of a percent of salary — a tie-break, not a thumb.
+ */
+export const CONTEST_MARGIN = 2;
+
+/**
+ * The player as a RIVAL club sees him: same man, same preferences, same
+ * personality weights — neutral price.
+ *
+ * Only `reservationApy` and the flags that describe your relationship with him
+ * move. Everything else is a fact about the player and travels unchanged,
+ * which is what makes the two interest numbers comparable at all.
+ *
+ * The division is the exact inverse of the subtraction in
+ * `buildNegotiationContext`: his price for you is the neutral price less
+ * `clubDiscount`, so the neutral price is his price for you divided by
+ * `1 - clubDiscount`. Clamped because `clubDiscount` is a share and a
+ * denominator near zero would produce a number that is not a contract.
+ */
+export function rivalView(ctx: NegotiationContext): NegotiationContext {
+  const neutral = Math.max(0.5, Math.min(1.5, 1 - ctx.clubDiscount));
+  return {
+    ...ctx,
+    reservationApy: Math.max(CAP.MIN_SALARY, Math.round(ctx.reservationApy / neutral)),
+    // He is not their incumbent either, and nobody holds contractual control
+    // of him at a club he has not signed for. Both only matter to callers that
+    // read the context; the evaluation itself reads neither.
+    incumbent: false,
+    loyaltyDiscount: 0,
+    clubDiscount: 0,
+    controlYears: 0,
+    currentContract: null,
+    // An extension is priced against a deal only YOU hold. What the rival is
+    // putting on the table is a fresh contract, so the years in their offer
+    // are the whole of the term he would be committing to.
+    mode: 'FREE_AGENT',
+  };
+}
+
+/** How the player reads the rival's package. Null when nobody is bidding. */
+export function evaluateRival(
+  ctx: NegotiationContext, gate: NegotiationGate,
+): { teamName: string; offer: Offer; interest: number } | null {
+  if (!gate.rival) return null;
+  return {
+    teamName: gate.rival.teamName,
+    offer: gate.rival.offer,
+    interest: evaluateOffer(rivalView(ctx), gate.rival.offer).interest,
+  };
+}
+
+/**
+ * THE comparison. Exported because the panel draws the rival's mark on the
+ * same track as your bar, and a second copy of this arithmetic in the
+ * component is how the two would drift apart again.
+ */
+export function winsContest(yourInterest: number, rivalInterest: number): boolean {
+  return yourInterest >= rivalInterest + CONTEST_MARGIN;
+}
+
+/**
+ * ===========================================================================
+ * WHAT WOULD BEAT THEM
+ * ===========================================================================
+ * *"you can overcome that score with more guaranteed money/years/salary. so
+ * it's not just raw salary"*.
+ *
+ * The old chip put `competingApy * 1.03` in the salary box, because salary
+ * was the only thing the comparison looked at. Now that the rival is a score,
+ * three different moves can win, they cost you completely different things,
+ * and which one is cheapest depends on the man — a business-first player
+ * weights guarantee at 0.18 and a ring-chaser at 0.30, so the same $1M of
+ * locked-in money is worth nearly twice as much interest to one as the other.
+ * Finding that is the front-office decision the panel was flattening into a
+ * salary bump.
+ *
+ * So this returns the minimum move in EACH dimension, on its own, from the
+ * offer currently on the table, that both wins the contest and closes the
+ * deal outright — `signBand === 'YES'`, a certain yes, not a coin flip.
+ * Anything weaker would put a chip on screen labelled "beat them" that leaves
+ * him refusing, which is the contradiction this whole pass removes.
+ *
+ * Null in a dimension means that dimension alone cannot do it: 100%
+ * guaranteed is still not enough, or no legal term is, or the salary slider
+ * does not reach. That is a real answer and the panel prints nothing for it
+ * rather than a chip that would not work.
+ *
+ * PURE, and deliberately NOT part of `decideOffer`. It costs on the order of a
+ * hundred evaluations and `decideOffer` runs a million times in the agreement
+ * sweep and once per animation frame in the browser; the panel calls this from
+ * a memo keyed on the offer instead.
+ * ===========================================================================
+ */
+export interface BeatPlan {
+  /** Rival interest this is measured against, on the player's own scale. */
+  rivalInterest: number;
+  /** Cheapest salary that closes it at the current term and guarantee. */
+  apy: number | null;
+  /** Cheapest guaranteed share that closes it at the current salary and term. */
+  guaranteePct: number | null;
+  /** Nearest term that closes it at the current salary and guarantee. */
+  years: number | null;
+  /**
+   * Which of the three costs you least in cash committed over the deal, ties
+   * broken toward the move that commits none. Guarantee usually wins that
+   * test and it is not a free lunch — it becomes signing bonus, which
+   * prorates, which is real dead money if you ever cut him. The panel says so
+   * beside the chip.
+   */
+  cheapest: 'APY' | 'GUARANTEE' | 'YEARS' | null;
+}
+
+/** Does this exact offer both win the auction and close him outright? */
+function closes(ctx: NegotiationContext, offer: Offer, rivalInterest: number): boolean {
+  if (committedTerm(ctx, offer) > ctx.willingYears) return false;
+  const interest = evaluateOffer(ctx, offer).interest;
+  return signBandFor(ctx, interest) === 'YES' && winsContest(interest, rivalInterest);
+}
+
+export function beatRival(ctx: NegotiationContext, offer: Offer, gate: NegotiationGate): BeatPlan | null {
+  const rival = evaluateRival(ctx, gate);
+  if (!rival) return null;
+  const r = rival.interest;
+
+  // SALARY. Monotonic in money — more never reads worse — so bisection is
+  // sound, and it is walked on the $100K grid the slider and the typed field
+  // both snap to, because a suggestion the controls cannot express is not a
+  // suggestion.
+  let apy: number | null = null;
+  if (closes(ctx, { ...offer, apy: gate.maxSalary }, r)) {
+    let lo = gate.minSalary;
+    let hi = gate.maxSalary;
+    while (hi - lo > 100_000) {
+      const mid = Math.round((lo + hi) / 2 / 100_000) * 100_000;
+      if (mid <= lo || mid >= hi) break;
+      if (closes(ctx, { ...offer, apy: mid }, r)) hi = mid; else lo = mid;
+    }
+    apy = closes(ctx, { ...offer, apy: lo }, r) ? lo : hi;
+  }
+
+  // GUARANTEE. Also monotonic, and the control is whole percent on both the
+  // slider and the field, so the answer is walked in whole percent.
+  let guaranteePct: number | null = null;
+  for (let g = Math.ceil(offer.guaranteePct * 100); g <= 100; g++) {
+    if (closes(ctx, { ...offer, guaranteePct: g / 100 }, r)) { guaranteePct = g / 100; break; }
+  }
+
+  // TERM. NOT monotonic in either direction — moving toward the term he wants
+  // lowers his asking price (`termPremium`) and moving away from it raises
+  // his asking price, so both a longer and a shorter deal can be the answer
+  // and neither can be bisected. Twelve legal terms is a scan, and the one
+  // that wins with the smallest change to what is on the table is the one
+  // worth suggesting.
+  let years: number | null = null;
+  let bestShift = Infinity;
+  for (let y = 1; y <= gate.maxYears; y++) {
+    if (y === offer.years) continue;
+    if (!closes(ctx, { ...offer, years: y }, r)) continue;
+    const shift = Math.abs(y - offer.years);
+    if (shift < bestShift) { bestShift = shift; years = y; }
+  }
+
+  // WHAT DOES IT COST YOU. Plain cash committed over the deal, against what
+  // the offer already on the table commits. Guarantee moves no cash at all,
+  // which is exactly why it is worth surfacing — and exactly why the panel
+  // has to print the dead money beside it.
+  const committed = offer.apy * offer.years;
+  const options: { key: 'APY' | 'GUARANTEE' | 'YEARS'; cost: number }[] = [];
+  if (guaranteePct !== null) options.push({ key: 'GUARANTEE', cost: 0 });
+  if (apy !== null) options.push({ key: 'APY', cost: Math.max(0, apy * offer.years - committed) });
+  if (years !== null) options.push({ key: 'YEARS', cost: Math.max(0, offer.apy * years - committed) });
+  options.sort((a, b) => a.cost - b.cost);
+
+  return { rivalInterest: r, apy, guaranteePct, years, cheapest: options[0]?.key ?? null };
 }
 
 /**
@@ -1029,8 +1374,19 @@ export interface OfferDecision {
   /** Bonus proration void years push past the end of the deal. */
   strandedVoidMoney: number;
   blocked: Block | null;
-  /** A rival is offering more per year. He signs THERE, not here. */
+  /**
+   * A rival's PACKAGE reads better to him than yours. He signs there, not
+   * here. Not a salary comparison — see THE CONTEST above.
+   */
   outbid: boolean;
+  /**
+   * What he thinks of the rival's package, 0-100, on the identical scale as
+   * `evaluation.interest`. Null when nobody is bidding. On the decision rather
+   * than re-derived in the panel because the meter draws the rival's mark on
+   * the same track as your bar, and two copies of one number is how a screen
+   * comes to contradict itself.
+   */
+  rivalInterest: number | null;
   /**
    * Which of the three regions this offer is in: he will not, he might, he
    * will. This is what the panel draws. `accepted` below is the answer, and
@@ -1147,21 +1503,38 @@ export function decideOffer(
     reason = `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room — clear space or lower the deal.`;
   }
 
-  // Losing an auction is not the same as being turned down. He would sign
-  // this; he just has something better in front of him, which is a fact the
-  // user can see (the rival's number is on screen) rather than a hidden roll.
-  const outbid = !blocked && gate.competingApy > offer.apy;
-  if (!reason && outbid) {
-    reason = `${gate.competingTeam ?? 'Another team'} is at ${formatMoney(gate.competingApy)}/yr. Beat it or he signs there.`;
-  }
+  // THE CONTEST. One comparison, on one scale, against the same evaluation
+  // that draws the meter — see THE CONTEST block above for why this used to be
+  // `gate.competingApy > offer.apy` and why that was a bug rather than a
+  // simplification. Deterministic in every input, so it adds no variance and
+  // touches nothing the hidden draw is seeded on.
+  const rival = evaluateRival(ctx, gate);
+  const rivalInterest = rival?.interest ?? null;
+  const outbid = !blocked && rival !== null && !winsContest(evaluation.interest, rival.interest);
 
   // The three regions, and the hidden draw that resolves the middle one. See
   // the "HE MIGHT SIGN HERE" block above: same seed on both sides of the
   // wire, so the browser and the Server Action reach the same answer for the
   // same offer, and neither of them can re-roll it.
-  const signBand = signBandFor(ctx, evaluation.interest);
-  const wouldSign = signBand === 'YES'
-    || (signBand === 'MAYBE' && acceptanceRoll(ctx, offer) < maybeChance(ctx, evaluation.interest));
+  //
+  // LOSING OVERRIDES ALL THREE, and that is the whole fix. A band drawn from
+  // his opinion of your package alone would read YES · "he will sign this"
+  // over a screen also saying he is signing somewhere else. The band is what
+  // HAPPENS, so when the rival's package reads better to him, the band says
+  // so and the meter has nothing left to contradict.
+  const playerBand = signBandFor(ctx, evaluation.interest);
+  const signBand: SignBand = outbid ? 'LOSING' : playerBand;
+  const wouldSign = playerBand === 'YES'
+    || (playerBand === 'MAYBE' && acceptanceRoll(ctx, offer) < maybeChance(ctx, evaluation.interest));
+
+  // ONE SENTENCE, and it is the same computation that drew the band. It names
+  // what is actually wrong — their package, not their salary — because the
+  // answer might be guaranteed money or a year, and a line that says "beat
+  // their number" would send the user to the only control that was already
+  // being compared.
+  if (!reason && outbid && rival) {
+    reason = `${rival.teamName} have ${formatMoney(rival.offer.apy)}/yr over ${rival.offer.years} year${rival.offer.years === 1 ? '' : 's'} with ${Math.round(rival.offer.guaranteePct * 100)}% guaranteed on the table, and he likes it better. Salary, years or guaranteed money — any of them can beat it.`;
+  }
 
   // NOTE THE ABSENCE OF `wouldSign` IN THIS CONDITION. The reason line is
   // rendered on screen, so it may only ever depend on things the user is
@@ -1193,6 +1566,7 @@ export function decideOffer(
     strandedVoidMoney,
     blocked,
     outbid,
+    rivalInterest,
     signBand,
     accepted: signs,
     costsPatience: refused,
@@ -1226,7 +1600,7 @@ export interface NegotiationSession {
   /**
    * The rival who actually wants him, or null when nobody in the league has
    * both the room and the need. In free agency this is the same club as
-   * `gate.competingApy`/`competingTeam` with its evidence attached; in a
+   * `gate.rival` with its evidence attached; in a
    * re-sign it is the pressure the window used to lack — a real team, checkable
    * against the rest of the league, that will be there when he hits the market.
    */
@@ -1260,7 +1634,14 @@ export function sessionFingerprint(s: NegotiationSession): string {
     s.ctx.currentContract
       ? `${s.ctx.currentContract.years}/${s.ctx.currentContract.yearsRemaining}/${s.ctx.currentContract.signingBonus}/${s.ctx.currentContract.baseSalaries}`
       : '-',
-    s.gate.capMode, s.gate.capSpace, s.gate.minSalary, s.gate.maxYears, s.gate.competingApy,
+    s.gate.capMode, s.gate.capSpace, s.gate.minSalary, s.gate.maxYears,
+    // THE WHOLE RIVAL PACKAGE, not just its headline. It is scored now, so a
+    // rival who dropped a year or moved his guarantee has changed the contest
+    // the meter was describing every bit as much as one who raised his bid.
+    s.gate.rival ? `${s.gate.rival.teamName}/${s.gate.rival.offer.apy}/${s.gate.rival.offer.years}/${s.gate.rival.offer.guaranteePct.toFixed(3)}` : '-',
+    // The share of his price that is about YOUR club. It is what the rival is
+    // priced against, so it decides the contest as surely as his own number.
+    s.ctx.clubDiscount.toFixed(4),
     // The suitor is named on screen and it moves his asking price, so a suitor
     // that changed under the user is a session that moved under the user.
     s.suitor?.teamId ?? '-', s.suitor?.apy ?? 0,

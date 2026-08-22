@@ -93,7 +93,8 @@ export function RosterShapePanel({ shape, rating }: { shape: RosterShape; rating
             <div>
               <div className="label-sm inline-flex items-center gap-1.5">
                 Team Overall
-                <Tooltip text={tip('teamOverall')} />
+                {/* Top band of a `panel overflow-hidden` — downward or clipped. */}
+                <Tooltip placement="bottom" text={tip('teamOverall')} />
               </div>
               <div className={`text-xs mt-0.5 font-semibold ${rating.rank <= 8 ? 'text-accent' : rating.rank >= 25 ? 'text-bad' : 'text-muted'}`}>
                 {ordinal(rating.rank)} of 32 · {ordinal(rating.confRank)} in the {rating.conference} · {ordinal(rating.divRank)} in the {rating.division}
@@ -119,7 +120,7 @@ export function RosterShapePanel({ shape, rating }: { shape: RosterShape; rating
         <div>
           <div className="label-sm inline-flex items-center gap-1.5">
             Roster Construction
-            <Tooltip text={tip('unitRating')} />
+            <Tooltip placement="bottom" text={tip('unitRating')} />
           </div>
           <div className="text-xs text-muted mt-0.5">
             Starter rating at each unit, with its league rank, measured against the league average starter there.
