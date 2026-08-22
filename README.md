@@ -1791,3 +1791,72 @@ ever force-pushed over, so every state below still exists in git history).
   league minimum; the Re-sign Window called itself the offseason in week 5 of
   the regular season; and the trade screen's cap block recommended adding
   picks, which cannot move a cap number by a cent. Commit `72a8ad1`.
+- **2026-08-22 — Say the save is fragile before there is one.** The home page
+  warned a signed-out player his saves live in one cookie, but only once he
+  HAD saves. The line read just before creating one presented an account as
+  something to get round to. Commit `b53b238`.
+- **2026-08-22 — The acceptance meter fills as you build.** Propose was a
+  button you pressed to see a number — and a number you could already have
+  had, since `evaluateTrade` is deterministic (50 identical evaluations per
+  deal, zero flips). The meter now reads live off the same evaluation the
+  verdict runs, debounced, with a sequence number so a slow response for a
+  selection you have changed can never land last. The club's answer in its own
+  words, the Trade Intel breakdown, the Insider call and Confirm all still sit
+  behind Propose. Commit `6237e9e`.
+- **2026-08-22 — A club's window, its roster and its books are one thing.**
+  `winNow` was an independent dice roll made before any player existed, payroll
+  was one flat 88%-of-cap target for all 32, and roster strength was a third
+  unrelated roll. Cap room ran BACKWARDS against the window — rebuilders $37M,
+  contenders $50M — which is why the quarterback market was dead: the clubs
+  that needed a passer could not pay, and the clubs with room already had one.
+  Now rebuilders $79M / contenders $29M, correlation −0.88. Also cut
+  `STAR_POSITION_WEIGHTS.QB` 2.2 → 1.5 (clubs holding an 88+ passer 10.3 → 8.0
+  per league) and widened the pick horizon to three tradeable future years,
+  counted after the draft takes one. Commit `426323b`.
+- **2026-08-22 — Depth chart links, linebackers play the run, beating an ask
+  counts.** The depth chart was the one screen where you could see a player and
+  not open his card. `POSITION_WEIGHTS.LB` carried no `runStop` at all — which
+  is why the position-change card claimed nobody had coached a linebacker in
+  run defence — added in a way that cannot move an existing linebacker's
+  rating. Position changes are reversible on purpose. Kickers and punters can
+  swap. And `satisfaction()` read `Math.min(1, 1 + (ratio-1)*0.25)`, an
+  overshoot bonus computed and then clamped away, so beating a player's ask was
+  worth nothing: 60/75/90/100% guaranteed all read 81, now 81/82/83/84. Roster
+  page splits the offensive line, defensive line and secondary into real
+  positions. Commit `5cbf3e3`.
+- **2026-08-22 — A 102% meter may not sit above the words TURNED DOWN.** The
+  package-quality rule was a hard veto that ran independently of the meter. It
+  was also nearly redundant — concentration weighting already discounts a pile,
+  so the junk-pile case scores 0.42 before the rule runs. Gated to offers that
+  have not cleared the bar it now explains a refusal instead of causing one:
+  16 offers cleared, 0 refused anyway. Commit `5800ce7`.
+- **2026-08-22 — A 72 quarterback is not "an acceptable starter."** `teamNeeds`
+  measured every position against a flat 72, so a club whose starting
+  QUARTERBACK was a 72 scored 0.00 — "stacked" — while the trade screen's own
+  severe-need badge said otherwise on the same page. Also: rival clubs now get
+  a read-only, fogged roster page instead of their franchise history. Commits
+  `861f5ac`, `5d177b7`, `b276912`.
+- **2026-08-22 — A desperate club can act desperate.** `NEED_MULT_MAX`
+  1.20 → 1.40. At +20% even a club with nobody at a position could bid only a
+  fifth more than one that was set there. Commit `ef91d9a`.
+- **2026-08-22 — The fuller the acceptance bar, the more you are overpaying.**
+  The meter's ratio is THEIRS — what the club receives over what it gives up —
+  so every point past their line is value handed over for nothing. Drawn as one
+  filling green bar it used the visual language of a score. The overshoot is now
+  its own segment, labelled "they'd take less", and the retrospectives state
+  that they price both sides on the open market rather than by what either club
+  needed that week. Commit `6202e68`.
+- **2026-08-22 — "Let AI decide" was deciding on everyone.** The pass was never
+  truncated; the REPORT was. It returned only `{kept, released}`, and `released`
+  counts only men whose deals had already expired — so every walk-year player
+  was weighed and then vanished. Eleven in, four reported. Now 11/11, 15/15,
+  24/24, 34/34 with the reason that actually fired. Commit `2eb9a97`.
+- **2026-08-22 — 80 is what a starter is.** Measured across 160 clubs: the
+  median starter at every non-specialist position is 79–83 and 53% of starters
+  are 80+. This also corrected my own earlier fix — I had derived the bar from
+  positional PAY, and starter quality tracks roster DEPTH instead (receivers go
+  six deep and median 83; interior linemen are paid less, rostered thinner, and
+  median 80). Three numbers now: 84 at quarterback, 72 for specialists, 80 for
+  everyone else. Clubs reading as below par went from 3–7% to 27–54%, and an 83
+  quarterback fetches a first from 7 clubs where it fetched one from a single
+  club. Commit `b7cf876`.
