@@ -34,7 +34,7 @@ export function GmCardReveal({ children, label = 'GM Card' }: { children: ReactN
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="btn-secondary text-xs">
+      <button type="button" onClick={() => setOpen(true)} className="btn-secondary">
         {label}
       </button>
 
@@ -57,8 +57,19 @@ export function GmCardReveal({ children, label = 'GM Card' }: { children: ReactN
           {/* The card must not close the overlay when it is the thing being
               pressed — a long-press to save the image on a phone starts as a
               press on the card. */}
-          <div className="animate-fadeUp my-auto" onClick={(e) => e.stopPropagation()}>
-            {children}
+          {/* The card is built at phone size, because that is where it gets
+              screenshotted. On a desktop it is simply scaled up rather than
+              relaid out, so the thing on screen is the same rectangle in the
+              same proportions either way. */}
+          {/* Two elements, and they have to stay two: .animate-fadeUp ends on a
+              `transform` keyframe with fill-mode both, and an animation's
+              transform beats a class's for as long as it is applied — put the
+              scale on the same node and it is silently thrown away. */}
+          <div
+            className="my-auto origin-center sm:scale-110 xl:scale-125"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="animate-fadeUp">{children}</div>
           </div>
         </div>,
         document.body,

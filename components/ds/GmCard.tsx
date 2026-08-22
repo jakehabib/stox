@@ -186,7 +186,7 @@ export function GmCard({ team, leagueName, seasonYear, gmName, summary, dynastyL
         <Cell
           label="Draft"
           value={s.draftHitRate !== null ? `${Math.round(s.draftHitRate * 100)}%` : '—'}
-          detail={s.draftPicksMade === 0 ? 'No picks used yet' : `${s.draftHits} of ${s.draftPicksMade} hit`}
+          detail={s.draftPicksMade === 0 ? 'No picks yet' : `${s.draftHits} of ${s.draftPicksMade} hit`}
         />
         <Cell
           label="All-Stars"

@@ -94,6 +94,14 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
   const dealLabels: Record<string, string> = graded.length >= 2
     ? { [graded[0].r.id]: `Best of ${graded.length}`, [graded[graded.length - 1].r.id]: `Worst of ${graded.length}` }
     : {};
+  // The heading names whichever cut is actually on screen. A panel titled for
+  // a best-and-worst pair, sitting over two deals that cannot be graded at
+  // all, is the heading lying about its own contents.
+  const dealsTitle = graded.length >= 2
+    ? 'The Deals That Defined You'
+    : graded.length === 1
+      ? 'The Deal That Defined You'
+      : 'Deals Still Playing Out';
   const dealsLede = graded.length >= 2
     ? `Your best and your worst, out of ${graded.length} deals old enough to grade.`
     : graded.length === 1
@@ -333,7 +341,7 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
         <TradeRetrospectives
           myAbbr={team.abbr}
           retrospectives={careerDeals}
-          title="The Deals That Defined You"
+          title={dealsTitle}
           lede={dealsLede}
           labels={dealLabels}
           action={
