@@ -94,7 +94,8 @@ export function InterestMeter({ interest, verdict, headline, maybeBand, rival }:
       <div className="flex items-baseline justify-between gap-3">
         <span className="label-sm inline-flex items-center gap-1.5">
           Interest
-          <Tooltip text={tip('interestMeter')} />
+          {/* Flush against the panel's left padding — opens rightward. */}
+          <Tooltip align="start" text={tip('interestMeter')} />
         </span>
         <span className={`label-sm ${style.text}`}>{style.label}</span>
       </div>

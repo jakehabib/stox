@@ -2,7 +2,7 @@ import { prisma } from './db';
 import { Rng, clamp } from './rng';
 import { readJson, writeJson } from './json';
 import { resolveStartYear } from './leagueYear';
-import { AGE_CURVE, DEV_TRAIT_MULT, POSITION_AGE_PROFILE, DEFAULT_AGE_PROFILE, Position } from './tuning';
+import { AGE_CURVE, DEV_TRAIT_MULT, POSITION_AGE_PROFILE, DEFAULT_AGE_PROFILE, WORKOUTS, Position } from './tuning';
 
 /**
  * ===========================================================================
@@ -252,15 +252,6 @@ export const DYNASTY = {
    */
   DEV_SPEED_MULT: [1, 1.05, 1.10, 1.15],
 
-  /**
-   * [TUNE] Development Focus charges granted per league year at the capstone
-   * rank of Coaching Staff. See Player.devFocus — a per-player growth
-   * multiplier that already existed, already fired, and had no way to be
-   * granted since the scouting focus-point economy it belonged to was cut.
-   * Three is deliberately fewer than a roster: the point is choosing which
-   * young player gets the coaching hours.
-   */
-  DEV_FOCUS_USES_PER_SEASON: 3,
   /** Round-scaled bar a drafted player must clear to count as a hit. Matches lib/gmCareer.ts so two screens never disagree about the same pick. */
   DRAFT_HIT_THRESHOLD: (round: number): number => (round === 1 ? 78 : round <= 3 ? 73 : round <= 5 ? 68 : 64),
 };
@@ -279,6 +270,7 @@ export type DynastyBranch = 'DRAFT' | 'DEVELOPMENT' | 'NEGOTIATION';
 
 export type DynastySkillId =
   | 'EVALUATIONS'
+  | 'COACHING_STAFF'
   | 'POTENTIAL_PROJECTION'
   | 'FILM_ROOM'
   | 'SCOUTING_NETWORK'
@@ -297,6 +289,19 @@ export interface DynastySkillDef {
   blurb: string;
   /** Per-rank cost in skill points and the concrete effect at that rank. */
   ranks: { cost: number; effect: string }[];
+  /**
+   * THE TREE. The skill that must be bought to rank 1 before this one can be
+   * touched at all. Omitted on the first node of each branch, which is by
+   * construction the cheapest and weakest — that is the owner's rule:
+   * *"the weakest ability needs to be purchased first"*.
+   *
+   * Declared explicitly rather than inferred from position in DYNASTY_SKILLS,
+   * so re-ordering that array for display can never silently re-order what
+   * unlocks what. `assertSkillTreeIsAcyclic()` below proves the chains
+   * terminate; it runs at module load, so a bad edit fails immediately rather
+   * than at the moment a GM clicks Upgrade.
+   */
+  requires?: DynastySkillId;
 }
 
 export const BRANCH_LABEL: Record<DynastyBranch, string> = {
@@ -318,88 +323,78 @@ export const BRANCH_BLURB: Record<DynastyBranch, string> = {
  */
 export const BRANCH_ORDER: DynastyBranch[] = ['DRAFT', 'DEVELOPMENT', 'NEGOTIATION'];
 
+/**
+ * THE TREE, one chain per branch, cheapest and weakest first.
+ *
+ * Read each branch top to bottom: that IS the purchase order, because each
+ * entry names the one above it in `requires`. The chains are deliberately
+ * shaped "information first, then the ability to act on it" — you learn to
+ * read a prospect before you get more visits to spend, and you learn where a
+ * player is headed before you get to change how fast he gets there.
+ */
 export const DYNASTY_SKILLS: DynastySkillDef[] = [
-  // --- SCOUTING ------------------------------------------------------------
+  // --- DRAFT ---------------------------------------------------------------
+  // The only branch fog of war still touches. Every range it narrows is on a
+  // prospect; nothing here can be pointed at a professional (lib/scouting.ts).
   {
     id: 'EVALUATIONS',
-    branch: 'SCOUTING',
+    branch: 'DRAFT',
     name: 'Better Evaluations',
-    blurb: 'Your area scouts quote tighter numbers on what a player is right now.',
+    blurb: 'Your area scouts quote tighter numbers on what a prospect is right now.',
     ranks: [
-      { cost: 1, effect: 'Current-rating ranges narrow by 15%.' },
-      { cost: 2, effect: 'Current-rating ranges narrow by 28%.' },
+      { cost: 1, effect: 'Current-rating ranges on the draft board narrow by 15%.' },
+      { cost: 2, effect: 'Current-rating ranges on the draft board narrow by 28%.' },
     ],
   },
   {
     id: 'POTENTIAL_PROJECTION',
-    branch: 'SCOUTING',
+    branch: 'DRAFT',
     name: 'Potential Projection',
     blurb: 'Better projection of a ceiling — the hardest read in the building.',
+    requires: 'EVALUATIONS',
     ranks: [
-      { cost: 1, effect: 'Potential ranges narrow by 22%.' },
-      { cost: 2, effect: 'Potential ranges narrow by 40%.' },
+      { cost: 1, effect: 'Potential ranges on prospects narrow by 22%.' },
+      { cost: 2, effect: 'Potential ranges on prospects narrow by 40%.' },
     ],
   },
   {
     id: 'FILM_ROOM',
-    branch: 'SCOUTING',
+    branch: 'DRAFT',
     name: 'Film Room',
     blurb: 'More hours on tape, on the traits tape is the only way to judge — instincts, awareness, decision making.',
+    requires: 'POTENTIAL_PROJECTION',
     ranks: [
       { cost: 1, effect: 'Ranges on hard-to-scout mental traits narrow by a further 18%.' },
       { cost: 2, effect: 'Ranges on hard-to-scout mental traits narrow by a further 32%.' },
     ],
   },
   {
+    // THE CAPSTONE, and the branch's real currency. The owner: *"I don't want
+    // to lose the realism, maybe we just do extra draft workouts (full
+    // scouts)."* Everything above narrows what your staff will say; this buys
+    // more of the two things that actually settle a file — a private workout
+    // and a complete evaluation. Both are already per-season charges that
+    // reset with the league year (limitedUse below, and lib/workouts.ts).
     id: 'SCOUTING_NETWORK',
-    branch: 'SCOUTING',
+    branch: 'DRAFT',
     name: 'Scouting Network',
-    blurb: `More contacts, more Full Scouts. Every GM starts each league year with ${DYNASTY.FULL_SCOUT_BASE_USES} perfect evaluations; this buys more.`,
+    blurb: 'More contacts, more access: extra private workouts before the draft and extra perfect evaluations to spend on whoever is still a question.',
+    requires: 'FILM_ROOM',
     ranks: [
-      { cost: 2, effect: `+${DYNASTY.FULL_SCOUT_PER_RANK} Full Scout per season (${DYNASTY.FULL_SCOUT_BASE_USES + DYNASTY.FULL_SCOUT_PER_RANK} total).` },
-      { cost: 2, effect: `+${DYNASTY.FULL_SCOUT_PER_RANK * 2} Full Scouts per season (${DYNASTY.FULL_SCOUT_BASE_USES + DYNASTY.FULL_SCOUT_PER_RANK * 2} total).` },
-    ],
-  },
-
-  // --- NEGOTIATION ---------------------------------------------------------
-  {
-    id: 'MARKET_KNOWLEDGE',
-    branch: 'NEGOTIATION',
-    name: 'Market Knowledge',
-    blurb: 'Your cap staff estimates what a free agent will actually sign for — not the public market rate you can already see.',
-    ranks: [
-      { cost: 1, effect: 'Shows an estimated signing band before you make an offer, accurate to about ±14%.' },
-      { cost: 2, effect: 'Estimated signing band tightens to about ±7%.' },
-    ],
-  },
-  {
-    id: 'TRADE_INTEL',
-    branch: 'NEGOTIATION',
-    name: 'Trade Intel',
-    blurb: 'Your capologist puts real numbers on how a rival values a deal, instead of a bar and a shrug.',
-    ranks: [
-      { cost: 1, effect: 'Trade evaluations show what the other side values each side of the deal at, and exactly how far short you are. Does NOT change what the AI accepts.' },
-    ],
-  },
-  {
-    id: 'INSIDER',
-    branch: 'NEGOTIATION',
-    name: 'Insider',
-    blurb: 'A contact who will tell you what a specific deal would really take.',
-    ranks: [
-      { cost: 2, effect: `${DYNASTY.INSIDER_USES_PER_SEASON} uses per season. Reveals the asking price on one trade target. Resets each new league year.` },
+      { cost: 2, effect: `+1 private workout and +1 Full Scout per season (${WORKOUTS.BASE_SLOTS + WORKOUTS.SLOTS_PER_NETWORK_RANK} workouts, ${DYNASTY.FULL_SCOUT_BASE_USES + DYNASTY.FULL_SCOUT_PER_RANK} evaluations).` },
+      { cost: 2, effect: `+2 private workouts and +2 Full Scouts per season (${WORKOUTS.BASE_SLOTS + WORKOUTS.SLOTS_PER_NETWORK_RANK * 2} workouts, ${DYNASTY.FULL_SCOUT_BASE_USES + DYNASTY.FULL_SCOUT_PER_RANK * 2} evaluations).` },
     ],
   },
 
   // --- DEVELOPMENT ---------------------------------------------------------
+  // Three rungs of "see where he is going", then the one rung that changes it.
   {
-    id: 'DEV_INSIGHT',
+    id: 'BREAKOUT_WATCH',
     branch: 'DEVELOPMENT',
-    name: 'Development Insight',
-    blurb: `Where a player on your roster projects in ${DYNASTY.DEV_PROJECTION_YEARS} seasons.`,
+    name: 'Breakout Watch',
+    blurb: 'Your staff flags young players they think are about to jump.',
     ranks: [
-      { cost: 1, effect: `Shows a ${DYNASTY.DEV_PROJECTION_YEARS}-year projected rating, ±${DYNASTY.DEV_PROJECTION_BAND[1]}.` },
-      { cost: 2, effect: `Projection tightens to ±${DYNASTY.DEV_PROJECTION_BAND[2]}.` },
+      { cost: 1, effect: 'Flags up to 4 players on your roster who look ready to improve. A flag is an opinion, not a promise.' },
     ],
   },
   {
@@ -407,20 +402,105 @@ export const DYNASTY_SKILLS: DynastySkillDef[] = [
     branch: 'DEVELOPMENT',
     name: 'Aging Insight',
     blurb: 'A read on when a veteran starts sliding, before the tape shows it.',
+    requires: 'BREAKOUT_WATCH',
     ranks: [
-      { cost: 1, effect: `Estimates the age decline begins, ±${DYNASTY.AGING_BAND_YEARS} years.` },
+      { cost: 1, effect: 'Estimates the age decline begins, ±1.5 years.' },
     ],
   },
   {
-    id: 'BREAKOUT_WATCH',
+    id: 'DEV_INSIGHT',
     branch: 'DEVELOPMENT',
-    name: 'Breakout Watch',
-    blurb: 'Your staff flags young players they think are about to jump.',
+    name: 'Development Insight',
+    blurb: 'Where a player on your roster projects in three seasons.',
+    requires: 'AGING_INSIGHT',
     ranks: [
-      { cost: 1, effect: `Flags up to ${DYNASTY.BREAKOUT_MAX_FLAGS} players on your roster who look ready to improve. A flag is an opinion, not a promise.` },
+      { cost: 1, effect: 'Shows a 3-year projected rating, ±6.' },
+      { cost: 2, effect: 'Projection tightens to ±3.5.' },
+    ],
+  },
+  {
+    // THE CAPSTONE, and the first skill in this game's history to change a
+    // number the sim rolls. See the policy block at the top of this file for
+    // why that is now allowed and how big it is permitted to be.
+    //
+    // "+5% experience" is the owner's phrasing; there is no XP in this game
+    // and none was invented for it. lib/progression.ts models development as
+    // an age curve x dev trait x performance roll against the player's
+    // potential ceiling, and `speedMult` is already a first-class multiplier
+    // on the growth mean. These percentages ARE that multiplier, which is why
+    // the effect text says "develop faster" and not "gain XP".
+    id: 'COACHING_STAFF',
+    branch: 'DEVELOPMENT',
+    name: 'Coaching Staff',
+    blurb: 'Better position coaches and a better strength programme. Every player on your roster develops faster — including the ones already at their ceiling, who simply hold it longer.',
+    requires: 'DEV_INSIGHT',
+    ranks: [
+      { cost: 2, effect: 'Your players develop 5% faster at every checkpoint.' },
+      { cost: 3, effect: 'Your players develop 10% faster.' },
+      { cost: 3, effect: 'Your players develop 15% faster. Nothing raises a ceiling — this is how fast a player reaches the one he has.' },
+    ],
+  },
+
+  // --- NEGOTIATION ---------------------------------------------------------
+  // The owner: *"the negotiating tree should be about signings. Each point up
+  // to the 3 abilities narrows the uncertainty band."* Note "each point": the
+  // band narrowing is a property of TOTAL ranks bought in this branch (see
+  // signBandMultFor), not of any one node, so every purchase pays even though
+  // each node also does its own separate job.
+  {
+    id: 'TRADE_INTEL',
+    branch: 'NEGOTIATION',
+    name: 'Trade Intel',
+    blurb: 'Your capologist puts real numbers on how a rival values a deal, instead of a bar and a shrug.',
+    ranks: [
+      { cost: 1, effect: 'Trade evaluations show what the other side values each side of the deal at. Does NOT change what the AI accepts. Narrows every signing window by 8%.' },
+    ],
+  },
+  {
+    id: 'MARKET_KNOWLEDGE',
+    branch: 'NEGOTIATION',
+    name: 'Market Knowledge',
+    blurb: 'Your cap staff estimates what a free agent will actually sign for — not the public market rate you can already see.',
+    requires: 'TRADE_INTEL',
+    ranks: [
+      { cost: 1, effect: 'Shows an estimated signing band before you make an offer, accurate to about ±14%. Narrows every signing window a further 8%.' },
+      { cost: 2, effect: 'Estimated signing band tightens to about ±7%, and the signing window narrows again.' },
+    ],
+  },
+  {
+    id: 'INSIDER',
+    branch: 'NEGOTIATION',
+    name: 'Insider',
+    blurb: 'A contact who will tell you what a specific deal would really take.',
+    requires: 'MARKET_KNOWLEDGE',
+    ranks: [
+      { cost: 2, effect: '2 uses per season. Reveals the asking price on one trade target, and narrows every signing window again. Resets each new league year.' },
     ],
   },
 ];
+
+/**
+ * Fails at module load if any `requires` chain loops or names a skill that
+ * does not exist. A cycle would make both nodes permanently unbuyable and the
+ * UI would simply render two locked boxes with no explanation, which is the
+ * kind of bug that survives for months.
+ */
+function assertSkillTreeIsAcyclic(): void {
+  const byId = new Map(DYNASTY_SKILLS.map((d) => [d.id, d]));
+  for (const def of DYNASTY_SKILLS) {
+    const seen = new Set<DynastySkillId>([def.id]);
+    let cur = def.requires;
+    while (cur) {
+      const parent = byId.get(cur);
+      if (!parent) throw new Error(`Dynasty tree: ${def.id} requires unknown skill ${cur}`);
+      if (parent.branch !== def.branch) throw new Error(`Dynasty tree: ${def.id} requires ${cur} from another branch`);
+      if (seen.has(cur)) throw new Error(`Dynasty tree: cycle at ${cur}`);
+      seen.add(cur);
+      cur = parent.requires;
+    }
+  }
+}
+assertSkillTreeIsAcyclic();
 
 export const SKILL_BY_ID: Record<DynastySkillId, DynastySkillDef> = Object.fromEntries(
   DYNASTY_SKILLS.map((s) => [s.id, s]),

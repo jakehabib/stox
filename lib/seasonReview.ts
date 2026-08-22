@@ -4,7 +4,9 @@ import { mergeStats } from './stats';
 import { Rng } from './rng';
 import { canonicalPosition } from './tuning';
 import { gradeLine, playedEnough, statLine } from './coachRoom';
+import { leadColumnKey } from './statLabels';
 import { positionRelativeScore } from './performanceScore';
+import { ageBasisYear, ageInSeason } from './playerSeasons';
 import type { BoxScore, SeasonStats } from './types';
 
 /**
@@ -471,18 +473,30 @@ export function spoken(position: string, s: SeasonStats): string {
     if ((s.recTd ?? 0) > 0) bits.push(count(s.recTd ?? 0, 'score'));
     return join(bits);
   }
+  // Defenders get two figures, not three, and the things that only happen when
+  // something happened come before the tackle count. The engine deals a
+  // defence's tackles by depth-chart share, so a club carrying eight listed
+  // defenders hands each of them half again as many as a club carrying
+  // fourteen — which is how a recap ended up printing "112 tackles" beside
+  // three different names on one sheet. Leading with sacks and takeaways is
+  // both the more interesting sentence and the more honest one.
   if (pos === 'EDGE' || pos === 'DT') {
     if ((s.sacks ?? 0) > 0) bits.push(count(s.sacks ?? 0, 'sack'));
-    bits.push(count(s.tackles ?? 0, 'tackle'));
     if ((s.ff ?? 0) > 0) bits.push(count(s.ff ?? 0, 'forced fumble'));
-    return join(bits.slice(0, 3));
+    if (bits.length < 2) bits.push(count(s.tackles ?? 0, 'tackle'));
+    return join(bits.slice(0, 2));
   }
-  if (pos === 'LB' || pos === 'CB' || pos === 'S') {
+  if (pos === 'CB' || pos === 'S') {
     if ((s.defInt ?? 0) > 0) bits.push(count(s.defInt ?? 0, 'interception'));
     if ((s.pd ?? 0) > 0) bits.push(`${count(s.pd ?? 0, 'ball', 'balls')} broken up`);
+    if ((s.ff ?? 0) > 0 && bits.length < 2) bits.push(count(s.ff ?? 0, 'forced fumble'));
+    if (bits.length < 2) bits.push(count(s.tackles ?? 0, 'tackle'));
+    return join(bits.slice(0, 2));
+  }
+  if (pos === 'LB') {
     bits.push(count(s.tackles ?? 0, 'tackle'));
-    if ((s.ff ?? 0) > 0 && bits.length < 3) bits.push(count(s.ff ?? 0, 'forced fumble'));
-    return join(bits.slice(0, 3));
+    if ((s.ff ?? 0) > 0) bits.push(count(s.ff ?? 0, 'forced fumble'));
+    return join(bits);
   }
   if (pos === 'K') {
     const fg = `${s.fgm ?? 0} of ${s.fga ?? 0} from the field`;
@@ -832,7 +846,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
         write: (v) => v.pick([
           () => `${capitalise(spoken(pos, p.stats))}, on ${money} a year. There is not a cheaper way to get that.`,
-          () => `He is the ${Math.round(p.payPct!)}th percentile of ${singular(pos)} pay in this league at ${money}, and he played nothing like it: ${spoken(pos, p.stats)}.`,
+          () => `${money} a year puts him in the cheapest ${Math.max(1, Math.round(p.payPct!))}% of ${plural(pos)} in this league, and he played nothing like it: ${spoken(pos, p.stats)}.`,
           () => `${money} a year. ${capitalise(spoken(pos, p.stats))}. Somebody is going to notice that before we want them to.`,
         ])(),
       });
@@ -875,7 +889,29 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
     const overBest = sh.z - bestPrior.z;
     const underWorst = worstPrior.z - sh.z;
 
-    if (overBest >= bestBar && sh.pct >= SOLID_SEASON) {
+    /**
+     * The sentence has to agree with its own figures.
+     *
+     * The z that decides a career year is a weighted blend, so it can move on
+     * a stat the sentence does not lead with — and then the recap prints "the
+     * best year of his career: two sacks, past the four he had in 2033". That
+     * is not a subtle failure, it is the paragraph arguing with itself in
+     * public, and it happened on the first real read of a defensive tackle.
+     * lib/statLabels.ts already answers "which number does this position lead
+     * with"; the claim is only made when THAT number moved the right way too,
+     * per game so a short season cannot fake it.
+     */
+    const leadKey = leadColumnKey(pos);
+    const leadRate = (st: SeasonStats, gp: number): number | null =>
+      leadKey ? ((st as Record<string, number | undefined>)[leadKey] ?? 0) / Math.max(1, gp) : null;
+    const mineLead = leadRate(p.stats, p.gp);
+    const agrees = (other: PriorSeason, better: boolean): boolean => {
+      const theirs = leadRate(other.stats, other.gp);
+      if (mineLead === null || theirs === null) return true;
+      return better ? mineLead >= theirs : mineLead <= theirs;
+    };
+
+    if (overBest >= bestBar && sh.pct >= SOLID_SEASON && agrees(bestPrior, true)) {
       const years = solidPrior.length + 1;
       out.push({
         kind: 'CAREER_YEAR', shape: sh, margin: (overBest - bestBar) / Math.max(0.1, bestBar),
@@ -889,7 +925,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         ])(),
       });
     }
-    if (underWorst >= worstBar && sh.pct <= ORDINARY_CEILING) {
+    if (underWorst >= worstBar && sh.pct <= ORDINARY_CEILING && agrees(worstPrior, false)) {
       const declineByAge = p.age >= 30;
       out.push({
         kind: declineByAge ? 'AGE_DECLINE' : 'CAREER_WORST',
@@ -903,7 +939,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
           ])
           : v.pick([
             () => `The leanest season on his record: ${spoken(pos, p.stats)}, below the ${worstPrior.seasonYear} that had been his worst (${headlineNumber(pos, worstPrior.stats)}).`,
-            () => `${capitalise(spoken(pos, p.stats))} in ${p.gp} games. He has never given us less than that, ${worstPrior.seasonYear} included.`,
+            () => `${capitalise(spoken(pos, p.stats))} in ${p.gp} games. There is no leaner year in his file — the closest was ${worstPrior.seasonYear}, ${headlineNumber(pos, worstPrior.stats)}.`,
             () => `Every year he has played beats this one. ${capitalise(spoken(pos, p.stats))}, against ${headlineNumber(pos, worstPrior.stats)} in ${worstPrior.seasonYear}.`,
           ]))(),
       });
@@ -927,7 +963,13 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
     const rookieYear = solidPrior[0];
     const jump = sh.z - rookieYear.z;
     const bar = CAREER_BEST_MARGIN[pos] ?? 0.3;
-    if (jump >= bar) {
+    const lk = leadColumnKey(pos);
+    const rate = (st: SeasonStats, gp: number) => (lk ? ((st as Record<string, number | undefined>)[lk] ?? 0) / Math.max(1, gp) : null);
+    const mineLead2 = rate(p.stats, p.gp);
+    const rookieLead = rate(rookieYear.stats, rookieYear.gp);
+    // Same rule as the career reads: the number the position leads with has to
+    // have moved the way the sentence says it did.
+    if (jump >= bar && (mineLead2 === null || rookieLead === null || mineLead2 >= rookieLead)) {
       out.push({
         kind: 'SECOND_YEAR_LEAP', shape: sh, margin: (jump - bar) / Math.max(0.1, bar),
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
@@ -1128,10 +1170,14 @@ export function buildReview(input: ReviewInput): SeasonReview {
       weightLb: p.weightLb,
       rookie: p.experience === 0,
       text: c.write(voice.scoped(c.kind)),
+      // No standing badge where the file refuses to grade the standing. A
+      // percentile beside a linebacker's name is a level claim however
+      // carefully the paragraph next to it avoids making one.
+      // (assigned below)
       line: statLine(p.position, c.line),
       scope: c.scope,
       games: c.games,
-      pct: c.pct,
+      pct: NO_LEVEL_VERDICT.has(canonicalPosition(p.position)) ? null : c.pct,
       strength: c.margin,
     };
   });
@@ -1209,11 +1255,17 @@ export async function buildSeasonReview(
       select: { week: true, kind: true, homeTeamId: true, homeScore: true, awayScore: true, boxScore: true },
       orderBy: { week: 'asc' },
     }),
-    prisma.league.findUnique({ where: { id: leagueId }, select: { settings: true } }),
+    prisma.league.findUnique({ where: { id: leagueId }, select: { settings: true, seasonYear: true, phase: true, week: true } }),
   ]);
   if (!team || games.length === 0) return null;
 
   const settings = readJson<{ scoutingEnabled?: boolean; fogOnOwnRoster?: boolean }>(leagueRow?.settings ?? null, {});
+  // How old he was IN THE SEASON BEING REVIEWED. Player.age is a bare number
+  // whose meaning depends on which league year it was last incremented for,
+  // and the offseason PROGRESS step bumps it before this panel is ever seen —
+  // so a man who played the year at 30 is already 31 in the column. The
+  // arithmetic is exact rather than an estimate; see ageInSeason().
+  const basis = leagueRow ? ageBasisYear(leagueRow) : seasonYear;
   // A rating may only be spoken about when the save already shows it on the
   // roster page. On a fogged save the whole scouting system exists to keep that
   // number away from the player, and a recap is not a hole to leak it through.
@@ -1326,7 +1378,7 @@ export async function buildSeasonReview(
       playerId,
       name: `${r.firstName} ${r.lastName}`,
       position: pos,
-      age: r.age,
+      age: ageInSeason(r.age, basis, seasonYear) ?? r.age,
       experience: r.experience,
       draftRound: r.draftRound,
       heightIn: r.heightIn,

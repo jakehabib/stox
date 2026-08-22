@@ -293,7 +293,9 @@ export function NegotiationPanel({
         <div className="text-right">
           <div className="label-sm inline-flex items-center gap-1.5 justify-end">
             Patience
-            <Tooltip text={tip('patience')} />
+            {/* Top-right corner of a `panel overflow-hidden`: downward AND
+                right-aligned, or the bubble opens out of two edges at once. */}
+            <Tooltip placement="bottom" align="end" text={tip('patience')} />
           </div>
           <div className="flex items-center gap-1 mt-1 justify-end">
             {Array.from({ length: ctx.patience }).map((_, i) => (
@@ -722,7 +724,9 @@ function Control({ label, display, hint, min, max, step, value, onChange, disabl
       <div className="flex items-baseline justify-between gap-3">
         <span className="label-sm inline-flex items-center gap-1.5">
           {label}
-          {tipText && <Tooltip text={tipText} />}
+          {/* Left-aligned: these labels sit against the panel's left padding,
+              and a centred 18rem bubble hangs out past the card edge. */}
+          {tipText && <Tooltip align="start" text={tipText} />}
         </span>
         <span className="stat-value text-stat-md">{display}</span>
       </div>
