@@ -95,20 +95,25 @@ export function TradeBuilder({
   // "Best trade partners" — when exactly one player is selected to shop,
   // surface which other teams actually need that position instead of making
   // the user open all 31 rosters by hand.
-  const shoppedPosition = useMemo(() => {
+  // His rating travels with the position: a club already starting an 84
+  // right tackle has no HOLE there and would never appear on a hole-ranked
+  // list, but it would still take a 91 — see rankTradePartners.
+  const shopped = useMemo(() => {
     const playerIds = [...give].filter((id) => myRoster.find((r) => r.id === id));
     if (playerIds.length !== 1) return null;
-    return myRoster.find((r) => r.id === playerIds[0])?.position ?? null;
+    const p = myRoster.find((r) => r.id === playerIds[0]);
+    return p ? { position: p.position, ovr: p.ovr } : null;
   }, [give, myRoster]);
+  const shoppedPosition = shopped?.position ?? null;
 
   useEffect(() => {
-    if (!shoppedPosition) { setPartnerSuggestions(null); return; }
+    if (!shopped) { setPartnerSuggestions(null); return; }
     let cancelled = false;
-    rankTradePartnersAction(leagueId, shoppedPosition, myTeam.id).then((res) => {
+    rankTradePartnersAction(leagueId, shopped.position, myTeam.id, shopped.ovr).then((res) => {
       if (!cancelled) setPartnerSuggestions(res);
     });
     return () => { cancelled = true; };
-  }, [shoppedPosition, leagueId, myTeam.id]);
+  }, [shopped, leagueId, myTeam.id]);
 
   const callInsider = () => {
     startTransition(async () => {

@@ -14,9 +14,13 @@ export async function evaluateTradeAction(leagueId: string, aiTeamId: string, gi
   return evaluateTrade({ aiTeamId, give, get, currentYear: league.seasonYear, settings: { aiAcceptsLopsided: settings.aiAcceptsLopsided } });
 }
 
-export async function rankTradePartnersAction(leagueId: string, position: string, excludeTeamId: string) {
+// `ovr` is the rating of the man actually being shopped — see
+// rankTradePartners: without it the list can only find clubs with a HOLE at
+// the position, never the (far more common) club that simply would be
+// upgraded by him.
+export async function rankTradePartnersAction(leagueId: string, position: string, excludeTeamId: string, ovr?: number) {
   await assertLeagueOwner(leagueId);
-  return rankTradePartners(leagueId, position, excludeTeamId);
+  return rankTradePartners(leagueId, position, excludeTeamId, ovr);
 }
 
 export interface TradeActionResult { ok: boolean; message: string }

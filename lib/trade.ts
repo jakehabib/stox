@@ -1,11 +1,12 @@
 import { prisma } from './db';
 import { Rng } from './rng';
 import { AI, LEAGUE } from './tuning';
-import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, philosophySummary, leagueScarcity, RosterPlayer } from './ai/gm';
+import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, rosterFit, philosophySummary, leagueScarcity, RosterPlayer } from './ai/gm';
 import { projectedDraftOrder, imminentDraftYear } from './draft';
 import { CapMode } from './types';
 import { recordTrade } from './tradeRetro';
-import { deadMoneyOnCut } from './cap';
+import { deadMoneyOnCut, formatMoney } from './cap';
+import { teamCapSummary } from './cap-summary';
 import { reconcileDepthChart } from './gen/league';
 import { assertCapRoom, tradeCapDeltas } from './capEnforcement';
 
@@ -50,6 +51,12 @@ export interface TradeEvaluation {
   /** Why the AI valued things this way — the strongest 1-3 notes across all assets on each side. */
   explanation: { give: string[]; receive: string[] };
   philosophy: ReturnType<typeof philosophySummary>;
+  /**
+   * Set when the AI's own cap sheet cannot take the deal on, whatever the
+   * value. Present so the UI can style a cap refusal differently from a value
+   * refusal — `counter.message` already states it in words either way.
+   */
+  capBlock?: { shortfall: number; added: number; available: number };
 }
 
 /**
@@ -83,18 +90,24 @@ async function assetValues(
   profile: ReturnType<typeof parseGmProfile>,
   needs: Record<string, number>,
   currentYear: number,
-  rng: Rng,
+  /** Seed prefix for per-asset valuation noise — see the block in evaluateTrade. */
+  noisePrefix: string,
   projectedOrder: Map<string, number>,
   imminentYear: number | null,
   capMode: CapMode,
   scarcity: Record<string, number>,
+  /** The AI club's roster and live cap space — what turns "how good is he" into "what does he do to US". */
+  club: { roster: RosterPlayer[]; capSpace?: number },
 ): Promise<{ total: number; reasons: string[] }> {
   let total = 0;
   const weighted: { text: string; weight: number }[] = [];
   for (const a of assets) {
     if (a.type === 'PLAYER') {
       const p = await prisma.player.findUniqueOrThrow({ where: { id: a.id }, include: { contract: true } });
-      const v = playerValueDetailed(p as unknown as RosterPlayer, { profile, needs, rng, capMode, scarcity });
+      const v = playerValueDetailed(p as unknown as RosterPlayer, {
+        profile, needs, rng: new Rng(`${noisePrefix}-${a.type}:${a.id}`), capMode, scarcity,
+        roster: club.roster, capSpace: club.capSpace,
+      });
       total += v.total;
       for (const r of v.reasons) weighted.push({ text: `${p.firstName} ${p.lastName}: ${r.text}`, weight: r.weight });
     } else {
@@ -126,12 +139,60 @@ export async function evaluateTrade(opts: {
   currentYear: number;
   settings: { aiAcceptsLopsided: boolean };
 }): Promise<TradeEvaluation> {
-  const rng = new Rng(`trade-${opts.aiTeamId}-${Date.now()}`);
   const team = await prisma.team.findUniqueOrThrow({ where: { id: opts.aiTeamId } });
   const league = await prisma.league.findUniqueOrThrow({ where: { id: team.leagueId } });
   const capMode: CapMode = JSON.parse(league.settings).capMode ?? 'REALISTIC';
-  const profile = parseGmProfile(team.gmProfile, rng);
-  const [roster, allPlayers, projectedOrder, imminentYear] = await Promise.all([
+
+  /**
+   * ==========================================================================
+   * THE VERDICT IS A JUDGEMENT, NOT A DRAW
+   * ==========================================================================
+   * The seed was `trade-${aiTeamId}-${Date.now()}`, so every submission of the
+   * SAME offer re-rolled the ~9%-per-asset valuation noise. A user who kept
+   * hitting Propose was rolling dice until the variance fell his way, and a
+   * borderline "no" was only ever a few clicks from a "yes" — the whole value
+   * model defeated by a button. Same bug class as the negotiation panel's,
+   * fixed the same way: lib/negotiation.ts seeds its `acceptanceRoll` on the
+   * player, the league year and the offer and on nothing else, so re-offering
+   * an identical deal gives an identical answer.
+   *
+   * SEEDED PER ASSET, not per deal. Both kill the re-roll, but the finer grain
+   * is strictly better and the difference is measurable. A deal-level
+   * fingerprint re-rolls EVERY asset the moment any one of them changes, so
+   * adding a seventh-round pick to an offer moved a measured deal from 1.058
+   * to 0.951 — the sweetener made the AI want it 10% LESS, because the fresh
+   * draw swamped the pick. Seeded per asset, a club's read on a given player
+   * is a property of that player (as it should be: it is that club's scouting
+   * being imperfect, not its mood), so adding to an offer can only ever add,
+   * and negotiating behaves the way the screen implies it does.
+   *
+   * The three things in the seed are the three that may legitimately change
+   * the answer:
+   *
+   *   the club   — a different front office may read the same player
+   *                differently, and does
+   *   the year   — a package refused this season can be revisited next
+   *                season; a "no" that never expires is its own bug
+   *   the asset  — a genuinely different piece is a genuinely different offer
+   *
+   * What is deliberately NOT in it: the clock, the order the Trade screen's
+   * Set happened to iterate in, and the rest of the package.
+   * ==========================================================================
+   */
+  const noisePrefix = `trade-${opts.aiTeamId}-${league.seasonYear}`;
+
+  /**
+   * A GM's character belongs to the franchise, not to the proposal in front
+   * of him. This used to draw from the shared evaluation rng, which meant a
+   * club whose stored profile was missing or partial was handed a brand new
+   * personality on every submission — and, even with a complete profile, the
+   * four draws it consumed shifted the noise stream underneath the
+   * valuations. Seeded per club per season, so a Rebuilding conservative GM
+   * is still one on the tenth proposal.
+   */
+  const profile = parseGmProfile(team.gmProfile, new Rng(`gm-${opts.aiTeamId}-${league.seasonYear}`));
+
+  const [roster, allPlayers, projectedOrder, imminentYear, capSummary] = await Promise.all([
     prisma.player.findMany({
       where: { teamId: opts.aiTeamId },
       select: { id: true, position: true, trueOvr: true, age: true, potential: true },
@@ -141,14 +202,19 @@ export async function evaluateTrade(opts: {
     prisma.player.findMany({ where: { leagueId: team.leagueId, status: 'ACTIVE' }, select: { position: true, trueOvr: true } }),
     projectedDraftOrder(team.leagueId),
     imminentDraftYear(team.leagueId),
+    capMode === 'OFF' ? Promise.resolve(null) : teamCapSummary(opts.aiTeamId, league.seasonYear, capMode),
   ]);
   const needs = teamNeeds(roster as RosterPlayer[]);
   const scarcity = leagueScarcity(allPlayers);
+  // Fetched once and shared by every asset on both sides, like `needs` and
+  // `scarcity` — the club's roster and its books are facts about the club,
+  // not about the asset being priced.
+  const club = { roster: roster as RosterPlayer[], capSpace: capSummary?.capSpace };
 
   // opts.give flows TO the AI => that's what the AI receives.
   // opts.get flows FROM the AI => that's what the AI sends away.
-  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, rng, projectedOrder, imminentYear, capMode, scarcity);
-  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, rng, projectedOrder, imminentYear, capMode, scarcity);
+  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, projectedOrder, imminentYear, capMode, scarcity, club);
+  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, projectedOrder, imminentYear, capMode, scarcity, club);
   const sendValue = send.total;
   const receiveValue = receive.total;
   const philosophy = philosophySummary(profile);
@@ -158,6 +224,28 @@ export async function evaluateTrade(opts: {
 
   const requiredRatio = opts.settings.aiAcceptsLopsided ? 0.9 : AI.TRADE_ACCEPT_RATIO;
   const ratio = sendValue === 0 ? Infinity : receiveValue / sendValue;
+
+  /**
+   * A deal the club has no room for is not a deal, however good the value.
+   * `assertCapRoom` will refuse to write it at Confirm — so without this the
+   * screen said "Deal accepted! Click confirm to execute", and then the
+   * Confirm died on the cap. Checking the same numbers here, with the same
+   * `tradeCapDeltas` the executor uses, turns a bait-and-switch into a
+   * sentence a GM can act on. Only the AI's own side is judged; the user's
+   * cap is his own business and is still reported at execution.
+   */
+  const capBlock = capSummary ? await aiCapShortfall(opts, capSummary.capSpace, capMode) : null;
+  if (capBlock) {
+    const valueAlso = ratio < requiredRatio
+      ? ` The value is short too — we'd want about ${Math.round((requiredRatio / Math.max(ratio, 0.01) - 1) * 100)}% more coming back.`
+      : ` We like the deal otherwise.`;
+    return {
+      accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy, capBlock,
+      counter: {
+        message: `We can't fit this on our cap — it adds ${formatMoney(capBlock.added)} against ${formatMoney(capBlock.available)} of room, ${formatMoney(capBlock.shortfall)} more than we have. Take a contract back the other way and we'll talk.${valueAlso}`,
+      },
+    };
+  }
 
   if (ratio >= requiredRatio) {
     return { accepted: true, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy };
@@ -172,6 +260,41 @@ export async function evaluateTrade(opts: {
     accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy,
     counter: { message: `Not enough here for us to consider it.` },
   };
+}
+
+/**
+ * Net current-season cap this trade puts on the AI club, against the room it
+ * actually has. Built from `tradeCapDeltas` — the same function
+ * `executeTrade` runs before it writes — rather than a second derivation of
+ * the "bonus stays behind, base salary travels" rule, because two copies of
+ * that rule is how a screen ends up promising a deal the executor refuses.
+ *
+ * Returns null when there is room (the overwhelmingly common case).
+ */
+async function aiCapShortfall(
+  opts: { aiTeamId: string; give: TradeAsset[]; get: TradeAsset[] },
+  capSpace: number,
+  capMode: CapMode,
+): Promise<{ shortfall: number; added: number; available: number } | null> {
+  if (capMode === 'OFF') return null;
+  // The user's team id isn't known here and isn't needed: only the AI-side
+  // rows are read, and those depend on which assets move, not on who the
+  // counterparty is. A stable placeholder keeps the other side's rows
+  // distinguishable.
+  const OTHER = `${opts.aiTeamId}-counterparty`;
+  const deltas = [
+    ...(await tradeCapDeltas(opts.give, OTHER, opts.aiTeamId, capMode)),
+    ...(await tradeCapDeltas(opts.get, opts.aiTeamId, OTHER, capMode)),
+  ];
+  const added = deltas.filter((d) => d.teamId === opts.aiTeamId).reduce((sum, d) => sum + d.delta, 0);
+  // Mirrors assertCapRoom exactly, including both of its escapes: a move that
+  // frees room (or is cap-neutral, e.g. picks only) is never blocked even for
+  // a club already over the ceiling, and the same 1-dollar rounding slack
+  // applies. Any divergence here would either promise a deal the executor
+  // refuses or refuse one it would have written.
+  if (added <= 0) return null;
+  if (added <= capSpace + 1) return null;
+  return { shortfall: added - capSpace, added, available: capSpace };
 }
 
 export async function executeTrade(opts: {
@@ -277,7 +400,13 @@ export interface TradePartnerSuggestion {
   teamId: string;
   teamName: string;
   teamAbbr: string;
-  need: number; // 0..1 at the shopped position
+  /**
+   * 0..1 interest at the shopped position. With `ovr` supplied this is the
+   * same blended roster-fit the valuation uses — hole OR upgrade — so a club
+   * that is set at the position but would still be improved by THIS player
+   * appears. Without it, it degrades to the raw hole-need.
+   */
+  need: number;
   needLabel: 'Severe' | 'High' | 'Moderate' | 'Low';
   philosophy: ReturnType<typeof philosophySummary>;
 }
@@ -286,10 +415,17 @@ export interface TradePartnerSuggestion {
  * "Best trade partners" for a position you're shopping — the QoL feature the
  * brief specifically calls out: instead of the user opening all 31 rosters
  * and cap sheets by hand, the game just tells them who's actually interested.
- * Ranked by need at that position; ties broken toward teams with an
- * aggressive trade tendency, since they're more likely to actually engage.
+ *
+ * `ovr` is how good the man you're shopping actually is, and it matters
+ * enormously: ranked on hole-need alone, a club starting an 84 right tackle
+ * reads 0.00 and never appears, even though it would obviously take a 91.
+ * That is the same "do I have a hole?" / "is he better than what I have?"
+ * confusion that made the AI discount the player in the first place, showing
+ * up a second time in the list that is supposed to tell the user WHO TO CALL.
+ * Optional so existing callers keep the old hole-only behaviour rather than
+ * silently changing meaning.
  */
-export async function rankTradePartners(leagueId: string, position: string, excludeTeamId: string): Promise<TradePartnerSuggestion[]> {
+export async function rankTradePartners(leagueId: string, position: string, excludeTeamId: string, ovr?: number): Promise<TradePartnerSuggestion[]> {
   const teams = await prisma.team.findMany({ where: { leagueId, id: { not: excludeTeamId }, isUser: false } });
   const rosters = await prisma.player.findMany({
     where: { leagueId, teamId: { in: teams.map((t) => t.id) } },
@@ -306,8 +442,14 @@ export async function rankTradePartners(leagueId: string, position: string, excl
     n >= 0.65 ? 'Severe' : n >= 0.4 ? 'High' : n >= 0.2 ? 'Moderate' : 'Low';
 
   const suggestions: TradePartnerSuggestion[] = teams.map((t) => {
-    const needs = teamNeeds((byTeam.get(t.id) ?? []) as RosterPlayer[]);
-    const need = needs[position] ?? 0;
+    const teamRoster = (byTeam.get(t.id) ?? []) as RosterPlayer[];
+    const needs = teamNeeds(teamRoster);
+    // Same blend, same order of arguments, as playerValueDetailed's fit term
+    // — the list and the valuation must not disagree about who wants him.
+    const fit = ovr === undefined
+      ? 0
+      : rosterFit({ id: '__shopped__', position, trueOvr: ovr, age: 26, potential: ovr }, teamRoster).score;
+    const need = Math.max(needs[position] ?? 0, fit);
     return {
       teamId: t.id,
       teamName: `${t.city} ${t.nickname}`,
@@ -349,7 +491,10 @@ export async function maybeGenerateAiTradeOffer(leagueId: string, userTeamId: st
   const surplus = candidates.length > 0 ? rng.pick(candidates) : rng.pick(roster.filter((p) => p.trueOvr >= 65 && p.trueOvr <= 83));
   if (!surplus) return null;
 
-  const askValue = playerValueDetailed(surplus as unknown as RosterPlayer, { profile, needs, rng, capMode }).total;
+  // `roster` matters here even though he's the club's own man: it's what
+  // makes the ask reflect that he is SURPLUS. Without it the AI priced its
+  // fourth receiver as though he were about to start somewhere.
+  const askValue = playerValueDetailed(surplus as unknown as RosterPlayer, { profile, needs, rng, capMode, roster: roster as RosterPlayer[] }).total;
 
   const userPicks = await prisma.draftPick.findMany({ where: { ownerTeamId: userTeamId, used: false }, orderBy: [{ year: 'asc' }, { round: 'asc' }] });
   // Find the cheapest pick (by this team's own pick-value scale) that still

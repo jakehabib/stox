@@ -47,13 +47,22 @@ export function effectiveRating(p: SimPlayer): number {
 }
 
 /**
+ * [TUNE] Rating of the "guy off the street" who fills an empty slot.
+ *
+ * EXPORTED because the AI has to answer the same question when it values a
+ * player — "what happens at right tackle if nobody is behind him" — and the
+ * honest answer is whatever the sim would actually field there. `rosterFit`
+ * in lib/ai/gm.ts scores an empty depth-chart slot at exactly this. A second
+ * constant would let the AI price a league the engine does not play.
+ */
+export const REPLACEMENT_LEVEL = 48;
+
+/**
  * Weighted positional unit rating: the starter carries most of the weight, but
  * depth matters (see UNIT_DEPTH_WEIGHTS). If a team is short-handed at a
  * position, the missing slots are filled with a replacement-level value so a
  * roster hole actually hurts.
  */
-const REPLACEMENT_LEVEL = 48; // [TUNE] rating of "guy off the street"
-
 export function positionUnitRating(players: SimPlayer[], position: Position): number {
   const weights = UNIT_DEPTH_WEIGHTS[position] ?? [1];
   const sorted = [...players].sort((a, b) => effectiveRating(b) - effectiveRating(a));

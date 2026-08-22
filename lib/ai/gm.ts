@@ -1,7 +1,9 @@
 import { Rng, clamp } from '../rng';
 import { AI, ROSTER_TARGETS, ROSTER_NEED_QUALITY_WEIGHT, Position, POSITIONS, PICK_VALUE_CHART, LEAGUE, TRADE_VALUE, TRADE_VALUE_TIER } from '../tuning';
 import { GmProfile } from '../types';
-import { marketValue, remainingValue, ContractLike } from '../cap';
+import { marketValue, remainingValue, capHit, proration, capSavingsOnCut, formatMoney, ContractLike } from '../cap';
+import { startersAt } from '../lineup';
+import { REPLACEMENT_LEVEL } from '../sim/units';
 import { CapMode } from '../types';
 import { readJson } from '../json';
 
@@ -96,6 +98,194 @@ export function needSeverity(score: number): { label: string; className: string 
 }
 
 /**
+ * ===========================================================================
+ * UPGRADE OVER THE INCUMBENT — "IS HE BETTER THAN WHAT I ALREADY HAVE?"
+ * ===========================================================================
+ * `teamNeeds` above answers exactly one question — DO I HAVE A HOLE? — and it
+ * answers it well. What it cannot answer, and was never shaped to, is the
+ * question a real front office actually asks about a good player: is he
+ * better than the man I would put on the field instead of him?
+ *
+ * Those are not the same question, and treating them as one produced the bug
+ * this exists to fix. `teamNeeds`' quality term is `(72 - starter) / 30`,
+ * which is flat zero for any starter at 72 or better — so a club with a 72
+ * right tackle and a club with a 90 right tackle were indistinguishable, and
+ * because `TRADE_VALUE.NEED_MULT_MIN` is 0.72, "no need" is not a shrug, it
+ * is an active 28% DISCOUNT. An 88 offered to a club starting a 78 came back
+ * priced at 72% of his worth. The club did not merely fail to want him; it
+ * marked him down.
+ *
+ * The fix is a second, separate signal rather than a wider `teamNeeds`:
+ *
+ *   - `teamNeeds` stays single-purpose, so the position-flexibility work that
+ *     also reads it (a club with three tackles and no guard) has a clean
+ *     function to reason about, and so free agency and the draft board see
+ *     exactly the numbers they see today.
+ *   - This asks the OTHER question, off the same roster.
+ *
+ * They are blended at the point of use (see `playerValueDetailed`) by taking
+ * the LARGER of the two, because they are two readings of one axis — "how
+ * much does this man improve us" — and a club with nobody at a position both
+ * has a hole and would be hugely upgraded. Taking the max keeps the existing
+ * bounded multiplier exactly as wide as it already was: this fix stops the AI
+ * DISCOUNTING obvious upgrades, it does not hand it a new way to overpay.
+ *
+ * WHO THE INCUMBENT IS. Not "the best man at the position" — the man who
+ * actually loses the job. `startersAt` (lib/lineup.ts) is the single
+ * definition of how many play at each spot, and it is read, not re-derived:
+ * three receivers start, so an 88 arriving at a club with 90/85/80/75 is not
+ * measured against the 90 or the 85, he is measured against the 80, because
+ * the 80 is who comes off the field. That is also why a fourth receiver is a
+ * smaller gain than a starter — he displaces nobody who plays.
+ *
+ * AND IT WORKS IN BOTH DIRECTIONS, which is the property that keeps the AI
+ * honest about what it gives up. A player already on this roster is removed
+ * from the group before the comparison, so the same arithmetic that asks
+ * "how much better is he than our starter" of an incoming player asks "how
+ * far do we drop if he leaves" of an outgoing one. Without that, a club
+ * valuing its OWN starting tackle would have found him sitting behind
+ * himself, called him a backup, and sold him cheap.
+ * ===========================================================================
+ */
+
+/**
+ * [TUNE] Shape of the upgrade curve. Deliberately saturating: a roster fields
+ * ONE man at a slot, so the second ten points of an upgrade cannot be worth
+ * what the first ten were — +25 lands at roughly 1.6x the score of +10, not
+ * 2.5x. And the sharpness keeps small gains near nothing, so a club with an
+ * 85 does not get talked into paying up for an 86.
+ */
+const UPGRADE = {
+  /** Snap-weighted rating points that score half of everything this term can give. */
+  HALF_GAIN: 10,
+  /** >1 flattens the bottom of the curve — +1 must not read as a tenth of +10. */
+  SHARPNESS: 1.6,
+  /**
+   * Share of the snaps the men BEHIND the starters actually take, first man
+   * off the bench then second. A backup is worth something — starters get
+   * hurt — but an order of magnitude less than the job itself, which is the
+   * whole of "acquiring a starter is worth more than acquiring a fourth
+   * receiver of the same rating". Past the second man a player is roster
+   * insurance rather than a contributor and is not counted at all.
+   *
+   * Sized against reality rather than to taste: a swing tackle or a backup
+   * corner plays on the order of a tenth of a team's snaps. An earlier draft
+   * of this used 0.3 for the first bench slot and it was visibly too generous
+   * — it made an 88 offered to a club starting an 89 (who would bench him)
+   * score HIGHER than the same 88 offered to a club starting an 84 (who would
+   * play him), because the deep backup he'd leapfrog was so much worse than
+   * either starter.
+   */
+  DEPTH_SNAP_WEIGHTS: [0.12, 0.02],
+};
+
+/**
+ * [TUNE] How a club's own cap position colours what a contract is worth TO
+ * IT. See the cap block in `playerValueDetailed`.
+ *
+ * Deliberately asymmetric. Acquiring reaches much further down than shedding
+ * reaches up, because "we cannot fit this contract" is a hard fact about a
+ * club's sheet while "we would quite like the relief" is only ever a
+ * preference — and because the hard version of the first is already enforced
+ * at execution by assertCapRoom, so an unbounded discount here would just be
+ * the same refusal charged twice.
+ */
+const CAP_FIT = {
+  /** Room above which a club has no cap-driven reason to shed salary at all. */
+  COMFORT_SPACE: 25_000_000,
+  /** A contract inside this share of a club's room costs it nothing to think about. */
+  FREE_SHARE: 0.25,
+  /** At this share (i.e. it does not fit) the acquiring discount is at full strength. */
+  FULL_SHARE: 1.25,
+  ACQUIRE_MULT_MIN: 0.6,
+  SHED_MULT_MIN: 0.88,
+};
+
+export interface RosterFit {
+  /** 0..1 — the curved, position-weighted read of `gain`. This is what moves value. */
+  score: number;
+  /**
+   * Snap-weighted rating points he adds to the club's depth chart at his
+   * position: the whole ladder after he arrives minus the whole ladder
+   * before, with each slot weighted by how much it actually plays. A pure
+   * starting upgrade of +10 comes out at 10; the same man arriving as a
+   * fourth receiver comes out at a fraction of it.
+   */
+  gain: number;
+  /** The man whose job he takes — the last starter, or the man he'd back up. REPLACEMENT_LEVEL when the slot is empty. */
+  incumbent: number;
+  /** Whether the slot he'd occupy is a starting slot, per lib/lineup.ts. */
+  starts: boolean;
+  /** True when he is ALREADY on this roster, i.e. the question is what we lose, not what we gain. */
+  onRoster: boolean;
+}
+
+/**
+ * How much a player improves (or, for one of your own, how much he is holding
+ * up) a specific roster at his position. See the block above.
+ *
+ * THE MEASURE IS THE WHOLE DEPTH CHART, not one slot. Signing an 88 to a club
+ * starting an 84 does not only upgrade the starter by four — it also drops
+ * the 84 into the swing role ahead of whatever was there. Scoring only the
+ * slot he lands in got that wrong in a way that showed: an 88 offered to a
+ * club with an 89 (who would bench him behind a strong starter) out-scored
+ * the same 88 offered to a club with an 84 (who would play him), purely
+ * because the deep backup he leapfrogged was worse. Summing the ladder both
+ * ways fixes it by construction and needs no special case.
+ *
+ * `roster` is the club's whole roster; the player is matched out of it by id,
+ * so callers pass the same list either way and never have to say which side
+ * of a trade they are asking about.
+ */
+export function rosterFit(p: RosterPlayer, roster: RosterPlayer[]): RosterFit {
+  const onRoster = roster.some((r) => r.id === p.id);
+  const group = roster
+    .filter((r) => r.position === p.position && r.id !== p.id)
+    .map((r) => r.trueOvr)
+    .sort((a, b) => b - a);
+  const starters = startersAt(p.position);
+
+  // The slots that play, and how much. Every starting slot counts fully;
+  // bench slots count for the share of snaps a backup really takes. Positions
+  // that only ever roster one man (K, P) carry no bench slots at all — the
+  // same rule, off the same table, that teamNeeds uses to skip its depth term
+  // for them, because for those a second body is not depth, it is a spare.
+  const carriesDepth = (ROSTER_TARGETS[p.position as Position]?.max ?? 1) > 1;
+  const weights = [
+    ...Array<number>(starters).fill(1),
+    ...(carriesDepth ? UPGRADE.DEPTH_SNAP_WEIGHTS : []),
+  ];
+  // An unfilled slot is scored at what the sim would actually field there
+  // (lib/sim/units.ts REPLACEMENT_LEVEL), not at a second opinion about it.
+  const ladder = (chart: number[]) =>
+    weights.reduce((sum, w, i) => sum + w * (chart[i] ?? REPLACEMENT_LEVEL), 0);
+
+  // Where he lands. Ties fall BEHIND the incumbent — a man who merely matches
+  // what you already have does not take anybody's job.
+  let slot = 0;
+  while (slot < group.length && group[slot] >= p.trueOvr) slot++;
+  const withHim = [...group.slice(0, slot), p.trueOvr, ...group.slice(slot)];
+  const gain = ladder(withHim) - ladder(group);
+
+  // Who the screen should name. If he cracks the lineup, the man who actually
+  // comes off the field is the LAST starter, not the one immediately above
+  // him — an 88 arriving as a club's WR2 pushes its WR3 to the bench, it does
+  // not un-play its WR1.
+  const starts = slot < starters;
+  const incumbent = (starts ? group[starters - 1] : group[slot]) ?? REPLACEMENT_LEVEL;
+
+  // Same table teamNeeds weights its quality term with, for the same reason:
+  // ten points of kicker is not ten points of quarterback. The position's
+  // TRADE economics are already in the tier curve this multiplies, so
+  // weighting by those a second time would double-count them.
+  const qualityWeight = ROSTER_NEED_QUALITY_WEIGHT[p.position as Position] ?? 1;
+  const g = Math.max(0, gain);
+  const curved = Math.pow(g, UPGRADE.SHARPNESS) / (Math.pow(g, UPGRADE.SHARPNESS) + Math.pow(UPGRADE.HALF_GAIN, UPGRADE.SHARPNESS));
+
+  return { score: clamp(curved * qualityWeight, 0, 1), gain, incumbent, starts, onRoster };
+}
+
+/**
  * League-wide scarcity per position, 0 (plentiful good talent) .. 1
  * (barely any). Pure function over an already-fetched roster snapshot —
  * callers fetch the whole league's players ONCE per trade evaluation (not
@@ -124,10 +314,20 @@ export interface ValueBreakdown {
   base: number;
   upside: number;
   ageMult: number;
-  needMult: number;
+  /**
+   * Roster-fit multiplier — what this man does to THIS club's depth chart,
+   * blended from `teamNeeds` (do we have a hole) and `rosterFit` (is he
+   * better than who we'd play instead). Named `fitMult` rather than
+   * `needMult` because "need" was only ever half of what it now answers.
+   */
+  fitMult: number;
+  /** What the deal does to THIS club's books — see the cap block in playerValueDetailed. 1 when no cap space was supplied. */
+  capMult: number;
   contractMult: number;
   scarcityMult: number;
   noiseMult: number;
+  /** The depth-chart read behind `fitMult`, or null when no roster was supplied. */
+  fit: RosterFit | null;
   total: number;
   /**
    * Human-readable notes explaining the number, strongest driver first — NOT
@@ -172,6 +372,20 @@ export function playerValueDetailed(
     capMode?: CapMode;
     /** 0..1 per position — how thin the league-wide supply of good players there is. See leagueScarcity(). Omit to skip (defaults to neutral). */
     scarcity?: Record<string, number>;
+    /**
+     * The valuing club's whole roster, which turns on the depth-chart read:
+     * where this man would actually line up and who he'd displace (or, if he
+     * is already on it, who would replace him). Omit and the valuation falls
+     * back to `needs` alone — which is exactly what the draft board and trade
+     * retrospectives want, since neither is asking "what does he do to our
+     * lineup", so neither is changed by this.
+     */
+    roster?: RosterPlayer[];
+    /**
+     * The valuing club's live cap space, in dollars. Omit to skip the cap
+     * term entirely (capMult stays 1).
+     */
+    capSpace?: number;
   },
 ): ValueBreakdown {
   const { profile, needs } = opts;
@@ -256,19 +470,102 @@ export function playerValueDetailed(
     }
   }
 
-  // Team-need multiplier — bounded on both ends (real front offices actively
-  // discount a redundant asset, not just withhold a bonus; and even
-  // desperate need never overrides positional economics enough to make a
-  // punter cost a premium pick).
+  // Roster fit — bounded on both ends (real front offices actively discount a
+  // redundant asset, not just withhold a bonus; and even desperate need never
+  // overrides positional economics enough to make a punter cost a premium
+  // pick). Two readings of one axis, blended by taking the larger: `needs`
+  // sees holes, `rosterFit` sees upgrades, and a club with nobody at a spot
+  // registers on both. The BOUNDS are untouched by this change — the fix is
+  // that an obvious upgrade now reaches the top of the existing range instead
+  // of being pinned to the bottom of it.
   const needVal = needs?.[p.position] ?? 0;
-  const needMult = needs
-    ? TRADE_VALUE.NEED_MULT_MIN + needVal * (TRADE_VALUE.NEED_MULT_MAX - TRADE_VALUE.NEED_MULT_MIN)
+  const fit = opts.roster ? rosterFit(p, opts.roster) : null;
+  const fitVal = Math.max(needVal, fit?.score ?? 0);
+  const fitMult = needs || fit
+    ? TRADE_VALUE.NEED_MULT_MIN + fitVal * (TRADE_VALUE.NEED_MULT_MAX - TRADE_VALUE.NEED_MULT_MIN)
     : 1;
-  const needSwing = base * Math.abs(needMult - 1);
-  if (needVal > 0.55) {
-    reasons.push({ text: `This fills a real hole for us at ${p.position}.`, weight: needSwing });
-  } else if (needs && needVal < 0.15) {
-    reasons.push({ text: `We're already strong at ${p.position}, so this doesn't move the needle much.`, weight: needSwing });
+  const fitSwing = base * Math.abs(fitMult - 1);
+
+  // The explanation has to read correctly from BOTH sides of a deal: the same
+  // number is the price of acquiring him and the price of prising him loose,
+  // and a screen that says "he'd start for us" about a man who already does
+  // is explaining someone else's roster.
+  // Stated in rating points over the man he displaces, not in `fit.gain`'s
+  // snap-weighted units — "10 points better than the man he'd replace" is a
+  // sentence a GM can check against the depth chart in front of him, and
+  // "15.2" is not.
+  const overIncumbent = fit ? Math.round(p.trueOvr - fit.incumbent) : 0;
+  if (fit?.onRoster) {
+    if (fit.starts && overIncumbent >= 3) {
+      reasons.push({ text: `He starts for us at ${p.position} — replacing him from inside the building drops us ${overIncumbent} points at the spot.`, weight: fitSwing });
+    } else if (!fit.starts) {
+      reasons.push({ text: `He's depth for us at ${p.position}, not someone we're counting on.`, weight: fitSwing });
+    }
+  } else if (needVal > 0.55) {
+    reasons.push({ text: `This fills a real hole for us at ${p.position}.`, weight: fitSwing });
+  } else if (fit && fit.starts && overIncumbent >= 3) {
+    reasons.push({
+      text: fit.incumbent <= REPLACEMENT_LEVEL
+        ? `He'd walk into an empty ${p.position} slot for us — we're playing nobody there.`
+        : `He'd start at ${p.position} for us — ${overIncumbent} points a snap better than the man he'd replace.`,
+      weight: fitSwing,
+    });
+  } else if (fit && !fit.starts) {
+    reasons.push({ text: `He'd sit behind what we already have at ${p.position} — that's depth, not a starter, and we price it that way.`, weight: fitSwing });
+  } else if (fitVal < 0.15) {
+    reasons.push({ text: `We're already strong at ${p.position}, so this doesn't move the needle much.`, weight: fitSwing });
+  }
+
+  /**
+   * WHAT THE DEAL DOES TO OUR BOOKS. Distinct from `contractMult` above,
+   * which asks whether the contract is good VALUE in the abstract (cheap
+   * relative to market). This asks whether this particular club can live with
+   * it, which is a different question with a different answer for every club:
+   * a $20M salary is a bargain to a team with $60M of room and an
+   * impossibility to a team with $3M, at identical market value.
+   *
+   * Only base salary travels in a trade — the signing bonus accelerates onto
+   * the club giving him up (see executeTrade / tradeCapDeltas) — so the number
+   * an acquiring club's sheet has to absorb is the hit minus proration, not
+   * the hit. Using the raw hit would overstate the bill on every
+   * bonus-heavy contract in the league.
+   *
+   * And it runs the other way too: for a man already on the roster, the cap
+   * he frees is a REASON TO TRADE HIM, but only for a club that is actually
+   * under pressure. A club with room has no reason to shed salary, so the
+   * term is inert there rather than quietly marking down every expensive
+   * player in the league.
+   */
+  let capMult = 1;
+  if (capMode !== 'OFF' && p.contract && opts.capSpace !== undefined) {
+    const room = Math.max(0, opts.capSpace);
+    if (fit?.onRoster) {
+      const freed = capSavingsOnCut(p.contract, capMode);
+      const pressure = clamp(1 - room / CAP_FIT.COMFORT_SPACE, 0, 1);
+      const relief = clamp(freed / CAP_FIT.COMFORT_SPACE, 0, 1);
+      capMult = 1 - pressure * relief * (1 - CAP_FIT.SHED_MULT_MIN);
+      if (capMult < 0.97) {
+        reasons.push({ text: `Moving his ${formatMoney(freed)} off our books is worth something on its own — we're tight against the cap.`, weight: base * (1 - capMult) });
+      }
+    } else {
+      const added = capHit(p.contract, capMode) - (capMode === 'REALISTIC' ? proration(p.contract) : 0);
+      const load = added / Math.max(room, 1);
+      const strain = clamp((load - CAP_FIT.FREE_SHARE) / (CAP_FIT.FULL_SHARE - CAP_FIT.FREE_SHARE), 0, 1);
+      capMult = 1 - strain * (1 - CAP_FIT.ACQUIRE_MULT_MIN);
+      // Only stated once it's actually material. Every reason carries its own
+      // value swing and the trade screen shows the strongest three, so a 2%
+      // nudge that announces itself pushes a real driver off the list — the
+      // exact "explaining a factor that isn't the reason" failure the
+      // breakdown's sort order exists to prevent.
+      if (capMult < 0.94) {
+        reasons.push({
+          text: load >= 1
+            ? `We don't have the room — his ${formatMoney(added)} salary is more cap space than we have.`
+            : `His ${formatMoney(added)} salary would eat ${Math.round(load * 100)}% of our cap room, and that's a real cost to us.`,
+          weight: base * (1 - capMult),
+        });
+      }
+    }
   }
 
   // League scarcity — modest by design (see TRADE_VALUE.SCARCITY_MULT_*).
@@ -277,7 +574,7 @@ export function playerValueDetailed(
     ? TRADE_VALUE.SCARCITY_MULT_MIN + scarcityVal * (TRADE_VALUE.SCARCITY_MULT_MAX - TRADE_VALUE.SCARCITY_MULT_MIN)
     : 1;
 
-  let total = (base + upside) * ageMult * contractMult * needMult * scarcityMult;
+  let total = (base + upside) * ageMult * contractMult * fitMult * scarcityMult * capMult;
 
   // Imperfect evaluation. Lower sharpness (easier difficulty) = noisier AI.
   let noiseMult = 1;
@@ -294,7 +591,7 @@ export function playerValueDetailed(
   total = Math.min(total, curve.ceiling);
 
   reasons.sort((a, b) => b.weight - a.weight);
-  return { base, upside, ageMult, needMult, contractMult, scarcityMult, noiseMult, total: Math.max(1, total), reasons };
+  return { base, upside, ageMult, fitMult, capMult, contractMult, scarcityMult, noiseMult, fit, total: Math.max(1, total), reasons };
 }
 
 /** Convenience wrapper for callers that only need the number. */
