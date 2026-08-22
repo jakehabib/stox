@@ -1670,3 +1670,40 @@ ever force-pushed over, so every state below still exists in git history).
   start-of-year rating isn't recoverable from the schema — `trueOvr` is
   overwritten in place by every checkpoint. Nothing is persisted, so it works
   on saves that already exist. Median 51ms, p99 87ms.
+- **2026-08-22 — Free agency was empty, and it was four bugs (`fe6db7d`,
+  `dde5a94`, `2ec7022`).** A beta tester's year-two free agency had almost
+  nobody in it. Four separate defects, each of which alone would have been
+  survivable:
+  1. **Clubs were born illegal.** Roster generation rolls a random count per
+     position; summed, the *mean* club started with **43 men against a 46-man
+     minimum**, so 31 of 32 clubs began short — about 90 bodies league-wide.
+  2. **Roster-minimum fill ignored the market floor.** It was the one signing
+     path in the game that skipped it, offered league minimum, and took the
+     *best available* — so it strip-mined the market from the top to pay for
+     bug 1. Measured, in a single step: **91 players → 15, best available
+     85 OVR → 57.**
+  3. **Nothing replenished the pool.** No source of new unsigned players, and
+     year one's contracts were all written fresh, so almost nothing expired
+     into the first offseason.
+  4. **Undrafted players never became free agents.** The flag clearing them
+     was a year late, so an undrafted rookie first reached an open market
+     *two* offseasons after his draft — and the same stuck flag excluded him
+     from the attrition curve, so he was **simultaneously unsignable and
+     unclearable.** Worst case: a fantasy-draft league writes its leftovers
+     with a null draft year, which the query could never match, so **a fantasy
+     league's market read zero in every week of every season of its
+     existence**, with 130 players invisible behind it. That is why the app
+     owner's own save had free agents and the tester's did not.
+
+  First offseason, before → after: pool **15 → 200**, best available
+  **57 → 92**, clubs under the roster minimum **31 → 1** (the one is the
+  user's own club, which fill deliberately never touches). Fantasy leagues go
+  **0 → 260** in every week of every season. Undrafted rookies now flow in as
+  the organic source from year two on, and the churn was measured rather than
+  asserted: of one 189-man undrafted class, 42% are out of football after one
+  offseason, 79% after two, and only **4% are still sitting unsigned after
+  three** — with eight of them reaching a roster, which is the point. Pool
+  size plateaus near 500 rather than climbing. Roster-minimum violations
+  across a 3-season health check fell **92%**, and their shape changed from
+  five clubs at a time playing whole seasons at 39–43 men to a single club
+  per check.
