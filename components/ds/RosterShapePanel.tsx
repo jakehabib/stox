@@ -1,5 +1,7 @@
 import type { RosterShape, GroupShape } from '@/lib/rosterShape';
 import type { TeamRating } from '@/lib/teamRating';
+import { Tooltip } from '../Tooltip';
+import { tip } from '@/lib/glossary';
 
 function ordinal(n: number): string {
   const s = ['th', 'st', 'nd', 'rd'];
@@ -89,7 +91,10 @@ export function RosterShapePanel({ shape, rating }: { shape: RosterShape; rating
           <div className="flex items-baseline gap-2.5">
             <span className="stat-value text-stat-xl leading-none">{rating.overall}</span>
             <div>
-              <div className="label-sm">Team Overall</div>
+              <div className="label-sm inline-flex items-center gap-1.5">
+                Team Overall
+                <Tooltip text={tip('teamOverall')} />
+              </div>
               <div className={`text-xs mt-0.5 font-semibold ${rating.rank <= 8 ? 'text-accent' : rating.rank >= 25 ? 'text-bad' : 'text-muted'}`}>
                 {ordinal(rating.rank)} of 32 · {ordinal(rating.confRank)} in the {rating.conference} · {ordinal(rating.divRank)} in the {rating.division}
               </div>
@@ -112,7 +117,10 @@ export function RosterShapePanel({ shape, rating }: { shape: RosterShape; rating
 
       <div className="px-4 py-3 border-b border-line/70 flex items-center justify-between flex-wrap gap-2">
         <div>
-          <div className="label-sm">Roster Construction</div>
+          <div className="label-sm inline-flex items-center gap-1.5">
+            Roster Construction
+            <Tooltip text={tip('unitRating')} />
+          </div>
           <div className="text-xs text-muted mt-0.5">
             Starter rating at each unit, with its league rank, measured against the league average starter there.
           </div>

@@ -16,7 +16,11 @@ const VERDICT_STYLE: Record<Verdict, { label: string; text: string; bar: string 
 };
 
 /** CONSIDERING, CLOSE and ACCEPT, in the order they are crossed. */
-const THRESHOLDS = [45, 68, 82];
+// Tick marks, aligned to the verdict boundaries in lib/negotiation.ts
+// (CONSIDERING 45, CLOSE 72, certain yes at ACCEPT_INTEREST 90). A second
+// copy of a threshold is how a meter comes to disagree with the decision it
+// is drawing; these are the same numbers, and they move together.
+const THRESHOLDS = [45, 72, 90];
 
 /**
  * The live read on how an offer is landing.

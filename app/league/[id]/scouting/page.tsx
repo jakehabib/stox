@@ -21,6 +21,8 @@ import { WorkoutButton } from '@/components/ds/WorkoutButton';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { ShortlistStar } from '@/components/ShortlistStar';
+import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
 
 export const dynamic = 'force-dynamic';
 
@@ -169,23 +171,27 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
           { label: 'Class', value: String(classSize), detail: `${draftLabelYear} draft · all graded, no cost` },
           {
             label: 'Shortlisted',
+            tip: tip('shortlist'),
             value: String(plan.shortlisted),
             detail: plan.shortlisted > 0 ? 'worked every week' : 'star anyone to start',
             color: plan.shortlisted > 0 ? 'text-gold' : 'text-warn',
           },
           {
             label: 'Attention Each',
+            tip: tip('attentionUnits'),
             value: plan.shortlisted > 0 ? unitsEach.toFixed(1) : '—',
             detail: plan.shortlisted > 0 ? 'units per starred man, per week' : 'nothing starred',
           },
           {
             label: 'Workouts',
+            tip: tip('privateWorkout'),
             value: `${slots.remaining}/${slots.max}`,
             detail: slots.open ? 'window open' : 'window closed',
             color: !slots.open ? 'text-muted' : slots.remaining === 0 ? 'text-bad' : undefined,
           },
           {
             label: 'Board Leader',
+            tip: tip('boardGrade'),
             value: leaderPlayer ? `${leaderPlayer.lastName}` : '—',
             detail: leader ? `${leaderPlayer?.position} · board grade ${leader.grade}` : 'class not set',
           },
@@ -199,6 +205,7 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
         <SectionHeading
           eyebrow="Free · public · identical for every team"
           title="The Consensus Board"
+          tip={tip('consensusBoard')}
           action={
             <Link href={`/league/${league.id}/draft`} className="text-xs text-muted hover:text-chalk">
               Full class ({classSize}) →
@@ -215,6 +222,10 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
           </p>
           {legend.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-3">
+              <span className="inline-flex items-center gap-1 text-[11px] text-muted mr-1">
+                Where the board is wrong
+                <Tooltip text={tip('positionalValue')} />
+              </span>
               {legend.map(([id, l]) => (
                 <span key={id} className={`pill text-[11px] gap-1.5 ${BIAS_TONE[id] ?? 'border-line text-muted'}`}>
                   {l.label}<span className="font-mono opacity-70 ml-1">{l.count}</span>
@@ -293,6 +304,7 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
         <SectionHeading
           eyebrow="Free · every week · the only ongoing input"
           title="Who Your Staff Is Watching"
+          tip={tip('shortlist')}
           action={
             plan.shortlisted > 0 ? (
               <span className="text-xs text-muted">
@@ -415,6 +427,7 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
         <SectionHeading
           eyebrow="Scarce · pre-draft only"
           title="Private Workouts"
+          tip={tip('privateWorkout')}
           action={
             <span className="text-xs">
               <span className={`stat-value text-stat-sm ${slots.remaining === 0 ? 'text-bad' : 'text-chalk'}`}>{slots.remaining}</span>

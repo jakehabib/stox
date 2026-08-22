@@ -49,13 +49,12 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
         Pythagorean expectation turns points scored and allowed into the record that scoring deserved
         (exponent 2.37, the football fit). Where the blue line sits above the orange one, the club banked
         wins its scoring did not earn — and a gap like that is the first thing that stops repeating.
-        No trend line is drawn through either series: the sim makes no such claim and neither should this.
       </>}
     >
       {rows.length === 0 ? (
         <p className="text-sm text-muted py-6">
-          No completed season on record for {teamAbbr} yet. This panel plots finished seasons only, so it
-          fills in the first time this franchise gets through a year.
+          No full season for {teamAbbr} yet. This one plots finished years only, so it fills in the first time
+          the club gets all the way through one.
         </p>
       ) : (
         <>
@@ -133,16 +132,16 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
                 Your completed seasons: <b>{tenure.map((t) => `${t.year} ${t.wins}-${t.losses} (${signed(t.luck)})`).join(', ')}</b>.
                 {seasonOnLedger
                   ? ` ${seasonYear} is finished and is the last point on the line.`
-                  : ` ${seasonYear} is still running — a part-season on a wins axis reads as a collapse, so it sits in the tile above rather than on the line.`}
+                  : ` ${seasonYear} is still running, so it sits in the tile above rather than on the line.`}
               </>
             ) : (
               <>Every season on this chart predates your appointment. It is the franchise you inherited, not a record of your work — the tenure view above filters it out once you have a finished season of your own.</>
             )}
-            {' '}Expected wins run over the games each season actually played, so a strike-shortened or in-progress year is never compared against a full one.
+            {' '}Expected wins are worked over the games a season actually played, so a short year is never held against a full one.
           </Note>
 
           <TableTwin
-            caption="Table view — every completed season on record"
+            caption="Every finished season, in numbers"
             columns={['Season', 'W', 'L', 'T', 'PF', 'PA', 'Expected W', 'Luck', 'Result', 'Era']}
             rows={[...rows].reverse().map((r) => [
               r.year, r.wins, r.losses, r.ties, r.pointsFor, r.pointsAgainst,

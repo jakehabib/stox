@@ -490,11 +490,11 @@ export function guaranteeFloorFor(ovr: number, personality: Personality): number
 /**
  * What a deal under his floor is capped at, in interest points. [TUNE]
  *
- * Below the "he might sign" band at every scouting confidence
- * (ACCEPT_INTEREST - BAND_MAX_HALF_WIDTH = 70), because the claim is that no
- * salary signs this, and the meter may not imply otherwise. Above the money
- * insult's 44, because it is a smaller failing: the offer is real, the
- * structure is not.
+ * Below the "he might sign" stretch at every scouting confidence — its floor
+ * is ACCEPT_INTEREST - MAYBE_WIDTH_UNKNOWN = 65 at worst — because the claim
+ * is that no salary signs this, and the meter may not imply otherwise. Above
+ * the money insult's 44, because it is a smaller failing: the offer is real,
+ * the structure is not.
  */
 const UNDER_GUARANTEED_CAP = 62;
 
@@ -600,26 +600,100 @@ export function committedTerm(ctx: NegotiationContext, offer: Offer): number {
   return offer.years + (ctx.mode === 'EXTENSION' ? ctx.controlYears : 0);
 }
 
+/**
+ * [TUNE] How far the term component can drag interest down on its own. The
+ * price carries the preference now; this is the residue.
+ */
+const TERM_SCORE_FLOOR = 0.62;
+
+/**
+ * [TUNE] What a year away from his preferred term costs, as a share of his
+ * asking price, per year, capped.
+ *
+ * Both directions, because both are real. Asking a man who wants a short
+ * prove-it deal to lock in five years costs you a premium — he is selling the
+ * upside of hitting the market again. Asking a man who wants five years to
+ * take two costs you a premium too — he is giving up security, and the years
+ * he does get have to be worth more.
+ *
+ * The owner's own figure: "if a player wants a short term deal you might need
+ * to pay 5-10% more for a longer term and vice versa." LONGER_PER_YEAR is set
+ * so the first extra year lands inside that range and the curve flattens,
+ * because the third extra year is not three times the imposition of the first.
+ */
+const TERM_PREMIUM = {
+  LONGER_PER_YEAR: 0.055,
+  SHORTER_PER_YEAR: 0.045,
+  MAX: 0.28,
+} as const;
+
+/**
+ * The multiplier on his asking price for a term that is not the one he wants.
+ * 1.0 at exactly his preferred term, rising in both directions, and steeper
+ * for a prove-it player because getting back to the market sooner is the
+ * whole point of the deal he is chasing.
+ */
+export function termPremium(ctx: NegotiationContext, committedYears: number): number {
+  const off = committedYears - ctx.desiredYears;
+  if (off === 0) return 1;
+  const proveIt = ctx.personality === 'PROVE_IT' ? 1.6 : 1;
+  const perYear = off > 0
+    ? TERM_PREMIUM.LONGER_PER_YEAR * proveIt
+    : TERM_PREMIUM.SHORTER_PER_YEAR;
+  // Square-root taper: the first year away costs the most, and a man does not
+  // ask for six times the money to go from two years to eight.
+  const raw = perYear * Math.sqrt(Math.abs(off));
+  return 1 + Math.min(TERM_PREMIUM.MAX, raw);
+}
+
 export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvaluation {
   const w = PERSONALITY_WEIGHTS[ctx.personality];
 
-  const moneyRatio = offer.apy / ctx.reservationApy;
-  const moneyScore = satisfaction(moneyRatio, 0.35);
-
-  // Years cut both ways: too few reads as a lack of commitment, too many is
-  // fine for most and actively unwanted by a prove-it player.
-  //
   // AN EXTENSION IS JUDGED ON THE TOTAL. `offer.years` there is the size of
   // the ADD-ON — the number he negotiates — but what he is agreeing to is
   // being tied to this club for the add-on PLUS everything already on his
   // deal. A 33-year-old with two years left taking four more is committing
   // through 39, and it is that figure he has an opinion about.
   const committedYears = committedTerm(ctx, offer);
+
+  // TERM IS A PREFERENCE WITH A PRICE, NOT A RULE.
+  //
+  // It used to be a rule, and the rule was unsignable. A prove-it player's
+  // term score was `1 - (extraYears * 0.28)`, which hits ZERO four years past
+  // what he wants — so his interest was capped by a term component no amount
+  // of money could move. Measured on a real save: a 97-overall receiver
+  // asking $31.1M over 2 years, offered the slider maximum of $51.0M over 12
+  // years with 100% guaranteed, came out at interest 74 and REFUSED, while
+  // the same money over his own 2 years read 100. Only 5.2% of the whole
+  // slider grid closed him. That is the app owner's report exactly: "I
+  // offered a maxed out contract to someone and they still wouldn't say yes
+  // or no", and his diagnosis of it — "These should be player preferences and
+  // not rules" — is the fix.
+  //
+  // So term now moves what he ASKS FOR rather than gating whether he can be
+  // signed: a man who wants two years will do five for a raise, and a man who
+  // wants five will take two if you make the years he does get worth it. His
+  // own words: "if a player wants a short term deal you might need to pay
+  // 5-10% more for a longer term and vice versa."
+  //
+  // The one genuinely hard limit stays hard, and it is his, not the
+  // rulebook's: `willingYears` — he does not intend to play past a certain
+  // age, and no price buys a year he does not want to be alive for in this
+  // sport. That refusal lives in `decideOffer` and is untouched.
+  const askApy = ctx.reservationApy * termPremium(ctx, committedYears);
+  const moneyRatio = offer.apy / askApy;
+  const moneyScore = satisfaction(moneyRatio, 0.35);
+
+  // What is LEFT for the term component to say, once the price has absorbed
+  // the preference: a little, so the slider still reads as meaningful, but
+  // never enough to refuse a deal on its own. Floored deliberately — this
+  // component's job is now flavour, and a flavour component that can zero out
+  // is a rule wearing a preference's clothes.
   const yearsRatio = committedYears / ctx.desiredYears;
-  const yearsScore =
-    ctx.personality === 'PROVE_IT' && committedYears > ctx.desiredYears
-      ? Math.max(0, 1 - (committedYears - ctx.desiredYears) * 0.28)
-      : satisfaction(Math.min(yearsRatio, 1.15), 0.55);
+  const yearsScore = Math.max(
+    TERM_SCORE_FLOOR,
+    satisfaction(Math.min(yearsRatio, 1.15), 0.55),
+  );
 
   const guaranteeScore = satisfaction(offer.guaranteePct / ctx.desiredGuarantee, 0.7);
 
@@ -652,10 +726,13 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
     Math.round(Math.max(0, Math.min(100, raw * 100))),
   );
 
+  // Tied to ACCEPT_INTEREST rather than to a second copy of the number, which
+  // is how the meter and the decision drift apart. ACCEPT here means CERTAIN:
+  // an offer below it can still be signed on the draw inside the band.
   let verdict: Verdict;
   if (insulting) verdict = 'INSULTED';
-  else if (interest >= 82) verdict = 'ACCEPT';
-  else if (interest >= 68) verdict = 'CLOSE';
+  else if (interest >= ACCEPT_INTEREST) verdict = 'ACCEPT';
+  else if (interest >= 72) verdict = 'CLOSE';
   else if (interest >= 45) verdict = 'CONSIDERING';
   else verdict = 'COLD';
 
@@ -684,8 +761,8 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   } else if (guaranteeScore < 0.85) {
     demands.push('He wants more of it guaranteed.');
   }
-  if (ctx.competition > 0.5 && interest < 82) demands.push('Other teams are calling. This will not sit on the table long.');
-  if (demands.length === 0 && interest < 82) demands.push('He is close. Something small is still missing.');
+  if (ctx.competition > 0.5 && interest < ACCEPT_INTEREST) demands.push('Other teams are calling. This will not sit on the table long.');
+  if (demands.length === 0 && interest < ACCEPT_INTEREST) demands.push('He is close. Something small is still missing.');
 
   const headline =
     verdict === 'ACCEPT' ? `${ctx.playerName} will sign this.`
@@ -772,28 +849,49 @@ export function minimumAcceptableApy(ctx: NegotiationContext, years: number, gua
 export type SignBand = 'NO' | 'MAYBE' | 'YES';
 
 /** The interest at which he used to flip from no to yes. Now the centre of the band. */
-export const ACCEPT_INTEREST = 82;
+/**
+ * WHERE A CERTAIN YES BEGINS, and it is deliberately expensive.
+ *
+ * The band used to be symmetric around 82, so a certain yes and a probable
+ * one sat the same distance apart on both sides and the top of the meter was
+ * hard to reach: at low scouting confidence YES needed 94, and a genuinely
+ * generous offer could still read "might". The app owner asked for the shape
+ * directly — *"maybe we make the 'might sign' from, for example, a score of
+ * 65-85 on the meter?"*, then *"or maybe 65-90?"* — and gave the reason:
+ * *"i want the user to have to pay a bit of a tax for getting the guaranteed
+ * yes."*
+ *
+ * So the regions are asymmetric now. He MIGHT sign across a wide stretch, and
+ * the gap between "he will probably take this" and "he will certainly take
+ * this" is real money. Buying certainty is a choice with a price, which is
+ * what a negotiation is.
+ */
+export const ACCEPT_INTEREST = 90;
 
 /**
- * [TUNE] Band half-width in interest points, by how well he is scouted.
+ * [TUNE] How far below a certain yes the "he might sign" stretch reaches.
  *
- * Around the threshold one interest point is worth roughly 0.6% of his
- * asking price, so a well-scouted player's +-4 is about +-2.5% — shaving the
- * last few hundred thousand off a $20M deal is a real gamble — and an
- * unscouted player's +-12 is an honest fog seven times as wide. A fair offer
- * is never a coin flip; a minimal one always is.
+ * Scouting still narrows it, because how well you know a man is exactly how
+ * well you can price him: an unscouted player's window is 65-90, and a fully
+ * scouted one's is 78-90. Around here a point of interest is worth roughly
+ * 0.6% of his asking price, so the fog is a real spread, not a rounding.
  */
-const BAND_MIN_HALF_WIDTH = 4;
-const BAND_MAX_HALF_WIDTH = 12;
+const MAYBE_WIDTH_SCOUTED = 12;
+const MAYBE_WIDTH_UNKNOWN = 25;
 
 export function bandHalfWidthFor(scoutConfidence: number): number {
   const known = Math.max(0, Math.min(100, scoutConfidence)) / 100;
-  return Math.round(BAND_MAX_HALF_WIDTH - (BAND_MAX_HALF_WIDTH - BAND_MIN_HALF_WIDTH) * known);
+  return Math.round(MAYBE_WIDTH_UNKNOWN - (MAYBE_WIDTH_UNKNOWN - MAYBE_WIDTH_SCOUTED) * known);
 }
 
-/** The three regions, as the meter draws them. */
+/**
+ * The three regions, as the meter draws them. `bandHalfWidth` is the width of
+ * the MAYBE stretch BELOW the certain-yes line — it stopped being a half-width
+ * when the band stopped being symmetric, and the name is kept only because it
+ * is on the context and read in several places.
+ */
 export function signBandFor(ctx: NegotiationContext, interest: number): SignBand {
-  if (interest >= ACCEPT_INTEREST + ctx.bandHalfWidth) return 'YES';
+  if (interest >= ACCEPT_INTEREST) return 'YES';
   if (interest >= ACCEPT_INTEREST - ctx.bandHalfWidth) return 'MAYBE';
   return 'NO';
 }
@@ -801,7 +899,7 @@ export function signBandFor(ctx: NegotiationContext, interest: number): SignBand
 /** Where in the band this offer sits, 0..1. Never rendered as a number. */
 export function maybeChance(ctx: NegotiationContext, interest: number): number {
   const lo = ACCEPT_INTEREST - ctx.bandHalfWidth;
-  const span = Math.max(1, ctx.bandHalfWidth * 2);
+  const span = Math.max(1, ctx.bandHalfWidth);
   return Math.max(0, Math.min(1, (interest - lo) / span));
 }
 

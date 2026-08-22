@@ -78,8 +78,8 @@ export function WhatIsLeftPanel({ remaining, sosPlayed, remainingOppWinRate, rec
 
       {remaining.length === 0 ? (
         <NotOnRecord>
-          Nothing is left on the regular-season schedule, so there is no forecast to make. The projected finish
-          above is simply the record.
+          Nothing left on the regular-season schedule, so there is nothing to forecast. The projected finish above
+          is simply the record.
         </NotOnRecord>
       ) : (
         <div className="flex flex-col gap-0.5 mt-3">
@@ -105,8 +105,8 @@ export function WhatIsLeftPanel({ remaining, sosPlayed, remainingOppWinRate, rec
       )}
 
       <Note>
-        Strength of schedule is the combined win rate of the clubs actually faced, using their full-season
-        records — the standard opponent-win-percentage definition, so it says who you played rather than when.
+        Strength of schedule is the combined win rate of the clubs you actually faced, taken over their full
+        seasons — so it says who you played, not when you caught them.
         {allAway && ' Every fixture left is away from home; the estimator charges each of them the road penalty.'}
       </Note>
 
@@ -136,7 +136,7 @@ export function WhatIsLeftPanel({ remaining, sosPlayed, remainingOppWinRate, rec
       </div>
 
       <TableTwin
-        caption="Table view — remaining schedule"
+        caption="What is left, in numbers"
         columns={['Wk', 'Opponent', 'H/A', 'Record', 'Rating', 'Rank', 'Win chance']}
         rows={remaining.map((r) => [
           r.week, r.oppName, r.home ? 'H' : 'A', `${r.oppWins}-${r.oppLosses}`, r.oppRating, r.oppRank, `${r.winPct}%`,

@@ -36,6 +36,8 @@ import {
   prospectBuzzNote, COLLEGE_WEEKS,
 } from '@/lib/gen/prospectProfile';
 import { CollegeStatLine } from '@/components/CollegeStatLine';
+import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
 import { CareerHonors, HonorAward } from '@/components/ds/CareerHonors';
 import { CareerStatTable } from '@/components/ds/CareerStatTable';
 import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/ds/StatScopeToggle';
@@ -310,28 +312,30 @@ export default async function PlayerPage({
     view,
   });
 
-  const heroFacts: { label: string; value: string; detail?: string; color?: string }[] = player.isDraftee
+  const heroFacts: { label: string; value: string; detail?: string; color?: string; tip?: string }[] = player.isDraftee
     ? [
         { label: 'Draft Class', value: String(league.seasonYear), detail: player.college },
-        { label: 'Projection', value: label.label, detail: 'role this profile suggests', color: label.className },
-        ...(combineTesting ? [{ label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s`, detail: combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day' }] : []),
-        ...(collegeProfile ? [{ label: 'Competition', value: `${collegeProfile.competitionGrade}-tier`, detail: 'strength of schedule faced', color: GRADE_CLASS[collegeProfile.competitionGrade] }] : []),
+        { label: 'Projection', value: label.label, detail: 'role this profile suggests', color: label.className, tip: tip('potential') },
+        ...(combineTesting ? [{ label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s`, detail: combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day', tip: tip('combineForty') }] : []),
+        ...(collegeProfile ? [{ label: 'Competition', value: `${collegeProfile.competitionGrade}-tier`, detail: 'strength of schedule faced', color: GRADE_CLASS[collegeProfile.competitionGrade], tip: tip('competitionGrade') }] : []),
         { label: 'Measurables', value: `${Math.floor(player.heightIn / 12)}'${player.heightIn % 12}"`, detail: `${player.weightLb} lb` },
       ]
     : settings.capMode === 'OFF'
       ? [
-          { label: 'Market Value', value: `${formatMoney(market)}/yr`, detail: 'what the rating is worth' },
-          { label: 'Years Left', value: player.contract ? String(player.contract.yearsRemaining) : '—', detail: player.contract ? `expires after ${league.seasonYear + Math.max(0, player.contract.yearsRemaining - 1)}` : 'no contract' },
+          { label: 'Market Value', value: `${formatMoney(market)}/yr`, detail: 'what the rating is worth', tip: tip('marketValue') },
+          { label: 'Years Left', value: player.contract ? String(player.contract.yearsRemaining) : '—', detail: player.contract ? `expires after ${league.seasonYear + Math.max(0, player.contract.yearsRemaining - 1)}` : 'no contract', tip: tip('expiringContract') },
         ]
       : [
           {
             label: `Cap Hit ${league.seasonYear}`,
             value: formatMoney(hit),
             detail: capTotal > 0 ? `${((hit / capTotal) * 100).toFixed(1)}% of cap` : undefined,
+            tip: tip('capHit'),
           },
           {
             label: 'Market Value',
             value: `${formatMoney(market)}/yr`,
+            tip: tip('marketValue'),
             detail: !player.contract
               ? 'what the rating is worth'
               : valueTier === 'market'
@@ -344,13 +348,15 @@ export default async function PlayerPage({
             label: 'Years Left',
             value: player.contract ? String(player.contract.yearsRemaining) : '—',
             detail: player.contract ? `expires after ${league.seasonYear + Math.max(0, player.contract.yearsRemaining - 1)}` : 'no contract',
+            tip: tip('expiringContract'),
           },
-          { label: 'Guaranteed', value: player.contract ? formatMoney(player.contract.guaranteed) : '—' },
+          { label: 'Guaranteed', value: player.contract ? formatMoney(player.contract.guaranteed) : '—', tip: tip('guaranteedMoney') },
           {
             label: 'Release Cost',
             value: formatMoney(releaseCost),
             detail: releaseCost > 0 ? 'dead money if cut' : 'clean cut',
             color: releaseCost > 0 ? 'text-bad' : 'text-accent',
+            tip: tip('deadMoney'),
           },
         ];
 
@@ -435,7 +441,10 @@ export default async function PlayerPage({
                 className="rounded-lg border-2 px-4 py-3 text-center"
                 style={{ borderColor: 'var(--team-accent, #38bdf8)', background: jerseyColor ? `color-mix(in srgb, ${jerseyColor} 16%, transparent)` : undefined }}
               >
-                <div className="label-sm">Overall</div>
+                <div className="label-sm inline-flex items-center gap-1.5">
+                  Overall
+                  <Tooltip text={tip('overall')} />
+                </div>
                 <div className={`stat-value text-stat-xl leading-none mt-1 ${ratingColor(view.scoutedOvr)}`}>
                   <span className={ratingPlateClass(view.scoutedOvr) ?? undefined}>{view.scoutedOvr}</span>
                   {ratingMark(view.scoutedOvr) && <span className="ml-1 text-[0.45em] align-super">{ratingMark(view.scoutedOvr)}</span>}
@@ -443,11 +452,11 @@ export default async function PlayerPage({
               </div>
             ) : (
               <div className="panel p-3">
-                <ScoutingRange low={view.ovrLow} high={view.ovrHigh} confidence={view.confidence} label="Scouted OVR" className="w-full" />
+                <ScoutingRange low={view.ovrLow} high={view.ovrHigh} confidence={view.confidence} label="Scouted OVR" tip={tip('scoutedRange')} className="w-full" />
               </div>
             )}
             <div className="panel p-3">
-              <ScoutingRange low={view.potLow} high={view.potHigh} confidence={view.confidence} label="Potential" className="w-full" />
+              <ScoutingRange low={view.potLow} high={view.potHigh} confidence={view.confidence} label="Potential" tip={tip('potential')} className="w-full" />
             </div>
           </div>
         </div>
@@ -458,7 +467,13 @@ export default async function PlayerPage({
           <div className="relative border-t border-line/60 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 divide-x divide-line/40 bg-ink/30">
             {heroFacts.map((f) => (
               <div key={f.label} className="px-4 py-3">
-                <div className="label-sm">{f.label}</div>
+                {/* Upward, like the masthead's own strip: this band is inside the
+                    hero's `overflow-hidden`, so a bubble opening below the last
+                    row of the card is clipped to nothing. */}
+                <div className="label-sm inline-flex items-center gap-1.5">
+                  {f.label}
+                  {f.tip && <Tooltip text={f.tip} />}
+                </div>
                 <div className={`stat-value text-stat-sm leading-none mt-1 ${f.color ?? ''}`}>{f.value}</div>
                 {f.detail && <div className="text-[11px] text-muted mt-1">{f.detail}</div>}
               </div>
@@ -489,8 +504,16 @@ export default async function PlayerPage({
           title="Contract"
           action={
             <div className="flex gap-1.5">
-              {player.contract?.isRookieDeal && <span className="pill border-accent2/30 text-accent2 bg-accent2/10">Rookie Deal</span>}
-              {player.contract?.isFranchiseTag && <span className="pill border-warn/30 text-warn bg-warn/10">Franchise Tag</span>}
+              {player.contract?.isRookieDeal && (
+                <span className="pill border-accent2/30 text-accent2 bg-accent2/10 gap-1.5">
+                  Rookie Deal<Tooltip text={tip('rookieDeal')} />
+                </span>
+              )}
+              {player.contract?.isFranchiseTag && (
+                <span className="pill border-warn/30 text-warn bg-warn/10 gap-1.5">
+                  Franchise Tag<Tooltip text={tip('franchiseTag')} />
+                </span>
+              )}
             </div>
           }
         />
@@ -572,7 +595,10 @@ export default async function PlayerPage({
       {!view.revealed && (
         <div className="panel border-l-2 border-l-accent2 p-4 flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-[16rem] flex-1">
-            <div className="text-sm font-medium">Scouting confidence: {Math.round(view.confidence)}%</div>
+            <div className="text-sm font-medium inline-flex items-center gap-1.5">
+              Scouting confidence: {Math.round(view.confidence)}%
+              <Tooltip text={tip('scoutingConfidence')} />
+            </div>
             <p className="text-xs text-muted mt-1 max-w-lg">{view.notes}</p>
           </div>
           {userTeam && (
@@ -613,7 +639,11 @@ export default async function PlayerPage({
       )}
 
       <div className="section">
-        <SectionHeading title="Scouting Report" action={<span className="text-xs text-muted">{Math.round(view.confidence)}% confidence</span>} />
+        <SectionHeading
+          title="Scouting Report"
+          tip={tip('scoutingConfidence')}
+          action={<span className="text-xs text-muted">{Math.round(view.confidence)}% confidence</span>}
+        />
         {/* Hedging in this prose is driven by each attribute's own displayed
             band width, not one aggregate number — so it can never assert more
             precision than the fog above is already showing. */}
@@ -623,7 +653,11 @@ export default async function PlayerPage({
       </div>
 
       <div className="section">
-        <SectionHeading title="Attributes" action={!view.revealed ? <span className="text-xs text-muted">Scouted range shown — true values hidden</span> : undefined} />
+        <SectionHeading
+          title="Attributes"
+          tip={!view.revealed ? tip('scoutedRange') : undefined}
+          action={!view.revealed ? <span className="text-xs text-muted">Scouted range shown — true values hidden</span> : undefined}
+        />
         <div className="panel p-5 grid sm:grid-cols-2 gap-x-8 gap-y-3">
           {view.attrs.map((a) => (
             <div key={a.key} className="flex items-center gap-3">
@@ -655,7 +689,10 @@ export default async function PlayerPage({
                 sharing a column with the season line. */}
             <div className="px-5 pt-4 pb-3 border-b border-line/60">
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                <div className="label-sm">{combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day'} Testing</div>
+                <div className="label-sm inline-flex items-center gap-1.5">
+                  {combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day'} Testing
+                  <Tooltip text={combineTesting.venue === 'COMBINE' ? tip('combineTesting') : tip('proDay')} />
+                </div>
                 <div className="text-xs text-muted">
                   {combineTesting.venue === 'COMBINE'
                     ? 'Measured under standard conditions at the league combine.'
@@ -665,17 +702,23 @@ export default async function PlayerPage({
             </div>
             <div className="grid grid-cols-3 sm:grid-cols-6 divide-x divide-line/40 border-b border-line/60">
               {([
-                { label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s`, key: 'fortyYard' },
-                { label: 'Vertical', value: `${combineTesting.vertical}"`, key: 'vertical' },
-                { label: 'Broad', value: `${combineTesting.broadJump}"`, key: 'broadJump' },
-                { label: '3-Cone', value: `${combineTesting.threeCone.toFixed(2)}s`, key: 'threeCone' },
-                { label: 'Shuttle', value: `${combineTesting.shuttle.toFixed(2)}s`, key: 'shuttle' },
-                { label: 'Bench', value: combineTesting.benchReps !== null ? `${combineTesting.benchReps}` : '—', key: 'benchReps' },
-              ] as { label: string; value: string; key: CombineMeasurable }[]).map((m) => {
+                // Every drill carries its own tip: the whole band is jargon to
+                // anyone who has not sat through a combine broadcast, and
+                // "3-Cone: 6.94s" tells a newcomer precisely nothing.
+                { label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s`, key: 'fortyYard', tip: tip('combineForty') },
+                { label: 'Vertical', value: `${combineTesting.vertical}"`, key: 'vertical', tip: tip('combineVertical') },
+                { label: 'Broad', value: `${combineTesting.broadJump}"`, key: 'broadJump', tip: tip('combineBroad') },
+                { label: '3-Cone', value: `${combineTesting.threeCone.toFixed(2)}s`, key: 'threeCone', tip: tip('combineThreeCone') },
+                { label: 'Shuttle', value: `${combineTesting.shuttle.toFixed(2)}s`, key: 'shuttle', tip: tip('combineShuttle') },
+                { label: 'Bench', value: combineTesting.benchReps !== null ? `${combineTesting.benchReps}` : '—', key: 'benchReps', tip: tip('combineBench') },
+              ] as { label: string; value: string; key: CombineMeasurable; tip: string }[]).map((m) => {
                 const rank = combineRanks[m.key];
                 return (
                   <div key={m.label} className="px-3 py-3 text-center">
-                    <div className="label-sm">{m.label}</div>
+                    <div className="label-sm inline-flex items-center gap-1">
+                      {m.label}
+                      <Tooltip text={m.tip} />
+                    </div>
                     <div className="stat-value text-stat-sm leading-none mt-1.5">{m.value}</div>
                     {/* Public combine data, same as the numbers above it — never fogged, so this
                         shows for every prospect regardless of scouting confidence. */}
@@ -749,7 +792,7 @@ export default async function PlayerPage({
 
         {userTeam && (
           <div className="section">
-            <SectionHeading title={`Your Depth at ${player.position}`} />
+            <SectionHeading title={`Your Depth at ${player.position}`} tip={tip('depthChart')} />
             <div className="panel p-4">
               {depthChart.length === 0 ? (
                 <p className="text-sm text-muted">Nobody rostered at {player.position} right now — a clear need.</p>

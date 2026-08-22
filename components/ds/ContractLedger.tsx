@@ -5,6 +5,8 @@ import {
 import { readJson } from '@/lib/json';
 import { CapMode } from '@/lib/types';
 import { StatNumber } from './StatNumber';
+import { Tooltip } from '../Tooltip';
+import { tip } from '@/lib/glossary';
 
 /**
  * WHAT THIS CONTRACT COSTS, EVERY YEAR OF IT, AND WHAT LEAVING IT COSTS.
@@ -107,7 +109,7 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
   return (
     <div className={className}>
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <StatNumber value={formatMoney(capHit(contract, capMode))} label={`Cap hit ${thisYear}`} size="lg" />
+        <StatNumber value={formatMoney(capHit(contract, capMode))} label={`Cap hit ${thisYear}`} size="lg" tip={tip('capHit')} />
         <StatNumber
           value={`${contract.yearsRemaining} of ${contract.years}`}
           label="Years remaining"
@@ -124,11 +126,12 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-4 pt-4 border-t border-line/60">
         <StatNumber value={formatMoney(remainingValue(contract, capMode))} label="Remaining value" size="sm" />
-        <StatNumber value={formatMoney(contract.guaranteed)} label="Guaranteed" size="sm" />
+        <StatNumber value={formatMoney(contract.guaranteed)} label="Guaranteed" size="sm" tip={tip('guaranteedMoney')} />
         <StatNumber
           value={formatMoney(deadMoneyOnCut(contract, capMode))}
           label="Dead if cut today"
           size="sm"
+          tip={tip('deadMoney')}
           color={deadMoneyOnCut(contract, capMode) > 0 ? 'text-bad' : 'text-chalk'}
         />
       </div>
@@ -141,9 +144,25 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
               <tr>
                 <th className="label-sm text-left py-1.5 pr-3 border-b border-line">Year</th>
                 {realistic && <th className="label-sm text-right py-1.5 px-3 border-b border-line">Base</th>}
-                {realistic && <th className="label-sm text-right py-1.5 px-3 border-b border-line">Bonus</th>}
+                {realistic && (
+                  <th className="label-sm text-right py-1.5 px-3 border-b border-line">
+                    <span className="inline-flex items-center gap-1">
+                      Bonus
+                      {/* Downward: the table lives in an `overflow-x-auto`
+                          scroller, and CSS clips BOTH axes the moment one
+                          stops being visible — an upward bubble here renders
+                          perfectly and is invisible. */}
+                      <Tooltip placement="bottom" text={tip('proration')} />
+                    </span>
+                  </th>
+                )}
                 <th className="label-sm text-right py-1.5 px-3 border-b border-line">Cap hit</th>
-                <th className="label-sm text-right py-1.5 pl-3 border-b border-line">Dead if cut</th>
+                <th className="label-sm text-right py-1.5 pl-3 border-b border-line">
+                  <span className="inline-flex items-center gap-1">
+                    Dead if cut
+                    <Tooltip placement="bottom" text={tip('deadMoney')} />
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -178,8 +197,9 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
         {voidYears > 0 && (
           <div className="mt-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2.5 flex flex-wrap items-baseline justify-between gap-3">
             <div className="text-sm text-warn">
-              <span className="font-semibold">
+              <span className="font-semibold inline-flex items-center gap-1.5">
                 +{voidYears} void year{voidYears === 1 ? '' : 's'}
+                <Tooltip text={tip('voidYears')} />
               </span>{' '}
               — not seasons he plays, and not years he is paid for.{' '}
               {!realistic

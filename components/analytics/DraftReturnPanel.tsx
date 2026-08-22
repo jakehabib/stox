@@ -43,7 +43,7 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
     >
       {picks.length === 0 ? (
         <p className="text-sm text-muted py-6">
-          This front office has not made a pick yet. The panel fills in after your first draft.
+          You have not made a pick yet. This fills in after your first draft.
         </p>
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-7 items-start">
@@ -101,23 +101,21 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
               ) : (
                 <>Too few rounds have been picked in to compare them yet.</>
               )}
-              {' '}Rating today is not draft grade: a fifth-rounder who developed is filed under the round he was
-              taken in, which is exactly the point of the chart.
+              {' '}Rating today is not draft grade — a fifth-rounder who developed is still filed under the fifth
+              round, which is the point.
             </Note>
 
           </div>
 
           <div className="xl:col-span-2">
             <NotOnRecord>
-              What the scouting department <em>said</em> a prospect would be is not recoverable.
-              {' '}<code>ScoutingReport</code> is re-centred in place as confidence rises, so by the time a pick has
-              been on the roster a year his report describes the player he became rather than the projection that
-              was made. This panel can show the return on a round; it cannot show a scouting miss.
+              What our scouts said a man would be on draft day is gone — a report gets rewritten as a player
+              becomes known, so what is left describes who he is now. This board grades the round, not the scout.
             </NotOnRecord>
             {gone.length === 0 && (
               <NotOnRecord>
-                Every one of these {picks.length} picks is still on the roster, so the &ldquo;released or traded
-                away&rdquo; class this chart can carry is empty — honestly empty, not hidden.
+                Every one of these {picks.length} picks is still on the roster — nobody you have drafted has been
+                let go.
               </NotOnRecord>
             )}
           </div>
@@ -125,7 +123,7 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
       )}
 
       <TableTwin
-        caption="Table view — every pick"
+        caption="Every pick, in numbers"
         columns={['Year', 'Rd', 'Slot', 'Player', 'Pos', 'Rating now', 'Age', 'First team', 'Still here']}
         rows={picks.map((p) => [
           p.year, p.round, p.slot, p.name, p.position, p.ovr, p.age, p.starter ? 'yes' : 'no', p.stillHere ? 'yes' : 'no',

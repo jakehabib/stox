@@ -47,15 +47,14 @@ export function DriveBoardPanel({ metrics, offense, defense, teamAbbr, gamesPlay
       title="The Drive Board"
       aside={ppd ? `${ppd.value.toFixed(2)} points a drive · ${ordinal(ppd.rank)} of ${ppd.clubs}` : undefined}
       why={<>
-        Read straight off the drive log inside every stored box score. A drive is the smallest thing this sim
-        records below the game, so this is as fine-grained as an honest number here can be — and every measure
-        is shown against the whole league, because a rank with no spread behind it hides how tight the
-        competition is.
+        A drive is the possession a front office argues about: it survives a change of pace, which a per-game
+        total does not. Every measure is set against all thirty-two, because a rank on its own hides how tight
+        the field is behind it.
       </>}
     >
       {metrics.length === 0 || offense.drives === 0 ? (
         <p className="text-sm text-muted py-6">
-          No drives on record for {teamAbbr} this season yet. The board fills in from the first game played.
+          No drives for {teamAbbr} yet this season. The board fills in from the first game played.
         </p>
       ) : (
         <>
@@ -88,19 +87,17 @@ export function DriveBoardPanel({ metrics, offense, defense, teamAbbr, gamesPlay
             <NotOnRecord>
               {offense.clockOuts + defense.clockOuts} drive{offense.clockOuts + defense.clockOuts === 1 ? '' : 's'} ended
               because the half did, and {offense.clockOuts + defense.clockOuts === 1 ? 'it is' : 'they are'} left out of
-              every rate above. A possession the clock took away never had the chance to score, and counting it would
-              drag every club&apos;s scoring rate down by an artefact of the clock.
+              every rate above. A possession the clock took away never had a chance to score, and counting it would
+              drag every club in the league down the same way.
             </NotOnRecord>
           )}
           <NotOnRecord>
-            A stored drive carries its result, points, plays and yards — and no down, distance or field position.
-            So expected points added, success rate, red-zone efficiency and third-and-long conversion are not
-            computable here, and nothing above is named after them. Drive yards are what the drive gained, not
-            where it started, so scoring rate by starting field position is not computable either.
+            We chart drives, not plays — nobody here is counting downs, distance or where a possession started.
+            So there is no expected points added, no success rate, and no red-zone or third-and-long split.
           </NotOnRecord>
 
           <TableTwin
-            caption="Table view — drive efficiency against the league"
+            caption="Drive efficiency against the league, in numbers"
             columns={['Measure', `${teamAbbr}`, 'Rank', 'League mean', 'League low', 'League high', 'Direction']}
             rows={metrics.map((m) => [
               m.label,

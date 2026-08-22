@@ -37,71 +37,80 @@ export interface ProductionMan {
  * number a broadcast graphic leads with at that position — rather than a
  * second opinion written for this screen. Which is also why the offensive line
  * has none: the sim records nothing an offensive lineman does.
+ *
+ * WHEN THERE IS ALMOST NOTHING TO PLOT. This used to render a card per man
+ * whatever the man had, so a first-season league showed seven cards all reading
+ * "No completed regular season on record yet" and then a paragraph naming all
+ * seven again to explain why — a lot of screen saying nothing twice, and the
+ * thing the owner flagged. Now a card is drawn only where there is a line to
+ * draw, the men left off are named ONCE in a single sentence under the board,
+ * and when nobody has anything the panel stands down to that one sentence with
+ * no cards at all. Nobody is hidden: the table twin still carries every man on
+ * the board, with the measure we do not have for him spelled out.
  */
-export function ProductionPanel({ men, leagueId, teamAccent, teamAbbr, seasonYear, syncedFromTable }: {
+export function ProductionPanel({ men, leagueId, teamAccent, teamAbbr, seasonYear }: {
   men: ProductionMan[];
   leagueId: string;
   teamAccent: string;
   teamAbbr: string;
   seasonYear: number;
-  /** False when the season rows had to be replayed out of the box scores. */
-  syncedFromTable: boolean;
 }) {
   const years = [...new Set(men.flatMap((m) => m.series.map((s) => s.year)))].sort((a, b) => a - b).slice(-5);
-  const noLine = men.filter((m) => m.series.length === 0 || !m.statLabel);
-  const linemen = noLine.filter((m) => !m.statLabel);
-  const tooNew = noLine.filter((m) => m.statLabel && m.series.length === 0);
+  const plotted = men.filter((m) => m.statLabel && m.series.length > 0);
+  const linemen = men.filter((m) => !m.statLabel);
+  const tooNew = men.filter((m) => m.statLabel && m.series.length === 0);
 
   return (
     <Panel
       span={12}
-      eyebrow={`Year by year, regular season · ${syncedFromTable ? 'PlayerSeason' : 'replayed from the box scores'}`}
+      eyebrow="Year by year · regular season"
       title="Is The Money Still Climbing?"
       aside="The largest cap hits, plus the best-paid lineman"
       why={<>
-        One small chart per man rather than eight lines on one axis. Each is scaled to its own man and its own
-        measure, and the line is blue where his last completed season beat his first and red where it did not —
-        a first-to-last comparison, not a trend line through the points.
+        One chart per man, each scaled to his own measure — read the shape, not the height. Blue where his last
+        full season beat his first, red where it did not. What you are looking for is a line flattening while the
+        cap hit above it climbs.
       </>}
     >
       {men.length === 0 ? (
         <p className="text-sm text-muted py-6">No contracts on this roster to chart yet.</p>
+      ) : plotted.length === 0 ? (
+        /* Nothing to draw for anybody — one sentence, no cards. */
+        <p className="text-sm text-muted py-6 max-w-[62ch]">
+          None of your biggest cap hits has a full season behind him yet, so there is nothing to chart. It fills in
+          as they get through a year.
+          {linemen.length > 0 && ' Linemen would not appear in any case — we do not track their snaps.'}
+        </p>
       ) : (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-5 gap-y-3.5">
-            {men.map((m) => <ManCard key={m.playerId} man={m} teamAccent={teamAccent} />)}
+            {plotted.map((m) => <ManCard key={m.playerId} man={m} teamAccent={teamAccent} />)}
           </div>
 
-          {noLine.length > 0 && (
+          {(linemen.length > 0 || tooNew.length > 0) && (
             <NotOnRecord>
-              {noLine.length === men.length ? `All ${men.length} of these` : `${noLine.length} of these ${men.length}`}
-              {' '}have no line at all, and each absence is a different fact.
               {linemen.length > 0 && (
-                <> <b className="text-chalk">{linemen.map((m) => m.name).join(', ')}</b>
-                  {linemen.length === 1
-                    ? ' is an offensive lineman — the box score records nothing he does'
-                    : ' are offensive linemen — the box score records nothing they do'}: no snaps, no blocks, no
-                  pressures allowed. There is no line to draw.</>
+                <>No line for <b className="text-chalk">{linemen.map((m) => m.name).join(', ')}</b> — we do not
+                  track linemen&apos;s snaps, so there is nothing to plot.{' '}</>
               )}
               {tooNew.length > 0 && (
-                <> <b className="text-chalk">{tooNew.map((m) => m.name).join(', ')}</b>
-                  {tooNew.length === 1 ? ' has' : ' have'} no completed season on record — arrived too recently, or
-                  the seasons played were for a club whose games predate this save.</>
+                <><b className="text-chalk">{tooNew.map((m) => m.name).join(', ')}</b>
+                  {tooNew.length === 1 ? ' has' : ' have'} no full season behind
+                  {tooNew.length === 1 ? ' him' : ' them'} yet.</>
               )}
             </NotOnRecord>
           )}
 
           <Note>
-            A season is attributed to the club he played it for, so a man traded in has the years he spent
-            elsewhere on his line and they are labelled with that club, not with {teamAbbr}. The {seasonYear} season is
-            not plotted: it is not finished, and half a year on a season axis reads as a collapse.
+            Years a man spent elsewhere are on his line, marked with the club he played them for rather than
+            with {teamAbbr}. {seasonYear} is not on here — it is not finished.
           </Note>
 
           <TableTwin
-            caption="Table view — production by season, regular season only"
+            caption="Season by season, in numbers"
             columns={['Player', 'Pos', 'Cap hit', 'Measure', ...years.map(String)]}
             rows={men.map((m) => [
-              m.name, m.position, formatMoney(m.hit), m.statLabel ?? 'not recorded',
+              m.name, m.position, formatMoney(m.hit), m.statLabel ?? 'not tracked',
               ...years.map((y) => {
                 const row = m.series.find((s) => s.year === y);
                 return row ? String(row.value) : '—';
@@ -134,17 +143,16 @@ function ManCard({ man, teamAccent }: { man: ProductionMan; teamAccent: string }
 
       {!man.statLabel ? (
         <p className="text-[11px] text-muted leading-relaxed pt-2 border-t border-line/55">
-          The box score records nothing an offensive lineman does — no snaps, no blocks, no pressures allowed.
-          There is no line to draw.
+          We do not track linemen&apos;s snaps, so there is nothing to plot.
         </p>
       ) : pts.length === 0 ? (
         <p className="text-[11px] text-muted leading-relaxed pt-2 border-t border-line/55">
-          No completed regular season on record yet.
+          No full season behind him yet.
         </p>
       ) : pts.length === 1 ? (
         <p className="text-[11px] text-muted leading-relaxed pt-2 border-t border-line/55">
-          One season on record: <span className="text-chalk font-semibold">{pts[0].value} {man.statLabel}</span> in {pts[0].year}
-          {' '}for {pts[0].team}. A single point is not a shape.
+          One season so far: <span className="text-chalk font-semibold">{pts[0].value} {man.statLabel}</span> in {pts[0].year}
+          {' '}for {pts[0].team}. One point is not a shape.
         </p>
       ) : (
         <>

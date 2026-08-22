@@ -9,6 +9,7 @@ import { PlayoffBracket, BracketGame } from '@/components/ds/PlayoffBracket';
 import { LEAGUE } from '@/lib/tuning';
 import { buildPowerRankings, ensurePowerSnapshot, PowerRow } from '@/lib/powerRankings';
 import { PowerRankingsCapsule } from '@/components/ds/PowerRankingsTable';
+import { tip } from '@/lib/glossary';
 
 /**
  * A team's own roster page only ever shows the user's team, so linking all 32
@@ -130,11 +131,12 @@ export default async function StandingsPage({ params }: { params: { id: string }
         { label: 'Your Record', value: `${userRow.wins}-${userRow.losses}${userRow.ties ? `-${userRow.ties}` : ''}`, detail: `${(userRow.pct * 100).toFixed(0)}% · week ${Math.min(playedWeeks + 1, LEAGUE.REGULAR_SEASON_WEEKS)}` },
         {
           label: 'Playoff Position',
+          tip: tip('divisionSeeding'),
           value: userRow.seed ? `#${userRow.seed} seed` : 'Outside',
           detail: userRow.seed ? (userRow.divisionLeader ? 'Leading the division' : 'Wild card') : `${userRow.gamesBack.toFixed(1)} games back`,
           color: userRow.seed ? 'text-accent' : 'text-bad',
         },
-        { label: 'Point Diff', value: `${userRow.diff >= 0 ? '+' : ''}${userRow.diff}`, detail: `${userRow.pointsFor} for · ${userRow.pointsAgnst} against`, color: userRow.diff >= 0 ? 'text-accent' : 'text-bad' },
+        { label: 'Point Diff', value: `${userRow.diff >= 0 ? '+' : ''}${userRow.diff}`, detail: `${userRow.pointsFor} for · ${userRow.pointsAgnst} against`, tip: tip('pointDifferential'), color: userRow.diff >= 0 ? 'text-accent' : 'text-bad' },
         { label: 'Division', value: `${userRow.divWins}-${userRow.divLosses}`, detail: `${userRow.conference} ${userRow.division}` },
         { label: 'Streak', value: userRow.streak ?? '—', detail: 'Last decided games' },
       ]

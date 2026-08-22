@@ -42,8 +42,8 @@ export function PerPlayPanel({ boards, leagueId, teamAbbr, gamesPlayed, missingP
     >
       {withAny.length === 0 ? (
         <p className="text-sm text-muted py-6">
-          Nobody in the league has enough attempts yet for a rate to mean anything. This board fills in once a
-          few games have been played.
+          Nobody in the league has the attempts yet for a rate to mean anything. This board fills in once a few
+          games have been played.
         </p>
       ) : (
         <>
@@ -63,19 +63,18 @@ export function PerPlayPanel({ boards, leagueId, teamAbbr, gamesPlayed, missingP
 
           {missingPositions.length > 0 && (
             <NotOnRecord>
-              {teamAbbr} has nobody past the volume qualifier at {missingPositions.join(', ')}. That is a real
-              fact about the club — a committee backfield or a spread-out target share — and the strip is left
-              without a marker rather than being filled with a player whose sample cannot carry a rate.
+              {teamAbbr} has nobody with the volume to qualify at {missingPositions.join(', ')} — usually a
+              committee backfield or a target share spread too thin. The strip stays unmarked rather than naming a
+              man off a handful of touches.
             </NotOnRecord>
           )}
           <NotOnRecord>
-            Only rostered players appear. A man cut or traded out of the league mid-season keeps his box-score
-            lines but loses the roster row that says what position he plays, so he cannot be placed on a
-            positional strip and is left off rather than guessed at.
+            Only men still in the league appear. Once a player is gone we lose the position that puts him on the
+            right strip, so his season drops off these boards.
           </NotOnRecord>
 
           <TableTwin
-            caption="Table view — per-play rates"
+            caption="Per-play rates, in numbers"
             columns={['Measure', 'Qualifies', 'Qualifiers', 'League mean', 'League best', `${teamAbbr} best`, 'Rank']}
             rows={withAny.map((b) => [
               b.label,

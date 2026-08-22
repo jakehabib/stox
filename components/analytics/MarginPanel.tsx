@@ -36,13 +36,13 @@ export function MarginPanel({ span = 7, games, profile, thresholds, teamRatingRa
       }}
       why={<>
         Signed margin per game, with hairlines at ±{thresholds.oneScore} (one score) and ±{thresholds.blowout} (a
-        game decided early). Reconstructed from the drives already stored in each box score, so the archetype on a
-        game is the same reading the recap gives you.
+        game decided early). The shape filed against each one is how the drives actually went, which is not always
+        what the final score suggests.
       </>}
     >
       {games.length === 0 ? (
         <p className="text-sm text-muted py-6">
-          No {seasonLabel.toLowerCase()} game has been played in {seasonYear} yet. This panel fills in from week one.
+          No {seasonLabel.toLowerCase()} game played in {seasonYear} yet. This fills in from week one.
         </p>
       ) : (
         <>
@@ -95,7 +95,7 @@ export function MarginPanel({ span = 7, games, profile, thresholds, teamRatingRa
             )}
           </Note>
 
-          <SubHead eyebrow="Read off the stored drive log, not the final score" title="The Shape Of Each Game" />
+          <SubHead eyebrow="How each one actually went, not how it finished" title="The Shape Of Each Game" />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5 mt-2">
             {profile.shapes.map((s) => {
               const max = Math.max(...profile.shapes.map((x) => x.games));
@@ -115,20 +115,20 @@ export function MarginPanel({ span = 7, games, profile, thresholds, teamRatingRa
 
           {noArchetype && (
             <NotOnRecord>
-              {noArchetype.games} game{noArchetype.games === 1 ? ' has' : 's have'} no drive log in the stored box
-              score, so no shape can be read off {noArchetype.games === 1 ? 'it' : 'them'}. That is filed as
-              &ldquo;not on record&rdquo; rather than guessed at.
+              We have no drive-by-drive account of {noArchetype.games} game
+              {noArchetype.games === 1 ? '' : 's'}, so there is no shape to read off
+              {noArchetype.games === 1 ? ' it' : ' them'} — only the final score.
             </NotOnRecord>
           )}
           {playoffGamesExcluded > 0 && (
             <NotOnRecord>
               {playoffGamesExcluded} postseason game{playoffGamesExcluded === 1 ? ' is' : 's are'} not counted here.
-              Every stat panel on this screen is the regular season, so a playoff run never inflates a per-game figure.
+              Everything on this screen is regular season, so a playoff run never flatters a per-game number.
             </NotOnRecord>
           )}
 
           <TableTwin
-            caption="Table view — game by game"
+            caption="Game by game, in numbers"
             columns={['Wk', 'Opp', 'H/A', 'Score', 'Margin', 'Shape', 'Note', 'Lead changes', 'Biggest lead', 'Biggest deficit']}
             rows={games.map((g) => [
               g.week, g.oppAbbr, g.home ? 'H' : 'A', `${g.us}-${g.them}`, signed(g.margin, 0),

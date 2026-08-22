@@ -17,6 +17,7 @@ import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/
 // One definition of the passer rating formula, shared with the career table's
 // Rate column. The two used to be separate copies that agreed only by luck.
 import { passerRating } from '@/lib/statLabels';
+import { tip, type GlossaryKey } from '@/lib/glossary';
 
 interface LeaderCol { key: keyof SeasonStats; label: string; format?: (n: number) => string }
 interface LeaderCategory { title: string; primary: LeaderCol; extra: LeaderCol[] }
@@ -31,54 +32,86 @@ const CATEGORIES: LeaderCategory[] = [
   { title: 'Interceptions', primary: { key: 'defInt', label: 'INT' }, extra: [{ key: 'pd', label: 'PD' }, { key: 'tackles', label: 'Tkl' }] },
 ];
 
-/** Position-shaped nerdy per-player line — efficiency rates, not just volume, for the My Team deep-dive. */
-function nerdyLine(position: string, s: SeasonStats): { label: string; value: string }[] {
+/**
+ * Position-shaped nerdy per-player line — efficiency rates, not just volume,
+ * for the My Team deep-dive.
+ *
+ * Each rate carries its glossary key. The labels here repeat once per ROW, so
+ * a "?" beside each one would put forty of them on a screen; instead the keys
+ * are collected into a single legend above the table (see EfficiencyKey), and
+ * deriving that legend from this list is what stops the two drifting apart.
+ */
+function nerdyLine(position: string, s: SeasonStats): { label: string; value: string; term?: GlossaryKey }[] {
   const pct = (num: number, den: number) => (den > 0 ? `${((num / den) * 100).toFixed(1)}%` : '—');
   const rate = (num: number, den: number, digits = 1) => (den > 0 ? (num / den).toFixed(digits) : '—');
   switch (position) {
     case 'QB': {
       const rating = passerRating(s);
       return [
-        { label: 'Cmp %', value: pct(s.passCmp ?? 0, s.passAtt ?? 0) },
-        { label: 'Y/A', value: rate(s.passYds ?? 0, s.passAtt ?? 0, 1) },
-        { label: 'TD %', value: pct(s.passTd ?? 0, s.passAtt ?? 0) },
-        { label: 'INT %', value: pct(s.int ?? 0, s.passAtt ?? 0) },
-        { label: 'Rating', value: rating !== null ? rating.toFixed(1) : '—' },
+        { label: 'Cmp %', value: pct(s.passCmp ?? 0, s.passAtt ?? 0), term: 'completionPct' },
+        { label: 'Y/A', value: rate(s.passYds ?? 0, s.passAtt ?? 0, 1), term: 'yardsPerAttempt' },
+        { label: 'TD %', value: pct(s.passTd ?? 0, s.passAtt ?? 0), term: 'tdRate' },
+        { label: 'INT %', value: pct(s.int ?? 0, s.passAtt ?? 0), term: 'intRate' },
+        { label: 'Rating', value: rating !== null ? rating.toFixed(1) : '—', term: 'passerRating' },
       ];
     }
     case 'RB':
       return [
-        { label: 'YPC', value: rate(s.rushYds ?? 0, s.rushAtt ?? 0, 1) },
-        { label: 'Catch %', value: pct(s.rec ?? 0, s.targets ?? 0) },
-        { label: 'Total Yds', value: String((s.rushYds ?? 0) + (s.recYds ?? 0)) },
+        { label: 'YPC', value: rate(s.rushYds ?? 0, s.rushAtt ?? 0, 1), term: 'yardsPerCarry' },
+        { label: 'Catch %', value: pct(s.rec ?? 0, s.targets ?? 0), term: 'catchRate' },
+        { label: 'Total Yds', value: String((s.rushYds ?? 0) + (s.recYds ?? 0)), term: 'scrimmageYards' },
         { label: 'TDs', value: String((s.rushTd ?? 0) + (s.recTd ?? 0)) },
       ];
     case 'WR': case 'TE':
       return [
-        { label: 'Catch %', value: pct(s.rec ?? 0, s.targets ?? 0) },
-        { label: 'Y/R', value: rate(s.recYds ?? 0, s.rec ?? 0, 1) },
-        { label: 'Y/Target', value: rate(s.recYds ?? 0, s.targets ?? 0, 1) },
+        { label: 'Catch %', value: pct(s.rec ?? 0, s.targets ?? 0), term: 'catchRate' },
+        { label: 'Y/R', value: rate(s.recYds ?? 0, s.rec ?? 0, 1), term: 'yardsPerReception' },
+        { label: 'Y/Target', value: rate(s.recYds ?? 0, s.targets ?? 0, 1), term: 'yardsPerTarget' },
         { label: 'TDs', value: String(s.recTd ?? 0) },
       ];
     case 'EDGE': case 'DT': case 'LB':
       return [
         { label: 'Impact (Tkl+Sk)', value: String((s.tackles ?? 0) + (s.sacks ?? 0)) },
         { label: 'Sacks', value: String(s.sacks ?? 0) },
-        { label: 'Forced Fum.', value: String(s.ff ?? 0) },
+        { label: 'Forced Fum.', value: String(s.ff ?? 0), term: 'forcedFumbles' },
       ];
     case 'CB': case 'S':
       return [
-        { label: 'Playmaker (INT+PD)', value: String((s.defInt ?? 0) + (s.pd ?? 0)) },
+        { label: 'Playmaker (INT+PD)', value: String((s.defInt ?? 0) + (s.pd ?? 0)), term: 'passesDefensed' },
         { label: 'INT', value: String(s.defInt ?? 0) },
-        { label: 'Passes Def.', value: String(s.pd ?? 0) },
+        { label: 'Passes Def.', value: String(s.pd ?? 0), term: 'passesDefensed' },
       ];
     case 'K':
-      return [{ label: 'FG %', value: pct(s.fgm ?? 0, s.fga ?? 0) }, { label: 'XP %', value: pct(s.xpm ?? 0, s.xpa ?? 0) }];
+      return [{ label: 'FG %', value: pct(s.fgm ?? 0, s.fga ?? 0), term: 'fieldGoalPct' }, { label: 'XP %', value: pct(s.xpm ?? 0, s.xpa ?? 0) }];
     case 'P':
       return [{ label: 'Avg', value: rate(s.puntYds ?? 0, s.punts ?? 0, 1) }];
     default:
       return [];
   }
+}
+
+/**
+ * The key for the roster stat line below it.
+ *
+ * The efficiency labels on that table are printed inside the CELLS, once per
+ * player, and they differ by position — a "?" on each would put dozens of them
+ * on one screen, which is noise rather than help. So the explanations move to
+ * one legend above the table, listing only the rates actually on screen, built
+ * from the same list that renders them.
+ */
+function EfficiencyKey({ terms }: { terms: { label: string; term: GlossaryKey }[] }) {
+  if (terms.length === 0) return null;
+  return (
+    <div className="px-4 py-2.5 border-b border-line/70 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <span className="label-sm text-[10px]">Key</span>
+      {terms.map((t) => (
+        <span key={t.term} className="inline-flex items-center gap-1 text-xs text-muted">
+          {t.label}
+          <Tooltip text={tip(t.term)} />
+        </span>
+      ))}
+    </div>
+  );
 }
 
 export default async function StatsPage({ params, searchParams }: { params: { id: string }; searchParams: { view?: string; scope?: string; split?: string } }) {
@@ -174,6 +207,16 @@ export default async function StatsPage({ params, searchParams }: { params: { id
   let sosRank = 0;
 
   const myPlayers = userTeam ? withStats.filter(({ p }) => p.teamId === userTeam.id) : [];
+
+  // One entry per rate that actually appears in the table below, in the order
+  // the roster produces them — a corner's roster shows no passing rates and
+  // the key does not claim otherwise.
+  const efficiencyKey: { label: string; term: GlossaryKey }[] = [];
+  for (const { p, stats } of myPlayers) {
+    for (const m of nerdyLine(p.position, stats)) {
+      if (m.term && !efficiencyKey.some((e) => e.term === m.term)) efficiencyKey.push({ label: m.label, term: m.term });
+    }
+  }
 
   if (advanced) {
     const ratingPool = myTeam ? myPlayers : withStats;
@@ -286,27 +329,27 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                   label: 'Pythagorean W-L',
                   value: `${myPythag.expectedWins.toFixed(1)}-${(myPythag.wins + myPythag.losses + myPythag.ties - myPythag.expectedWins).toFixed(1)}`,
                   detail: `actual ${myPythag.wins}-${myPythag.losses}${myPythag.ties ? `-${myPythag.ties}` : ''}`,
-                  tip: "The record your point differential says you should have, using the football-tuned Pythagorean exponent (2.37). It ignores how the wins actually fell — a team far above it has been winning the close ones.",
+                  tip: tip('pythagoreanWins'),
                 },
                 {
                   label: 'Luck',
                   value: `${myPythag.luck >= 0 ? '+' : ''}${myPythag.luck.toFixed(1)}`,
                   detail: myPythag.luck >= 0 ? 'wins above what the scoring earned' : 'wins below what the scoring earned',
                   color: myPythag.luck >= 1 ? 'text-warn' : myPythag.luck <= -1 ? 'text-accent2' : undefined,
-                  tip: "Actual wins minus Pythagorean wins. Positive means you're outperforming your point differential — historically that regresses. Negative means you've been better than the record looks.",
+                  tip: tip('luck'),
                 },
                 {
                   label: 'Point Differential',
                   value: `${myPythag.pointsFor - myPythag.pointsAgainst >= 0 ? '+' : ''}${myPythag.pointsFor - myPythag.pointsAgainst}`,
                   detail: `${myPythag.pointsFor} scored · ${myPythag.pointsAgainst} allowed`,
                   color: myPythag.pointsFor - myPythag.pointsAgainst >= 0 ? 'text-accent' : 'text-bad',
-                  tip: 'Total points scored minus allowed. The single best one-number summary of team quality — it predicts future record better than the record itself does.',
+                  tip: tip('pointDifferential'),
                 },
                 {
                   label: 'Strength of Schedule',
                   value: mySos.opponents > 0 ? mySos.sos.toFixed(3).slice(1) : '—',
                   detail: sosRank > 0 ? `#${sosRank} hardest · ${mySos.opponents} games` : 'no games played',
-                  tip: "Combined win rate of every opponent you've actually played. #1 is the hardest schedule in the league. Useful for reading whether a record was earned against real competition.",
+                  tip: tip('strengthOfSchedule'),
                 },
               ]}
             />
@@ -315,7 +358,10 @@ export default async function StatsPage({ params, searchParams }: { params: { id
           {advanced && pythagorean.length > 0 && (
             <div className="panel overflow-hidden">
               <div className="px-4 py-3 border-b border-line/70">
-                <div className="label-sm">Luck Table — Actual vs. Expected</div>
+                <div className="label-sm inline-flex items-center gap-1.5">
+                  Luck Table — Actual vs. Expected
+                  <Tooltip text={tip('pythagoreanWins')} />
+                </div>
                 <div className="text-xs text-muted mt-0.5">
                   Every team sorted by how far their record sits above or below what their scoring earned. Top of the list has been winning
                   close games; the bottom has been losing them.
@@ -357,7 +403,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
               <div className="panel p-4">
                 <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
                   Passer Rating
-                  <Tooltip text="The real NFL passer rating formula — completion %, yards/attempt, TD rate, and INT rate, each capped and blended into one number. 100 is a solid, unspectacular season; 158.3 is the mathematical maximum." />
+                  <Tooltip text={tip('passerRating')} />
                 </h2>
                 <p className="text-xs text-muted mb-3">Top qualifying passers, season-to-date.</p>
                 {ratingBars.length > 0 ? <HorizontalBarChart bars={ratingBars} maxValue={158.3} /> : <p className="text-sm text-muted">No qualifying passers yet.</p>}
@@ -390,6 +436,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
           {myTeam ? (
             <div className="panel overflow-hidden">
               <div className="px-4 py-3 border-b border-line/70 label-sm">{playoffs ? 'Full Roster Stat Line — Postseason' : 'Full Roster Stat Line'}</div>
+              <EfficiencyKey terms={efficiencyKey} />
               <div className="overflow-x-auto">
                 <table className="table-clean">
                   <thead>

@@ -32,9 +32,8 @@ export function CliffPanel({ bands, cliff, capHealth, groups, seasonYear, nextYe
       title="The Cliff, Two Years Out"
       aside={`${cliff.starterCount} first-teamers`}
       why={<>
-        Two charts rather than one: bodies and dollars are different units, and putting them on a single pair of
-        axes would invent a relationship the roster does not have. First team is the eleven, eleven and two that
-        lib/lineup.ts says take the field, filled at each position in rating order.
+        Bodies on the left, dollars on the right, both by age. First team is the eleven, eleven and two who take
+        the field, filled at each position in rating order — so the blue block is what you actually put out there.
       </>}
     >
       {!anyBodies ? (
@@ -104,7 +103,7 @@ export function CliffPanel({ bands, cliff, capHealth, groups, seasonYear, nextYe
           </div>
 
           <TableTwin
-            caption="Table view — age bands"
+            caption="Age bands, in numbers"
             columns={['Band', 'Players', 'First team', 'Cap $', 'Share of salary', 'Mean rating']}
             rows={bands.map((b) => [
               b.band, b.players, b.starters, formatMoney(b.spend),

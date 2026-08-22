@@ -3,6 +3,7 @@ import { PageMasthead } from '@/components/ds/PageMasthead';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { PowerRankingsTable } from '@/components/ds/PowerRankingsTable';
 import { buildPowerRankings, ensurePowerSnapshot, POWER_WEIGHTS } from '@/lib/powerRankings';
+import { tip } from '@/lib/glossary';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +36,7 @@ export default async function PowerRankingsPage({ params }: { params: { id: stri
       ? [{
           label: 'Your Ranking',
           value: `#${user.rank}`,
+          tip: tip('powerIndex'),
           detail: user.move
             ? user.move.delta === 0
               ? `Held #${user.move.fromRank} from week ${user.move.fromWeek}`
@@ -46,15 +48,16 @@ export default async function PowerRankingsPage({ params }: { params: { id: stri
     ...(user && user.recordRank !== null
       ? [{
           label: 'Against The Record',
+          tip: tip('recordRankGap'),
           value: swingOf(user) === 0 ? 'Level' : `${swingOf(user) > 0 ? '+' : ''}${swingOf(user)}`,
           detail: `Record alone has them ${user.recordRank}${user.recordRank === 1 ? 'st' : user.recordRank === 2 ? 'nd' : user.recordRank === 3 ? 'rd' : 'th'}`,
         }]
       : []),
     ...(riser && riser.move!.delta > 0
-      ? [{ label: 'Biggest Riser', value: riser.abbr, detail: `Up ${riser.move!.delta} to #${riser.rank}`, color: 'text-accent' }]
+      ? [{ label: 'Biggest Riser', value: riser.abbr, detail: `Up ${riser.move!.delta} to #${riser.rank}`, tip: tip('powerMovement'), color: 'text-accent' }]
       : []),
     ...(faller && faller.move!.delta < 0
-      ? [{ label: 'Biggest Faller', value: faller.abbr, detail: `Down ${Math.abs(faller.move!.delta)} to #${faller.rank}`, color: 'text-bad' }]
+      ? [{ label: 'Biggest Faller', value: faller.abbr, detail: `Down ${Math.abs(faller.move!.delta)} to #${faller.rank}`, tip: tip('powerMovement'), color: 'text-bad' }]
       : []),
     ...(biggestSwing && biggestSwing.recordRank !== null && biggestSwing.recordRank !== biggestSwing.rank
       ? [{

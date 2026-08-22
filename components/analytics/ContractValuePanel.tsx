@@ -53,13 +53,13 @@ export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, tea
     >
       {!capEnabled ? (
         <p className="text-sm text-muted py-6">
-          Cap mode is <strong className="text-chalk">off</strong> in this league. Every contract carries a cap hit of
-          zero, so there is no surplus to rank and this board has nothing honest to say.
+          Cap mode is <strong className="text-chalk">off</strong> in this league. Every contract carries a cap hit
+          of zero, so there is no surplus to rank here.
         </p>
       ) : rows.length === 0 ? (
         <p className="text-sm text-muted py-6">
-          Not one of the {rosterSize} contracts on this roster misses its market value by enough to clear the
-          threshold above. That is a genuinely flat cap sheet, not an empty panel.
+          Not one of the {rosterSize} contracts on this roster misses its market value by enough to matter. That
+          is a flat cap sheet — nothing to celebrate, nothing to cut.
         </p>
       ) : (
         <>
@@ -118,12 +118,12 @@ export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, tea
                 {rookieAged.length === 1 ? ' is' : ' are'} 24 or younger — cheap years, not clever negotiating.
               </>
             )}
-            {' '}Market value is a function of rating, age and potential only; it does not know who a player is to a
-            locker room, and neither does this board.
+            {' '}Market value knows rating, age and potential. It does not know what a man is to a locker room,
+            and neither does this board.
           </Note>
 
           <TableTwin
-            caption="Table view — contract value"
+            caption="Contract value, in numbers"
             columns={['Player', 'Pos', 'Age', 'Rating', 'Cap hit', 'Market', 'Surplus', 'Verdict']}
             rows={rows.map((r) => [
               r.name, r.position, r.age, r.ovr, formatMoney(r.hit), formatMoney(r.marketValue), formatMoney(r.surplus), r.tier,

@@ -6,6 +6,7 @@ import { teamCapSummary } from '@/lib/cap-summary';
 import { formatMoney, capHit, deadMoneyOnCut, capSavingsOnCut, capHitSchedule, capForYear, marketValue } from '@/lib/cap';
 import { resolveStartYear } from '@/lib/leagueYear';
 import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
 import { POSITION_GROUPS, positionGroup } from '@/lib/positionGroups';
 import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
 import { LineChart } from '@/components/charts/LineChart';
@@ -228,17 +229,19 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
             label: 'Cap Space',
             value: formatMoney(summary.capSpace),
             detail: `${usedPct}% of the cap used`,
+            tip: tip('capSpace'),
             color: summary.capSpace >= 0 ? 'text-accent' : 'text-bad',
           },
-          { label: 'Cap Limit', value: formatMoney(summary.capTotal), detail: `${league.seasonYear} league cap` },
-          { label: 'Committed', value: formatMoney(summary.capUsed), detail: `${players.length} contracts` },
+          { label: 'Cap Limit', value: formatMoney(summary.capTotal), detail: `${league.seasonYear} league cap`, tip: tip('capLimit') },
+          { label: 'Committed', value: formatMoney(summary.capUsed), detail: `${players.length} contracts`, tip: tip('committedCap') },
           {
             label: 'Dead Money',
             value: formatMoney(summary.deadMoney),
             detail: summary.deadMoney > 0 ? 'already spent, unrecoverable' : 'none on the books',
+            tip: tip('deadMoney'),
             color: summary.deadMoney > 0 ? 'text-bad' : 'text-accent',
           },
-          { label: 'Mode', value: settings.capMode === 'REALISTIC' ? 'Realistic' : 'Simplified', detail: 'set in league settings' },
+          { label: 'Mode', value: settings.capMode === 'REALISTIC' ? 'Realistic' : 'Simplified', detail: 'set in league settings', tip: tip('capMode') },
         ]}
       />
 
@@ -284,7 +287,10 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
 
           {compliance.relief.some((r) => r.kind === 'RESTRUCTURE') && (
             <div>
-              <div className="label-sm mb-1.5">Or keep them — restructure candidates</div>
+              <div className="label-sm mb-1.5 inline-flex items-center gap-1.5">
+                Or keep them — restructure candidates
+                <Tooltip text={tip('restructure')} />
+              </div>
               <div className="space-y-1">
                 {compliance.relief.filter((r) => r.kind === 'RESTRUCTURE').map((r) => (
                   <Link
@@ -329,14 +335,14 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
               value: `${Math.round(health.topFiveShare * 100)}%`,
               detail: 'of committed cap in 5 contracts',
               color: health.topFiveShare > 0.45 ? 'text-warn' : undefined,
-              tip: "Share of your committed cap tied up in your five biggest contracts. Above roughly 45% is a top-heavy roster — a few stars carrying a thin supporting cast, which is a real strategy but leaves little room to absorb an injury or a bad contract.",
+              tip: tip('topFiveConcentration'),
             },
             {
               label: 'Cap-Weighted Age',
               value: health.capWeightedAge.toFixed(1),
               detail: `roster average is ${health.rosterAvgAge.toFixed(1)}`,
               color: health.capWeightedAge > health.rosterAvgAge + 2 ? 'text-warn' : undefined,
-              tip: "Average age weighted by cap dollars — how old the money is, not how old the roster is. Well above the plain roster average means your spending is concentrated in older players, so the cap sheet will age out faster than the depth chart suggests.",
+              tip: tip('capWeightedAge'),
             },
             {
               label: 'Committed Next Year',
@@ -430,11 +436,9 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
                       <Link href={sortHref(c.key)} className="hover:text-chalk whitespace-nowrap">
                         {c.label}{sortKey === c.key && (dir === -1 ? ' ▾' : ' ▴')}
                       </Link>
+                      {c.key === 'cap' && <Tooltip placement="bottom" text={tip('capHit')} />}
                       {c.key === 'savings' && (
-                        <Tooltip
-                          placement="bottom"
-                          text="What cutting this player right now does to your cap. The first number is the NET saving — his cap hit with the dead money already subtracted — so it is the space you actually gain. The second is the dead money you keep paying for a player who is gone."
-                        />
+                        <Tooltip placement="bottom" text={tip('capSavingsOnCut')} />
                       )}
                     </span>
                   </th>
@@ -465,7 +469,10 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
 
       {deadRows.length > 0 && (
         <div className="panel p-4">
-          <h2 className="font-semibold mb-2 text-sm">Dead Money Charges</h2>
+          <h2 className="font-semibold mb-2 text-sm inline-flex items-center gap-1.5">
+            Dead Money Charges
+            <Tooltip text={tip('deadMoney')} />
+          </h2>
           {deadRows.map((r) => (
             <div key={r.id} className="flex justify-between text-sm py-1">
               <span className="text-muted">{r.label}</span><span className="font-mono">{formatMoney(r.amount)}</span>
@@ -483,7 +490,10 @@ function ContractValueList({ title, hint, rows, leagueId, positive }: {
   return (
     <div className="panel overflow-hidden">
       <div className="px-4 py-3 border-b border-line/70">
-        <div className="label-sm">{title}</div>
+        <div className="label-sm inline-flex items-center gap-1.5">
+          {title}
+          <Tooltip text={tip('marketValue')} />
+        </div>
         <div className="text-xs text-muted mt-0.5">{hint}</div>
       </div>
       <div className="divide-y divide-line/60">

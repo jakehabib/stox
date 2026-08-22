@@ -225,13 +225,16 @@ export function NegotiationPanel({
   const capOn = gate.capMode !== 'OFF';
   const spaceAfter = gate.capSpace - decision.year1CapHit;
   const signedDeal = result?.ok ? result.signed : undefined;
+  // The "he might sign" stretch sits BELOW the certain-yes line now, not
+  // symmetrically around it, so that buying certainty costs real money — see
+  // signBandFor. Both edges come from the shared constants; a second copy of
+  // either here is how the meter and the decision drift apart.
   const bandLo = ACCEPT_INTEREST - ctx.bandHalfWidth;
-  const bandHi = ACCEPT_INTEREST + ctx.bandHalfWidth;
+  const bandHi = ACCEPT_INTEREST;
 
   // WHAT THE METER IS ALLOWED TO SAY. Inside the band the raw verdict would
-  // read "Will sign" for anything at 82 or over, which is precisely the
-  // certainty the band exists to remove — and, half the time, a promise the
-  // server is about to break.
+  // read "Will sign" for anything the server might still refuse, which is
+  // precisely the certainty the band exists to remove.
   const shownVerdict: Verdict = talksDead
     ? 'COLD'
     : decision.signBand === 'YES' ? 'ACCEPT'

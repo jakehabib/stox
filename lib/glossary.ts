@@ -1,0 +1,601 @@
+/**
+ * ===========================================================================
+ * THE GLOSSARY — one definition per term, for the whole game
+ * ===========================================================================
+ * Every explanatory tooltip in the app reads from here. That is the entire
+ * point of the file: this codebase's most persistent defect is two places
+ * describing the same thing and drifting apart — a twelve-man defence in two
+ * duplicated tables, a power-ranking note contradicting its own table, three
+ * different definitions of "starter". "Dead money" is now explained in exactly
+ * the same words on the cap sheet, the player card, the re-sign window and the
+ * trade builder, and a rewrite lands on all four at once.
+ *
+ * THE SHAPE, AND WHY
+ *
+ *   `definition` is what the thing IS, in football language.
+ *   `why` is the optional second beat — why a GM should care, or what counts
+ *   as good, bad and normal. It is optional because forcing one produces
+ *   padding, and a padded tooltip is worse than a short one.
+ *
+ * `tip()` glues the two together, so a call site never has to decide how to
+ * present a term and two call sites can never present the same term
+ * differently. Where a layout genuinely cannot carry a "?" — a nine-column
+ * standings table — the same string goes into a native `title` instead, which
+ * keeps one voice even where the affordance has to change.
+ *
+ * Keyed by a camelCase id rather than held in an array: `tip('deadMoney')` is
+ * greppable back to this file in one hop, the lookup is O(1), and — the real
+ * argument — `GlossaryKey` makes a misspelled term a compile error rather
+ * than an empty bubble in production.
+ *
+ * THE WRITING STANDARD, which is the hard part and not the wiring:
+ *
+ *   Useful and informative, never an explainer that breaks immersion. A
+ *   tooltip explains the FOOTBALL concept. It never mentions the database, a
+ *   box score, a stat line, this save, the sim, or how a number is computed
+ *   internally. "Signing bonus you already paid, accelerated onto the books
+ *   the year you cut him" — not "Contract.signingBonus / proration years".
+ *
+ *   Give a sense of scale wherever it can be supported honestly: what is
+ *   good, what is bad, what is normal. That is the thing a new GM actually
+ *   lacks. Every threshold quoted below comes either from this game's own
+ *   tuning (lib/tuning.ts, lib/ratings.ts, lib/cap.ts) or from a real-sport
+ *   fact — never from a number invented to sound authoritative.
+ * ===========================================================================
+ */
+
+export interface GlossaryTerm {
+  /** The name this is usually labelled with on screen. Here for greppability from a label back to its definition. */
+  term: string;
+  /** What it is. Football language, one or two sentences. */
+  definition: string;
+  /** Why a GM should care, or what good/bad/normal looks like. Omitted where there is nothing honest to add. */
+  why?: string;
+}
+
+/**
+ * `satisfies` rather than a plain annotation: it type-checks every entry and
+ * still keeps the literal keys, which is what makes GlossaryKey a real union
+ * instead of `string`.
+ */
+export const GLOSSARY = {
+  // -------------------------------------------------------------------------
+  // SALARY CAP
+  // -------------------------------------------------------------------------
+  capHit: {
+    term: 'Cap hit',
+    definition: 'What a player counts against the salary cap this season — his base salary for the year plus the slice of his signing bonus charged to it.',
+    why: 'It is what he costs your books, not what lands in his bank account. The two rarely match, and the gap is where every clever contract lives.',
+  },
+  capSpace: {
+    term: 'Cap space',
+    definition: 'The cap ceiling minus everything already committed: salaries, bonus charges and dead money.',
+    why: 'What you can spend today without clearing something first. Going negative is not a state you are allowed to sit in — the new league year will not open while you are over.',
+  },
+  capLimit: {
+    term: 'Cap limit',
+    definition: 'The ceiling every club has to fit its spending under this season. The same figure for all 32 teams.',
+    why: 'It rises about 7% a year, so a contract that looks heavy today is quietly getting lighter every season it survives.',
+  },
+  committedCap: {
+    term: 'Committed',
+    definition: 'Everything already charged to this season — every contract on the roster plus any dead money left by players who are gone.',
+  },
+  deadMoney: {
+    term: 'Dead money',
+    definition: 'Money still charged against your cap for a player who is no longer on the roster. Signing bonus you already paid, accelerated onto the books the year you cut him.',
+    why: 'It buys you nothing. It is also what turns a release into a real decision rather than a delete button — and a cap sheet heavy with it is a roster of ghosts.',
+  },
+  proration: {
+    term: 'Proration',
+    definition: 'A signing bonus is paid up front but charged to the cap in equal slices — over the length of the deal, to a maximum of five seasons.',
+    why: 'It is why a long contract gets cheap to escape near the end: from year six onward there is no bonus left to charge, so those years are pure salary and walking away costs nothing.',
+  },
+  voidYears: {
+    term: 'Void years',
+    definition: 'Fake seasons tacked onto the end of a deal. He never plays them and is never paid for them — they exist only to spread the signing bonus across more years and shrink this season\'s charge.',
+    why: 'The bill does not disappear. Every prorated dollar still sitting on those years lands as dead money the moment the real contract ends.',
+  },
+  guaranteedMoney: {
+    term: 'Guaranteed money',
+    definition: 'The part of a contract the player collects whatever happens — including if you release him.',
+    why: 'It is the number that separates a real commitment from a tryout with paperwork, which is why agents fight harder over it than over the headline total.',
+  },
+  capSavingsOnCut: {
+    term: 'Cap saving on a cut',
+    definition: 'What releasing a player actually frees: this year\'s cap hit, minus the dead money the release leaves behind.',
+    why: 'On a deal signed recently the dead money can be larger than the hit — cutting him then costs you room instead of creating it.',
+  },
+  restructure: {
+    term: 'Restructure',
+    definition: 'Converting salary a player is owed this year into signing bonus, which spreads it over the remaining seasons and drops this year\'s charge.',
+    why: 'The standard way to fit a signing you cannot otherwise afford — but every dollar you move is a dollar of future dead money. Only restructure a player you intend to keep.',
+  },
+  dealShape: {
+    term: 'Front-loaded / back-loaded',
+    definition: 'How a deal\'s salary is spread across its years. Front-loaded pays more early and less later; back-loaded does the reverse.',
+    why: 'The player mostly cares about the total and what is guaranteed, so the shape is your problem, not his: back-loading buys room now and hands the bill to a future roster.',
+  },
+  apy: {
+    term: 'APY',
+    definition: 'Average per year — total contract value divided by its length. The standard shorthand for what a player is paid.',
+    why: 'It hides the shape. A back-loaded deal has an APY he never earns in any single season, and on an extension the quoted APY usually covers only the new years, not the ones already on the books.',
+  },
+  newMoney: {
+    term: 'New money',
+    definition: 'On an extension, the money attached to the years being added. The seasons already on his deal keep their existing salaries.',
+    why: 'A "4 year, $120M extension" is $30M a year of new money. Averaged across the whole contract it is a smaller number — quoting either as the other is how a cap sheet surprises somebody.',
+  },
+  franchiseTag: {
+    term: 'Franchise tag',
+    definition: 'A one-year deal you can force on a single expiring player, priced at the average of the five biggest salaries at his position.',
+    why: 'It keeps a star off the market for a season without a long commitment. It is expensive, it is fully guaranteed, and it buys you a year rather than a solution.',
+  },
+  rookieDeal: {
+    term: 'Rookie deal',
+    definition: 'The four-year contract a drafted player signs, priced by where he was taken rather than negotiated.',
+    why: 'The cheapest good football in the sport. A first-round starter on a rookie deal is worth two of the same player on a second contract, which is most of the argument for building through the draft.',
+  },
+  rookieScale: {
+    term: 'Rookie scale',
+    definition: 'The fixed price list for drafted players — the first pick in the draft earns the most and it falls away steadily to the last.',
+  },
+  capMode: {
+    term: 'Cap mode',
+    definition: 'How strictly this league runs its books. Realistic charges bonus proration and leaves dead money behind on a cut; Simplified charges a flat yearly figure with no dead money; Off removes the ceiling entirely.',
+  },
+  topFiveConcentration: {
+    term: 'Top-5 concentration',
+    definition: 'The share of your committed cap tied up in your five largest contracts.',
+    why: 'Above roughly 45% is a top-heavy roster — a few stars carrying a thin supporting cast. A real strategy, but it leaves little room to absorb an injury or a contract that goes wrong.',
+  },
+  capWeightedAge: {
+    term: 'Cap-weighted age',
+    definition: 'The average age of your roster weighted by cap dollars — how old the money is, rather than how old the squad is.',
+    why: 'Well above the plain roster average means your spending is concentrated in older players, so the cap sheet will age out faster than the depth chart suggests.',
+  },
+
+  // -------------------------------------------------------------------------
+  // NEGOTIATION
+  // -------------------------------------------------------------------------
+  marketValue: {
+    term: 'Market value',
+    definition: 'The going rate for a player of his position, rating and age — an open estimate of what he would fetch if every club could bid.',
+    why: 'Position matters more than most people expect: a quarterback is paid roughly three times what an equally-rated running back is, because one of those jobs decides games.',
+  },
+  interestMeter: {
+    term: 'Interest',
+    definition: 'How this offer is landing with the player, from cold to signed. The marks on the track are the points where his answer changes — considering, close, and the line where he signs.',
+    why: 'His actual price stays hidden; the rules do not. You can always see how far you are from a yes, you just cannot see the number that gets you there.',
+  },
+  maybeBand: {
+    term: 'Might sign',
+    definition: 'The stretch of the meter where he could go either way. Inside it an offer is a genuine gamble.',
+    why: 'The band is as wide as your uncertainty about the man — the better your scouts know him, the narrower it is, and the more of a coin flip it is otherwise.',
+  },
+  patience: {
+    term: 'Patience',
+    definition: 'How many rejected offers a player will sit through before he stops taking your calls this year.',
+    why: 'It is what stops you finding his number by guessing. Insulting offers cost two pips instead of one, so a lowball is a real spend rather than a free probe.',
+  },
+  guaranteeFloor: {
+    term: 'Guarantee floor',
+    definition: 'The share of a deal a player will not go below having locked in. Below it he is refusing the structure, not the money.',
+    why: 'No salary fixes it — a star does not put his name to a big contract with nothing guaranteed at any price. Backups have no floor at all; the better the player, the more he wants in writing.',
+  },
+  walkYear: {
+    term: 'Walk year',
+    definition: 'The last season on a player\'s contract. He is still yours, nobody else may sign him, and free agency is one offseason away.',
+    why: 'This is the cheap window. The discount for staying is at its biggest here and mostly gone once the deal has actually expired.',
+  },
+  loyaltyDiscount: {
+    term: 'Hometown discount',
+    definition: 'The amount a player knocks off his own price to stay where he is, rather than test the market.',
+    why: 'It shrinks as his contract runs out. Getting ahead of a re-sign is worth real money; waiting until he is a free agent in all but name is not.',
+  },
+  setAside: {
+    term: 'Set aside',
+    definition: 'A decision parked rather than made. He is not released and you can bring him back at any time before the window closes.',
+    why: 'Parking is not keeping. Anyone still set aside with an expired deal walks to free agency when the phase ends.',
+  },
+  suitor: {
+    term: 'Suitor',
+    definition: 'A rival club with real interest — one that has the cap room and the hole at that position to actually make the call.',
+    why: 'The figure quoted is roughly what they would offer if he reached the market, so it is the price you are bidding against rather than atmosphere.',
+  },
+
+  // -------------------------------------------------------------------------
+  // RATINGS AND SCOUTING
+  // -------------------------------------------------------------------------
+  overall: {
+    term: 'Overall (OVR)',
+    definition: 'One number for how good a player is right now, weighted for what his position actually has to do.',
+    why: 'The ladder: 70 is a starter, 78 a quality one, 85 a star, 90 elite. 95 and up is roughly one player per club across the whole league, and a 99 turns up about four times in 32 rosters.',
+  },
+  potential: {
+    term: 'Potential',
+    definition: 'The ceiling a player could reach if he develops well. Nobody is guaranteed to get there, and plenty stop short.',
+    why: 'It is the hardest thing in football to judge, so it is always shown as a range — even a scout who has watched a man all year will not give you a single number.',
+  },
+  ratingColours: {
+    term: 'Rating colours',
+    definition: 'The colour on a rating is the tier it falls in — gold for elite, then star, quality starter, starter, and grey for depth.',
+    why: 'Below starter level the colour stays neutral on purpose. Everyone on a roster cannot be exceptional, and colouring the bottom of it only makes the top harder to find.',
+  },
+  scoutedRange: {
+    term: 'Scouted range',
+    definition: 'The span your scouts will commit to rather than a single number. The wider it is, the less certain they are.',
+    why: 'It narrows as they spend time on him. It never collapses to a point on a prospect, which is exactly why draft picks bust.',
+  },
+  scoutingConfidence: {
+    term: 'Confidence',
+    definition: 'How complete your file on a player is. Low means an early look and a rough sketch; high means the department has a real book on him.',
+    why: 'Physical traits converge fast — a stopwatch does not lie. How he reads a defence stays foggy far longer, and that is the read that decides careers.',
+  },
+  devTrait: {
+    term: 'Development trait',
+    definition: 'How quickly a player improves compared with an ordinary teammate — from slow, through normal, to star and superstar.',
+    why: 'A superstar developer climbs roughly twice as fast as a normal one. It is why two rookies with the same rating can be four years apart by 25.',
+  },
+  shortlist: {
+    term: 'Shortlist',
+    definition: 'The prospects your scouting department works every week. Starring a man puts him in front of your staff for the rest of the season, at no cost.',
+    why: 'The weekly effort is fixed and split evenly. Star five and each gets a fifth of everything you have; star sixty and you will know a little about sixty men and enough about none of them.',
+  },
+  attentionUnits: {
+    term: 'Attention',
+    definition: 'One week of your scouting department\'s work on one prospect. The week\'s total is fixed, so it is divided between everyone you have starred.',
+  },
+  privateWorkout: {
+    term: 'Private workout',
+    definition: 'A prospect flown in for your own staff to test. Every measurable comes back exact and the ceiling projection tightens to about as narrow as it ever gets.',
+    why: 'The only thing in scouting you can run out of — a handful a year, pre-draft only. It will not tell you how he reads a defence, which is the read that busts picks.',
+  },
+  fullScout: {
+    term: 'Full scout',
+    definition: 'Dropping everything to build one complete, exact file on a single player. No range, no doubt.',
+    why: 'Deliberately not enough of them to cover a draft class. Spending one is the admission that this is the man your season turns on.',
+  },
+  combineTesting: {
+    term: 'Combine testing',
+    definition: 'The standard set of athletic drills every prospect runs in front of the league — speed, explosiveness, change of direction and strength.',
+    why: 'Public and identical for everyone, which is exactly why it is over-weighted: it measures what a stopwatch can measure, and nothing about how a man plays football.',
+  },
+  combineForty: {
+    term: '40-yard dash',
+    definition: 'A straight-line sprint from a standing start. The headline speed number, and the one the room over-trusts.',
+  },
+  combineThreeCone: {
+    term: '3-cone drill',
+    definition: 'A timed L-shaped course around three cones. It measures the ability to sink the hips and change direction sharply — a pass rusher bending the edge, a receiver breaking off a route.',
+  },
+  combineShuttle: {
+    term: 'Shuttle',
+    definition: 'Five yards right, ten yards left, five yards back. Short-area quickness and the ability to stop and restart, which matters far more than top speed for most jobs on the field.',
+  },
+  combineVertical: {
+    term: 'Vertical jump',
+    definition: 'A standing leap, measured off the highest point reached. Explosiveness through the hips, and a fair proxy for winning a contested ball.',
+  },
+  combineBroad: {
+    term: 'Broad jump',
+    definition: 'A standing jump for distance. The same explosiveness the vertical measures, pushed forward rather than up.',
+  },
+  combineBench: {
+    term: 'Bench press',
+    definition: 'Repetitions at 225 pounds. Upper-body strength endurance — most relevant to linemen, largely decoration for a receiver.',
+  },
+  proDay: {
+    term: 'Pro day',
+    definition: 'A prospect testing at his own school instead of at the league combine.',
+    why: 'His surface, his timing, his crowd. Pro day numbers tend to run a touch fast, and the room does not always discount them.',
+  },
+  competitionGrade: {
+    term: 'Competition faced',
+    definition: 'The standard of opposition a prospect played against in college, A-tier down to F.',
+    why: 'Production against D-tier defences is worth less than the same production against A-tier ones — and the room is not always careful about the difference.',
+  },
+
+  // -------------------------------------------------------------------------
+  // THE DRAFT BOARD
+  // -------------------------------------------------------------------------
+  consensusBoard: {
+    term: 'Consensus board',
+    definition: 'How the league as a whole rates this draft class. Free, public, and identical for every front office.',
+    why: 'Your edge is not having it — everyone does. Your edge is knowing where it is wrong, and it is wrong in named, visible ways: it over-trusts a stopwatch, it takes a big programme at its word, it marks down anyone unfinished or medically flagged.',
+  },
+  boardGrade: {
+    term: 'Board grade',
+    definition: 'What the room thinks a prospect is worth, blending what he is now with what he might become.',
+    why: 'It is talk, and on the prospects that matter most it is usually wrong. Your own grade sitting well above or below it is the whole reason to scout anybody.',
+  },
+  draftBand: {
+    term: 'Draft band',
+    definition: 'Roughly where the league expects a prospect to come off the board — blue chip, first round, day two, day three, or an undrafted flier.',
+  },
+  positionalValue: {
+    term: 'Positional value',
+    definition: 'How much a position is worth relative to its raw rating. A quarterback, edge rusher or left tackle is worth more than an equally-good running back, because the job decides more games.',
+    why: 'It is why a lower-graded prospect can sit above a higher-graded one on the board, and why an evenly-rated running back is the cheapest player in football to sign.',
+  },
+  pickValue: {
+    term: 'Pick value',
+    definition: 'What a draft pick is worth in trade. The curve is steep at the top — the first pick is worth far more than the fifth, and a whole late round is worth less than one early selection.',
+    why: 'Picks in future years are discounted, which is why a rebuilding club will take three next-year picks for one this year and a contender will do the exact opposite.',
+  },
+  draftHitRate: {
+    term: 'Draft hit rate',
+    definition: 'The share of your picks that turned into genuine contributors. The bar is highest for a first-rounder and eases a little each round after — nobody expects a seventh-round pick to start.',
+    why: 'It only appears once you have made five picks. Below that it is noise, and a 1-for-2 record is not a scouting department.',
+  },
+  onTheClock: {
+    term: 'On the clock',
+    definition: 'Whose turn it is to pick. Nothing moves until they make a selection.',
+  },
+
+  // -------------------------------------------------------------------------
+  // PLAYER STATS
+  // -------------------------------------------------------------------------
+  passerRating: {
+    term: 'Passer rating',
+    definition: 'The real NFL formula — completion rate, yards per attempt, touchdown rate and interception rate, each capped and blended into one number.',
+    why: '100 is a solid, unspectacular season. 90 is ordinary, 110 is a very good year, and 158.3 is the mathematical maximum.',
+  },
+  completionPct: {
+    term: 'Completion %',
+    definition: 'The share of passes thrown that were caught.',
+    why: 'Around 65% is normal for a modern starter. On its own it says little — a quarterback checking down all afternoon can lead the league in it.',
+  },
+  yardsPerAttempt: {
+    term: 'Yards per attempt (Y/A)',
+    definition: 'Passing yards divided by passes thrown — how much ground a throw is worth on average, whether or not it is caught.',
+    why: 'About 7 is average. Over 8 is a genuinely dangerous passing game; under 6 usually means a lot of short, safe completions that never threaten anybody.',
+  },
+  tdRate: {
+    term: 'TD %',
+    definition: 'The share of passes that went for a touchdown.',
+    why: 'Around 4-5% is normal. It is heavily flattered by a good red-zone offence, so it says as much about the team as the quarterback.',
+  },
+  intRate: {
+    term: 'INT %',
+    definition: 'The share of passes that were intercepted.',
+    why: 'Around 2% is ordinary and under 2% is careful. Past 3% he is handing games away, whatever else the line says.',
+  },
+  yardsPerCarry: {
+    term: 'Yards per carry (YPC)',
+    definition: 'Rushing yards divided by carries.',
+    why: '4.0 is the line between adequate and not. 4.5 and up is a real running game; under 3.5 and the run is costing you more than it gains.',
+  },
+  catchRate: {
+    term: 'Catch %',
+    definition: 'Catches divided by times targeted — how often a ball thrown his way is actually caught.',
+    why: 'Around two-thirds is normal for a receiver. A back or a tight end working underneath will be much higher, and a deep threat much lower, so it is only fair to compare like with like.',
+  },
+  yardsPerReception: {
+    term: 'Yards per reception (Y/R)',
+    definition: 'Receiving yards divided by catches — how far he goes with each ball he holds on to.',
+    why: 'Double figures is the usual mark. A deep threat pushes past 15; a slot receiver living underneath sits nearer 10 and is not worse for it.',
+  },
+  yardsPerTarget: {
+    term: 'Yards per target',
+    definition: 'Receiving yards divided by times thrown at, whether or not he caught it.',
+    why: 'The fairer of the two receiving rates, because drops count against him. It is the number that tells you whether throwing at him is a good idea.',
+  },
+  yardsPerTouch: {
+    term: 'Yards per touch',
+    definition: 'Total yards from scrimmage divided by carries plus catches — one figure for a player used both ways.',
+  },
+  fieldGoalPct: {
+    term: 'FG %',
+    definition: 'The share of field goal attempts made.',
+    why: 'A kicker in the mid-80s is doing his job. Below 75% he is costing you the close games a kicker exists to win.',
+  },
+  passesDefensed: {
+    term: 'Passes defensed',
+    definition: 'Throws a defender broke up without intercepting. The near-misses.',
+    why: 'Interceptions are lumpy year to year; this is the steadier read on whether a corner is actually covering anybody.',
+  },
+  forcedFumbles: {
+    term: 'Forced fumbles',
+    definition: 'Times a defender knocked the ball loose from a ball carrier.',
+  },
+  tacklesForLoss: {
+    term: 'Tackles for loss (TFL)',
+    definition: 'Tackles made behind the line of scrimmage — a play stopped before it started.',
+  },
+  scrimmageYards: {
+    term: 'Yards from scrimmage',
+    definition: 'Rushing and receiving yards added together, for a player who is used both ways.',
+  },
+
+  // -------------------------------------------------------------------------
+  // TEAM AND LEAGUE
+  // -------------------------------------------------------------------------
+  teamOverall: {
+    term: 'Team overall',
+    definition: 'One number for how good a roster is — the players who actually take the field at each unit, weighted by how much that unit decides games.',
+    why: 'It counts starters, not squad size: you are not worse at receiver for carrying a seventh one. Quarterback carries about a fifth of it on its own, which is roughly what the position is worth in the sport.',
+  },
+  unitRating: {
+    term: 'Unit rating',
+    definition: 'How good one part of the roster is — the average of the men who start there.',
+    why: 'The rank beside it is the one that means something. A 79 offence is good or bad depending entirely on what the other 31 clubs have.',
+  },
+  pointDifferential: {
+    term: 'Point differential',
+    definition: 'Points scored minus points allowed across the season.',
+    why: 'The best one-number summary of team quality there is — it predicts what a club does next better than its own record does.',
+  },
+  netPointsPerGame: {
+    term: 'Net points per game',
+    definition: 'Point differential spread over the games actually played, so a club six weeks in can be compared with one twelve weeks in.',
+    why: 'A touchdown a game clear is a genuine contender. A touchdown a game the wrong way is a top-five draft pick.',
+  },
+  pythagoreanWins: {
+    term: 'Pythagorean wins',
+    definition: 'The record a club\'s scoring says it should have, ignoring how the wins actually fell.',
+    why: 'A team well above it has been winning the close ones, which is not a skill that holds. A team below it has been better than its record looks and is usually the better bet going forward.',
+  },
+  luck: {
+    term: 'Luck',
+    definition: 'Actual wins minus the wins the scoring earned.',
+    why: 'Positive means you have been getting away with it; negative means you have been unlucky. Neither tends to last, which is exactly why it is worth knowing which one you are.',
+  },
+  srs: {
+    term: 'Adjusted margin (SRS)',
+    definition: 'Average scoring margin corrected for the strength of the teams that produced it, so beating good clubs counts for more than beating bad ones.',
+    why: 'Roughly twenty points covers the whole span from the best team in the league to the worst, so a ten-point gap makes the weaker side about a one-in-four proposition. Any single blowout is capped at three scores — one wild Sunday cannot carry a season.',
+  },
+  strengthOfSchedule: {
+    term: 'Strength of schedule',
+    definition: 'How hard the opposition has been — the combined record of everyone a club has actually played.',
+    why: 'The context a win-loss column does not carry. 8-4 against the league\'s hardest schedule and 8-4 against its softest are not the same season.',
+  },
+  powerIndex: {
+    term: 'Power index',
+    definition: 'The composite score behind the power ranking, centred so the league average is 50.',
+    why: 'It blends what a club has done with how good it actually is, so it is allowed to disagree with the standings — and the disagreement is the interesting part.',
+  },
+  powerRanking: {
+    term: 'Power ranking',
+    definition: 'An argument about who is actually good, built from results credited against opponent quality, adjusted scoring margin, roster strength and recent form.',
+    why: 'Deliberately not the standings re-sorted. A 5-2 club that has escaped three times against bad teams will sit below a 4-3 club that has been battering people.',
+  },
+  powerMovement: {
+    term: 'Movement',
+    definition: 'How far a club has climbed or fallen since the last published ranking.',
+    why: 'It only exists once there is an earlier week on record. Last week\'s ranking cannot be worked out after the fact — a club that signed somebody on Tuesday would rewrite its own history.',
+  },
+  resume: {
+    term: 'Résumé',
+    definition: 'Results weighed against the quality of who produced them. Beating a good side banks more than beating a bad one; losing to a good side costs less than losing to a bad one.',
+  },
+  recentForm: {
+    term: 'Recent form',
+    definition: 'The last four results, with the most recent counting most.',
+  },
+  recordRankGap: {
+    term: 'Against the record',
+    definition: 'How many places a club sits above or below where its record alone would put it.',
+    why: 'A large positive number is a good team that has been unlucky. A large negative one is a record that will not survive contact with a real schedule.',
+  },
+  divisionSeeding: {
+    term: 'Seeding',
+    definition: 'Every division winner is seeded above every wild card, whatever the records say.',
+    why: 'A division lead is worth more than a better record somewhere else, which is why the four games inside your own division are the ones to worry about.',
+  },
+  clinchStatus: {
+    term: 'Clinched / eliminated',
+    definition: 'Whether a club\'s postseason place is already settled — mathematically in, mathematically out, or still to be decided.',
+  },
+  winProbability: {
+    term: 'Win chance',
+    definition: 'How likely a club is to win a given game, from the two rosters and home advantage.',
+    why: 'Nothing in football is a certainty: even a heavy favourite loses often enough that a season is decided by the games you were supposed to win.',
+  },
+
+  // -------------------------------------------------------------------------
+  // ROSTER
+  // -------------------------------------------------------------------------
+  depthChart: {
+    term: 'Depth chart',
+    definition: 'The order players take the field at each position. The man at the top starts.',
+    why: 'It is not sorted for you. A better player buried behind a worse one is minutes you are simply throwing away.',
+  },
+  starter: {
+    term: 'Starter',
+    definition: 'A player at the top of the depth chart at his position — the eleven on offence and eleven on defence who take the first snap.',
+  },
+  expiringContract: {
+    term: 'Expiring',
+    definition: 'A contract with no seasons left after this one. Unless he is re-signed or tagged, he reaches free agency.',
+    why: 'Roughly a quarter of a roster expires every year. Deciding which quarter to keep is most of the job.',
+  },
+  rosterNeed: {
+    term: 'Need',
+    definition: 'A position where the roster is short of bodies, short of quality, or both.',
+    why: 'A need is not the same as a hole in the starting lineup — a position with a good starter and nobody behind him is one hamstring from being your biggest problem.',
+  },
+  injuryStatus: {
+    term: 'Injury status',
+    definition: 'Whether a player is available. An injured man does not take the field and does not come off your cap.',
+  },
+
+  // -------------------------------------------------------------------------
+  // TRADES
+  // -------------------------------------------------------------------------
+  tradeValue: {
+    term: 'Trade value',
+    definition: 'What each side of a deal is worth to the club being asked, counting players, picks, contracts and what they already have at that position.',
+    why: 'The same player is worth different amounts to different clubs. A rebuilding team pays for youth and picks; a contender pays for the man who starts on Sunday.',
+  },
+  tradeAcceptance: {
+    term: 'Acceptance line',
+    definition: 'How your offer compares with what this club needs to see. At 100% they will take it.',
+    why: 'A little short and they counter. Well short and they simply decline — there is no amount of asking that turns a bad offer into a good one.',
+  },
+  gmPhilosophy: {
+    term: 'Front office philosophy',
+    definition: 'Where a club sees itself — rebuilding, competing, or somewhere between.',
+    why: 'It changes what they will pay for. A rebuilding club values youth and draft capital over immediate roster quality; a contender will pay a premium for the opposite.',
+  },
+
+  // -------------------------------------------------------------------------
+  // DYNASTY / GM CAREER
+  // -------------------------------------------------------------------------
+  dynastyScore: {
+    term: 'Dynasty score',
+    definition: 'One number for a franchise\'s whole body of work — titles, playoff runs, win rate, draft record, cap discipline, individual awards and league records held.',
+    why: 'Championships dominate it, at 25 points each against 5 for a playoff trip. Everything on the list is visible in the breakdown, so a club can always see exactly why its number is what it is.',
+  },
+  gmLevel: {
+    term: 'Dynasty level',
+    definition: 'Your standing as a general manager, earned from what the franchise actually achieves.',
+    why: 'The first level costs about a good half-season; level 20 is around three titles\' worth of work.',
+  },
+  gmXp: {
+    term: 'XP',
+    definition: 'Earned for results — wins, playoff runs, titles, awards, picks that turn into players. Never for repeating an action.',
+    why: 'A championship is worth roughly seventy regular-season wins, because a career spent grinding out 9-8 seasons should not out-earn actually winning something. There is nothing here to farm.',
+  },
+  skillPoints: {
+    term: 'Skill points',
+    definition: 'What a Dynasty level buys. They pay for information and tools — never for better players.',
+    why: 'There are about ten to earn by level 30 against twenty needed to fill the tree, so you are choosing what kind of GM you are rather than eventually having everything.',
+  },
+  skillTree: {
+    term: 'Skill branches',
+    definition: 'Three lines of upgrade — scouting, negotiation and player development. No prerequisites; spend where you like.',
+    why: 'Nothing in here touches a rating, a development roll or a game result. A level 50 GM and a level 1 GM play the same football; the level 50 one just sees more of it.',
+  },
+  gmBadge: {
+    term: 'GM badge',
+    definition: 'A reputation earned from decisions already on your record — every one of them backed by a number you can go and check.',
+  },
+
+  // -------------------------------------------------------------------------
+  // HONOURS
+  // -------------------------------------------------------------------------
+  allStar: {
+    term: 'All-Star',
+    definition: 'A selection earned by being one of the best at your position over a season. Chosen from what a player actually did, never from his rating.',
+  },
+} as const satisfies Record<string, GlossaryTerm>;
+
+export type GlossaryKey = keyof typeof GLOSSARY;
+
+/**
+ * The string a tooltip shows: the definition, plus the "why it matters" beat
+ * where the term has earned one. One function so two screens explaining the
+ * same term cannot present it differently — which is the whole reason this
+ * file exists.
+ */
+export function tip(key: GlossaryKey): string {
+  const t = GLOSSARY[key];
+  return t.why ? `${t.definition} ${t.why}` : t.definition;
+}
+
+/** Just the definition, for the rare surface with no room for the second beat. */
+export function define(key: GlossaryKey): string {
+  return GLOSSARY[key].definition;
+}

@@ -575,7 +575,7 @@ export default async function AnalyticsPage({ params, searchParams }: {
         <b>{biggestOverpay.name}</b> ({biggestOverpay.position}, {biggestOverpay.age}) carries {formatMoney(biggestOverpay.hit)}
         {' '}against a {formatMoney(biggestOverpay.marketValue)} market — the widest gap on the roster
         {decliningStory
-          ? <>, and the box score agrees: his {decliningStory.statLabel} have gone
+          ? <>, and the numbers back it up: his {decliningStory.statLabel} have gone
             {' '}<b>{decliningStory.series[0].value} → {decliningStory.series[decliningStory.series.length - 1].value}</b>
             {' '}between {decliningStory.series[0].year} and {decliningStory.series[decliningStory.series.length - 1].year}.</>
           : <>.</>}

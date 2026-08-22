@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { TeamLogo } from '../TeamLogo';
 import type { PowerRankingBoard, PowerRow } from '@/lib/powerRankings';
+import { tip } from '@/lib/glossary';
+import { Tooltip } from '../Tooltip';
 
 /**
  * The published table. Everything on it is a number this league actually
@@ -89,13 +91,18 @@ export function PowerRankingsTable({ leagueId, board }: { leagueId: string; boar
             {showMove && <th className="w-10 px-1.5 text-right">MOV</th>}
             <th className="w-full">Team</th>
             <th className="text-right w-16 px-1.5">Rec</th>
+            {/* Eleven columns at 40-80px each. Nothing here can carry a "?"
+                without wrapping the header row, so every column's explanation
+                is a native title drawn from the same glossary the "?" bubbles
+                on this page's method panel read from — one voice, two
+                affordances. */}
             <th className="text-right w-12 px-1.5" title="Where this club sits on record alone (win pct, then point differential)">Rec#</th>
-            <th className="text-right w-12 px-1.5" title="Places above (+) or below (−) its record">Δ</th>
-            <th className="text-right w-14 px-1.5" title="Team rating from the roster — the same OVR the dashboard shows, with its league rank">OVR</th>
-            <th className="text-right w-14 px-1.5 hidden sm:table-cell" title="Point differential per game">Net</th>
-            <th className="text-right w-14 px-1.5 hidden md:table-cell" title="Scoring margin adjusted for the strength of the teams played">Adj</th>
-            <th className="text-right w-20 px-1.5 hidden md:table-cell">Last 4</th>
-            <th className="text-right w-14 px-1.5" title="Power index — league average is 50">Idx</th>
+            <th className="text-right w-12 px-1.5" title={tip('recordRankGap')}>Δ</th>
+            <th className="text-right w-14 px-1.5" title={tip('teamOverall')}>OVR</th>
+            <th className="text-right w-14 px-1.5 hidden sm:table-cell" title={tip('netPointsPerGame')}>Net</th>
+            <th className="text-right w-14 px-1.5 hidden md:table-cell" title={tip('srs')}>Adj</th>
+            <th className="text-right w-20 px-1.5 hidden md:table-cell" title={tip('recentForm')}>Last 4</th>
+            <th className="text-right w-14 px-1.5" title={tip('powerIndex')}>Idx</th>
           </tr>
         </thead>
         <tbody>
@@ -155,7 +162,10 @@ export function PowerRankingsCapsule({ leagueId, board, take = 5 }: { leagueId: 
     <div className="panel overflow-hidden">
       <div className="px-4 py-3 border-b border-line/70 flex items-center justify-between flex-wrap gap-2">
         <div>
-          <div className="label-sm">{board.weekLabel} Power Rankings</div>
+          <div className="label-sm inline-flex items-center gap-1.5">
+            {board.weekLabel} Power Rankings
+            <Tooltip text={tip('powerRanking')} />
+          </div>
           <div className="text-xs text-muted mt-0.5">
             Record, opponent-adjusted margin, roster rating and recent form — so it can, and does, disagree with the table below.
           </div>

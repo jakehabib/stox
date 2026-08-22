@@ -14,6 +14,8 @@ import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { FillRosterButton } from '@/components/FillRosterButton';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
 import { RosterGroupHeader } from '@/components/ds/RosterGroupHeader';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { buildRosterShape } from '@/lib/rosterShape';
@@ -267,18 +269,20 @@ export default async function RosterPage({ params, searchParams }: { params: { i
             detail: injured > 0 ? `${injured} injured` : 'all healthy',
             color: injured > 0 ? 'text-warn' : undefined,
           },
-          { label: `Average ${ovrLabel}`, value: avgOvr.toFixed(1), detail: 'across the roster' },
+          { label: `Average ${ovrLabel}`, value: avgOvr.toFixed(1), detail: 'across the roster', tip: tip('overall') },
           { label: 'Average Age', value: avgAge.toFixed(1), detail: 'years' },
           {
             label: 'Expiring',
             value: String(expiring),
             detail: expiring > 0 ? 'deals up within a year' : 'nothing up soon',
+            tip: tip('expiringContract'),
             color: expiring > 0 ? 'text-warn' : undefined,
           },
           ...(capSummary ? [{
             label: 'Cap Space',
             value: formatMoney(capSummary.capSpace),
             detail: `${formatMoney(capSummary.capUsed)} committed`,
+            tip: tip('capSpace'),
             color: capSummary.capSpace >= 0 ? 'text-accent' : 'text-bad',
           }] : []),
         ]}
@@ -294,10 +298,29 @@ export default async function RosterPage({ params, searchParams }: { params: { i
                 <th><Link href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
                 <th>Player</th>
                 <th><Link href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
-                <th><Link href={sortHref('ovr')} className="hover:text-chalk">{ovrLabel}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
-                <th><Link href={sortHref('potential')} className="hover:text-chalk">Pot.{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
+                <th>
+                  <span className="inline-flex items-center gap-1">
+                    <Link href={sortHref('ovr')} className="hover:text-chalk">{ovrLabel}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
+                    {/* Downward on every one of these: this table is inside
+                        `panel overflow-hidden` AND an `overflow-x-auto`
+                        scroller — the exact pair that once rendered a Cap-page
+                        tooltip perfectly and clipped it out of existence. */}
+                    <Tooltip placement="bottom" text={tip('overall')} />
+                  </span>
+                </th>
+                <th>
+                  <span className="inline-flex items-center gap-1">
+                    <Link href={sortHref('potential')} className="hover:text-chalk">Pot.{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
+                    <Tooltip placement="bottom" text={tip('potential')} />
+                  </span>
+                </th>
                 <th>Status</th>
-                <th><Link href={sortHref('cap')} className="hover:text-chalk">Cap Hit{sortKey === 'cap' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
+                <th>
+                  <span className="inline-flex items-center gap-1">
+                    <Link href={sortHref('cap')} className="hover:text-chalk">Cap Hit{sortKey === 'cap' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
+                    <Tooltip placement="bottom" text={tip('capHit')} />
+                  </span>
+                </th>
                 <th><Link href={sortHref('years')} className="hover:text-chalk">Years Left{sortKey === 'years' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
               </tr>
             </thead>

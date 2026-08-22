@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { DeltaChip } from './DeltaChip';
+import { Tooltip } from '../Tooltip';
 
 function confidenceLabel(confidence: number): { text: string; color: string } {
   if (confidence >= 75) return { text: 'HIGH', color: 'text-accent' };
@@ -41,10 +42,17 @@ function confidenceLabel(confidence: number): { text: string; color: string } {
  *     own numbers never change and there is nothing to transition. Those
  *     surfaces stay dead still, as they must.
  */
-export function ScoutingRange({ low, high, confidence, label = 'OVR', className = 'w-40' }: {
+export function ScoutingRange({ low, high, confidence, label = 'OVR', className = 'w-40', tip }: {
   low: number; high: number; confidence: number; label?: string;
   /** Width utility — narrower (e.g. "w-28") for dense rows like a draft board. */
   className?: string;
+  /**
+   * Glossary text for the label. Deliberately opt-in rather than automatic:
+   * the dense variants of this component are LIST ROWS, and a "?" repeated
+   * down forty rows is noise, not help. Pass it on the single instance a
+   * page shows, not on the lane.
+   */
+  tip?: string;
 }) {
   const c = confidenceLabel(confidence);
   const SCALE_MIN = 40, SCALE_MAX = 99;
@@ -115,7 +123,10 @@ export function ScoutingRange({ low, high, confidence, label = 'OVR', className 
   return (
     <div className={className} ref={box}>
       <div className="flex items-baseline justify-between mb-1.5">
-        <span className="label-sm">{label}</span>
+        <span className="label-sm inline-flex items-center gap-1.5">
+          {label}
+          {tip && <Tooltip text={tip} />}
+        </span>
         <span className="stat-value text-stat-sm text-chalk">{low}–{high}</span>
       </div>
       <div className="relative h-1.5 rounded-full bg-raised overflow-hidden">

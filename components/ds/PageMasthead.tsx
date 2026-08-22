@@ -1,4 +1,5 @@
 import { TeamLogo } from '../TeamLogo';
+import { Tooltip } from '../Tooltip';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 
 export interface MastheadFact {
@@ -6,6 +7,11 @@ export interface MastheadFact {
   value: string;
   /** Short qualifier under the number — a baseline, a share, a count. */
   detail?: string;
+  /**
+   * Glossary text for the label. Use `tip('capSpace')` — never a hand-written
+   * string, or the same term ends up explained two ways on two screens.
+   */
+  tip?: string;
   /** Tailwind text color for the value. Omit for default ink. */
   color?: string;
 }
@@ -79,7 +85,14 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
         }`}>
           {facts.map((f) => (
             <div key={f.label} className="px-4 py-3">
-              <div className="label-sm">{f.label}</div>
+              {/* Opens UPWARD, and must: this whole band sits inside the
+                  masthead's `overflow-hidden`, so a bubble opening downward
+                  off the bottom edge is clipped away to nothing. Above the
+                  label there is always masthead to open into. */}
+              <div className="label-sm inline-flex items-center gap-1.5">
+                {f.label}
+                {f.tip && <Tooltip text={f.tip} />}
+              </div>
               <div className={`stat-value text-stat-sm leading-none mt-1 ${f.color ?? ''}`}>{f.value}</div>
               {f.detail && <div className="text-[11px] text-muted mt-1">{f.detail}</div>}
             </div>
