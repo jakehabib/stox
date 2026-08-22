@@ -44,6 +44,14 @@ export interface GmCardBestDeal {
   partnerAbbr: string;
   /** What came back, already summarised by the caller from the graded row. */
   received: string;
+  /**
+   * How far his return has outgained what he gave up, in points of growth —
+   * retroEdgeFor's own number, rounded, never re-derived here. This is what
+   * "he won the deal" is worth as a figure rather than a sentence, and the
+   * app owner asked for it on the card: *"under 'best deal' it should show
+   * like, the gain in value for example"*.
+   */
+  edgePct: number;
 }
 
 export function GmCard({ team, leagueName, seasonYear, gmName, summary, dynastyLevel, bestDeal }: {
@@ -67,7 +75,7 @@ export function GmCard({ team, leagueName, seasonYear, gmName, summary, dynastyL
   // Two named lines, in the order they say the most about a front office: the
   // player he found, then the deal he won. Best season fills in for a GM who
   // has not yet drafted or dealt, so the card is never left with a hole.
-  const lines: { label: string; value: string; detail: string; chip?: number }[] = [];
+  const lines: { label: string; value: string; detail: string; chip?: number; edgePct?: number }[] = [];
   if (s.signaturePick) {
     lines.push({
       label: 'Signature Pick',
@@ -81,6 +89,7 @@ export function GmCard({ team, leagueName, seasonYear, gmName, summary, dynastyL
       label: 'Best Deal',
       value: `${bestDeal.partnerAbbr}, ${bestDeal.year}`,
       detail: bestDeal.received,
+      edgePct: bestDeal.edgePct,
     });
   }
   if (lines.length < 2 && s.bestSeason) {
@@ -208,6 +217,17 @@ export function GmCard({ team, leagueName, seasonYear, gmName, summary, dynastyL
             {l.chip !== undefined && (
               <div className="shrink-0">
                 <RatingBadge value={l.chip} size="sm" filled />
+              </div>
+            )}
+            {/* Not a RatingBadge: that shape means a 0-99 player rating
+                everywhere else in this app, and a growth figure wearing it
+                would read as one. Same column, its own mark. "Outgained" is
+                the retrospective panel's own verb for this quantity, so the
+                card and the panel describe it with one word rather than two. */}
+            {l.edgePct !== undefined && (
+              <div className="shrink-0 text-right">
+                <div className="stat-value text-[1.35rem] leading-none text-accent">+{l.edgePct}%</div>
+                <div className="label-sm text-[9px] mt-1">outgained</div>
               </div>
             )}
           </div>

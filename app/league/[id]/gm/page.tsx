@@ -119,6 +119,13 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
       year: graded[0].r.seasonYear,
       partnerAbbr: graded[0].r.teamAAbbr === team.abbr ? graded[0].r.teamBAbbr : graded[0].r.teamAAbbr,
       received: receivedSummary(graded[0].r, team.abbr),
+      // BY HOW MUCH HE WON IT. `graded[0].edge` is retroEdgeFor's own number —
+      // the difference between how his return has grown and how the other
+      // club's has — which is the same quantity the panel's verdict sentence
+      // is written from and the same one this list was ranked on. Read, never
+      // recomputed: a percentage here that disagreed with the verdict below
+      // would be one deal graded twice.
+      edgePct: Math.round(graded[0].edge * 100),
     }
     : null;
 
