@@ -636,6 +636,66 @@ function softenInjury(type: string): string {
   return [keep ? head : head.toLowerCase(), ...rest].join(' ');
 }
 
+/**
+ * The two halves of a season, phrased with THE SAME NUMBERS on both sides.
+ *
+ * `spoken` picks whichever figures a line happens to lead with, which is right
+ * for one man's season and wrong for a comparison: it printed "13 balls broken
+ * up and one forced fumble through week 9, and then four balls broken up and
+ * 38 tackles the rest of the way", where the halves are not measured on the
+ * same thing at all and the reader cannot see the fall he is being told about.
+ * Here the columns are chosen once, from whichever of them either half
+ * actually used, and both sides are read off the same ones.
+ */
+type SplitPart = { of: (s: SeasonStats) => number; say: (s: SeasonStats) => string };
+
+function splitParts(pos: string): { parts: SplitPart[]; max: number } {
+  const n = (k: keyof SeasonStats) => (s: SeasonStats) => (s[k] as number | undefined) ?? 0;
+  switch (pos) {
+    case 'QB': return { max: 3, parts: [
+      { of: n('passYds'), say: (s) => `${num(s.passYds ?? 0)} yards` },
+      { of: n('passTd'), say: (s) => count(s.passTd ?? 0, 'touchdown') },
+      { of: n('int'), say: (s) => count(s.int ?? 0, 'interception') },
+    ] };
+    case 'RB': return { max: 2, parts: [
+      { of: n('rushYds'), say: (s) => `${num(s.rushYds ?? 0)} on ${count(s.rushAtt ?? 0, 'carry', 'carries')}` },
+      { of: n('rushTd'), say: (s) => count(s.rushTd ?? 0, 'score') },
+      { of: n('rec'), say: (s) => count(s.rec ?? 0, 'catch', 'catches') },
+    ] };
+    case 'WR': case 'TE': return { max: 2, parts: [
+      { of: n('recYds'), say: (s) => `${count(s.rec ?? 0, 'catch', 'catches')} for ${num(s.recYds ?? 0)}` },
+      { of: n('recTd'), say: (s) => count(s.recTd ?? 0, 'score') },
+    ] };
+    case 'EDGE': case 'DT': return { max: 2, parts: [
+      { of: n('sacks'), say: (s) => count(s.sacks ?? 0, 'sack') },
+      { of: n('ff'), say: (s) => count(s.ff ?? 0, 'forced fumble') },
+      { of: n('tackles'), say: (s) => count(s.tackles ?? 0, 'tackle') },
+    ] };
+    case 'CB': case 'S': return { max: 2, parts: [
+      { of: n('defInt'), say: (s) => count(s.defInt ?? 0, 'interception') },
+      { of: n('pd'), say: (s) => `${count(s.pd ?? 0, 'ball', 'balls')} broken up` },
+      { of: n('tackles'), say: (s) => count(s.tackles ?? 0, 'tackle') },
+    ] };
+    case 'LB': return { max: 2, parts: [
+      { of: n('tackles'), say: (s) => count(s.tackles ?? 0, 'tackle') },
+      { of: n('ff'), say: (s) => count(s.ff ?? 0, 'forced fumble') },
+    ] };
+    case 'K': return { max: 2, parts: [
+      { of: n('fga'), say: (s) => `${s.fgm ?? 0} of ${s.fga ?? 0} from the field` },
+      { of: n('xpa'), say: (s) => `${s.xpm ?? 0} of ${s.xpa ?? 0} on extra points` },
+    ] };
+    default: return { max: 1, parts: [{ of: n('gp'), say: (s) => statLine(pos, s) }] };
+  }
+}
+
+export function spokenSplit(position: string, a: SeasonStats, b: SeasonStats): [string, string] {
+  const pos = canonicalPosition(position);
+  const { parts, max } = splitParts(pos);
+  let chosen = parts.filter((pt) => pt.of(a) > 0 || pt.of(b) > 0).slice(0, max);
+  if (chosen.length === 0) chosen = parts.slice(0, 1);
+  return [join(chosen.map((pt) => pt.say(a))), join(chosen.map((pt) => pt.say(b)))];
+}
+
 /** The one number that is HIS number — used where a sentence wants a single figure. */
 function headlineNumber(position: string, s: SeasonStats): string {
   const pos = canonicalPosition(position);

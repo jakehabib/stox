@@ -1549,8 +1549,6 @@ export async function negotiateOffer(opts: {
           capHitThisYear: capHit(written.contract, settings.capMode),
           capSpaceBefore: capBefore,
           capSpaceAfter: capAfter,
-          // You only beat somebody if somebody was actually bidding and you
-          // went past them. Both figures are off the gate the meter used.
           // You only beat somebody if somebody was actually bidding and the
           // man chose you over them — which is what `decision.outbid` being
           // false means now that a rival is a package rather than a number.

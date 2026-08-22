@@ -971,7 +971,6 @@ export function bandHalfWidthFor(scoutConfidence: number): number {
 export function signBandFor(ctx: NegotiationContext, interest: number): SignBand {
   // Never returns LOSING: it does not take a gate and therefore cannot know
   // there is anybody else at the table. `decideOffer` overrides it.
-
   if (interest >= ACCEPT_INTEREST) return 'YES';
   if (interest >= ACCEPT_INTEREST - ctx.bandHalfWidth) return 'MAYBE';
   return 'NO';
@@ -1104,16 +1103,17 @@ export interface RivalBid {
  * [TUNE] How much better your package has to read than the rival's, in
  * interest points, before he actually chooses you.
  *
- * Small and non-zero. Non-zero because a tie is not a win: changing clubs is
- * a real event and a man does not do it — or refuse to do it — over a
- * rounding error, so somebody has to hold the tie and the club with the deal
- * on the table does. Small because the substantive edge is already in the
- * PRICE (`clubDiscount`), and stacking a second, invisible loyalty bonus on
- * top of it would make the contest unlosable for reasons the panel could not
- * state.
+ * A dead heat is not a win. Two packages he cannot separate give him no
+ * reason to pick you, and the alternative — tossing a coin — is exactly the
+ * re-rollable variance the "HE MIGHT SIGN HERE" block above forbids, since it
+ * would be a draw the user could re-run by nudging a slider and coming back.
+ * So the rival holds the tie and you have to be visibly better.
  *
+ * Small, though. The substantive incumbent edge is already in the PRICE
+ * (`clubDiscount`), and stacking a second, invisible loyalty bonus on top of
+ * it would make the contest unlosable for reasons the panel could not state.
  * Around here a point of interest is worth roughly 0.6% of his asking price,
- * so this is a fraction of a percent of salary — a tie-break, not a thumb.
+ * so two points is a fraction of a percent of salary.
  */
 export const CONTEST_MARGIN = 2;
 
@@ -1167,8 +1167,23 @@ export function evaluateRival(
  * THE comparison. Exported because the panel draws the rival's mark on the
  * same track as your bar, and a second copy of this arithmetic in the
  * component is how the two would drift apart again.
+ *
+ * NOTHING BEATS A PERFECT OFFER, and that clause is load-bearing rather than
+ * flattering. Interest is clamped at 100, so a rival whose package he cannot
+ * fault reads 100 — and so does yours, however far past his asking price you
+ * go. Without this the margin above could never be cleared and the man would
+ * be unsignable at any salary, any term and any guarantee, with the panel
+ * unable to name a single thing that would help. That is the app owner's
+ * older report exactly — *"I offered a maxed out contract to someone and they
+ * still wouldn't say yes or no"* — and it was measured happening here: a free
+ * agent reading 100 against a rival reading 100, with all three "what would
+ * beat them" routes returning nothing.
+ *
+ * Monotone in your own interest either way, which the sweep requires: more
+ * money can never turn a win into a loss.
  */
 export function winsContest(yourInterest: number, rivalInterest: number): boolean {
+  if (yourInterest >= 100) return true;
   return yourInterest >= rivalInterest + CONTEST_MARGIN;
 }
 
@@ -1395,9 +1410,14 @@ export interface OfferDecision {
    */
   rivalInterest: number | null;
   /**
-   * Which of the three regions this offer is in: he will not, he might, he
-   * will. This is what the panel draws. `accepted` below is the answer, and
-   * inside the band the panel must not show it — that is the whole mechanic.
+   * What happens if you offer this, as the panel draws it: he will not, he
+   * might, he will — or LOSING, which is none of the three because it is not
+   * about him at all. `accepted` below is the answer, and inside the band the
+   * panel must not show it: that is the whole mechanic.
+   *
+   * LOSING outranks the other three deliberately. Drawing the band from his
+   * opinion of your package while a separate flag said he was signing
+   * elsewhere is exactly the contradiction this pass removes.
    */
   signBand: SignBand;
   /** True only when submitting this right now signs him. */

@@ -129,6 +129,13 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
   const viewFor = (playerId: string) => {
     const p = playerById.get(playerId)!;
     return buildScoutedView({
+      // KEEPS ITS FOG, and is now the only room in the building that has any.
+      // Fog was scoped to draft prospects (see the SCOPE block in
+      // lib/scouting.ts); every player this page renders is one, by
+      // construction — `classPlayers` is filtered on isDraftee — but the flag
+      // is read off the record rather than hard-coded true, so the claim is
+      // checkable instead of assumed.
+      isProspect: p.isDraftee,
       position: p.position as any,
       trueAttrs: readJson(p.trueAttrs, {}),
       trueOvr: p.trueOvr,

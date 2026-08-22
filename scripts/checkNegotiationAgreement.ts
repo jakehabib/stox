@@ -894,8 +894,23 @@ async function main() {
       const d = decideOffer(ctx, offer, gate, DEFAULT_STRUCTURE);
       comparisons++;
       // The band the panel DRAWS has to be the band the decision USES.
+      //
+      // With one stated exception, which is the whole of this pass: LOSING.
+      // `signBandFor` answers "what does HE think of this offer" and takes no
+      // gate, so it cannot know there is another club at the table; the
+      // decision does, and when the rival's package reads better to him it
+      // overrides (lib/negotiation.ts, THE CONTEST). That override is not a
+      // drift between two copies of a rule — it is the contest, and the panel
+      // draws the decision's band, never `signBandFor`'s. So the two are
+      // required to agree everywhere the contest is not being lost, and where
+      // it IS, the decision is required to say so.
       const drawn = signBandFor(ctx, d.evaluation.interest);
-      if (drawn !== d.signBand) fail(`${subject.lastName}: the drawn band (${drawn}) and the decided band (${d.signBand}) disagree at ${formatMoney(apy)}`);
+      if (d.signBand === 'LOSING') {
+        if (!d.outbid) fail(`${subject.lastName}: band LOSING with nobody winning it at ${formatMoney(apy)}`);
+        if (drawn === 'NO') fail(`${subject.lastName}: an offer he refuses outright reads LOSING at ${formatMoney(apy)} — his own refusal comes first`);
+      } else if (drawn !== d.signBand) {
+        fail(`${subject.lastName}: the drawn band (${drawn}) and the decided band (${d.signBand}) disagree at ${formatMoney(apy)}`);
+      }
       if (d.signBand === 'YES' && !d.accepted && !d.blocked && !d.outbid) {
         fail(`${subject.lastName}: a certainty at ${formatMoney(apy)} was not accepted`);
       }
