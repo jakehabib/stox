@@ -2,18 +2,16 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { TradeBuilder } from '@/components/TradeBuilder';
 import { PendingTradeOffers } from '@/components/PendingTradeOffers';
-import { parseGmProfile, philosophySummary, rosterFit, type RosterPlayer } from '@/lib/ai/gm';
+import { parseGmProfile, philosophySummary } from '@/lib/ai/gm';
 import { capHit, capSavingsOnCut, proration, formatMoney } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { readJson } from '@/lib/json';
 import { isTradeDeadlinePassed } from '@/lib/trade';
 import { projectedDraftOrder, imminentDraftYear } from '@/lib/draft';
-import { REPLACEMENT_LEVEL } from '@/lib/sim/units';
 import type { TradeAsset } from '@/lib/trade';
-import { buildTradeRetrospectives, type TradeAssetSnapshot } from '@/lib/tradeRetro';
+import { buildTradeRetrospectives } from '@/lib/tradeRetro';
 import { TradeRetrospectives } from '@/components/TradeRetrospectives';
 import { PageMasthead } from '@/components/ds/PageMasthead';
-import type { TradeRecapAsset, TradeRecapData } from '@/components/ds/TradeRecapCard';
 
 export default async function TradePage({ params, searchParams }: { params: { id: string }; searchParams: { with?: string; reviewOffer?: string; pos?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -75,7 +73,7 @@ export default async function TradePage({ params, searchParams }: { params: { id
   // held — which club it came from is half of what makes a stack of draft
   // capital interesting to read. Every club in the league is in the map,
   // including the user's own, since the partner may be holding YOUR pick.
-  const clubById = new Map([team, ...otherTeams].map((t) => [t.id, { abbr: t.abbr, name: `${t.city} ${t.nickname}` }]));
+  const abbrById = new Map([team, ...otherTeams].map((t) => [t.id, t.abbr]));
 
   // Only the next draft that hasn't happened yet gets a live projection — a
   // further-future year has no standings to project from at all. This is
@@ -84,11 +82,7 @@ export default async function TradePage({ params, searchParams }: { params: { id
   const toPickP = (p: (typeof myPicks)[number]) => ({
     id: p.id, year: p.year, round: p.round, slot: p.slot,
     projectedSlot: p.year === imminentYear ? projectedOrder.get(p.originalTeamId) : undefined,
-    via: p.originalTeamId === p.ownerTeamId ? undefined : clubById.get(p.originalTeamId)?.abbr,
-  });
-
-  const lastTrade = await buildTradeRecap({
-    leagueId: league.id, myTeamId: team.id, myRoster, seasonYear: league.seasonYear, clubById,
+    via: p.originalTeamId === p.ownerTeamId ? undefined : abbrById.get(p.originalTeamId),
   });
 
   return (
@@ -145,103 +139,9 @@ export default async function TradePage({ params, searchParams }: { params: { id
         tradeDeadlineWeek={settings.tradeDeadlineWeek}
         draftRounds={settings.draftRounds}
         imminentYear={imminentYear}
-        lastTrade={lastTrade}
       />
 
       <TradeRetrospectives myAbbr={team.abbr} retrospectives={retrospectives} />
     </div>
   );
-}
-
-/**
- * THE TRADE THAT JUST HAPPENED, assembled where the numbers live.
- *
- * Every figure on the recap card has to be the one the system used, so none of
- * it is worked out in the component: the depth-chart consequence is
- * `rosterFit` — the same function that prices a trade for the AI — read
- * against the roster as it now stands, and the dead money is the CapCharge row
- * the executor actually wrote rather than a second calculation of what
- * accelerates. The two cap-space figures the card shows come from
- * `teamCapSummary` on either side of the deal (see TradeBuilder's capBefore).
- *
- * Read on every render, not only after a trade: the page has no idea one just
- * happened. The builder holds that fact — it compares this record's id with
- * the one that was on screen when it mounted — so an old deal can never
- * announce itself on a plain page load.
- */
-async function buildTradeRecap(opts: {
-  leagueId: string;
-  myTeamId: string;
-  myRoster: RosterPlayer[];
-  seasonYear: number;
-  clubById: Map<string, { abbr: string; name: string }>;
-}): Promise<TradeRecapData | null> {
-  const record = await prisma.tradeRecord.findFirst({
-    where: { leagueId: opts.leagueId, OR: [{ teamAId: opts.myTeamId }, { teamBId: opts.myTeamId }] },
-    orderBy: { createdAt: 'desc' },
-  });
-  if (!record) return null;
-
-  const iAmA = record.teamAId === opts.myTeamId;
-  const partnerId = iAmA ? record.teamBId : record.teamAId;
-  const partner = opts.clubById.get(partnerId);
-
-  const resolve = async (snapshots: TradeAssetSnapshot[]): Promise<TradeRecapAsset[]> => {
-    const out: TradeRecapAsset[] = [];
-    for (const s of snapshots) {
-      if (s.type === 'PICK') {
-        // Re-read rather than parsing the snapshot's label, so the recap says
-        // "2028 R3" in exactly the pick board's terms.
-        const pick = await prisma.draftPick.findUnique({ where: { id: s.id } });
-        out.push({ kind: 'PICK', label: pick ? `${pick.year} R${pick.round}` : s.label, round: pick?.round });
-        continue;
-      }
-      const p = await prisma.player.findUnique({ where: { id: s.id } });
-      if (!p) {
-        // He has left the league since (released, retired). The snapshot is
-        // still the truth about what was traded.
-        out.push({ kind: 'PLAYER', label: s.label, position: s.position });
-        continue;
-      }
-      const fit = rosterFit(p as unknown as RosterPlayer, opts.myRoster);
-      out.push({
-        kind: 'PLAYER', label: `${p.firstName} ${p.lastName}`, position: p.position, ovr: p.trueOvr,
-        depth: {
-          starts: fit.starts,
-          incumbent: Math.round(fit.incumbent),
-          // At or under replacement there is nobody there — the sim fields a
-          // replacement-level body, which is not a man the card can name.
-          emptySlot: fit.incumbent <= REPLACEMENT_LEVEL,
-          position: p.position,
-        },
-      });
-    }
-    return out;
-  };
-
-  const outgoing = await resolve(readJson<TradeAssetSnapshot[]>(iAmA ? record.aToB : record.bToA, []));
-  const incoming = await resolve(readJson<TradeAssetSnapshot[]>(iAmA ? record.bToA : record.aToB, []));
-
-  // executeTrade books accelerated bonus as a CapCharge labelled with the
-  // player's name; matching on that label reads the charge the trade actually
-  // created instead of recomputing acceleration a second time.
-  const charges = await prisma.capCharge.findMany({
-    where: {
-      teamId: opts.myTeamId,
-      year: record.seasonYear,
-      label: { in: outgoing.filter((a) => a.kind === 'PLAYER').map((a) => `Traded away — ${a.label}`) },
-    },
-  });
-
-  return {
-    id: record.id,
-    seasonYear: record.seasonYear,
-    week: record.week,
-    partnerId,
-    partnerAbbr: iAmA ? record.teamBAbbr : record.teamAAbbr,
-    partnerName: partner?.name ?? (iAmA ? record.teamBAbbr : record.teamAAbbr),
-    incoming,
-    outgoing,
-    deadMoneyBooked: charges.reduce((sum, c) => sum + c.amount, 0),
-  };
 }

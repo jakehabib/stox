@@ -6,47 +6,6 @@ import { startersAt } from '../lineup';
 import { REPLACEMENT_LEVEL } from '../sim/units';
 import { CapMode } from '../types';
 import { readJson } from '../json';
-import { assertConversionTiersAgree, relatedPositions } from '../ratings';
-
-/**
- * A POSITION CHANGE MAY NOT CHANGE WHAT A MAN IS WORTH.
- *
- * lib/ratings.ts makes every conversion its menu offers free and reversible,
- * so two positions that menu connects have to price on the same trade tier or
- * the difference is money for nothing — buy the cheap label, convert, sell the
- * dear one. It was live, at 5.5x: the same 84-rated man was 46 points as a
- * right tackle and 251 as a left tackle.
- *
- * This is the one module that reads TRADE_VALUE_TIER, so this is where the
- * check belongs. It runs at import rather than per-valuation because it is a
- * statement about two constant tables, and it throws rather than warns for the
- * same reason lib/lineup.ts throws on an eleven-man sum that isn't eleven: a
- * silent free arbitrage is worse than a failed boot. (lib/ratings.ts cannot
- * run it itself — lib/tuning.ts is upstream of it and the cycle would break
- * the build.)
- */
-assertConversionTiersAgree((pos) => TRADE_VALUE_TIER[pos]);
-
-// The age multiplier is part of a man's price too, so it is bound by the same
-// rule and checked by the same assertion. Keying arcs per-position reopened
-// this exact arbitrage at 2.49x — an old left tackle relabelled a guard
-// escaped the receivers' decline curve and got 10% more valuable on average.
-// Re-worded on the way out because the shared assertion can only name
-// TRADE_VALUE_TIER, and a check that reports the wrong table is worse than no
-// check: here the table to fix is AGE_ARC.
-try {
-  assertConversionTiersAgree((pos) => TRADE_VALUE.AGE_ARC[pos]);
-} catch {
-  const clash = POSITIONS.flatMap((from) =>
-    relatedPositions(from).map((to) => [from, to] as const),
-  ).find(([from, to]) => TRADE_VALUE.AGE_ARC[from] !== TRADE_VALUE.AGE_ARC[to]);
-  throw new Error(
-    `lib/tuning.ts: ${clash?.[0]} and ${clash?.[1]} can be converted between at no cost but age on `
-    + `different curves (${clash && TRADE_VALUE.AGE_ARC[clash[0]]} vs ${clash && TRADE_VALUE.AGE_ARC[clash[1]]}) — `
-    + `the age multiplier is part of a man's price, so that is a free arbitrage. Put them on the same `
-    + `TRADE_VALUE.AGE_ARC, or remove the adjacency in lib/ratings.ts.`,
-  );
-}
 
 /**
  * ===========================================================================
@@ -466,12 +425,9 @@ export function playerValueDetailed(
     });
   }
 
-  // Age curve — position-specific arc (RB earliest/fastest decline, QB and
-  // specialists longest). Keyed on the position's AGE_ARC, NOT on its trade
-  // tier: how long a career lasts and what the position is worth are two
-  // different questions, and tying them together meant re-tiering the
-  // offensive line would have started ageing it like a wide receiver.
-  const ageCurve = TRADE_VALUE.AGE_CURVE[TRADE_VALUE.AGE_ARC[p.position as Position] ?? 'STURDY'];
+  // Age curve — position-specific arc (RB earliest/fastest decline, OL/QB
+  // longest, K/P barely age at all).
+  const ageCurve = TRADE_VALUE.AGE_CURVE[tier];
   let ageMult = 1;
   if (p.age > ageCurve.declineStart) ageMult -= (p.age - ageCurve.declineStart) * ageCurve.declinePerYear;
   else if (p.age < ageCurve.youthThreshold) ageMult += (ageCurve.youthThreshold - p.age) * ageCurve.youthPremiumPerYear;

@@ -10,7 +10,6 @@ import { consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensu
 import { imminentDraftYear, projectedDraftOrder } from '@/lib/draft';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { DraftSelectionButton } from '@/components/DraftSelectionButton';
-import { DraftMomentProvider } from '@/components/DraftMoment';
 import { LiveDraftTicker } from '@/components/LiveDraftTicker';
 import { ShortlistStar } from '@/components/ShortlistStar';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
@@ -290,15 +289,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     let y = capitalYears.get(year);
     if (!y) {
       const settled = year === settledYear;
-      // Three things have to be true before a projected number is honest: it
-      // is the next draft, that draft is the one THIS season's standings will
-      // seed (seasonYear rolls forward mid-offseason, so after RESET_STANDINGS
-      // the imminent draft is already the one this table no longer describes),
-      // and some football has actually been played.
-      const projected = !settled
-        && year === upcomingDraftYear
-        && year === league.seasonYear + 1
-        && standingsPlayed;
+      const projected = !settled && standingsPlayed && year === upcomingDraftYear;
       y = {
         year,
         settled,
@@ -341,16 +332,11 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       bucket.picks.push(pick);
     } else if (p.originalTeamId === team.id) {
       const holder = teamById.get(p.ownerTeamId);
-      // Projected off THIS club's own record, because it is this club's pick —
-      // which is exactly what makes it worth showing: a first traded away in
-      // August is a different asset in November.
-      const projSlot = bucket.projected ? projectedOrder.get(p.originalTeamId) : undefined;
       const forfeit: DraftCapitalForfeit = {
         id: p.id,
         year: p.year,
         round: p.round,
         overall: bucket.settled ? overallOf(p.round, p.slot) : undefined,
-        projectedOverall: projSlot === undefined ? undefined : overallOf(p.round, projSlot),
         to: { teamId: holder?.id ?? p.ownerTeamId, abbr: holder?.abbr ?? '???' },
         spentOn,
       };
@@ -530,10 +516,6 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     ?? (isFantasy && order.length > 0 ? Math.floor((state?.pickIndex ?? 0) / order.length) + 1 : state?.round ?? 1);
 
   return (
-    // The selection card is raised from inside the board but must outlive it:
-    // the pick action revalidates this route, and the row that raised it is
-    // gone from the board a moment later. The provider sits above all of that.
-    <DraftMomentProvider>
     <div className="space-y-6">
       {classOutlook && (
         <div className="panel px-4 py-3 flex items-start gap-3">
@@ -546,33 +528,17 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         <PageMasthead
           teamId={team.id}
           teamAbbr={team.abbr}
-          eyebrow={state
-            ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft · Round ${state.round}`)
-            : draftJustFinished ? 'Rookie Draft' : 'Scouting Hub'}
+          eyebrow={state ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft · Round ${state.round}`) : 'Scouting Hub'}
           // Named for the draft these prospects are actually selected in, not
           // the season being played: they're generated during one season and
           // drafted in the offseason after it, so seasonYear runs a year early
           // and wouldn't match the picks you'd spend on them.
-          //
-          // EXCEPT in the window between the last selection and the phase
-          // advancing. The class that just went through the draft is still
-          // flagged isDraftee (the conversion runs on the way out of DRAFT,
-          // see lib/season.ts), while upcomingDraftYear has already moved to
-          // next year's picks — so the old title called 176 undrafted men
-          // "the 2028 Draft Class", a class that will not be generated until
-          // week 1 of the coming season.
-          title={state
-            ? `Pick ${state.pickIndex + 1} of ${totalPicks}`
-            : draftJustFinished ? `${recapYear} Draft Complete` : `${upcomingDraftYear ?? league.seasonYear} Draft Class`}
-          subtitle={state || draftJustFinished
+          title={state ? `Pick ${state.pickIndex + 1} of ${totalPicks}` : `${upcomingDraftYear ?? league.seasonYear} Draft Class`}
+          subtitle={state
             ? undefined
             : 'The incoming class is browsable all season — scout them now, the draft opens after free agency.'}
           facts={[
-            {
-              label: draftJustFinished ? 'Undrafted' : 'Prospects',
-              value: String(classSize),
-              detail: searchParams.pos ? `filtered to ${searchParams.pos}` : draftJustFinished ? 'nobody called their name' : 'in the class',
-            },
+            { label: 'Prospects', value: String(classSize), detail: searchParams.pos ? `filtered to ${searchParams.pos}` : 'in the class' },
             {
               label: 'Shortlisted',
               tip: tip('shortlist'),
@@ -627,7 +593,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       {draftJustFinished && recap}
 
       {capitalList.length > 0 && (
-        <DraftCapitalPanel years={capitalList} nextUp={nextUp} />
+        <DraftCapitalPanel years={capitalList} nextUp={nextUp} teamAbbr={team.abbr} />
       )}
 
       {upcomingPicks.length > 1 && (
@@ -767,37 +733,34 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                         <DraftSelectionButton
                           leagueId={league.id}
                           teamId={team.id}
-                          moment={{
-                            team: { id: team.id, abbr: team.abbr, city: team.city, nickname: team.nickname },
-                            pick: { year: league.seasonYear, round: onClockRound, overall: state!.pickIndex + 1 },
-                            player: {
-                              id: p.id,
-                              firstName: p.firstName,
-                              lastName: p.lastName,
-                              position: p.position,
-                              age: p.age,
-                              college: p.college,
-                              heightIn: p.heightIn,
-                              weightLb: p.weightLb,
-                              // The card carries the file this pick was MADE on.
-                              // Drafting him clears Player.isDraftee, which is
-                              // buildScoutedView's scope gate, so a view rebuilt
-                              // a moment later would print his true rating on
-                              // the one screen that exists to celebrate not
-                              // knowing yet.
-                              ovrLow: view.ovrLow,
-                              ovrHigh: view.ovrHigh,
-                              ovrExact: view.revealed ? view.scoutedOvr : undefined,
-                              potLow: view.potLow,
-                              potHigh: view.potHigh,
-                              potExact: view.potentialRevealed ? p.potential : undefined,
-                              confidence: view.confidence,
-                              label: label.label,
-                              labelClass: label.className,
-                              boardRank: read?.rank,
-                              boardGrade: read?.grade,
-                              bandLabel: read?.bandLabel,
-                            },
+                          team={{ id: team.id, abbr: team.abbr, city: team.city, nickname: team.nickname }}
+                          pick={{ year: league.seasonYear, round: onClockRound, overall: state!.pickIndex + 1 }}
+                          player={{
+                            id: p.id,
+                            firstName: p.firstName,
+                            lastName: p.lastName,
+                            position: p.position,
+                            age: p.age,
+                            college: p.college,
+                            heightIn: p.heightIn,
+                            weightLb: p.weightLb,
+                            // The card carries the file this pick was MADE on.
+                            // Drafting him clears Player.isDraftee, which is
+                            // buildScoutedView's scope gate, so a view rebuilt
+                            // a moment later would print his true rating on the
+                            // one screen that exists to celebrate not knowing.
+                            ovrLow: view.ovrLow,
+                            ovrHigh: view.ovrHigh,
+                            ovrExact: view.revealed ? view.scoutedOvr : undefined,
+                            potLow: view.potLow,
+                            potHigh: view.potHigh,
+                            potExact: view.potentialRevealed ? p.potential : undefined,
+                            confidence: view.confidence,
+                            label: label.label,
+                            labelClass: label.className,
+                            boardRank: read?.rank,
+                            boardGrade: read?.grade,
+                            bandLabel: read?.bandLabel,
                           }}
                         />
                       )}
@@ -822,6 +785,5 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         </div>
       </div>
     </div>
-    </DraftMomentProvider>
   );
 }
