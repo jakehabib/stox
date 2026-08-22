@@ -29,8 +29,13 @@ export interface UpcomingSlot {
 export function BroadcastHero({ eyebrow, headline, team, clock, yourNext, upcoming }: {
   eyebrow: string;
   headline: string;
-  /** The club on the clock — the band takes its colours. */
-  team: { id: string; abbr: string; city: string; nickname: string };
+  /**
+   * The club on the clock — the band takes its colours from it. Absent when
+   * nobody is: a completed draft has no team waiting, and a board that has
+   * not been opened yet has not started the order. The band falls back to the
+   * app's own accent rather than borrowing a club's colours at random.
+   */
+  team?: { id: string; abbr: string; city: string; nickname: string };
   /** The live ticker: the pace, the hold, and the run to your own selection. */
   clock?: React.ReactNode;
   /**
@@ -41,7 +46,7 @@ export function BroadcastHero({ eyebrow, headline, team, clock, yourNext, upcomi
   /** The running order from the clock forward. */
   upcoming: UpcomingSlot[];
 }) {
-  const accent = generateTeamLogoParams(team.abbr).primary;
+  const accent = team ? generateTeamLogoParams(team.abbr).primary : 'var(--color-accent2, #4aa3ff)';
 
   return (
     <div
@@ -59,12 +64,12 @@ export function BroadcastHero({ eyebrow, headline, team, clock, yourNext, upcomi
           className="absolute inset-0 opacity-[0.05]"
           style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
         />
-        <TeamLogo seed={team.id} abbr={team.abbr} nickname={team.nickname} size={240} className="watermark-logo opacity-[0.06] -right-16 -top-16" />
+        {team && <TeamLogo seed={team.id} abbr={team.abbr} nickname={team.nickname} size={240} className="watermark-logo opacity-[0.06] -right-16 -top-16" />}
       </div>
 
       <div className="relative flex flex-wrap items-center justify-between gap-6 px-6 py-6">
         <div className="flex items-center gap-4 min-w-0">
-          <TeamLogo seed={team.id} abbr={team.abbr} nickname={team.nickname} size={60} />
+          {team && <TeamLogo seed={team.id} abbr={team.abbr} nickname={team.nickname} size={60} />}
           <div className="min-w-0">
             <div className="label-sm">{eyebrow}</div>
             <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1.5 text-team">

@@ -1,6 +1,6 @@
 import { DraftPickRow, DraftRoundBand } from '@/lib/analytics';
 import { tip } from '@/lib/glossary';
-import { Panel, Legend, Note, NotOnRecord, TableTwin, ChartBox, ColLabel, headTipAlign } from './Panel';
+import { Panel, Legend, Note, NotOnRecord, TableTwin, ChartBox } from './Panel';
 import { VIZ, TXT } from './viz';
 
 /**
@@ -70,6 +70,12 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
             <table className="w-full border-separate border-spacing-0 text-xs">
               <thead>
                 <tr>
+                  {/* Native `title` rather than a "?" here, and measured
+                      rather than chosen: this table's scroller is 494px wide
+                      against an 18rem bubble, which leaves the middle columns
+                      with no edge to open from — "First team" fits neither
+                      left nor right. The terms are on the panel heading and
+                      the legend above anyway, in the same words. */}
                   {([
                     { label: 'Round' },
                     { label: 'Picks' },
@@ -77,9 +83,9 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
                     { label: 'First team', tip: tip('starter') },
                     { label: 'Still here' },
                     { label: 'Best pick' },
-                  ] as { label: string; tip?: string }[]).map((c, i, all) => (
-                    <th key={c.label} className={`label-sm text-[9.5px] px-1.5 pb-1.5 border-b border-line ${i ? 'text-right' : 'text-left'}`}>
-                      <ColLabel label={c.label} tip={c.tip} align={headTipAlign(i, all.length)} />
+                  ] as { label: string; tip?: string }[]).map((c, i) => (
+                    <th key={c.label} title={c.tip} className={`label-sm text-[9.5px] px-1.5 pb-1.5 border-b border-line ${i ? 'text-right' : 'text-left'}`}>
+                      {c.label}
                     </th>
                   ))}
                 </tr>

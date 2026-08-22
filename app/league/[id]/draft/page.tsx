@@ -1340,7 +1340,13 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th>
                   <span className="inline-flex items-center gap-1">
                     Projection
-                    <Tooltip placement="bottom" align="end" text={tip('prospectProjection')} />
+                    <Tooltip placement="bottom" text={tip('prospectProjection')} />
+                  </span>
+                </th>
+                <th>
+                  <span className="inline-flex items-center gap-1">
+                    Workout
+                    <Tooltip placement="bottom" align="end" text={`${tip('privateWorkout')} ${workoutSlots.windowLabel}`} />
                   </span>
                 </th>
                 <th></th>
@@ -1360,6 +1366,13 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 return (
                   <tr key={p.id}>
                     <td><ShortlistStar leagueId={league.id} teamId={team.id} playerId={p.id} initial={shortlistIds.has(p.id)} /></td>
+                    {/* Our own board beside theirs. The disagreement is the
+                        entire return on a season of scouting, and until now it
+                        could only be read one row at a time out of the grade
+                        column's "us NN". */}
+                    <td className={`stat-value text-stat-sm text-right ${ourRank.has(p.id) ? 'text-accent2' : 'text-muted/50'}`}>
+                      {ourRank.get(p.id) ?? '—'}
+                    </td>
                     <td className="stat-value text-stat-sm text-muted text-right">{read?.rank ?? '—'}</td>
                     <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                     <td className="font-medium">
@@ -1389,6 +1402,32 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                       {read && <div className="text-[10px] text-muted leading-none mt-0.5">{read.bandLabel}</div>}
                     </td>
                     <td><span className={`text-xs font-medium ${label.className}`}>{label.label}</span></td>
+                    <td>
+                      {/* Offered only where a slot can actually be spent, and
+                          still shown for a man already worked out so the board
+                          remembers who we flew in. The window is closed for the
+                          whole of draft day by design (lib/workouts.ts) — the
+                          line above the table says so once rather than eighty
+                          times down this column. */}
+                      {(workoutSlots.open || workedOutIds.has(p.id)) && (
+                        <WorkoutButton
+                          leagueId={league.id}
+                          teamId={team.id}
+                          playerId={p.id}
+                          name={`${p.firstName} ${p.lastName}`}
+                          meta={`${p.position} · ${p.college}${read ? ` · board #${read.rank}` : ''}`}
+                          avatar={<PlayerAvatar seed={p.id} age={p.age} size={40} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />}
+                          remaining={workoutSlots.remaining}
+                          max={workoutSlots.max}
+                          open={workoutSlots.open}
+                          windowLabel={workoutSlots.windowLabel}
+                          done={workedOutIds.has(p.id)}
+                          potLow={view.potLow}
+                          potHigh={view.potHigh}
+                          confidence={view.confidence}
+                        />
+                      )}
+                    </td>
                     <td>
                       {/* Not while the war room is up: the GM is on the clock
                           for pick 1 only once he has actually opened the
