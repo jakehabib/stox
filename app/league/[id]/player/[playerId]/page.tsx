@@ -322,7 +322,7 @@ export default async function PlayerPage({
   const heroFacts: { label: string; value: string; detail?: string; color?: string; tip?: string }[] = player.isDraftee
     ? [
         { label: 'Draft Class', value: String(league.seasonYear), detail: player.college },
-        { label: 'Projection', value: label.label, detail: 'role this profile suggests', color: label.className, tip: tip('potential') },
+        { label: 'Projection', value: label.label, detail: 'role this profile suggests', color: label.className, tip: tip('prospectProjection') },
         ...(combineTesting ? [{ label: '40-Yard', value: `${combineTesting.fortyYard.toFixed(2)}s`, detail: combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day', tip: tip('combineForty') }] : []),
         ...(collegeProfile ? [{ label: 'Competition', value: `${collegeProfile.competitionGrade}-tier`, detail: 'strength of schedule faced', color: GRADE_CLASS[collegeProfile.competitionGrade], tip: tip('competitionGrade') }] : []),
         { label: 'Measurables', value: `${Math.floor(player.heightIn / 12)}'${player.heightIn % 12}"`, detail: `${player.weightLb} lb` },

@@ -234,7 +234,9 @@ const MISSED_GAMES_BAR = 4;
  * the worst-week grade runs 24.5 at the median and 58.7 at the 90th percentile,
  * and the first bar tried — "his worst week still beat half the league" — fired
  * on 18.2% of them and took a fifth of every recap in the database. At 65 it is
- * 5.2%: his QUIETEST afternoon of the year was still a top-third one.
+ * 5.2% and at 70 it is 2.5%: his QUIETEST afternoon of the year was still a
+ * top-third one. 70 is the bar, because even at 65 it was still the loudest
+ * single verdict in the narrative list.
  *
  * It is not reachable everywhere, and that is a fact about the simulation
  * rather than a hole in the bar. A corner's weekly grade turns on whether a
@@ -243,7 +245,7 @@ const MISSED_GAMES_BAR = 4;
  * The claim is only true where weekly production is continuous, so that is
  * where it is made.
  */
-const UNFAILING_WORST_WEEK = 65;
+const UNFAILING_WORST_WEEK = 70;
 
 /** [TUNE] Season-production percentile bars, on the SEASON_LADDER scale. */
 const GOOD_SEASON = 85;       // top 15% of seasons at his position
@@ -881,7 +883,7 @@ const KIND_PRIORITY: Record<StoryKind, number> = {
   // Development was invisible before this panel existed, so it leads where it
   // is earned: a man whose year actually moved his ceiling is the single thing
   // a dynasty player most wants told and never was.
-  BREAKOUT: 61, LED_THE_LEAGUE: 55,
+  BREAKOUT: 61, LED_THE_LEAGUE: 52,
   // The outlook pair is selected separately (see buildReview) and these only
   // order them against each other.
   ROOM_TO_GROW: 40, AT_CEILING: 36,
@@ -1209,7 +1211,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         kind: 'NEVER_A_BAD_WEEK', shape: sh, margin: (worst.grade! - 50) / 20,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
         write: (v) => v.pick([
-          () => `${p.gp} games and not one of them a write-off. His quietest afternoon of the year was week ${worst.week} — ${spoken(pos, worst.stats)} — and that still beat two thirds of the ${plural(pos)} in the league.`,
+          () => `${p.gp} games and not one of them a write-off. His quietest afternoon of the year was week ${worst.week} — ${spoken(pos, worst.stats)} — and that still beat seven ${plural(pos)} in ten.`,
           () => `You could set your watch by him. ${capitalise(spoken(pos, p.stats))} on the year, and his worst single game — week ${worst.week}, ${spoken(pos, worst.stats)} — was still better than most ${plural(pos)} manage on a good one.`,
           () => `Nothing spectacular and nothing wasted: ${spoken(pos, p.stats)}, and no week all season where he was below what the job asks.`,
         ])(),
@@ -1425,7 +1427,11 @@ export function buildReview(input: ReviewInput): SeasonReview {
     opener: buildOpener(team, voice),
     stories,
     outlook,
-    quiet: stories.length === 0 && outlook.length === 0 ? buildQuiet(team, voice) : null,
+    // Quiet is about the YEAR, not about the roster. Every club has a young
+    // player with room left in him, so letting the outlook section suppress
+    // this line meant a season with nothing to say about it never got to say
+    // so — measured, exactly one club-season in 2,944.
+    quiet: stories.length === 0 ? buildQuiet(team, voice) : null,
   };
 }
 
@@ -1551,7 +1557,7 @@ export async function buildSeasonReview(
   if (teamGames === 0) return null;
 
   const ids = [...acc.keys()];
-  const [roster, leaguePlayers, priorRows, milestoneRows] = await Promise.all([
+  const [roster, leaguePlayers, leagueContracts, priorRows, milestoneRows] = await Promise.all([
     prisma.player.findMany({
       where: { id: { in: ids } },
       select: {
@@ -1560,12 +1566,22 @@ export async function buildSeasonReview(
         contract: { select: { years: true, baseSalaries: true, signingBonus: true, signedYear: true } },
       },
     }),
+    // The league-wide yardsticks for pay, rating and the growth model's band.
+    // ACTIVE only: a retired man's rating and a draft-pool prospect's are not
+    // part of the market this club competes in, and including them dragged the
+    // rating ladder down with two thousand players nobody can sign.
+    //
+    // Split into two queries ON PURPOSE. Asking Prisma for the contract as a
+    // RELATION on 3,540 player rows measured 98ms — most of the whole panel.
+    // The same data as two parallel queries over the ~1,700 active players is
+    // 21ms, and this is the only expensive thing the panel does.
     prisma.player.findMany({
-      where: { leagueId },
-      select: {
-        id: true, position: true, trueOvr: true, status: true, seasonStats: true,
-        contract: { select: { years: true, baseSalaries: true, signingBonus: true } },
-      },
+      where: { leagueId, status: 'ACTIVE' },
+      select: { id: true, position: true, trueOvr: true, seasonStats: true },
+    }),
+    prisma.contract.findMany({
+      where: { player: { leagueId, status: 'ACTIVE' } },
+      select: { playerId: true, years: true, baseSalaries: true, signingBonus: true },
     }),
     prisma.playerSeason.findMany({
       where: { playerId: { in: ids }, seasonYear: { lt: seasonYear } },
@@ -1591,12 +1607,13 @@ export async function buildSeasonReview(
     if (bases.length === 0 && c.signingBonus === 0) return null;
     return (bases.reduce((a, b) => a + b, 0) + c.signingBonus) / Math.max(1, c.years);
   };
+  const contractByPlayer = new Map(leagueContracts.map((c) => [c.playerId, c]));
   const payPool = new Map<string, number[]>();
   const ratePool = new Map<string, number[]>();
   for (const lp of leaguePlayers) {
     const pos = canonicalPosition(lp.position);
     (ratePool.get(pos) ?? ratePool.set(pos, []).get(pos)!).push(lp.trueOvr);
-    const apy = apyOf(lp.contract);
+    const apy = apyOf(contractByPlayer.get(lp.id) ?? null);
     if (apy !== null) (payPool.get(pos) ?? payPool.set(pos, []).get(pos)!).push(apy);
   }
 
@@ -1612,7 +1629,6 @@ export async function buildSeasonReview(
   {
     const byPos = new Map<string, { id: string; rate: number }[]>();
     for (const lp of leaguePlayers) {
-      if (lp.status !== 'ACTIVE') continue;
       const st = readJson<SeasonStats>(lp.seasonStats, {});
       const rate = DEFENSIVE_POSITIONS.has(lp.position) ? defensiveScore(st) : offensiveScore(st);
       if (rate === 0) continue;
@@ -1742,7 +1758,7 @@ function outlookCandidates(sh: Shape): Candidate[] {
       kind: 'ROOM_TO_GROW', shape: sh, margin: (gap - bar) / 6 + (p.potential - ROOM_MIN_CEILING) / 20,
       line: p.stats, scope: 'REGULAR', games: p.gp, pct: null,
       write: (v) => v.pick([
-        () => `${p.age}, and ${p.rating} of a possible ${p.potential}. That is ${count(gap, 'point')} still to come, and the age to come by them.`,
+        () => `${p.age}, and ${p.rating} of a possible ${p.potential}. That is ${count(gap, 'point')} of headroom, and we are the club that gets to use it.`,
         () => `We have him at ${p.rating}. Our own people put his ceiling nearer ${p.potential}, and he is ${p.age} — this is not the player we will end up with.`,
         () => `${capitalise(aNumber(p.rating!))} at ${p.age} with ${p.potential} in front of him. Whatever he is worth today he will be worth more, and we hold the deal.`,
         () => `The distance between what he is (${p.rating}) and what he could be (${p.potential}) is the whole reason to be patient with him.`,
@@ -1804,15 +1820,19 @@ function developmentCandidates(sh: Shape): Candidate[] {
   if (p.milestones.length > 0) {
     const first = p.milestones[0];
     const weeks = p.milestones.map((m) => m.week);
-    const span = weeks.length === 1 ? `week ${weeks[0]}` : `weeks ${weeks[0]} and ${weeks[weeks.length - 1]}`;
+    // "weeks 4 and 17" for four separate occasions is a sentence that quietly
+    // undercounts itself. Three or more get counted out loud.
+    const span = weeks.length === 1 ? `in week ${weeks[0]}`
+      : weeks.length === 2 ? `in weeks ${weeks[0]} and ${weeks[1]}`
+      : `at ${count(weeks.length, 'point')} of the season, from week ${weeks[0]} to week ${weeks[weeks.length - 1]}`;
     const cat = first.categories;
     out.push({
       kind: 'LED_THE_LEAGUE', shape: sh, margin: (p.milestones.length - 1) / 2,
       line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
       write: (v) => v.pick([
-        () => `At ${span} he was out in front of the whole league in ${cat}, and that is not just a line in the paper — a run like that raises what a player believes he can be, and what we think he can become.`,
-        () => `He led the league in ${cat} at ${span}. Being the best there is at something, even for a month, leaves a mark on a player; his ceiling moved with it.`,
-        () => `Nobody in the league had more ${cat} than him at ${span}. He finished the year with ${spoken(pos, p.stats)}, and he came out of it a better player than he went in.`,
+        () => `He was out in front of the whole league in ${cat} ${span}, and that is not just a line in the paper — a run like that raises what a player believes he can be, and what we think he can become.`,
+        () => `He led the league in ${cat} ${span}. Being the best there is at something, even for a month, leaves a mark on a player; his ceiling moved with it.`,
+        () => `Nobody in the league had more ${cat} than him ${span}. He finished the year with ${spoken(pos, p.stats)}, and he came out of it a better player than he went in.`,
       ])(),
     });
   }

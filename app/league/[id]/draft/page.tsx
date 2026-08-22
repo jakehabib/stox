@@ -18,7 +18,7 @@ import { SectionHeading } from '@/components/ds/SectionHeading';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { Tooltip } from '@/components/Tooltip';
-import { tip } from '@/lib/glossary';
+import { define, tip } from '@/lib/glossary';
 
 type SortKey = 'consensus' | 'pos' | 'ovr' | 'age' | 'potential';
 
@@ -366,13 +366,18 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th>
                   <span className="inline-flex items-center gap-1">
                     Board Grade
-                    <Tooltip placement="bottom" text={tip('boardGrade')} />
+                    {/* The cell carries the grade AND the band under it, so
+                        the bubble covers both — two whole glossary strings
+                        joined, never a slice of one: cutting a definition up
+                        with a regex is how a rewrite over there silently
+                        breaks the sentence over here. */}
+                    <Tooltip placement="bottom" text={`${tip('boardGrade')} ${define('draftBand')}`} />
                   </span>
                 </th>
                 <th>
                   <span className="inline-flex items-center gap-1">
                     Projection
-                    <Tooltip placement="bottom" align="end" text={tip('draftBand')} />
+                    <Tooltip placement="bottom" align="end" text={tip('prospectProjection')} />
                   </span>
                 </th>
                 <th></th>

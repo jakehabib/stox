@@ -322,6 +322,11 @@ export const GLOSSARY = {
     definition: 'What the room thinks a prospect is worth, blending what he is now with what he might become.',
     why: 'It is talk, and on the prospects that matter most it is usually wrong. Your own grade sitting well above or below it is the whole reason to scout anybody.',
   },
+  prospectProjection: {
+    term: 'Projection',
+    definition: 'The role your own scouts think a prospect grows into — a starter, a star, a rotational piece — drawn from his ceiling rather than what he is today.',
+    why: 'It stays hidden until there is a real file on him, and it is shown hedged while the read is still forming. A rookie\'s present-day number means almost nothing; the projection is the whole story, which is also why it can move as you learn more.',
+  },
   draftBand: {
     term: 'Draft band',
     definition: 'Roughly where the league expects a prospect to come off the board — blue chip, first round, day two, day three, or an undrafted flier.',
