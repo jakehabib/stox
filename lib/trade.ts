@@ -9,7 +9,7 @@ import { recordTrade } from './tradeRetro';
 import { unamortizedBonus, formatMoney } from './cap';
 import { teamCapSummary } from './cap-summary';
 import { reconcileDepthChart } from './gen/league';
-import { assertCapRoom, tradeCapDeltas } from './capEnforcement';
+import { assertCapRoom, tradeCapDeltas, autoTrimRosterToLimit } from './capEnforcement';
 
 /**
  * ===========================================================================
@@ -641,12 +641,39 @@ export async function executeTrade(opts: {
   ] as const) {
     const after = await prisma.player.count({ where: { teamId, status: 'ACTIVE' } })
       - playerCount(sends) + playerCount(gets);
-    if (after > rosterLimit) {
+    if (after <= rosterLimit) continue;
+
+    /*
+     * ONLY THE USER IS BLOCKED, BECAUSE ONLY THE USER CAN ACT ON IT.
+     *
+     * This threw for whichever club was over, which meant a five-for-one died
+     * on "Charlotte Pumas would carry 54 players against a 53-man limit.
+     * Release 1 before making this deal." — an instruction the user cannot
+     * follow, since he cannot release another club's player. A refusal that
+     * names no action he can take is a dead end, not a decision.
+     *
+     * An AI club makes room the way it makes cap room: it sheds its least
+     * valuable man first, on the same ranking cut-down day uses, so a club
+     * does not lose one player here and a different one in September. The
+     * user's own roster stays his to manage, and his message still names a
+     * thing he can do.
+     */
+    if (info.isUser) {
       throw new TradeAssetError(
         `${info.city} ${info.nickname} would carry ${after} players against a ${rosterLimit}-man limit. `
         + `Release ${after - rosterLimit} before making this deal.`,
       );
     }
+    await autoTrimRosterToLimit({
+      leagueId: opts.leagueId,
+      teamId,
+      // The limit they must be under ONCE the deal lands: they are about to
+      // take on `gets` and lose `sends`, and none of that has happened yet.
+      limit: rosterLimit - playerCount(gets) + playerCount(sends),
+      seasonYear: opts.seasonYear,
+      capMode,
+      week: opts.week,
+    });
   }
 
   // Snapshot what's being traded (and what it's worth right now) BEFORE

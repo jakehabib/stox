@@ -465,6 +465,80 @@ export async function tradeCapDeltas(
  * Deterministic by construction — worth, then saving, then id. No RNG.
  * Returns the players actually released.
  */
+/**
+ * AN AI CLUB THAT WOULD BE TOO BIG MAKES ITSELF SMALLER.
+ *
+ * The trade screen refused any deal that pushed a roster past the limit, and
+ * it refused it identically for both clubs — so a five-for-one with an AI
+ * partner died on `Charlotte Pumas would carry 54 players against a 53-man
+ * limit. Release 1 before making this deal.` The app owner cannot release a
+ * Charlotte Pumas player. It was an instruction only the other club could
+ * follow, which makes it a dead end rather than a decision, and he proposed
+ * the fix himself: *"maybe the AI logic drops their lowest ovr player?"*
+ *
+ * That is what a real front office does, and it is what this codebase already
+ * does one function down for money — `autoClearCapRoom` has an AI club
+ * release its least valuable men rather than stall the draft. Same principle,
+ * different unit: there the bill is dollars, here it is bodies.
+ *
+ * WHO GOES is the same question cut-down day answers, and it must have the
+ * same answer, or a club sheds one man in a trade and a different one in
+ * September. `lib/season.ts` `trimRostersToLimit` still carries its own copy
+ * of this ordering and should be pointed here — that duplication is
+ * deliberate and temporary rather than overlooked, because that file is being
+ * rewritten as this ships.
+ *
+ * The user's own club is NEVER trimmed. His roster is his, and the block he
+ * gets names an action he can actually take.
+ */
+export const CUT_DEAD_MONEY_PER_OVR = 1_500_000;
+
+/**
+ * The order a club sheds players in: worst first, with a man who is expensive
+ * to be rid of treated as better than his rating alone says. Dead money is
+ * the reason a good contract survives a cut-down and a bad one does not, so
+ * it belongs in the ranking rather than beside it.
+ */
+export function releaseRanking<T extends {
+  id: string; trueOvr: number; contract: { signingBonus: number; years: number; yearsRemaining: number;
+  signedYear: number; baseSalaries: string; guaranteed: number; voidYears: number } | null;
+}>(players: T[], capMode: CapMode): T[] {
+  const score = (p: T) =>
+    p.trueOvr + deadMoneyOnCut(p.contract, capMode) / CUT_DEAD_MONEY_PER_OVR;
+  return [...players].sort((a, b) => score(a) - score(b) || a.id.localeCompare(b.id));
+}
+
+/**
+ * Release the fewest, least valuable men that get this club to `limit`.
+ * Returns who went. A no-op for the user's club — callers must not pass it.
+ */
+export async function autoTrimRosterToLimit(opts: {
+  leagueId: string;
+  teamId: string;
+  limit: number;
+  seasonYear: number;
+  capMode: CapMode;
+  week: number;
+}): Promise<{ name: string; ovr: number }[]> {
+  const roster = await prisma.player.findMany({
+    where: { teamId: opts.teamId, status: 'ACTIVE' },
+    include: { contract: true },
+  });
+  const over = roster.length - opts.limit;
+  if (over <= 0) return [];
+
+  const { cutPlayer } = await import('./freeagency');
+  const released: { name: string; ovr: number }[] = [];
+  for (const p of releaseRanking(roster, opts.capMode).slice(0, over)) {
+    await cutPlayer({
+      leagueId: opts.leagueId, playerId: p.id, capMode: opts.capMode,
+      seasonYear: opts.seasonYear, week: opts.week,
+    });
+    released.push({ name: `${(p as any).firstName} ${(p as any).lastName}`, ovr: p.trueOvr });
+  }
+  return released;
+}
+
 export async function autoClearCapRoom(opts: {
   leagueId: string;
   teamId: string;
