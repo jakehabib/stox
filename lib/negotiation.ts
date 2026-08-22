@@ -1,6 +1,7 @@
 import { Rng } from './rng';
 import {
   buildContract, buildExtension, capHitSchedule, deadMoneyOnCut, formatMoney,
+  guaranteedMoney as totalGuaranteed,
   willingnessHorizon, prorationYears as capProrationYears, TERM, type ContractLike,
 } from './cap';
 import { CAP } from './tuning';
@@ -1423,11 +1424,17 @@ export function clampOffer(offer: Offer, gate: NegotiationGate): Offer {
 /**
  * How the guarantee slider becomes a real contract.
  *
- * Guaranteed money in this schema is carried by the signing bonus, which is
- * prorated — so promising more of the deal is not free: it lowers the year-1
- * cap hit and raises the dead money you eat if you ever cut him. That is the
- * cost that stops "drag guarantee to 100%" from being the dominant move, and
- * it is the same accounting `deadMoneyOnCut` already charges everywhere else.
+ * It moves two things at once. More guarantee means a bigger share of the deal
+ * paid as signing bonus, which lowers the year-1 cap hit — and it means more
+ * of his base salary locked in, which the club owes whether he is on the
+ * roster or not. Both land on `deadMoneyOnCut`, so promising more is never
+ * free: it is precisely the cost that stops "drag guarantee to 100%" from
+ * being the dominant move, and it is the same accounting charged everywhere
+ * else in the game.
+ *
+ * The bonus floor is 12% at a zero guarantee, so even the meanest offer hands
+ * over some cash the club cannot claw back — `buildContract` stores that as
+ * the guarantee rather than letting the panel print "$0 guaranteed" over it.
  */
 export function contractShapeFor(offer: Offer): { bonusPct: number; guaranteedPct: number } {
   const g = Math.max(0, Math.min(1, offer.guaranteePct));
@@ -1708,7 +1715,11 @@ export function decideOffer(
     totalValue,
     newMoneyValue,
     contractYears,
-    guaranteedMoney: c.guaranteed,
+    // Read back off the contract this offer WRITES, floored at the signing
+    // bonus, because that is the figure the club is held to — on a deal
+    // signed today it is exactly `deadMoneyIfCut` below, and those two sitting
+    // side by side in the panel disagreeing is the bug this closes.
+    guaranteedMoney: totalGuaranteed(priced),
     deadMoneyIfCut: deadMoneyOnCut(priced, gate.capMode),
     strandedVoidMoney,
     blocked,

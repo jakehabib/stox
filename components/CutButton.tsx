@@ -79,6 +79,22 @@ export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: 
             <span className="text-muted">Dead money created</span>
             <span className="font-mono text-bad">{formatMoney(impact.deadMoney)}</span>
           </div>
+          {/* Broken out only when both halves are actually in it. One line
+              saying "$23.0M dead" leaves a GM guessing which decision cost
+              him that — the bonus he paid to sign the man, or the salary he
+              promised him. They are different mistakes. */}
+          {impact.deadBonus > 0 && impact.deadGuaranteedSalary > 0 && (
+            <>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted pl-3">Bonus you already paid him</span>
+                <span className="font-mono text-muted">{formatMoney(impact.deadBonus)}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted pl-3">Salary you guaranteed him</span>
+                <span className="font-mono text-muted">{formatMoney(impact.deadGuaranteedSalary)}</span>
+              </div>
+            </>
+          )}
           <div className="flex justify-between pt-1.5 border-t border-line/60">
             <span className="text-muted">Net cap {impact.savings >= 0 ? 'freed' : 'LOST'}</span>
             <span className={`font-mono font-semibold ${impact.savings >= 0 ? 'text-accent' : 'text-bad'}`}>
@@ -100,16 +116,23 @@ export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: 
 
       {impact?.costsMoreThanKeeping && (
         <p className="text-xs text-bad">
-          This release costs you {formatMoney(-impact.savings)} of cap space rather than freeing any. His signing bonus
-          has been prorated across years you'd no longer get — all of it accelerates onto this season the moment he's
-          cut. Keeping him through the season is cheaper; the dead money shrinks each year the deal runs down.
+          This release costs you {formatMoney(-impact.savings)} of cap space rather than freeing any.
+          {impact.deadGuaranteedSalary > 0 && ` You guaranteed him ${formatMoney(impact.deadGuaranteedSalary)} of salary, and you owe it whether he plays or not.`}
+          {impact.deadBonus > 0 && ` His signing bonus was prorated across years you'd no longer get, and all ${formatMoney(impact.deadBonus)} of it accelerates onto this season the moment he's cut.`}
+          {' '}Keeping him through the season is cheaper; the bill shrinks each year the deal runs down, as the bonus
+          amortises and the guarantee is paid off.
         </p>
       )}
 
       {impact?.capEnabled && !impact.costsMoreThanKeeping && impact.deadMoney > 0 && (
         <p className="text-xs text-muted">
-          {formatMoney(impact.deadMoney)} of prorated signing bonus stays on your books as dead money — you pay for him
-          either way, you just stop getting the player.
+          {formatMoney(impact.deadMoney)} stays on your books as dead money
+          {impact.deadGuaranteedSalary > 0 && impact.deadBonus > 0
+            ? ' — bonus you have already paid, and salary you promised him in writing.'
+            : impact.deadGuaranteedSalary > 0
+              ? ' — salary you promised him in writing.'
+              : ' — signing bonus you have already paid.'}
+          {' '}You pay for him either way, you just stop getting the player.
         </p>
       )}
 

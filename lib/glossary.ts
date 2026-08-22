@@ -96,13 +96,13 @@ export const GLOSSARY = {
   },
   deadMoney: {
     term: 'Dead money',
-    definition: 'Money still charged against your cap for a player who is no longer on the roster. Signing bonus you already paid, accelerated onto the books the year you cut him.',
+    definition: 'Money still charged against your cap for a player who is no longer on the roster: signing bonus you already paid, accelerated onto the books the year you cut him, plus any guaranteed salary you still owe a man who will not be playing for you.',
     why: 'It buys you nothing. It is also what turns a release into a real decision rather than a delete button — and a cap sheet heavy with it is a roster of ghosts.',
   },
   proration: {
     term: 'Proration',
     definition: 'A signing bonus is paid up front but charged to the cap in equal slices — over the length of the deal, to a maximum of five seasons.',
-    why: 'It is why a long contract gets cheap to escape near the end: from year six onward there is no bonus left to charge, so those years are pure salary and walking away costs nothing.',
+    why: 'It is why a long contract gets cheap to escape near the end: from year six onward there is no bonus left to charge, and by then his guarantees are long since collected.',
   },
   voidYears: {
     term: 'Void years',
@@ -111,7 +111,7 @@ export const GLOSSARY = {
   },
   guaranteedMoney: {
     term: 'Guaranteed money',
-    definition: 'The part of a contract the player collects whatever happens — including if you release him.',
+    definition: 'The part of a contract the player collects whatever happens — including if you release him. The signing bonus is inside that figure, not on top of it: it is handed over on day one and no release gets it back.',
     why: 'It is the number that separates a real commitment from a tryout with paperwork, which is why agents fight harder over it than over the headline total.',
   },
   capSavingsOnCut: {

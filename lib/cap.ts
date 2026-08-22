@@ -134,18 +134,127 @@ export function remainingValue(c: ContractLike, mode: CapMode): number {
 }
 
 /**
+ * ---------------------------------------------------------------------------
+ * THE GUARANTEE THE PANEL SHOWS AND THE GUARANTEE THAT BINDS
+ * ---------------------------------------------------------------------------
+ * `deadMoneyOnCut` used to be the unamortised signing bonus and nothing else.
+ * It never read `guaranteed` at all — so the guarantee slider on the
+ * negotiation screen moved a figure the club was never actually held to, and
+ * it was wrong in BOTH directions. Measured on a 93 free agent, four years at
+ * market, before this:
+ *
+ *     slider    "guaranteed" shown    dead money if cut
+ *        0%           $0.0M                 $4.6M
+ *       50%          $19.2M                $13.2M
+ *      100%          $38.4M                $21.8M
+ *
+ * At the top of the slider the club walked away from $16.6M it had told the
+ * player was locked in; at the bottom the panel said nothing was guaranteed
+ * while $4.6M still bound, because `contractShapeFor` pays a 12% signing
+ * bonus even at a zero guarantee and a signing bonus is cash in his pocket.
+ *
+ * HOW `guaranteed` IS STORED. `buildContract` writes
+ * `(baseSum + signingBonus) * guaranteedPct` — a share of the deal's TOTAL
+ * value. The signing bonus is INSIDE that figure, not on top of it. So the
+ * guaranteed BASE SALARY is `guaranteed - signingBonus`, and adding the two
+ * together would count the bonus twice. Legacy rows can carry a `guaranteed`
+ * BELOW the bonus (the 0% slider above); that is not a smaller guarantee,
+ * because the bonus was paid regardless, which is what `guaranteedMoney`
+ * floors and what `buildContract` now stores directly.
+ *
+ * WHAT A RELEASE COSTS. The real rule, and now this one: the unamortised
+ * signing bonus PLUS the guaranteed base salary still owed. They are
+ * different kinds of money — the bonus is cash already paid whose cap charge
+ * accelerates, the guaranteed salary is cash the club has yet to pay and now
+ * must — and both land on the cut year's cap, which is why one function adds
+ * them.
+ *
+ * A TRADE IS NOT A RELEASE, and this is why `unamortizedBonus` is exported
+ * separately. When a player is dealt, only the bonus accelerates onto the
+ * club giving him up; his guaranteed salary travels with the contract and is
+ * the acquiring club's problem (see `tradeCapEffect`, and the `guaranteed`
+ * rewrite in executeTrade that keeps the two halves from being charged twice).
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * Base salary for every year of the deal, indexed from signing, with the same
+ * fallback capHit() and capHitSchedule() use — so every figure here is
+ * measured off the identical schedule those two are.
+ */
+function baseSchedule(c: ContractLike): number[] {
+  const raw = readJson<number[]>(c.baseSalaries, []);
+  const out: number[] = [];
+  for (let i = 0; i < Math.max(1, Math.round(c.years)); i++) {
+    out.push(raw[i] ?? raw[raw.length - 1] ?? CAP.MIN_SALARY);
+  }
+  return out;
+}
+
+/**
+ * Total guaranteed money written into a deal — bonus included, since the
+ * bonus is guaranteed by being paid up front. `buildContract` stores exactly
+ * this now; the floor is what keeps contracts already sitting in a save from
+ * claiming a guarantee smaller than the cheque the club has handed over.
+ */
+export function guaranteedMoney(c: ContractLike): number {
+  return Math.max(c.guaranteed, c.signingBonus);
+}
+
+/**
+ * How the guaranteed base salary sits across the years of the deal.
+ *
+ * Earliest year first, because that is how guarantees are written and how
+ * they are consumed: a man three years into a four-year deal has already
+ * COLLECTED the guaranteed part of years one to three, so nothing about
+ * those years binds the club any more. The alternative — carrying the whole
+ * figure to the end of the deal — would make a veteran on an old contract
+ * permanently untradeable and uncuttable, which is the opposite of how a
+ * deal ages in real football.
+ *
+ * The year the club is IN counts as still owed. The cap charges that season
+ * whole (capHit takes no view on which week it is), so a release during it
+ * has to answer for the whole of it too, or cutting a man in December would
+ * quietly cost less than cutting him in August.
+ */
+function guaranteedBaseByYear(c: ContractLike): number[] {
+  let left = Math.max(0, guaranteedMoney(c) - c.signingBonus);
+  return baseSchedule(c).map((b) => {
+    const g = Math.min(left, b);
+    left -= g;
+    return g;
+  });
+}
+
+/** Guaranteed base salary the club still owes him if it releases him today. */
+export function guaranteedSalaryOwed(c: ContractLike | null | undefined, mode: CapMode): number {
+  if (!c || mode !== 'REALISTIC') return 0;
+  return guaranteedBaseByYear(c)
+    .slice(yearIndex(c))
+    .reduce((a, b) => a + b, 0);
+}
+
+/**
+ * Signing bonus paid but not yet charged to a cap. Accelerates in full the
+ * moment he leaves the roster — by release OR by trade. Void years are
+ * already inside `prorationYears`, which is what makes them accelerate the
+ * moment the real deal ends.
+ */
+export function unamortizedBonus(c: ContractLike | null | undefined, mode: CapMode): number {
+  if (!c || mode !== 'REALISTIC') return 0;
+  return proration(c) * Math.max(0, prorationYears(c) - yearIndex(c));
+}
+
+/**
  * Dead money left behind by cutting a player right now.
- * REALISTIC: all remaining bonus proration accelerates onto this year's cap
- * — including any void years, since those were never real roster years to
- * begin with and always accelerate the moment the real deal ends.
+ * REALISTIC: the unamortised signing bonus plus the guaranteed base salary
+ * still owed — see the block comment above for why those are the two halves
+ * and why they cannot be double-counted.
  * SIMPLIFIED / OFF: nothing.
  */
 export function deadMoneyOnCut(c: ContractLike | null | undefined, mode: CapMode): number {
   if (!c || mode !== 'REALISTIC') return 0;
-  // Everything not yet amortised accelerates onto this year's cap — no more
-  // than that, and no less. Void years are already inside `prorationYears`,
-  // which is what makes them accelerate the moment the real deal ends.
-  return proration(c) * Math.max(0, prorationYears(c) - yearIndex(c));
+  return unamortizedBonus(c, mode) + guaranteedSalaryOwed(c, mode);
 }
 
 /**
@@ -335,7 +444,19 @@ export function restructureContract(
     // slider left at zero shortened its proration window from five years to
     // three and RAISED the very cap hit the restructure was performed to lower.
     voidYears: usableVoidYears(c.yearsRemaining, (c.voidYears ?? 0) + Math.max(0, opts.addVoidYears ?? 0)),
-    guaranteed: c.guaranteed,
+    // RE-EXPRESSED IN THE REBASED FRAME, because `guaranteed` is read against
+    // year 0 of whatever schedule it is stored with (guaranteedBaseByYear) and
+    // this deal has just been rebased onto the years that are left. Carrying
+    // the old figure across verbatim would resurrect guarantees the player has
+    // already collected — a man three years into a deal would come out of a
+    // restructure owed his year-one guarantee all over again.
+    //
+    // The converted salary joins the bonus, and is guaranteed by being paid
+    // now rather than owed later; whatever guaranteed salary the conversion
+    // did not swallow is still owed on top of it.
+    guaranteed:
+      c.signingBonus + converted
+      + Math.max(0, guaranteedSalaryOwed(c, 'REALISTIC') - Math.min(converted, guaranteedBaseByYear(c)[yearIdx] ?? 0)),
   };
 }
 
@@ -406,7 +527,12 @@ export interface TradeCapEffect {
 export function tradeCapEffect(c: ContractLike | null | undefined, mode: CapMode): TradeCapEffect {
   if (!c || mode === 'OFF') return { frees: 0, takesOn: 0, dead: 0 };
   const hit = capHit(c, mode);
-  const dead = deadMoneyOnCut(c, mode);
+  // The BONUS, not the whole dead-money figure a release would cost. His
+  // guaranteed salary does not accelerate here — it travels inside the
+  // contract and lands on the acquiring club as base salary, which `takesOn`
+  // is already charging them for. Charging it to both sides would invent
+  // money out of a trade.
+  const dead = unamortizedBonus(c, mode);
   return {
     frees: hit - dead,
     takesOn: hit - (mode === 'REALISTIC' ? proration(c) : 0),
@@ -714,7 +840,12 @@ export function buildContract(opts: {
     signedYear: opts.signedYear,
     baseSalaries,
     signingBonus,
-    guaranteed: Math.round((baseSum + signingBonus) * (opts.guaranteedPct ?? 0.45)),
+    // A share of the deal's TOTAL value, bonus included — and never less than
+    // the bonus itself, which is guaranteed by having been paid. Without the
+    // floor a 0%-guarantee offer stored `guaranteed: 0` over a contract that
+    // still handed the player a signing bonus, and the contract card then
+    // printed "$0 guaranteed" over money the club could not get back.
+    guaranteed: Math.max(signingBonus, Math.round((baseSum + signingBonus) * (opts.guaranteedPct ?? 0.45))),
     voidYears: usableVoidYears(years, opts.voidYears ?? 0),
     isRookieDeal: opts.isRookieDeal ?? false,
   };

@@ -1,5 +1,5 @@
 import {
-  capHit, capHitSchedule, deadMoneyOnCut, formatMoney, proration, prorationYears, remainingValue,
+  capHit, capHitSchedule, deadMoneyOnCut, formatMoney, guaranteedMoney, proration, prorationYears, remainingValue,
   type ContractLike,
 } from '@/lib/cap';
 import { readJson } from '@/lib/json';
@@ -126,7 +126,7 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-4 pt-4 border-t border-line/60">
         <StatNumber value={formatMoney(remainingValue(contract, capMode))} label="Remaining value" size="sm" />
-        <StatNumber value={formatMoney(contract.guaranteed)} label="Guaranteed" size="sm" tip={tip('guaranteedMoney')} />
+        <StatNumber value={formatMoney(guaranteedMoney(contract))} label="Guaranteed" size="sm" tip={tip('guaranteedMoney')} />
         <StatNumber
           value={formatMoney(deadMoneyOnCut(contract, capMode))}
           label="Dead if cut today"

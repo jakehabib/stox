@@ -7,7 +7,7 @@ import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFr
 import { decideOffer, type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer } from '@/lib/negotiation';
 import { parseSettings } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
-import { capHit, deadMoneyOnCut, capSavingsOnCut } from '@/lib/cap';
+import { capHit, deadMoneyOnCut, capSavingsOnCut, unamortizedBonus, guaranteedSalaryOwed } from '@/lib/cap';
 import { autoDepthChart, reconcileDepthChart } from '@/lib/gen/league';
 import { Rng } from '@/lib/rng';
 import { readJson, writeJson } from '@/lib/json';
@@ -44,8 +44,12 @@ export interface CutImpact {
   playerName: string;
   /** This year's cap hit that goes away. */
   currentHit: number;
-  /** Accelerated signing-bonus proration that stays on the books. */
+  /** Everything that stays on the books: `deadBonus` + `deadGuaranteedSalary`. */
   deadMoney: number;
+  /** Signing bonus already paid, whose remaining proration accelerates onto this year. */
+  deadBonus: number;
+  /** Base salary the club guaranteed him and still owes for seasons he will not play. */
+  deadGuaranteedSalary: number;
   /** currentHit - deadMoney. NEGATIVE means the release costs you cap space. */
   savings: number;
   capSpaceBefore: number;
@@ -60,10 +64,13 @@ export interface CutImpact {
  * What releasing this player actually does, for the confirm step.
  *
  * A cut is the one move whose real cost is invisible at the point of
- * decision: in REALISTIC mode every remaining dollar of prorated signing
- * bonus (void years included) accelerates onto THIS year's cap the moment
- * he's gone, so a heavily-restructured contract can cost more to release
- * than to keep. Nothing said so before you clicked.
+ * decision. In REALISTIC mode two separate bills land on THIS year's cap the
+ * moment he's gone: every remaining dollar of prorated signing bonus (void
+ * years included) accelerates, and any base salary the club guaranteed him
+ * still has to be paid for seasons he will not play. Either one alone can
+ * make a contract cost more to release than to keep, so both are returned
+ * under their own names — the confirm step says which is doing the damage
+ * rather than blaming the bonus for a bill the guarantee ran up.
  */
 export async function cutImpactAction(leagueId: string, playerId: string): Promise<CutImpact> {
   await assertLeagueOwner(leagueId);
@@ -74,7 +81,8 @@ export async function cutImpactAction(leagueId: string, playerId: string): Promi
 
   if (settings.capMode === 'OFF' || !player.contract || !player.teamId) {
     return {
-      capEnabled: false, playerName: name, currentHit: 0, deadMoney: 0, savings: 0,
+      capEnabled: false, playerName: name, currentHit: 0, deadMoney: 0,
+      deadBonus: 0, deadGuaranteedSalary: 0, savings: 0,
       capSpaceBefore: 0, capSpaceAfter: 0, leavesOverCap: false, costsMoreThanKeeping: false,
     };
   }
@@ -82,6 +90,11 @@ export async function cutImpactAction(leagueId: string, playerId: string): Promi
   const summary = await teamCapSummary(player.teamId, league.seasonYear, settings.capMode);
   const currentHit = capHit(player.contract, settings.capMode);
   const dead = deadMoneyOnCut(player.contract, settings.capMode);
+  // The two halves of that same figure, from the same functions it is built
+  // from — never re-derived here, or the panel could split a total it does
+  // not actually add up to.
+  const deadBonus = unamortizedBonus(player.contract, settings.capMode);
+  const deadGuaranteedSalary = guaranteedSalaryOwed(player.contract, settings.capMode);
   const savings = capSavingsOnCut(player.contract, settings.capMode);
   const after = summary.capSpace + savings;
 
@@ -90,6 +103,8 @@ export async function cutImpactAction(leagueId: string, playerId: string): Promi
     playerName: name,
     currentHit,
     deadMoney: dead,
+    deadBonus,
+    deadGuaranteedSalary,
     savings,
     capSpaceBefore: summary.capSpace,
     capSpaceAfter: after,

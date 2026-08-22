@@ -3,7 +3,7 @@ import { Rng, clamp } from './rng';
 import { AI, CAP, LEAGUE, FREE_AGENCY, ROSTER_TARGETS, Position, rosterMinFor } from './tuning';
 import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
-import { buildContract, marketValue, suggestedYears, capHit, capSavingsOnCut, formatMoney, maxYearsForAge } from './cap';
+import { buildContract, marketValue, suggestedYears, capHit, capSavingsOnCut, formatMoney, guaranteedMoney, maxYearsForAge } from './cap';
 import { buildScoutedView } from './scouting';
 import { loadDynastyProfile, parseSkills, scoutingModsFor, signBandMultFor } from './dynasty';
 import {
@@ -1716,7 +1716,7 @@ export async function negotiateOffer(opts: {
           // was signed.
           newYears: appended ? offer.years : written.contract.years,
           apy: offer.apy,
-          guaranteed: written.contract.guaranteed,
+          guaranteed: guaranteedMoney(written.contract),
           capHitThisYear: capHit(written.contract, settings.capMode),
           capSpaceBefore: capBefore,
           capSpaceAfter: capAfter,

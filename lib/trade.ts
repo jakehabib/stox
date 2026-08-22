@@ -6,7 +6,7 @@ import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, rosterFit, p
 import { projectedDraftOrder, imminentDraftYear } from './draft';
 import { CapMode } from './types';
 import { recordTrade } from './tradeRetro';
-import { deadMoneyOnCut, formatMoney } from './cap';
+import { unamortizedBonus, formatMoney } from './cap';
 import { teamCapSummary } from './cap-summary';
 import { reconcileDepthChart } from './gen/league';
 import { assertCapRoom, tradeCapDeltas } from './capEnforcement';
@@ -697,7 +697,10 @@ export async function executeTrade(opts: {
 
           const contract = await tx.contract.findUnique({ where: { playerId: a.id } });
           if (contract && capMode === 'REALISTIC') {
-            const accelerated = deadMoneyOnCut(contract, capMode);
+            // The BONUS accelerates, not what a release would cost. His
+            // guaranteed salary is not escaped by trading him — it travels
+            // with the contract below and becomes the acquiring club's bill.
+            const accelerated = unamortizedBonus(contract, capMode);
             if (accelerated > 0) {
               const p = await tx.player.findUniqueOrThrow({ where: { id: a.id } });
               await tx.capCharge.create({
@@ -712,10 +715,22 @@ export async function executeTrade(opts: {
           }
           // Bonus stays behind with the old team as the charge above, so the
           // contract that travels carries base salary and nothing else.
+          //
+          // `guaranteed` has to be restated at the same time, because it is
+          // stored bonus-inclusive (see lib/cap.ts) and the bonus has just
+          // been zeroed out of this row. Left alone, every dollar of bonus
+          // guarantee would be re-read as guaranteed BASE salary and the
+          // acquiring club would inherit a dead-money bill for money the
+          // selling club had already been charged for.
           await tx.contract.updateMany({
             where: { playerId: a.id },
             data: capMode === 'REALISTIC'
-              ? { teamId: toTeam, signingBonus: 0, voidYears: 0 }
+              ? {
+                  teamId: toTeam,
+                  signingBonus: 0,
+                  voidYears: 0,
+                  guaranteed: Math.max(0, contract ? contract.guaranteed - contract.signingBonus : 0),
+                }
               : { teamId: toTeam },
           });
         } else {
