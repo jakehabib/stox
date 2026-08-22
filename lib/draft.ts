@@ -83,9 +83,12 @@ export async function draftPlayer(opts: {
    *   - the user is blocked, with the same specific CapViolationError every
    *     other move throws, and has to clear room before picking;
    *   - an AI team clears its own room first (autoClearCapRoom releases the
-   *     fewest positive-savings veterans that cover the bill) — the same
-   *     price a real front office pays to fit its rookie pool — rather than
-   *     stalling the draft for everyone.
+   *     least valuable veterans that cover the bill) — the same price a real
+   *     front office pays to fit its rookie pool — rather than stalling the
+   *     draft for everyone. "Fewest" used to be the principle here and it is
+   *     not any more: paid by count, a club settled a $990k bill by waiving
+   *     its 24-year-old 95, which is where the elite men in the post-draft
+   *     free-agent pool were coming from.
    */
   if (!isFantasy && pickInfo.pick) {
     const { parseSettings } = await import('./settings');

@@ -230,7 +230,13 @@ export interface UnitSpendRow {
   spend: number;
   /** Share of this club's own active salary. */
   share: number;
-  /** Mean of the other 31 clubs' shares — the thing the share is judged against. */
+  /**
+   * Mean share across ALL THIRTY-TWO clubs, this one included — the thing the
+   * share is judged against. It said "the other 31" and it never was: the
+   * average runs over `input.teamIds`, which is every club. The on-screen
+   * wording says "league average", which is right for all 32; only this line
+   * was wrong.
+   */
   leagueMeanShare: number;
   /** share − leagueMeanShare, in share units (multiply by 100 for points). */
   shareDelta: number;
@@ -257,9 +263,12 @@ export interface UnitSpendRow {
  *
  * Both axes are DIFFERENCES from the league because neither raw number means
  * anything alone — "14.5% of the cap on the offensive line" is only high or
- * low once you know what everyone else does, and the league-wide rating
- * spread in this sim is about seven points, so a raw unit rating of 82 is
- * unreadable without its mean beside it.
+ * low once you know what everyone else does, and a raw unit rating of 82 is
+ * unreadable without its mean beside it. This used to claim the league-wide
+ * rating spread was "about seven points"; measured, per-unit spreads run
+ * 18-40 (quarterback 53-93) and team overall 61-81. The argument for showing
+ * differences survives the correction — it is stronger with the real numbers
+ * — but the number itself was stale by a factor of three.
  */
 export function buildUnitSpendTable(input: {
   /** Every club's cap dollars per group, keyed `${teamId}|${group}`. */

@@ -10,9 +10,11 @@ import { VIZ, TXT, SIDE_COLOR, signed, pct1, ordinal } from './viz';
  *
  * Both axes are differences on purpose. "14.5% of the cap at offensive line"
  * and "82 at offensive line" are unreadable alone: the second only means
- * something once you know the league-wide rating spread in this sim is about
- * seven points, and the first only once you know what the other 31 clubs
- * spend there.
+ * something once you know where the league sits at that unit, and the first
+ * only once you know what everyone else spends there. (The mean this is
+ * measured against is over all thirty-two clubs, this one included — see
+ * UnitSpendRow.leagueMeanShare in lib/analytics.ts, where the comment used to
+ * say "the other 31". The screen's own wording, "league average", is right.)
  *
  * Nine groups is one above the categorical ceiling, and a scatter is judged on
  * ALL pairs rather than adjacent ones, which caps a validated set at three. So

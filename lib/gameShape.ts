@@ -90,8 +90,11 @@ export interface GameShape {
  * recap engine's BLOWOUT_MARGIN of 21: across 11,723 played games in a real
  * save, 28% of every game in this sim finishes by 21 or more, so a marker at
  * 21 would fire on more than a quarter of the schedule and stop meaning
- * anything. 28 marks the top ~15%, which is roughly the decile the marker is
- * supposed to be for.
+ * anything. 28 was chosen as "the top ~15%"; re-measured on one league's 176
+ * regular-season games only 9.1% finish there, so it is nearer the top tenth
+ * than the top seventh. That is still the decile this marker is supposed to
+ * be for, and 28 stays — but nothing user-facing quotes a blowout frequency,
+ * because 176 games is a thin sample to publish a rate from.
  */
 export const BLOWOUT_MARGIN = 28;
 /** [TUNE] One possession. 35% of games finish inside it. */
