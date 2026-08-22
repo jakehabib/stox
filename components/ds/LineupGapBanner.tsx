@@ -1,3 +1,6 @@
+'use client';
+
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
 export interface LineupGapItem {
@@ -19,9 +22,53 @@ export interface LineupGapItem {
  *
  * Deliberately NOT a block. Real clubs play short-handed all the time; the
  * game's job is to tell you, not to refuse to run the week.
+ *
+ * AND IT CAN BE DISMISSED, because sometimes there is nothing to be done and
+ * the GM knows it — there may be no kicker on the wire worth signing, or he
+ * may have decided to ride it out. The app owner: *"I think the fix for that
+ * banner saying you have no available players is to just give us a dismiss
+ * button."*
+ *
+ * THE DISMISSAL IS SCOPED TO THE HOLE HE ACTUALLY SAW, and that is the whole
+ * design. It is keyed on the exact set of positions and counts in front of
+ * him, so waving away "no healthy K" cannot also hide "no healthy QB" next
+ * week — a new hole has a different key and comes back loud. Losing a second
+ * kicker changes the count, so that returns too. He is silencing one known
+ * fact, not turning the warning off.
+ *
+ * Client-side and per-browser on purpose: this is a preference about being
+ * told something, not a fact about the league, and it has no business in the
+ * save file where an export would carry it to somebody else.
  */
 export function LineupGapBanner({ leagueId, gaps }: { leagueId: string; gaps: LineupGapItem[] }) {
-  if (gaps.length === 0) return null;
+  // The hole itself, as a string. Position and count both matter — see above.
+  const signature = gaps.map((g) => `${g.position}:${g.missing}${g.none ? '!' : ''}`).join(',');
+  const storageKey = `dgm:lineup-gap-dismissed:${leagueId}`;
+
+  // Starts hidden and is revealed once we have read the browser's answer.
+  // The other order flashes the banner on every page load for a GM who
+  // already dismissed it, which is a worse thing to do than appear a frame
+  // late.
+  const [checked, setChecked] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    try {
+      setDismissed(window.localStorage.getItem(storageKey) === signature);
+    } catch {
+      // Private browsing, blocked storage — the warning simply always shows,
+      // which is the safe way for this particular control to fail.
+      setDismissed(false);
+    }
+    setChecked(true);
+  }, [storageKey, signature]);
+
+  const dismiss = () => {
+    setDismissed(true);
+    try { window.localStorage.setItem(storageKey, signature); } catch { /* see above */ }
+  };
+
+  if (gaps.length === 0 || !checked || dismissed) return null;
 
   const worst = gaps[0];
   const empty = gaps.filter((g) => g.none);
@@ -55,6 +102,15 @@ export function LineupGapBanner({ leagueId, gaps }: { leagueId: string; gaps: Li
         <div className="flex items-center gap-2 ml-auto shrink-0">
           <Link href={`/league/${leagueId}/free-agency`} className="btn-secondary text-xs py-1">Sign someone</Link>
           <Link href={`/league/${leagueId}/depth-chart`} className="btn-ghost text-xs py-1">Depth chart</Link>
+          <button
+            type="button"
+            onClick={dismiss}
+            title="Stops showing this particular hole. A different one still gets your attention."
+            className="text-muted hover:text-chalk text-lg leading-none px-1.5 -mr-1"
+            aria-label="Dismiss this warning"
+          >
+            &times;
+          </button>
         </div>
       </div>
     </div>
