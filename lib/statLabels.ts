@@ -260,28 +260,50 @@ export const CAREER_COLUMNS: Record<string, StatColumn[]> = {
   // Offensive line: the sim writes no box line for them, so there is nothing
   // truthful to put in a row. See the block comment above.
   LT: OFF_LINE_NONE, LG: OFF_LINE_NONE, C: OFF_LINE_NONE, RG: OFF_LINE_NONE, RT: OFF_LINE_NONE,
+  /*
+   * EVERY DEFENSIVE COLUMN THE ENGINE STORES, NOT A SELECTION OF THEM.
+   *
+   * These five used to omit stats the simulation actually records: EDGE and DT
+   * dropped `defInt` and `pd`, LB dropped `sacks`, `defInt` and `pd`, and CB
+   * and S dropped `sacks`. Measured against a real save's stored career blobs,
+   * the offensive positions were already supersets — a quarterback's table
+   * carries all eight keys he has — and only the defenders leaked.
+   *
+   * That omission was load-bearing, because it was the reason the card could
+   * not simply have ONE home for career numbers. The app owner counted three
+   * ("we have career stats in 3 places"), and the two raw stat dumps could only
+   * be removed once this table was guaranteed to carry everything they did. It
+   * now does, at every position, so it is the single home and the dumps are
+   * gone.
+   *
+   * `lead` orders the headline figures; a key with no `lead` still gets a
+   * column, it just does not open the sentence.
+   */
   EDGE: [
     { key: 'gp', short: 'G' }, { key: 'tackles', short: 'Tkl', lead: 2 },
     { key: 'sacks', short: 'Sk', lead: 1 }, { key: 'ff', short: 'FF', lead: 3 },
+    { key: 'defInt', short: 'Int' }, { key: 'pd', short: 'PD' },
   ],
   DT: [
     { key: 'gp', short: 'G' }, { key: 'tackles', short: 'Tkl', lead: 2 },
     { key: 'sacks', short: 'Sk', lead: 1 }, { key: 'ff', short: 'FF', lead: 3 },
+    { key: 'defInt', short: 'Int' }, { key: 'pd', short: 'PD' },
   ],
   LB: [
     { key: 'gp', short: 'G' }, { key: 'tackles', short: 'Tkl', lead: 1 },
     { key: 'tklPerG', short: 'Tkl/G', derive: (s) => per(s.tackles, s.gp), format: 'avg1' },
-    { key: 'ff', short: 'FF', lead: 2 },
+    { key: 'sacks', short: 'Sk', lead: 3 }, { key: 'ff', short: 'FF', lead: 2 },
+    { key: 'defInt', short: 'Int' }, { key: 'pd', short: 'PD' },
   ],
   CB: [
     { key: 'gp', short: 'G' }, { key: 'tackles', short: 'Tkl', lead: 3 },
     { key: 'defInt', short: 'Int', lead: 1 }, { key: 'pd', short: 'PD', lead: 2 },
-    { key: 'ff', short: 'FF' },
+    { key: 'sacks', short: 'Sk' }, { key: 'ff', short: 'FF' },
   ],
   S: [
     { key: 'gp', short: 'G' }, { key: 'tackles', short: 'Tkl', lead: 1 },
     { key: 'defInt', short: 'Int', lead: 2 }, { key: 'pd', short: 'PD', lead: 3 },
-    { key: 'ff', short: 'FF' },
+    { key: 'sacks', short: 'Sk' }, { key: 'ff', short: 'FF' },
   ],
   K: [
     { key: 'gp', short: 'G' }, { key: 'fgm', short: 'FGM', lead: 1 }, { key: 'fga', short: 'FGA', lead: 2 },

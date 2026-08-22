@@ -18,7 +18,7 @@ export interface HonorAward {
  * should simply not have a trophy shelf on his card.
  */
 export function CareerHonors({
-  position, ringYears, awards, allStarYears = [], careerHighlights, seasons,
+  position, ringYears, awards, allStarYears = [], seasons,
 }: {
   position: string;
   ringYears: number[];
@@ -31,10 +31,9 @@ export function CareerHonors({
    */
   allStarYears?: number[];
   /** Two or three headline career totals, pre-formatted by the caller. */
-  careerHighlights: { label: string; value: string }[];
   seasons: number;
 }) {
-  if (ringYears.length === 0 && awards.length === 0 && allStarYears.length === 0 && careerHighlights.length === 0) return null;
+  if (ringYears.length === 0 && awards.length === 0 && allStarYears.length === 0) return null;
 
   return (
     <div className="panel overflow-hidden">
@@ -95,21 +94,15 @@ export function CareerHonors({
         </div>
       )}
 
-      {careerHighlights.length > 0 && (<>
-        {/* Regular season, which is what "career stats" means on every real
-            football reference — and here it is literally what the column
-            holds, since the postseason lives in its own bucket. Labelled so
-            the number can't be read as a combined total. */}
-        <div className="px-4 pt-3 -mb-1 label-sm">Career · regular season</div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-line/40">
-          {careerHighlights.map((h) => (
-            <div key={h.label} className="px-4 py-3">
-              <div className="label-sm">{h.label}</div>
-              <div className="stat-value text-stat-sm leading-none mt-1">{h.value}</div>
-            </div>
-          ))}
-        </div>
-      </>)}
+      {/* NO CAREER TOTALS HERE ANY MORE.
+          This block printed a four-figure career strip off Player.careerStats,
+          and it was the third place on the card showing career numbers — the
+          app owner counted them. It was also the STALEST of the three: the
+          season roll folds the live year into careerStats only when the season
+          ends, so three games into 2026 this strip read 22,673 passing yards
+          beside a table whose CAREER row, summed from the seasons on screen,
+          read 23,497. Honours are what this component is for; the numbers live
+          in the year-by-year table, once. */}
     </div>
   );
 }

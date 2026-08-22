@@ -382,14 +382,6 @@ export default async function PlayerPage({
     playerId: player.id, trueOvr: player.trueOvr, careerStartYear,
     currentYear: league.seasonYear, titleYears: titleSeasons.map((s) => s.year),
   });
-  // Same per-position column list the year-by-year table below renders, cut
-  // to the broadcast-graphic subset — see lib/statLabels.ts. Deriving it
-  // rather than keeping a second list here is what stops the hero and the
-  // table from ever disagreeing about what defines the position.
-  const careerHighlights = headlineColumns(player.position)
-    .map(({ key, label }) => ({ label, value: (careerStats[key] ?? 0).toLocaleString() }))
-    .filter((h) => h.value !== '0');
-
   const market = marketValue({ ovr: view.scoutedOvr, position: player.position as any, age: player.age, potential: player.potential });
   const releaseCost = deadMoneyOnCut(player.contract, settings.capMode);
   const capTotal = capSummary?.capTotal ?? 0;
@@ -611,90 +603,6 @@ export default async function PlayerPage({
         )}
       </div>
 
-      {/* Contract sits directly under the hero on purpose. It is the only
-          section on this page that DOES anything — the offer form for a free
-          agent, extend/restructure/cut for your own man — and everything below
-          it informs the decision this box commits. Its POSITION is
-          unconditional: reordering the page by player state would make the
-          layout unlearnable, so a rostered player and a free agent find it in
-          the same place.
-
-          Its PRESENCE is not, and that is a different question. A draft
-          prospect cannot be signed at all, so the box had nothing to offer him
-          but one sentence saying so — a full-width panel in the best slot on
-          the page carrying no decision. He doesn't get one. That matches what
-          this page already does either side of it: the Season/Career Stats
-          panels below skip a draftee, and CareerHonors renders nothing when
-          there is nothing to honour. Hiding an empty section is not reordering
-          a full one. */}
-      {!player.isDraftee && (
-      <div className="section">
-        <SectionHeading
-          title="Contract"
-          action={
-            <div className="flex gap-1.5">
-              {player.contract?.isRookieDeal && (
-                <span className="pill border-accent2/30 text-accent2 bg-accent2/10 gap-1.5">
-                  Rookie Deal<Tooltip text={tip('rookieDeal')} />
-                </span>
-              )}
-              {player.contract?.isFranchiseTag && (
-                <span className="pill border-warn/30 text-warn bg-warn/10 gap-1.5">
-                  Franchise Tag<Tooltip text={tip('franchiseTag')} />
-                </span>
-              )}
-            </div>
-          }
-        />
-        <div className="panel p-5">
-          {player.contract ? (
-            <div className="space-y-4">
-              {/* One component rather than a headline figure plus two summary
-                  cells: the question this box answers is "what does he cost me
-                  for the rest of the deal, and what does it cost to get out",
-                  and that is a per-year table. Dead-money-if-cut is the column
-                  that turns it from a statement into a decision. */}
-              <ContractLedger
-                contract={player.contract}
-                capMode={settings.capMode}
-                seasonYear={league.seasonYear}
-              />
-
-              {isOwnRoster && userTeam && (
-                <div className="pt-3 space-y-3 border-t border-line/60">
-                  <ContractActions
-                    leagueId={league.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age}
-                    contract={{
-                      years: player.contract.years, yearsRemaining: player.contract.yearsRemaining, signedYear: player.contract.signedYear,
-                      baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
-                      guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
-                    }}
-                    availableSpaceForExtension={capSpace + hit} capSpace={capSpace} capMode={settings.capMode}
-                  />
-                  <CutButton leagueId={league.id} playerId={player.id} />
-                </div>
-              )}
-            </div>
-          ) : player.status === 'FREE_AGENT' && userTeam ? (
-            <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} />
-          ) : (
-            <p className="text-sm text-muted">No contract on file.</p>
-          )}
-        </div>
-      </div>
-      )}
-
-      {!player.isDraftee && (
-        <CareerHonors
-          position={player.position}
-          ringYears={ringYears}
-          awards={honorAwards}
-          allStarYears={allStarYears}
-          careerHighlights={careerHighlights}
-          seasons={player.experience}
-        />
-      )}
-
       {/* The page's marquee block, and deliberately high up: this is the thing
           the owner asked for, so it sits where a stat page leads rather than
           under six sections of scouting. It is also the tallest thing here —
@@ -718,8 +626,37 @@ export default async function PlayerPage({
           <div className="panel overflow-hidden">
             <CareerStatTable position={player.position} table={careerTable} />
           </div>
+          {/* THE TWO RAW STAT PANELS THAT USED TO SIT HERE ARE GONE.
+              The card carried career statistics in three places — the
+              year-by-year table above, a "Career Stats" panel, and the
+              highlights strip inside Career Honors — and the app owner counted
+              them: *"we have career stats in 3 places"*. Worse, two of the
+              three disagreed: the table's CAREER row sums the seasons it
+              shows, INCLUDING the one in progress, while the raw panel read
+              Player.careerStats, which the season roll has not folded the live
+              year into yet. On a quarterback three games into 2026 that read
+              23,497 yards and 96 games against 22,673 and 93 — both labelled
+              career, neither wrong, and nothing on screen explaining the gap.
+
+              They could not simply be deleted while CAREER_COLUMNS omitted
+              stats the engine stores (see lib/statLabels.ts — the defensive
+              rows were dropping sacks, interceptions and pass break-ups).
+              Those columns are complete now, verified against real stored
+              blobs at every position, so the table carries everything these
+              panels did and one number answers the question. */}
         </div>
       )}
+
+      {!player.isDraftee && (
+        <CareerHonors
+          position={player.position}
+          ringYears={ringYears}
+          awards={honorAwards}
+          allStarYears={allStarYears}
+          seasons={player.experience}
+        />
+      )}
+
 
       {!view.revealed && (
         <div className="panel border-l-2 border-l-accent2 p-4 flex flex-wrap items-center justify-between gap-4">
@@ -883,52 +820,6 @@ export default async function PlayerPage({
       )}
 
       <div className="grid sm:grid-cols-2 gap-6">
-        {/* A draft prospect has no NFL production by definition — his College
-            Profile above is the whole record, so two empty panels saying so
-            are just noise on the card. */}
-        {!player.isDraftee && (<>
-        <div className="section">
-          <SectionHeading title={showPlayoffs ? 'This Postseason' : 'Season Stats'} />
-          <div className="panel p-5">
-            {Object.keys(shownSeasonStats).length === 0 ? (
-              <p className="text-sm text-muted">
-                {showPlayoffs
-                  ? `No postseason games this year — his club hasn't played one, or hasn't got there.`
-                  : 'No stats recorded yet this season.'}
-              </p>
-            ) : (
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                {sortStatEntries(shownSeasonStats).map(([k, v]) => (
-                  <div key={k} className="flex justify-between border-b border-line/50 py-1">
-                    <span className="text-muted">{statLabel(k)}</span><span className="font-mono font-semibold">{v}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="section">
-          <SectionHeading title={showPlayoffs ? 'Career Postseason' : 'Career Stats'} />
-          <div className="panel p-5">
-            {Object.keys(shownCareerStats).length === 0 ? (
-              <p className="text-sm text-muted">
-                {showPlayoffs
-                  ? 'No postseason games on his record. Twenty of thirty-two clubs finish every year without one, so this is an ordinary answer rather than missing data.'
-                  : 'No career stats on file yet — these accumulate as full seasons complete.'}
-              </p>
-            ) : (
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                {sortStatEntries(shownCareerStats).map(([k, v]) => (
-                  <div key={k} className="flex justify-between border-b border-line/50 py-1">
-                    <span className="text-muted">{statLabel(k)}</span><span className="font-mono font-semibold">{v}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-        </>)}
 
         {userTeam && (
           <div className="section">
@@ -1005,6 +896,80 @@ export default async function PlayerPage({
         )}
 
       </div>
+
+      {/* CONTRACT SITS LAST, AND THAT IS A REVERSAL.
+          It used to sit directly under the hero, argued for on the grounds
+          that it is the only section on this page that DOES anything. The app
+          owner's read of the finished card: *"contract is the first box....
+          we need to more elegantly present it"*. He is right, and the old
+          argument had it backwards — this card is READ far more often than it
+          is acted on. You open it to find out who somebody is; only sometimes
+          to extend or cut him. So the man comes first, his production second,
+          and the front-office machinery follows underneath.
+
+          Its POSITION is still unconditional — a rostered player and a free
+          agent find it in the same place, because reordering by player state
+          would make the layout unlearnable. Its PRESENCE still is not: a draft
+          prospect cannot be signed, so he gets no empty box.
+
+          Nothing here is trimmed. The ledger keeps its per-year schedule, its
+          void years and its dead-money column. It is moved, not reduced. */}
+      {!player.isDraftee && (
+      <div className="section">
+        <SectionHeading
+          title="Contract"
+          action={
+            <div className="flex gap-1.5">
+              {player.contract?.isRookieDeal && (
+                <span className="pill border-accent2/30 text-accent2 bg-accent2/10 gap-1.5">
+                  Rookie Deal<Tooltip text={tip('rookieDeal')} />
+                </span>
+              )}
+              {player.contract?.isFranchiseTag && (
+                <span className="pill border-warn/30 text-warn bg-warn/10 gap-1.5">
+                  Franchise Tag<Tooltip text={tip('franchiseTag')} />
+                </span>
+              )}
+            </div>
+          }
+        />
+        <div className="panel p-5">
+          {player.contract ? (
+            <div className="space-y-4">
+              {/* One component rather than a headline figure plus two summary
+                  cells: the question this box answers is "what does he cost me
+                  for the rest of the deal, and what does it cost to get out",
+                  and that is a per-year table. Dead-money-if-cut is the column
+                  that turns it from a statement into a decision. */}
+              <ContractLedger
+                contract={player.contract}
+                capMode={settings.capMode}
+                seasonYear={league.seasonYear}
+              />
+
+              {isOwnRoster && userTeam && (
+                <div className="pt-3 space-y-3 border-t border-line/60">
+                  <ContractActions
+                    leagueId={league.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age}
+                    contract={{
+                      years: player.contract.years, yearsRemaining: player.contract.yearsRemaining, signedYear: player.contract.signedYear,
+                      baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
+                      guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
+                    }}
+                    availableSpaceForExtension={capSpace + hit} capSpace={capSpace} capMode={settings.capMode}
+                  />
+                  <CutButton leagueId={league.id} playerId={player.id} />
+                </div>
+              )}
+            </div>
+          ) : player.status === 'FREE_AGENT' && userTeam ? (
+            <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} />
+          ) : (
+            <p className="text-sm text-muted">No contract on file.</p>
+          )}
+        </div>
+      </div>
+      )}
     </div>
   );
 }
