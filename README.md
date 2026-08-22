@@ -1770,3 +1770,24 @@ ever force-pushed over, so every state below still exists in git history).
   "about fifteen hundred generated players", "Thirty-two clubs, none of them
   real", and a GM skill tree promising it never touches "a development roll".
   Also: San Francisco's nickname was "Prospect", singular. Commit `18e02c6`.
+- **2026-08-22 — Free agency: he has to still be free, and he has to be your
+  player.** Two save-wrecking holes from the pre-release battle test.
+  `signFreeAgent` moved whoever the id named and deleted his existing contract
+  on the next line, so aimed at a man on another club's roster it simply took
+  him — no dead money, no release, nothing on the wire. The negotiation
+  fingerprint does not guard this, it delays it: it refuses once and hands back
+  a fresh session the panel adopts, so the second click goes through (3 of 3
+  rostered players taken; now 0 of 3). And six contract actions stopped at
+  "do you own this save", which says nothing about which player id you then
+  passed — so a rival club's 99 receiver could be extended, have his bonus
+  rewritten from $11.0M to $50.7M, be tagged, restructured, or released. Both
+  are now enforced at the write. Commit `0953a2f`.
+- **2026-08-22 — Screens that contradict themselves.** The negotiation meter
+  drew a green "he will sign this" over a dead "Not enough cap room" button
+  with the explanation suppressed; the restructure panel quoted $5.19M and
+  $2.60M for the same season in two rows three inches apart; a 38-year-old was
+  told he "does not intend to play past 35"; cap-off leagues advertised
+  "$InfinityM of room"; a refusal told you to lower an offer already at the
+  league minimum; the Re-sign Window called itself the offseason in week 5 of
+  the regular season; and the trade screen's cap block recommended adding
+  picks, which cannot move a cap number by a cent. Commit `72a8ad1`.
