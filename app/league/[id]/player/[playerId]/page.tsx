@@ -8,7 +8,7 @@ import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
 import { ratingColor, playerLabel, positionMoves, relatedPositions, POSITION_WEIGHTS, ATTRIBUTE_BY_KEY, AttrMap } from '@/lib/ratings';
 import { rankProspectCombine, ordinal, CombineMeasurable } from '@/lib/combineRank';
-import { formatMoney, capHit, marketValue, proration, prorationYears, restructureContract } from '@/lib/cap';
+import { formatMoney, capHit, askingPrice, marketValue, proration, prorationYears, restructureContract } from '@/lib/cap';
 import { classifyContractValue } from '@/lib/analytics';
 import { generateScoutingReport } from '@/lib/scoutingProse';
 import { teamCapSummary } from '@/lib/cap-summary';
@@ -394,6 +394,17 @@ export default async function PlayerPage({
     currentYear: league.seasonYear, titleYears: titleSeasons.map((s) => s.year),
   });
   const market = marketValue({ ovr: view.scoutedOvr, position: player.position as any, age: player.age, potential: player.potential });
+  // WHAT HE WILL SIGN FOR, which is only a different number for a man standing
+  // on the wire: `askingPrice` is `market` discounted for weeks unsigned, and
+  // weeksUnsigned is 0 for everybody under contract. It is quoted rather than
+  // `market` wherever this page talks to a free agent, because it is the figure
+  // his agent reserves at the moment you open talks (resolveNegotiationSession)
+  // and the figure the free-agency board prints — a hero strip advertising the
+  // other one would be describing a deal nobody in the game is offering.
+  const ask = askingPrice({
+    ovr: view.scoutedOvr, position: player.position as any, age: player.age,
+    potential: player.potential, weeksUnsigned: player.weeksUnsigned,
+  });
   const capTotal = capSummary?.capTotal ?? 0;
   const valueTier = player.contract ? classifyContractValue(market - hit, market) : 'market';
 
@@ -442,12 +453,19 @@ export default async function PlayerPage({
               detail: capTotal > 0 ? `${((hit / capTotal) * 100).toFixed(1)}% of cap` : undefined,
               tip: tip('capHit'),
             }
-          : {
-              label: 'Market Value',
-              value: `${formatMoney(market)}/yr`,
-              detail: 'what the rating is worth',
-              tip: tip('marketValue'),
-            },
+          : ask < market
+            ? {
+                label: 'Asking',
+                value: `${formatMoney(ask)}/yr`,
+                detail: `down from ${formatMoney(market)}`,
+                tip: tip('askingPrice'),
+              }
+            : {
+                label: 'Market Value',
+                value: `${formatMoney(market)}/yr`,
+                detail: 'what the rating is worth',
+                tip: tip('marketValue'),
+              },
         {
           label: 'Years Left',
           value: player.contract ? String(player.contract.yearsRemaining) : '—',

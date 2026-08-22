@@ -1,4 +1,4 @@
-import { CAP, CONTRACT, MARKET, Position } from './tuning';
+import { CAP, CONTRACT, FREE_AGENCY, MARKET, Position } from './tuning';
 import { CapMode } from './types';
 import { readJson } from './json';
 import { retirementChance } from './progression';
@@ -586,6 +586,13 @@ export function qbJobShare(ovr: number): number {
  *
  * Quarterbacks additionally carry `qbJobShare` on top of their position
  * multiplier — see the block above it for why that position alone needs one.
+ *
+ * THIS IS WORTH, NOT ASK. It answers "what would he fetch if every club could
+ * bid", which is the right question about a man on a roster and about a man
+ * who has just reached the market. It is NOT what a free agent nobody has
+ * signed will actually take three months later — that is `askingPrice` below,
+ * this number discounted for time spent standing on the wire, and it is the
+ * one every free-agent price in the game goes through.
  */
 export function marketValue(opts: {
   ovr: number;
@@ -607,6 +614,66 @@ export function marketValue(opts: {
   ageMult = clamp(ageMult, 0.35, 1.35);
 
   return Math.max(CAP.MIN_SALARY, Math.round((base * posMult * ageMult) / 100_000) * 100_000);
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE ASK FALLS WHILE NOBODY CALLS
+ * ---------------------------------------------------------------------------
+ * `marketValue` above answers "what is this man worth on the open market",
+ * which is a fact about the player. What he will actually SIGN for is a fact
+ * about the player and the calendar, and the two stop being the same number
+ * the moment nobody wants him: a released veteran holds his number through the
+ * spring, shades it when camp opens, and by midseason is signing for whatever
+ * gets him on a roster. Ask a real agent in December what his client wants and
+ * you will not get the April answer.
+ *
+ * This returns that discount as a share of open-market worth, on a logistic in
+ * WEEKS ON THE WIRE — see FREE_AGENCY.ASK_DECAY for the shape and why it is a
+ * logistic rather than a straight line down. Normalised so it is exactly 1.0
+ * on the day he is released, which is what lets every screen quote
+ * `marketValue` as "what he wanted" and this as "what he will take" without
+ * the two disagreeing on week zero.
+ *
+ * Pure, and keyed on one number, so the figure a page prints and the figure
+ * the sealed-bid wave enforces cannot drift apart — they are the same call.
+ */
+export function unsignedAskMultiplier(weeksUnsigned: number): number {
+  const { MIDPOINT_WEEKS, WIDTH_WEEKS, FLOOR } = FREE_AGENCY.ASK_DECAY;
+  const weeks = Math.max(0, weeksUnsigned || 0);
+  const logistic = (w: number) => 1 / (1 + Math.exp((w - MIDPOINT_WEEKS) / WIDTH_WEEKS));
+  const shape = logistic(weeks) / logistic(0);
+  return FLOOR + (1 - FLOOR) * shape;
+}
+
+/**
+ * What an unsigned player will actually put his name on today: his open-market
+ * worth, discounted for however long he has been standing on the wire.
+ *
+ * THIS IS THE NUMBER THE GAME ENFORCES, and it is the one every free-agent
+ * price in the codebase goes through — the AI's sealed-bid wave and its
+ * in-season shopping (lib/freeagency.ts), the AI's own budgeting (`maxOffer`
+ * in lib/ai/gm.ts), the reservation price behind the user's negotiation panel,
+ * and the free-agency board itself. A screen that quoted `marketValue` for a
+ * man the engine would sign at this price would be the lying metric this
+ * codebase keeps writing down, so when in doubt about a FREE AGENT, this is
+ * the function; `marketValue` is what he WAS worth before nobody called, and
+ * is still the right answer for anybody under contract.
+ *
+ * The league minimum floor is `marketValue`'s own and applies here too: no ask
+ * ever lands under it, whatever the discount says.
+ */
+export function askingPrice(opts: {
+  ovr: number;
+  position: Position;
+  age: number;
+  potential?: number;
+  /** Player.weeksUnsigned. Zero — an ordinary rostered player — returns market. */
+  weeksUnsigned: number;
+}): number {
+  const open = marketValue(opts);
+  const asked = open * unsignedAskMultiplier(opts.weeksUnsigned);
+  return Math.max(CAP.MIN_SALARY, Math.round(asked / 100_000) * 100_000);
 }
 
 /**

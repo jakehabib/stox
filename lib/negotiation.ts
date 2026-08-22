@@ -165,8 +165,20 @@ export interface NegotiationContext {
   playerName: string;
   position: string;
   age: number;
-  /** Open, honest market estimate — the same number the UI already shows. */
+  /**
+   * What he will sign for, as far as the user can see — the same number the
+   * UI already shows, and for a free agent that is his ASK rather than his
+   * open-market worth (see askingPrice in lib/cap.ts). The two differ only
+   * once he has been standing on the wire a while.
+   */
   marketApy: number;
+  /**
+   * What he WAS worth before nobody called: `marketValue`, undiscounted. Equal
+   * to `marketApy` for everybody under contract and for anybody just released,
+   * and carried purely so the panel can say how far he has come down. A price
+   * that falls silently is a mechanic the user never learns exists.
+   */
+  openMarketApy: number;
   personality: Personality;
   /**
    * The APY he will actually sign for, hidden from the user. Derived from
@@ -338,8 +350,14 @@ export function buildNegotiationContext(opts: {
   position: string;
   age: number;
   ovr: number;
-  /** What the USER can see him being worth — the public estimate, scouted. */
+  /** What the USER can see him signing for — the public estimate, scouted. */
   marketApy: number;
+  /**
+   * The same estimate WITHOUT the unsigned discount. Defaults to `marketApy`,
+   * which is right for every caller whose player is on a roster — only a free
+   * agent's two numbers ever differ.
+   */
+  openMarketApy?: number;
   /**
    * What he is ACTUALLY worth, off true ratings. Defaults to `marketApy`.
    * Split out because the reservation price has to be priced off the player
@@ -470,6 +488,7 @@ export function buildNegotiationContext(opts: {
     position: opts.position,
     age: opts.age,
     marketApy: opts.marketApy,
+    openMarketApy: opts.openMarketApy ?? opts.marketApy,
     personality,
     reservationApy,
     desiredYears: desiredYearsFor(opts.age, personality),

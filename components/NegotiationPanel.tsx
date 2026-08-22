@@ -378,10 +378,16 @@ export function NegotiationPanel({
             label={appending ? 'New money' : 'Salary'}
             tipText={appending ? tip('newMoney') : tip('apy')}
             display={`${formatMoney(offer.apy)}/yr`}
+            /* His number, and — for a man who has been sitting on the wire —
+               the number he started at. The second half only appears when he
+               has actually come down, so nothing changes for a player under
+               contract or one who has just been released. */
             hint={
               appending
                 ? `On the ${offer.years} new year${offer.years === 1 ? '' : 's'} — market estimate ${formatMoney(ctx.marketApy)}/yr`
-                : `Market estimate ${formatMoney(ctx.marketApy)}/yr`
+                : ctx.openMarketApy > ctx.marketApy
+                  ? `Asking ${formatMoney(ctx.marketApy)}/yr, down from ${formatMoney(ctx.openMarketApy)}`
+                  : `Market estimate ${formatMoney(ctx.marketApy)}/yr`
             }
             min={gate.minSalary}
             max={gate.maxSalary}

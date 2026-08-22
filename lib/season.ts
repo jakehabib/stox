@@ -11,7 +11,7 @@ import { retirementChance, bumpForMilestone } from './progression';
 import { AttrMap } from './ratings';
 import { applyInSeasonProgression, progressFreeAgents } from './development';
 import { proration, deadMoneyOnCut } from './cap';
-import { runAiFreeAgencyWave, fillTeamsToRosterMinimum } from './freeagency';
+import { runAiFreeAgencyWave, fillTeamsToRosterMinimum, runInSeasonSignings } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
 import { mergeStats } from './stats';
 import { SeasonStats } from './types';
@@ -186,7 +186,55 @@ async function capComplianceBlock(leagueId: string, settings: LeagueSettings, ph
   };
 }
 
+/**
+ * ---------------------------------------------------------------------------
+ * ONE STEP OF THE PHASE MACHINE, AND THE CLOCK THE UNSIGNED ARE STANDING ON
+ * ---------------------------------------------------------------------------
+ * Everything below the wrapper is the phase machine itself. The wrapper exists
+ * for one thing: a free agent has been unsigned for another week, and
+ * something has to say so.
+ *
+ * Player.weeksUnsigned is what an asking price falls on (see askingPrice in
+ * lib/cap.ts), so it has to move when — and only when — league time moves. Not
+ * every click does: a re-sign warning, a draft still on the clock and a roster
+ * over the limit all return without advancing anything, and ticking on those
+ * would let a GM age the whole market by pressing a button that told him no.
+ * So the test is the league's own clock, read before and after: if the phase,
+ * the week or the season year changed, a week happened.
+ *
+ * ONE RACE OVER-COUNTS AND IT IS THE RIGHT WAY ROUND. Two concurrent advances
+ * of the same regular-season week both observe the week move — one of them did
+ * it — so the pool ages twice for one week of football. The alternative
+ * (claiming the tick per step) would trade that for a tick silently SKIPPED
+ * when a step is retried, and a market clock that runs slow is a market that
+ * never clears, which is the bug this whole mechanism exists to fix. One week
+ * of extra discount on a double click is invisible; a stuck clock is what the
+ * app owner was looking at.
+ */
 async function advanceWeekStep(leagueId: string) {
+  const before = await prisma.league.findUniqueOrThrow({
+    where: { id: leagueId }, select: { phase: true, week: true, seasonYear: true },
+  });
+  const result = await runPhaseStep(leagueId);
+  const after = await prisma.league.findUnique({
+    where: { id: leagueId }, select: { phase: true, week: true, seasonYear: true },
+  });
+  const timeMoved = !!after
+    && (after.phase !== before.phase || after.week !== before.week || after.seasonYear !== before.seasonYear);
+  if (timeMoved) {
+    // Every phase counts, not just the season. A man released in April is
+    // unsigned through the draft and through camp just as surely as he is
+    // unsigned in November, and his price should know it. One statement for
+    // the whole pool — this runs on every advance in the game.
+    await prisma.player.updateMany({
+      where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+      data: { weeksUnsigned: { increment: 1 } },
+    });
+  }
+  return result;
+}
+
+async function runPhaseStep(leagueId: string) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const rng = new Rng(`${settings.simSeed || league.id}-${league.phase}-${league.week}`);
@@ -211,11 +259,22 @@ async function advanceWeekStep(leagueId: string) {
       // freshly-created league (which already has one) is a no-op.
       const scheduled = await ensureSeasonSchedule(leagueId, league.seasonYear, rng, settings.seasonLength);
 
+      // Camp signings. The wire does not close when free agency does — a club
+      // that comes out of the offseason with a hole fills it in August, and
+      // the men still unsigned in August are cheaper than they were in April.
+      // See runInSeasonSignings: one or two clubs, when they have a real hole.
+      const camp = await runInSeasonSignings({
+        leagueId, seasonYear: league.seasonYear, week: league.week, phase: 'PRESEASON', settings,
+      });
+
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'REGULAR', week: 1 } });
+      const campNote = camp.signings > 0
+        ? ` ${camp.signings} club${camp.signings === 1 ? '' : 's'} went to the wire for help before the opener.`
+        : '';
       return {
-        summary: scheduled > 0
+        summary: (scheduled > 0
           ? `Preseason complete. The ${league.seasonYear} schedule is out — ${scheduled} games across ${settings.seasonLength} weeks. Week 1 is set, and next year's draft class is on the board.`
-          : 'Preseason complete. Week 1 is set — next year\'s draft class is on the board.',
+          : 'Preseason complete. Week 1 is set — next year\'s draft class is on the board.') + campNote,
       };
     }
 
@@ -511,6 +570,14 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   // something you can do wrong (lib/shortlistAttention.ts).
   await applyShortlistAttention(leagueId, league.seasonYear, week, settings.simSeed || leagueId);
   await maybeMakeAiTradeOffer(leagueId, league.seasonYear, week, settings, rng);
+  // Somebody's starter went down on Sunday, and the man who can replace him is
+  // on the wire at a fraction of what he wanted in the spring. Runs AFTER the
+  // week is claimed, so it happens exactly once per week however many times
+  // Advance is clicked, and it is deliberately quiet — see runInSeasonSignings
+  // for what stops it emptying the board the GM is reading.
+  const wire = await runInSeasonSignings({
+    leagueId, seasonYear: league.seasonYear, week, phase: 'REGULAR', settings,
+  });
 
   const nextWeek = week + 1;
   const seasonOver = nextWeek > settings.seasonLength;
@@ -531,9 +598,12 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
     await prisma.league.update({ where: { id: leagueId }, data: { week: nextWeek } });
   }
 
-  const summary = seasonOver
+  const wireNote = wire.signings > 0
+    ? ` ${wire.signings} free agent${wire.signings === 1 ? '' : 's'} signed off the wire.`
+    : '';
+  const summary = (seasonOver
     ? `Week ${week} complete (${played} games). Regular season is over — playoffs are set.`
-    : `Week ${week} complete: ${played} games played.`;
+    : `Week ${week} complete: ${played} games played.`) + wireNote;
 
   const report = await buildWeekReport(leagueId, {
     before,

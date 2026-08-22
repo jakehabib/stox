@@ -294,6 +294,30 @@ model Player {
   // Reset to 0 the moment he signs anywhere.
   yearsUnsigned Int @default(0)
 
+  // Consecutive WEEKS on the wire — every advance of the league clock while he
+  // is unsigned, whatever the phase. This is the clock his asking price falls
+  // on (askingPrice in lib/cap.ts): a good player nobody has signed by
+  // September takes less than he wanted in April, and by midseason he is
+  // signing for a fraction of it.
+  //
+  // WHY THIS EXISTS ALONGSIDE yearsUnsigned RATHER THAN REUSING IT. The yearly
+  // counter moves in one lump during the offseason PROGRESS step, which has
+  // nothing to do with when a man actually hit the market: somebody released in
+  // the playoffs would be stamped "a year unsigned" four weeks later and his
+  // price would fall off a cliff for a reason that is not about him, while
+  // somebody released the week after PROGRESS sits at zero for a full calendar
+  // year. Weeks are the honest clock, and they are also the only one that moves
+  // WITHIN a season — which is exactly the window a GM watches a released star
+  // sit unsigned in. yearsUnsigned keeps doing its own job (attrition) and this
+  // one prices him; the migration that added this column seeded it from
+  // yearsUnsigned so saves written before it existed do not quote a
+  // three-years-unsigned player his April number.
+  //
+  // Zeroed at both ends of a stint: by signFreeAgent when somebody takes him,
+  // and by cutPlayer when he is released, so it always means "weeks since he
+  // last hit the wire" rather than "weeks he has ever spent unsigned".
+  weeksUnsigned Int @default(0)
+
   injuryWeeks Int     @default(0)
   injuryType  String? // human-readable description, e.g. "Hamstring strain" — set when injured, cleared on recovery
   fatigue     Int     @default(0) // 0-100, restores between weeks

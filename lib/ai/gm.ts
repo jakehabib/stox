@@ -1,7 +1,7 @@
 import { Rng, clamp } from '../rng';
 import { AI, ROSTER_TARGETS, ROSTER_NEED_QUALITY_WEIGHT, MARKET, Position, POSITIONS, PICK_VALUE_CHART, LEAGUE, TRADE_VALUE, TRADE_VALUE_TIER } from '../tuning';
 import { GmProfile } from '../types';
-import { marketValue, remainingValue, capHit, proration, capSavingsOnCut, formatMoney, ContractLike } from '../cap';
+import { askingPrice, marketValue, remainingValue, capHit, proration, capSavingsOnCut, formatMoney, ContractLike } from '../cap';
 import { startersAt } from '../lineup';
 import { REPLACEMENT_LEVEL } from '../sim/units';
 import { CapMode } from '../types';
@@ -124,6 +124,13 @@ export interface RosterPlayer {
   potential: number;
   /** Optional — only trade-value pricing needs this. Free agents/rookie-pool players naturally have none. */
   contract?: ContractLike | null;
+  /**
+   * Weeks he has spent on the wire, for the men who are on it. Absent (or 0)
+   * for anybody on a roster, which is the same thing as far as `maxOffer` is
+   * concerned: a player under contract has no ask to discount. See
+   * askingPrice in lib/cap.ts.
+   */
+  weeksUnsigned?: number;
 }
 
 /**
@@ -217,7 +224,12 @@ export function acceptableStarter(pos: Position): number {
  * Need score per position, 0 (stacked) .. 1 (desperate).
  * Combines "do we have enough bodies" with "is the starter any good".
  */
-export function teamNeeds(players: RosterPlayer[]): Record<string, number> {
+/**
+ * Takes the two fields it actually reads rather than a whole RosterPlayer, so
+ * a caller that only needs this answer can select two columns instead of six.
+ * Every existing caller still satisfies it — a RosterPlayer is one of these.
+ */
+export function teamNeeds(players: Pick<RosterPlayer, 'position' | 'trueOvr'>[]): Record<string, number> {
   const needs: Record<string, number> = {};
   for (const pos of POSITIONS) {
     const group = players
@@ -941,12 +953,25 @@ export function philosophySummary(profile: GmProfile): PhilosophySummary {
   return { windowLabel, tradeTendency, pickPreference };
 }
 
-/** Max APY the AI will offer a free agent. */
+/**
+ * Max APY the AI will offer a free agent.
+ *
+ * Priced off `askingPrice` rather than `marketValue`, which are the same
+ * number until somebody has been sitting unsigned: a club negotiating in
+ * November is negotiating against what the man will take in November. Bidding
+ * his April price would have the AI volunteer money nobody is asking for, and
+ * — because the wave's own MARKET_FLOOR test is against the same ask — would
+ * put the number the free-agency board shows the user out of step with the
+ * number the AI actually pays.
+ */
 export function maxOffer(
   p: RosterPlayer,
   opts: { profile: GmProfile; needs: Record<string, number>; capSpace: number; rng: Rng },
 ): number {
-  const market = marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential });
+  const market = askingPrice({
+    ovr: p.trueOvr, position: p.position as Position, age: p.age,
+    potential: p.potential, weeksUnsigned: p.weeksUnsigned ?? 0,
+  });
   const need = opts.needs[p.position] ?? 0;
 
   // Aggression + need drive how far above market the AI will go.

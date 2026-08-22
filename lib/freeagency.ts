@@ -3,7 +3,7 @@ import { Rng, clamp } from './rng';
 import { AI, CAP, LEAGUE, FREE_AGENCY, ROSTER_TARGETS, Position, rosterMinFor } from './tuning';
 import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
-import { buildContract, marketValue, suggestedYears, capHit, capSavingsOnCut, formatMoney, guaranteedMoney, maxYearsForAge } from './cap';
+import { askingPrice, marketValue, buildContract, suggestedYears, capHit, capSavingsOnCut, formatMoney, guaranteedMoney, maxYearsForAge } from './cap';
 import { buildScoutedView } from './scouting';
 import { loadDynastyProfile, parseSkills, scoutingModsFor, signBandMultFor } from './dynasty';
 import {
@@ -28,6 +28,15 @@ import { reconcileDepthChart } from './gen/league';
  * the highest bidder above the player's asking price signs him. Called once
  * per offseason week during the FREE_AGENCY phase, and can also be invoked
  * on demand to fast-forward.
+ *
+ * THE MARKET DOES NOT CLOSE WHEN THAT WINDOW DOES. `runInSeasonSignings`
+ * below is the same machinery run much more quietly through PRESEASON and the
+ * regular season — one or two clubs a week, for a hole they actually have —
+ * because a league where nobody can sign a free agent between April and April
+ * accumulates unsigned stars nobody is able to reach. And what those clubs
+ * bid against is `askingPrice` (lib/cap.ts), not `marketValue`: an unsigned
+ * man's number falls the longer he stands there, which is the other half of
+ * the same fix and the reason an in-season club can afford him at all.
  * ===========================================================================
  */
 
@@ -127,7 +136,7 @@ export async function leadingCompetingBid(
     where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
     orderBy: [{ trueOvr: 'desc' }, { id: 'asc' }],
     take: FREE_AGENCY.WAVE_BOARD_SIZE,
-    select: { id: true, position: true, trueOvr: true, age: true, potential: true },
+    select: { id: true, position: true, trueOvr: true, age: true, potential: true, weeksUnsigned: true },
   });
   const onBoard = pool.some((p) => p.id === playerId);
   if (!onBoard && player.status === 'FREE_AGENT') {
@@ -137,14 +146,22 @@ export async function leadingCompetingBid(
   }
   const board: BoardPlayer[] = onBoard
     ? pool
-    : [...pool, { id: player.id, position: player.position, trueOvr: player.trueOvr, age: player.age, potential: player.potential }]
+    : [...pool, {
+        id: player.id, position: player.position, trueOvr: player.trueOvr, age: player.age,
+        potential: player.potential, weeksUnsigned: player.weeksUnsigned,
+      }]
         .sort((a, b) => b.trueOvr - a.trueOvr || a.id.localeCompare(b.id));
 
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false, id: { not: excludeTeamId } } });
   const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
   const rookieReserve = Math.ceil(settings.draftRounds * LEAGUE.ROOKIE_ROSTER_HIT_RATE);
-  const playerMarket = marketValue({
-    ovr: player.trueOvr, position: player.position as Position, age: player.age, potential: player.potential,
+  // HIS PRICE TODAY, not his price the day he was released. Everything below
+  // — the reachability walk, the bid that has to clear the market floor — is
+  // measured against what he will actually sign for now (see askingPrice), so
+  // a man whose number has come down is a man more clubs can reach.
+  const playerMarket = askingPrice({
+    ovr: player.trueOvr, position: player.position as Position, age: player.age,
+    potential: player.potential, weeksUnsigned: player.weeksUnsigned,
   });
 
   let best: CompetingBid | null = null;
@@ -180,7 +197,10 @@ export async function leadingCompetingBid(
       // upgrade-and-displace branch never opened, and three of the top forty
       // free agents in a fresh league were reported as unwanted and then signed
       // by the very next wave.)
-      Math.max(marketValue({ ovr: fa.trueOvr, position: fa.position as Position, age: fa.age, potential: fa.potential }) * MARKET_FLOOR, CAP.MIN_SALARY),
+      Math.max(askingPrice({
+        ovr: fa.trueOvr, position: fa.position as Position, age: fa.age,
+        potential: fa.potential, weeksUnsigned: fa.weeksUnsigned,
+      }) * MARKET_FLOOR, CAP.MIN_SALARY),
       Math.max(0, capSpace - AI.CAP_RESERVE),
     ));
     if (!plan.some((b) => b.playerId === playerId)) continue;
@@ -265,9 +285,12 @@ export async function signFreeAgent(opts: {
   await assertCapRoom({ action: 'Signing', seasonYear, capMode, charges: [{ teamId, delta: hit }] });
 
   await prisma.$transaction(async (tx) => {
-    // yearsUnsigned resets the moment somebody signs him — it only counts
-    // CONSECUTIVE years on the street (see progressFreeAgents in
-    // lib/development.ts, which rolls attrition off it).
+    // BOTH unsigned clocks reset the moment somebody signs him, because both
+    // only ever count CONSECUTIVE time on the street: yearsUnsigned feeds the
+    // attrition roll (progressFreeAgents, lib/development.ts) and
+    // weeksUnsigned feeds his asking price (askingPrice, lib/cap.ts). A man
+    // cut again next year starts a fresh stint at a fresh price — his old
+    // discount is not a property he carries around.
     /**
      * HE HAS TO STILL BE A FREE AGENT, AND THIS IS THE ONLY PLACE THAT CAN
      * PROVE IT.
@@ -290,7 +313,7 @@ export async function signFreeAgent(opts: {
      */
     const claimed = await tx.player.updateMany({
       where: { id: playerId, leagueId: opts.leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
-      data: { teamId, status: 'ACTIVE', yearsUnsigned: 0 },
+      data: { teamId, status: 'ACTIVE', yearsUnsigned: 0, weeksUnsigned: 0 },
     });
     if (claimed.count === 0) {
       const now = await tx.player.findUnique({
@@ -816,7 +839,13 @@ export async function cutPlayer(opts: {
       }
     }
     if (player.contract) await tx.contract.delete({ where: { playerId: player.id } });
-    await tx.player.update({ where: { id: player.id }, data: { teamId: null, status: 'FREE_AGENT' } });
+    // He reaches the wire TODAY, whatever he did before it. Zeroing the week
+    // clock here means "weeks unsigned" always means weeks since this release
+    // — a man cut, signed and cut again starts at his full price the second
+    // time rather than inheriting the discount his last spell on the street
+    // earned. signFreeAgent zeroes it on the way in for the same reason; this
+    // is the way out.
+    await tx.player.update({ where: { id: player.id }, data: { teamId: null, status: 'FREE_AGENT', weeksUnsigned: 0 } });
     await tx.transaction.create({
       data: {
         leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week, type: 'CUT', teamId: player.teamId,
@@ -911,6 +940,8 @@ export interface BoardPlayer {
   trueOvr: number;
   age: number;
   potential: number;
+  /** Weeks on the wire — what his ask is discounted for. See askingPrice. */
+  weeksUnsigned: number;
 }
 
 export interface BidderState {
@@ -934,7 +965,14 @@ export function bidderState(opts: {
   capSpace: number;
   capMode: LeagueSettings['capMode'];
   rosterMax: number;
+  /**
+   * Roster spots held back for a draft class that has not happened yet. The
+   * offseason wave reserves half a class; an in-season club reserves nothing,
+   * because its rookies are already on the roster it just handed in.
+   */
   rookieReserve: number;
+  /** Defaults to the offseason wave's allowance. See FREE_AGENCY.IN_SEASON. */
+  maxDisplace?: number;
 }): BidderState {
   const worstAtPosition = new Map<string, { id: string; trueOvr: number; frees: number }>();
   const countAtPosition = new Map<string, number>();
@@ -955,13 +993,15 @@ export function bidderState(opts: {
   return {
     needs: opts.needs,
     budget: Math.max(0, opts.capSpace - AI.CAP_RESERVE),
-    // Leave room for the rookie class. This wave only ever runs during
-    // FREE_AGENCY, and the draft lands immediately after it, so filling all
-    // the way to rosterMax here just means cutting those same players again
-    // on cut-down day (see trimRostersToLimit in lib/season.ts). Reserve only
-    // the share of the class that realistically sticks, not the whole class.
+    // Leave room for the rookie class, WHEN THERE IS ONE COMING. During
+    // FREE_AGENCY the draft lands immediately afterwards, so filling all the
+    // way to rosterMax just means cutting those same players again on
+    // cut-down day (see trimRostersToLimit in lib/season.ts) — the caller
+    // reserves the share of a class that realistically sticks. A club shopping
+    // in October has no class to hold spots for and passes 0, which is why
+    // this is the caller's number and not a constant read in here.
     openSlots: Math.max(0, opts.rosterMax - opts.roster.length - opts.rookieReserve),
-    displacesLeft: FREE_AGENCY.MAX_DISPLACE_PER_TEAM_PER_WAVE,
+    displacesLeft: opts.maxDisplace ?? FREE_AGENCY.MAX_DISPLACE_PER_TEAM_PER_WAVE,
     worstAtPosition,
     countAtPosition,
     alreadyDisplaced: new Set<string>(),
@@ -1018,7 +1058,10 @@ export function planTeamBids(
     // run while 350 free agents rated 80+ sat unsigned. Applying the same
     // floor here, before the money is committed, lets a team walk down the
     // board to somebody it can actually sign.
-    const market = marketValue({ ovr: fa.trueOvr, position: fa.position as Position, age: fa.age, potential: fa.potential });
+    const market = askingPrice({
+      ovr: fa.trueOvr, position: fa.position as Position, age: fa.age,
+      potential: fa.potential, weeksUnsigned: fa.weeksUnsigned,
+    });
     if (offer < market * MARKET_FLOOR) continue;
 
     out.push({ playerId: fa.id, offer, displacePlayerId: displace?.id });
@@ -1088,7 +1131,10 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
   const releasedThisWave = new Set<string>();
   for (const [playerId, offers] of byPlayer) {
     const player = freeAgents.find((f) => f.id === playerId)!;
-    const market = marketValue({ ovr: player.trueOvr, position: player.position as any, age: player.age, potential: player.potential });
+    const market = askingPrice({
+      ovr: player.trueOvr, position: player.position as any, age: player.age,
+      potential: player.potential, weeksUnsigned: player.weeksUnsigned,
+    });
     const best = offers.sort((a, b) => b.offer - a.offer || a.teamId.localeCompare(b.teamId))[0];
     if (best.offer < market * MARKET_FLOOR) continue;
 
@@ -1120,6 +1166,231 @@ export async function runAiFreeAgencyWave(leagueId: string, seasonYear: number, 
       /* cap edge case — skip this signing */
     }
   }
+  return { signings, displaced };
+}
+
+/**
+ * ===========================================================================
+ * THE WIRE IS OPEN IN OCTOBER TOO — AI CLUBS SHOPPING DURING THE SEASON
+ * ===========================================================================
+ * `runAiFreeAgencyWave` above is called from exactly one place: the
+ * FREE_AGENCY phase in lib/season.ts. That meant that from the moment a league
+ * reached PRESEASON, nothing in the game could put a free agent on an AI
+ * roster until the following spring. A 98-overall quarterback released in
+ * April was unreachable for a full calendar year however far his price fell,
+ * and the pool of unsigned stars the app owner kept finding on his free-agency
+ * screen was the arithmetic result: an inflow every week, an outflow once a
+ * year.
+ *
+ * This is the missing outflow, and it is deliberately NOT the offseason wave
+ * run again. A wave is thirty-one clubs bidding on everybody at once, which in
+ * week 1 of the regular season would strip the board clean before the GM had
+ * read it. A season is not like that. Clubs sign a stranger when they have a
+ * hole they cannot cover from inside the building and the man they want has
+ * come down to what they can pay, and it happens to one or two clubs a week,
+ * not thirty-one. So:
+ *
+ *   MOST WEEKS, NOBODY SIGNS ANYBODY (FREE_AGENCY.IN_SEASON.WEEK_CHANCE).
+ *   AT MOST TWO CLUBS SHOP, one man each, and they are drawn from the clubs
+ *     with the worst holes rather than from the league at large.
+ *   A HOLE IS WHO CAN PLAY ON SUNDAY. Need is scored on the men who are
+ *     actually available — injured players are dropped before `teamNeeds`
+ *     runs — because in-season holes are injuries, and a club whose starting
+ *     left tackle is out for six weeks is the club that reads the wire. The
+ *     roster spot and the money are still counted off the WHOLE roster: an
+ *     injured man occupies a place and a cap number whether he plays or not.
+ *   THE PRICE HAS TO HAVE COME TO THEM. Nothing here discounts anybody — the
+ *     ask is `askingPrice`, the same figure the free-agency board prints, and
+ *     the reason a club can suddenly afford a 97 in November is that he has
+ *     spent three months not signing anywhere. In-season cap space is thin, so
+ *     this gate does most of the work on its own.
+ *
+ * WHAT IT MAY NOT DO. It never touches the user's club — his roster is his,
+ * and the only signings that ever appear on it are the ones he made. It signs
+ * through `signFreeAgent` like everything else in this file, so `assertCapRoom`
+ * applies exactly as it does in the offseason and an in-season signing can
+ * never be the cheap way around the cap. And it displaces at most one man per
+ * club, through the ordinary cut path, dead money and all.
+ *
+ * TERM. A club signing in the regular season is buying the rest of THIS year:
+ * one-year deal, and he is back on the market in the spring at whatever he is
+ * then worth. Preseason is still really the offseason — camp signings are
+ * ordinary contracts — so those get `suggestedYears` like any other.
+ */
+export async function runInSeasonSignings(opts: {
+  leagueId: string;
+  seasonYear: number;
+  week: number;
+  /** PRESEASON or REGULAR. Decides the term — see TERM above. */
+  phase: string;
+  settings: LeagueSettings;
+}): Promise<{ signings: number; displaced: number }> {
+  const { leagueId, seasonYear, week, phase, settings } = opts;
+  const quiet = { signings: 0, displaced: 0 };
+  /**
+   * ITS OWN STREAM, AND THE SEASON YEAR IS IN THE SEED. This used to take the
+   * week's rng — the one `simulateWeek` builds from
+   * `<simSeed>-<phase>-<week>` and hands to the games — and that made the
+   * quiet weeks a permanent property of the league rather than of the season:
+   * the seed has no year in it and every week draws the same number of games,
+   * so week 5 of 2029 landed on the identical roll as week 5 of 2027, and a
+   * league that happened to be quiet in a given week was quiet in that week
+   * for ever. Measured on a save that ran three seasons: one in-season
+   * signing in the first year, none at all in the next two.
+   *
+   * Seeded rather than random, because a re-run of the same week must produce
+   * the same market — replaying an advance is not supposed to reshuffle who
+   * signed where.
+   */
+  const rng = new Rng(`in-season-${leagueId}-${seasonYear}-${week}`);
+  // Most weeks the wire is quiet. Rolled FIRST so that on those weeks this
+  // costs a random number and no database round trip at all — it runs on
+  // every single week advance, and sim speed in this codebase is a real
+  // constraint (see the batching note in lib/season.ts).
+  if (!rng.bool(FREE_AGENCY.IN_SEASON.WEEK_CHANCE)) return quiet;
+
+  const board = await prisma.player.findMany({
+    where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+    orderBy: [{ trueOvr: 'desc' }, { id: 'asc' }],
+    take: FREE_AGENCY.IN_SEASON.BOARD_SIZE,
+    select: { id: true, position: true, trueOvr: true, age: true, potential: true, weeksUnsigned: true },
+  });
+  if (board.length === 0) return quiet;
+
+  // Every AI roster in one read, without contracts. This is the scan that
+  // decides WHO has a hole; the two clubs that end up shopping are re-read
+  // properly below. Thirty-one separate queries with the contract join — what
+  // the offseason wave does, where it runs four times a year — would be the
+  // wrong shape for something that runs on every week advance.
+  const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
+  const rosterMin = rosterMinFor(rosterMax);
+  const rostered = await prisma.player.findMany({
+    where: { leagueId, status: 'ACTIVE', teamId: { not: null }, team: { isUser: false } },
+    // Four columns, not the whole player: `teamNeeds` reads position and
+    // rating, and this scan wants nothing else. Measured over ~1,630 rows it
+    // is 11ms against 18ms for the wider select, on a query that runs on
+    // every week advance in the game.
+    select: { teamId: true, position: true, trueOvr: true, injuryWeeks: true },
+  });
+  const byTeam = new Map<string, typeof rostered>();
+  for (const p of rostered) {
+    const list = byTeam.get(p.teamId!) ?? [];
+    list.push(p);
+    byTeam.set(p.teamId!, list);
+  }
+
+  interface Candidate { teamId: string; needs: Record<string, number>; severity: number }
+  const candidates: Candidate[] = [];
+  for (const [teamId, roster] of byTeam) {
+    // The hole is measured on who can actually play. See the block above.
+    const available = roster.filter((p) => p.injuryWeeks === 0);
+    const needs = teamNeeds(available);
+    const severity = Object.values(needs).reduce((m, v) => Math.max(m, v), 0);
+    // A club below the legal roster size is short of bodies whatever its need
+    // scores say, and it is exactly the club a real front office would expect
+    // to see making a signing this week.
+    if (severity < FREE_AGENCY.IN_SEASON.NEED_FLOOR && roster.length >= rosterMin) continue;
+    candidates.push({ teamId, needs, severity });
+  }
+  if (candidates.length === 0) return quiet;
+
+  /**
+   * WHICH OF THEM ACTUALLY SIGNS SOMEBODY THIS WEEK — drawn at random, weighted
+   * by how bad the hole is, from EVERY club that has one.
+   *
+   * Taking the worst holes outright (what this did first) reads sensible and
+   * measured terribly. `teamNeeds` scores a position below its roster minimum
+   * at 1.00, and the positions that carry one man — kicker, punter — go below
+   * their minimum the moment that one man is hurt. So the top of the list was
+   * permanently a queue of clubs needing a kicker, the same two of them signed
+   * a kicker every week, and the 97-overall left tackle three quarters of the
+   * league would have wanted was never looked at by anybody. Measured on a
+   * save at the end of a season: 29 of 31 clubs cleared the need floor and 12
+   * of the top 12 were short a specialist.
+   *
+   * Weighted-random across the whole candidate list keeps the property that
+   * mattered — a club with a real hole is likelier to be the one that moves —
+   * without letting one kind of hole own the market.
+   */
+  // Sorted before the draw purely so the draw is reproducible: the roster read
+  // above has no ORDER BY, and a weighted pick over an unordered list would
+  // hand back a different club each time the same week was replayed.
+  const remaining = [...candidates].sort((a, b) => a.teamId.localeCompare(b.teamId));
+  const shopping: Candidate[] = [];
+  while (shopping.length < FREE_AGENCY.IN_SEASON.MAX_CLUBS_PER_WEEK && remaining.length > 0) {
+    const total = remaining.reduce((sum, c) => sum + c.severity, 0);
+    let roll = rng.float(0, total);
+    let idx = remaining.length - 1;
+    for (let i = 0; i < remaining.length; i++) {
+      roll -= remaining[i].severity;
+      if (roll <= 0) { idx = i; break; }
+    }
+    shopping.push(remaining.splice(idx, 1)[0]);
+  }
+
+  let signings = 0;
+  let displaced = 0;
+  const taken = new Set<string>();
+
+  for (const candidate of shopping) {
+    const team = await prisma.team.findUnique({ where: { id: candidate.teamId } });
+    if (!team || team.isUser) continue; // his club is his — belt on top of the query filter
+    const roster = await prisma.player.findMany({
+      where: { teamId: team.id, status: 'ACTIVE' },
+      select: { id: true, position: true, trueOvr: true, age: true, potential: true, contract: true },
+      orderBy: [{ trueOvr: 'asc' }, { id: 'asc' }],
+    });
+    const summary = await teamCapSummary(team.id, seasonYear, settings.capMode);
+    const profile = parseGmProfile(team.gmProfile, rng);
+    const state = bidderState({
+      roster: roster as RosterPlayer[],
+      needs: candidate.needs,
+      capSpace: summary.capSpace,
+      capMode: settings.capMode,
+      rosterMax,
+      // The draft is behind us — this club's rookies are already on this roster.
+      rookieReserve: 0,
+      maxDisplace: FREE_AGENCY.IN_SEASON.MAX_DISPLACE,
+    });
+    const open = board.filter((p) => !taken.has(p.id));
+    const plan = planTeamBids(open, state, (fa, capSpace) => maxOffer(
+      fa as unknown as RosterPlayer, { profile, needs: candidate.needs, capSpace, rng },
+    ));
+    // The top of ITS board, not the whole plan. A club fills a hole this week;
+    // it does not run a wave of its own.
+    for (const bid of plan.slice(0, FREE_AGENCY.IN_SEASON.MAX_SIGNINGS_PER_CLUB)) {
+      const player = board.find((p) => p.id === bid.playerId)!;
+      // Regular-season deals run to the end of this year and no further — see
+      // TERM above. Preseason is still the offseason as far as a contract is
+      // concerned.
+      const years = phase === 'REGULAR' ? 1 : suggestedYears(player.trueOvr, player.age);
+      try {
+        if (bid.displacePlayerId) {
+          // Identical to the wave's own swap check, and for the same reason:
+          // prove the money works BEFORE anybody is released, so a signing
+          // that fails at the cap gate can never leave a club a body short
+          // for nothing.
+          const outgoing = await prisma.player.findUnique({ where: { id: bid.displacePlayerId }, include: { contract: true } });
+          if (!outgoing || outgoing.teamId !== team.id) continue;
+          const preview = buildContract({ apy: Math.round(bid.offer), years, signedYear: seasonYear });
+          const incomingHit = capHit({ ...preview, baseSalaries: writeJson(preview.baseSalaries) }, settings.capMode);
+          const freed = capSavingsOnCut(outgoing.contract, settings.capMode);
+          if (incomingHit > summary.capSpace + freed) continue;
+          await cutPlayer({ leagueId, playerId: bid.displacePlayerId, capMode: settings.capMode, seasonYear, week });
+          displaced += 1;
+        }
+        await signFreeAgent({
+          leagueId, playerId: bid.playerId, teamId: team.id, apy: Math.round(bid.offer),
+          years, seasonYear, capMode: settings.capMode, week,
+        });
+        taken.add(bid.playerId);
+        signings += 1;
+      } catch {
+        /* cap edge case, or somebody signed him first — the club simply misses out */
+      }
+    }
+  }
+
   return { signings, displaced };
 }
 
@@ -1175,8 +1446,9 @@ export async function fillTeamsToRosterMinimum(
     });
     // Who would actually put his name on a one-year league-minimum deal.
     // Everyone else stays on the board for the wave and for the user.
-    const affordable = pool.filter((c) => marketValue({
-      ovr: c.trueOvr, position: c.position as Position, age: c.age, potential: c.potential,
+    const affordable = pool.filter((c) => askingPrice({
+      ovr: c.trueOvr, position: c.position as Position, age: c.age,
+      potential: c.potential, weeksUnsigned: c.weeksUnsigned,
     }) <= CAP.MIN_SALARY * FREE_AGENCY.FILL_MAX_MARKET_MULT);
     // Last resort only, and cheapest-first: a club may not stay illegal, but
     // it does not get to raid the top of the market to avoid it.
@@ -1335,9 +1607,20 @@ export async function resolveNegotiationSession(opts: {
     isUserView: true,
     dynasty: scoutingModsFor(skills),
   });
-  const marketApy = marketValue({ ovr: view.scoutedOvr, position: player.position as Position, age: player.age });
-  const trueMarketApy = marketValue({
-    ovr: player.trueOvr, position: player.position as Position, age: player.age, potential: player.potential,
+  // WHAT HE WILL TAKE TODAY, on both halves. `askingPrice` is `marketValue`
+  // discounted for time on the wire, and it is identical to it for anybody
+  // under contract (weeksUnsigned is 0 for every rostered player), so the
+  // re-sign and extension screens are unaffected — but a free agent whose
+  // number has come down must reserve against the number the board is
+  // advertising and the number the AI wave will bid, or the panel would quote
+  // a discount the table then refuses to honour.
+  const marketApy = askingPrice({
+    ovr: view.scoutedOvr, position: player.position as Position, age: player.age,
+    weeksUnsigned: player.weeksUnsigned,
+  });
+  const trueMarketApy = askingPrice({
+    ovr: player.trueOvr, position: player.position as Position, age: player.age,
+    potential: player.potential, weeksUnsigned: player.weeksUnsigned,
   });
 
   // --- Who else wants him ---------------------------------------------------
@@ -1397,6 +1680,11 @@ export async function resolveNegotiationSession(opts: {
     age: player.age,
     ovr: player.trueOvr,
     marketApy,
+    // What the same rating was worth before he went unsigned. Only ever
+    // different for a free agent whose ask has come down, and carried so the
+    // panel can show him coming down rather than quietly quoting a smaller
+    // number than the one the user remembers.
+    openMarketApy: marketValue({ ovr: view.scoutedOvr, position: player.position as Position, age: player.age }),
     trueMarketApy,
     incumbent,
     teamStrength,

@@ -164,6 +164,103 @@ export const FREE_AGENCY = {
    * rather than staying illegal; see fillTeamsToRosterMinimum. [TUNE]
    */
   FILL_MAX_MARKET_MULT: 1.5,
+
+  /**
+   * ---------------------------------------------------------------------
+   * WHAT A MAN NOBODY HAS SIGNED WILL TAKE
+   * ---------------------------------------------------------------------
+   * An asking price is not a fact about a player, it is a fact about a
+   * player AND a date. Nobody sits out a season at his April number: a good
+   * veteran still unsigned when camp opens takes less, and one still
+   * unsigned at midseason signs for close to nothing. Until this existed
+   * `marketValue` answered the same question on day 400 as on day 1, so a
+   * 98-overall quarterback released in the spring was still asking $60M in
+   * December — unsignable, and therefore still there. (The app owner, deep
+   * into a season: *"those same really high overall 95, 96, 97, 98 overall
+   * players are still on the free agent list. Those players should
+   * gradually drop their salary demand. So that way, they get picked up."*)
+   *
+   * The shape is a logistic on WEEKS ON THE WIRE (Player.weeksUnsigned),
+   * normalised so it is exactly 1.0 the week he is released, and it is a
+   * logistic rather than a straight line because that is how the market
+   * actually treats him. Early on nothing has been learned — clubs are
+   * still working through their own re-signs and the draft, and his agent
+   * has no reason to blink — so the price barely moves. Once it is clear
+   * nobody is coming, it falls fast. Then it flattens, because a genuinely
+   * good player is still a genuinely good player and there is a price below
+   * which he would rather wait for next spring.
+   *
+   * A LEAGUE YEAR IS 30 TICKS OF THIS CLOCK — measured over three simulated
+   * seasons, and 30 rather than 33 because the first three playoff rounds do
+   * not move League.week and so do not age the wire (see advanceWeekStep in
+   * lib/season.ts, which ticks on the league's own clock and nothing else;
+   * those rounds are twelve clubs playing, not a league-wide week). Against
+   * that year, a man who hits the wire when free agency opens holds ~98% of
+   * his price through the whole offseason bidding window — so nothing about
+   * the offseason market moves — and is at ~90% on opening day, ~72% by week
+   * 5, ~55% by week 9 and ~43% by week 13. A full year unsigned puts him on
+   * the floor.
+   *
+   * THE FLOOR IS A SHARE, AND THERE IS A SECOND FLOOR UNDER IT. This one
+   * stops a 97 being available for pocket change — a star signing for
+   * nothing is exactly as wrong as a star asking $45M in December — and
+   * `marketValue`'s own Math.max keeps every ask at or above CAP.MIN_SALARY,
+   * which is the league's real floor and the one that binds for depth. [TUNE]
+   */
+  ASK_DECAY: {
+    /** Weeks on the wire where the slide is steepest — roughly midseason. */
+    MIDPOINT_WEEKS: 11,
+    /** How abrupt the slide is. Smaller is sharper; this is ~7 weeks top to bottom. */
+    WIDTH_WEEKS: 3.5,
+    /** He never asks less than this share of his open-market worth. */
+    FLOOR: 0.35,
+  },
+
+  /**
+   * ---------------------------------------------------------------------
+   * CLUBS SHOP DURING THE SEASON TOO
+   * ---------------------------------------------------------------------
+   * `runAiFreeAgencyWave` was called from exactly one place — the
+   * FREE_AGENCY phase — so from the moment a league reached PRESEASON
+   * nothing in the game could sign a free agent to an AI roster until the
+   * next offseason. A player released in April was unreachable for a full
+   * calendar year no matter how far his price had fallen, which is half of
+   * why the elite unsigned pile up: the other half was the price never
+   * falling, and fixing either one alone changes nothing.
+   *
+   * These numbers exist to make the in-season market PLAUSIBLE rather than
+   * a sweep. A front office does not clear the wire the week prices drop;
+   * it signs when it has a real hole and the man it wants has come down to
+   * what it can pay. A bargain veteran is exactly the sort of thing the GM
+   * should get a shot at, so the AI is deliberately slow: most weeks nobody
+   * signs anybody, and the clubs that do are the ones with the worst holes.
+   */
+  IN_SEASON: {
+    /** Chance any club at all goes shopping in a given week. */
+    WEEK_CHANCE: 0.5,
+    /** How many clubs may sign in one week, on the weeks anything happens. */
+    MAX_CLUBS_PER_WEEK: 2,
+    /** And at most one man each — nobody rebuilds a roster in a bye week. */
+    MAX_SIGNINGS_PER_CLUB: 1,
+    /**
+     * A hole worth signing a stranger for, on `teamNeeds`' 0..1 scale. The
+     * rest of the game calls 0.15 "notable"; in-season is a higher bar,
+     * because a club that merely wants to be better waits for the offseason.
+     * A club below the roster minimum is a candidate whatever it scores.
+     *
+     * IT EXCLUDES ALMOST NOBODY MID-SEASON, and that is worth knowing rather
+     * than assuming: measured on a save at the end of a season, 29 of 31 AI
+     * clubs cleared it, because injuries push somebody below a positional
+     * minimum on nearly every roster and `teamNeeds` scores that at 1.00.
+     * What actually keeps the in-season market small is MAX_CLUBS_PER_WEEK
+     * above; this floor is the sanity check underneath it.
+     */
+    NEED_FLOOR: 0.35,
+    /** How deep into the board an in-season club looks. Its hole is specific. */
+    BOARD_SIZE: 60,
+    /** Displacements per club per week. One: this is a signing, not a purge. */
+    MAX_DISPLACE: 1,
+  },
 };
 
 // ---------------------------------------------------------------------------

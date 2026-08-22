@@ -248,7 +248,12 @@ export function unsignedAttritionChance(yearsUnsigned: number, trueOvr: number, 
  * nothing ever came back.
  *
  * Unsigned players now:
- *   - age a year and accrue a year of being unsigned,
+ *   - age a year and accrue a year of being unsigned (Player.yearsUnsigned,
+ *     which is this roll's own clock and NOT the one his asking price falls
+ *     on — that is Player.weeksUnsigned, ticked every advance in
+ *     lib/season.ts and deliberately untouched here. A yearly counter moving
+ *     in one lump would drop the price of a man released in the playoffs off
+ *     a cliff four weeks later, for a reason that is nothing to do with him),
  *   - roll the ordinary age/rating retirement AND the out-of-football
  *     attrition above, whichever is worse,
  *   - develop at FREE_AGENCY.UNSIGNED_PROGRESSION_SCALE of a full year. A

@@ -4,7 +4,7 @@ import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
 import { ratingColor } from '@/lib/ratings';
-import { marketValue, formatMoney, capHit } from '@/lib/cap';
+import { askingPrice, marketValue, formatMoney, capHit } from '@/lib/cap';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { positionSortKey } from '@/lib/league-data';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
@@ -102,7 +102,21 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
     position: topAvailable.position as any, trueAttrs: readJson(topAvailable.trueAttrs, {}), trueOvr: topAvailable.trueOvr, potential: topAvailable.potential,
     report: reportMap.get(topAvailable.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
   }) : null;
-  const topMarket = topAvailable && topView ? marketValue({ ovr: topView.scoutedOvr, position: topAvailable.position as any, age: topAvailable.age }) : 0;
+  // TWO FIGURES FOR EVERY MAN ON THIS BOARD, and they are two different
+  // questions. `marketValue` is what his rating is worth on an open market;
+  // `askingPrice` is what he will sign for TODAY, which is the first number
+  // discounted for however many weeks he has stood here unsigned. The ask is
+  // the one that matters — it is what the AI's own clubs bid against and what
+  // his agent reserves at when you open talks (see resolveNegotiationSession)
+  // — so it is the number this page sorts, budgets and prints, with the
+  // opening price kept beside it to show how far he has come down.
+  const topAsk = topAvailable && topView ? askingPrice({
+    ovr: topView.scoutedOvr, position: topAvailable.position as any, age: topAvailable.age,
+    weeksUnsigned: topAvailable.weeksUnsigned,
+  }) : 0;
+  const topOpening = topAvailable && topView ? marketValue({
+    ovr: topView.scoutedOvr, position: topAvailable.position as any, age: topAvailable.age,
+  }) : 0;
   const topVerdict = topAvailable && topView
     ? slotVerdict(topAvailable.position, depthAt(topAvailable.position), { ovrLow: topView.ovrLow, ovrHigh: topView.ovrHigh, revealed: topView.revealed })
     : null;
@@ -114,14 +128,17 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
       position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
       report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
     });
-    const market = marketValue({ ovr: view.scoutedOvr, position: p.position as any, age: p.age });
+    const market = askingPrice({
+      ovr: view.scoutedOvr, position: p.position as any, age: p.age, weeksUnsigned: p.weeksUnsigned,
+    });
+    const opening = marketValue({ ovr: view.scoutedOvr, position: p.position as any, age: p.age });
     // Still the BAND rather than p.trueOvr, and still routed through the view:
     // slotVerdict must never be handed a number this page's reader cannot see.
     // For a free agent the band is now a point (low === high === truth), so the
     // verdict comes back unfogged and states a plain "STARTER" / "DEPTH" —
     // which is the right answer about a man with a professional career on film.
     const verdict = slotVerdict(p.position, depthAt(p.position), { ovrLow: view.ovrLow, ovrHigh: view.ovrHigh, revealed: view.revealed });
-    return { p, view, market, verdict };
+    return { p, view, market, opening, verdict };
   });
 
   // What the rating column is actually showing. It used to key off
@@ -182,7 +199,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         teamAbbr={team.abbr}
         eyebrow="Free Agency"
         title={`${filteredAvailable} Available`}
-        subtitle="Open talks and his agent takes the call. Salary, term and guarantee are yours to set — the interest meter tells you how it is landing, and every offer he turns down costs you patience. Rival teams are bidding on the same players, so a fair offer isn't always the winning one."
+        subtitle="Open talks and his agent takes the call. Salary, term and guarantee are yours to set — the interest meter tells you how it is landing, and every offer he turns down costs you patience. Rival teams are bidding on the same players, so a fair offer isn't always the winning one. Nobody holds his spring number forever, either: the longer a man goes unsigned, the less he will take to sign now."
         facts={[
           ...(capSummary ? [{
             label: 'Cap Space',
@@ -204,9 +221,9 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
           }] : []),
           ...(affordable !== null ? [{
             label: 'Within Budget',
-            tip: tip('marketValue'),
+            tip: tip('askingPrice'),
             value: String(affordable),
-            detail: `of the top ${rows.length} shown`,
+            detail: `of the top ${rows.length} shown, at what they're asking now`,
             color: affordable === 0 ? 'text-warn' : undefined,
           }] : []),
         ]}
@@ -222,7 +239,10 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
               <a href={`/league/${league.id}/player/${topAvailable.id}`} className="font-semibold hover:text-accent2 truncate">{topAvailable.firstName} {topAvailable.lastName}</a>
               <span className="text-xs text-muted">Age {topAvailable.age}</span>
             </div>
-            <div className="text-xs text-muted mt-0.5">Est. market {formatMoney(topMarket)}/yr</div>
+            <div className="text-xs text-muted mt-0.5">
+              Asking {formatMoney(topAsk)}/yr
+              {topOpening > topAsk && <span className="text-accent"> · down from {formatMoney(topOpening)}</span>}
+            </div>
           </div>
           {topVerdict && <SlotVerdictBadge verdict={topVerdict} />}
           {topView.revealed || topView.confidence >= 90 ? (
@@ -283,22 +303,30 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
               </th>
               <th>
                 <span className="inline-flex items-center gap-1">
-                  <a href={sortHref('market')} className="hover:text-chalk">Est. Market{sortKey === 'market' && (dir === -1 ? ' ▾' : ' ▴')}</a>
-                  <Tooltip placement="bottom" text={tip('marketValue')} />
+                  <a href={sortHref('market')} className="hover:text-chalk">Asking{sortKey === 'market' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                  <Tooltip placement="bottom" text={tip('askingPrice')} />
                 </span>
               </th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {sorted.map(({ p, view, market, verdict }) => (
+            {sorted.map(({ p, view, market, opening, verdict }) => (
               <tr key={p.id}>
                 <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                 <td><a href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={26} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} /> {p.firstName} {p.lastName}</a></td>
                 <td className="text-muted">{p.age}</td>
                 <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
                 <td><SlotVerdictBadge verdict={verdict} /></td>
-                <td className="font-mono text-muted">{formatMoney(market)}/yr</td>
+                {/* What he wants now, and what he wanted. The second line only
+                    appears once he has actually come down, so a market that is
+                    still fresh reads exactly as it did before. */}
+                <td className="font-mono text-muted">
+                  <div>{formatMoney(market)}/yr</div>
+                  {opening > market && (
+                    <div className="text-[11px] text-accent">was {formatMoney(opening)}</div>
+                  )}
+                </td>
                 <td><a href={`/league/${league.id}/player/${p.id}?view=contract`} className="btn-secondary text-xs px-2.5 py-1">Negotiate</a></td>
               </tr>
             ))}

@@ -176,6 +176,11 @@ export const GLOSSARY = {
     definition: 'The going rate for a player of his position, rating and age — an open estimate of what he would fetch if every club could bid.',
     why: 'Position matters more than most people expect: a quarterback is paid roughly three times what an equally-rated running back is, because one of those jobs decides games.',
   },
+  askingPrice: {
+    term: 'Asking price',
+    definition: 'What an unsigned player will actually put his name to today. It starts at his market value and comes down the longer he goes without a club.',
+    why: 'Nobody sits out a season at his April number. A good player still on the wire when camp opens has already shaded his price, and by midseason he is signing for a fraction of it — which is where the bargains are, if you are the club that needs him.',
+  },
   interestMeter: {
     term: 'Interest',
     definition: 'How this offer is landing with the player, from cold to signed. The marks on the track are the points where his answer changes — considering, close, and the line where he signs.',
