@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
-import { CAP, CONTRACT, LEAGUE, Position, PROGRESSION, RESIGN, ROSTER_TARGETS, SCOUTING, GENERATION, rosterMinFor } from './tuning';
+import { CAP, CONTRACT, FREE_AGENCY, LEAGUE, Position, PROGRESSION, RESIGN, ROSTER_TARGETS, SCOUTING, GENERATION, rosterMinFor } from './tuning';
 import { parseSettings, LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { simulateGame, SimTeamInput } from './sim/engine';
@@ -388,8 +388,11 @@ async function runPhaseStep(leagueId: string) {
       await fillTeamsToRosterMinimum(leagueId, league.seasonYear, league.week, settings, rng);
       const { signings, displaced } = await runAiFreeAgencyWave(leagueId, league.seasonYear, league.week, settings);
       const displacedNote = displaced > 0 ? ` ${displaced} veteran(s) released to make room.` : '';
+      // FREE_AGENCY.WEEKS, not a literal, because the roadmap draws a bar with
+      // one segment per week of this window and the two must not disagree
+      // about how long it is.
       const nextWeek = league.week + 1;
-      if (nextWeek > 4) {
+      if (nextWeek > FREE_AGENCY.WEEKS) {
         await reseedDraftOrder(leagueId, league.seasonYear);
         await startRookieDraft(leagueId, league.seasonYear, rng);
         return { summary: `Free agency closed. ${signings} signing(s) this week.${displacedNote} The draft is on the clock.` };
@@ -561,7 +564,9 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
     where: { leagueId, week, seasonYear: league.seasonYear, kind: 'REGULAR', played: true },
   });
 
-  // Recover fatigue league-wide between weeks.
+  // Recover fatigue and tick injury clocks league-wide, between weeks. The
+  // postseason runs the same week between its own rounds — inside
+  // withRoundLock, which is where its exactly-once guarantee lives.
   await recoverFatigueAndInjuries(leagueId);
   await applyInSeasonProgression(leagueId, league.seasonYear, week, settings.seasonLength, rng, settings.progressionSpeed);
   // Your staff spent the week on the players you starred. This is the ONLY
@@ -1122,7 +1127,7 @@ async function applyAwardDevelopmentBump(playerId: string) {
 
 /**
  * ===========================================================================
- * BUILDING THE NEXT ROUND EXACTLY ONCE
+ * BUILDING THE NEXT ROUND EXACTLY ONCE — AND THE WEEK BETWEEN THE ROUNDS
  * ===========================================================================
  * Both round builders below called `game.create` unconditionally. The games
  * themselves are safe — simulateAndSaveGame claims each one — but BUILDING the
@@ -1239,23 +1244,92 @@ async function createFinal(leagueId: string, seasonYear: number) {
 // Offseason
 // ---------------------------------------------------------------------------
 
-const OFFSEASON_STEPS = ['PROGRESS', 'RESET_STANDINGS', 'AGE_CONTRACTS', 'ADD_DRAFT_CLASS', 'RESIGN'] as const;
+/**
+ * ===========================================================================
+ * THE OFFSEASON, IN THE ADVANCES A GM ACTUALLY PRESSES
+ * ===========================================================================
+ * Five steps, TWO advances. The steps below are unchanged and still run in
+ * this order — what changed is how many of them one press of Advance carries.
+ *
+ * It used to be one step per press, which put SIX presses between the final
+ * whistle and free agency, and four of them asked the user nothing: rosters
+ * age, the standings reset, contracts roll a year, the pick horizon extends.
+ * Every one of those was bookkeeping he clicked through to reach the one
+ * screen that actually asks him a question. The app owner: *"thats so many
+ * advances, we need to combine some of these"*, and then *"ideally i'd like
+ * post super bowl to free agency to be 3 advances"* — so the bookkeeping is
+ * GROUPED rather than deleted, and the group boundary is where the reading
+ * changes:
+ *
+ *   Advance 1  PROGRESS, RESET_STANDINGS, AGE_CONTRACTS — the season just
+ *              played is settled and the new league year opens.
+ *   Advance 2  ADD_DRAFT_CLASS, RESIGN — the incoming class is on the board
+ *              and his own expiring men become a decision (phase -> RESIGN).
+ *   Advance 3  out of RESIGN: whoever wasn't kept walks, free agency opens.
+ *
+ * Both of the first two have something worth reading in the summary, which is
+ * the point of splitting there rather than running all four at once: an
+ * advance that reports nothing is an advance that reads as broken.
+ *
+ * LEAGUE.WEEK STILL COUNTS STEPS, NOT PRESSES, and that is deliberate rather
+ * than lazy. A week is still "the next step in OFFSEASON_STEPS", so:
+ *
+ *   - CAP.OFFSEASON_YEAR_ROLL_WEEK keeps both its meaning and its value —
+ *     RESET_STANDINGS is still the step at week 2, so capChargeYear() files
+ *     dead money against the same league year it did before (see there).
+ *   - a save left mid-offseason by the old one-step-per-press build resumes
+ *     at exactly the step it stopped on and is grouped from there.
+ *   - a step that throws leaves the week ON THE STEP THAT FAILED, so the
+ *     steps already done are not re-run. See runOffseasonStep.
+ *
+ * One press moves the week by however many steps it ran, so a league that
+ * starts its offseason under this build reads week 1 -> week 4 -> RESIGN. The
+ * weeks in between are still real and still mean what they always did; they
+ * are simply passed through rather than stopped on, unless a step throws and
+ * leaves the league standing on the one that failed.
+ * ===========================================================================
+ */
+const OFFSEASON_ADVANCES = [
+  ['PROGRESS', 'RESET_STANDINGS', 'AGE_CONTRACTS'],
+  ['ADD_DRAFT_CLASS', 'RESIGN'],
+] as const;
+
+/** Every offseason step in order. League.week is a 1-based index into this. */
+const OFFSEASON_STEPS = OFFSEASON_ADVANCES.flat();
+
+type OffseasonStep = (typeof OFFSEASON_ADVANCES)[number][number];
+
+/**
+ * What one press of Advance runs, starting from the step League.week points
+ * at: the remainder of the advance that step belongs to. Clamped exactly as
+ * the old index arithmetic was, so a save that somehow ran past the end of
+ * the list re-runs the last step rather than reading off the end of it.
+ */
+function offseasonAdvanceFrom(week: number): OffseasonStep[] {
+  const idx = Math.min(Math.max(week, 1) - 1, OFFSEASON_STEPS.length - 1);
+  let start = 0;
+  for (const advance of OFFSEASON_ADVANCES) {
+    if (idx < start + advance.length) return advance.slice(idx - start);
+    start += advance.length;
+  }
+  return [OFFSEASON_STEPS[OFFSEASON_STEPS.length - 1]];
+}
 
 async function runOffseasonStep(leagueId: string, rng: Rng) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
-  const step = OFFSEASON_STEPS[Math.min(league.week - 1, OFFSEASON_STEPS.length - 1)];
+  const steps = offseasonAdvanceFrom(league.week);
 
   /**
    * ===========================================================================
-   * ONE CLICK, ONE OFFSEASON STEP
+   * ONE CLICK, ONE OFFSEASON ADVANCE
    * ===========================================================================
    * Same bug as the regular season's duplicate advance (see ONE WEEK, ONE SET
    * OF LEAGUE-WIDE EFFECTS), and worse here, because none of these steps has a
-   * per-row guard to fall back on. Every case below ends by ASSIGNING
-   * `week: league.week + 1`, so two concurrent clicks both read the same week,
-   * both do the whole step, and both write the same number — the league looks
-   * fine and the damage is invisible:
+   * per-row guard to fall back on. The week is the only thing standing between
+   * a double click and the work being done twice, so two concurrent clicks
+   * would both read the same week, both do the whole thing, and both leave it
+   * on the same number — the league looks fine and the damage is invisible:
    *
    *   PROGRESS         every player ages twice, develops twice, and gets two
    *                    retirement rolls in one offseason.
@@ -1269,31 +1343,66 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
    * and the difference is deliberate. A week's sixteen games are individually
    * claimed, so claiming the week late costs a duplicate click some wasted CPU
    * and nothing else. An offseason step has no such inner guard: by the time
-   * the work is done it is already done twice. So the step is claimed before
-   * the work, and rolled back if the work throws.
+   * the work is done it is already done twice. So the work is claimed before
+   * it runs, and rolled back if it throws.
+   *
+   * ONE CLAIM COVERS THE WHOLE ADVANCE, however many steps it carries: the
+   * week jumps straight to the far side of the group, so a second click
+   * arriving anywhere inside a running advance finds a week it cannot match
+   * and does nothing. That is the only way to say it once — claiming per step
+   * inside the loop would leave a duplicate click free to race in through the
+   * gap between two steps and run the rest of the group alongside the first.
+   *
+   * AND A THROW PARTWAY THROUGH GIVES BACK ONLY WHAT IT DID NOT DO. The week
+   * is put back to the step that FAILED, not to the start of the advance, so
+   * the steps that already committed are never re-run — re-running PROGRESS or
+   * RESET_STANDINGS is exactly the silent doubling above. The next press picks
+   * up at the failed step and finishes the group, which costs the user one
+   * extra click in a case that should not happen and nothing else. This is why
+   * League.week still counts steps rather than presses.
    *
    * The residual risk is a HARD kill — a serverless timeout, not an
-   * exception — between the claim and the rollback, which would skip the step
-   * outright. That is the trade being made, and it is the right way round:
-   * these steps are bulk updates measured in hundreds of milliseconds, where a
-   * week is sixteen simulated games, and a skipped step is visible and
-   * re-runnable while doubled career stats are silent and permanent.
+   * exception — between the claim and the rollback, which would skip the rest
+   * of the advance outright. That is the trade being made, and it is the right
+   * way round: these steps are bulk updates measured in hundreds of
+   * milliseconds, where a week is sixteen simulated games, and a skipped step
+   * is visible and re-runnable while doubled career stats are silent and
+   * permanent.
    */
   const claimed = await prisma.league.updateMany({
     where: { id: leagueId, phase: 'OFFSEASON', week: league.week },
-    data: { week: league.week + 1 },
+    data: { week: league.week + steps.length },
   });
   if (claimed.count === 0) {
     return { summary: 'That offseason step has already been taken.' };
   }
+
+  let done = 0;
   try {
-    return await runOffseasonStepClaimed(leagueId, league, settings, step, rng);
+    const parts: string[] = [];
+    for (const step of steps) {
+      // THE LEAGUE IS RE-READ BETWEEN STEPS, because one of them moves the
+      // league year underneath the others: RESET_STANDINGS increments
+      // seasonYear, and AGE_CONTRACTS, ADD_DRAFT_CLASS and RESIGN all take it
+      // as an argument and mean the NEW one. When each step was its own
+      // request that came for free. `week` is overridden with the step's own
+      // index rather than the claimed one so every step still sees the week it
+      // saw when it was a press of its own — it is what the RESIGN wave stamps
+      // its transactions with.
+      const current = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+      const view = { ...current, week: league.week + done };
+      const { summary } = await runOffseasonStepClaimed(leagueId, view, settings, step, rng);
+      parts.push(summary);
+      done++;
+    }
+    // One report, not a stack of receipts: the steps write their sentences to
+    // be read in sequence (see each case), so this is a join rather than a
+    // list. It is the only record the user gets that any of this happened.
+    return { summary: parts.join(' ') };
   } catch (err) {
-    // Put the step back so the user can retry it, rather than leaving the
-    // league a week further on with the work never done.
     await prisma.league.updateMany({
-      where: { id: leagueId, phase: 'OFFSEASON', week: league.week + 1 },
-      data: { week: league.week },
+      where: { id: leagueId, phase: 'OFFSEASON', week: league.week + steps.length },
+      data: { week: league.week + done },
     });
     throw err;
   }
@@ -1303,22 +1412,38 @@ async function runOffseasonStepClaimed(
   leagueId: string,
   league: Awaited<ReturnType<typeof prisma.league.findUniqueOrThrow>>,
   settings: ReturnType<typeof parseSettings>,
-  step: (typeof OFFSEASON_STEPS)[number],
+  step: OffseasonStep,
   rng: Rng,
 ) {
+  /*
+   * THE SUMMARIES ARE WRITTEN TO BE READ IN SEQUENCE. Several of these steps
+   * now share one press of Advance (see OFFSEASON_ADVANCES) and their
+   * sentences are joined into a single paragraph, which is the only record the
+   * user gets that any of it happened. So each one states its own fact plainly
+   * and does not repeat the ones before it — read on their own they are still
+   * whole sentences, read together they are a report rather than four receipts.
+   *
+   * None of them writes League.week any more: the claim in runOffseasonStep
+   * owns the week for the whole advance. Writing it here as well would put the
+   * week a step further on than the work actually got.
+   */
   switch (step) {
     case 'PROGRESS': {
-      await progressAllPlayers(leagueId, rng, settings.retirementEnabled);
+      const retired = await progressAllPlayers(leagueId, rng, settings.retirementEnabled);
       // Free agents age on the same schedule. Skipping them is what turned the
       // unsigned pool into a permanent sink — see progressFreeAgents().
       const fa = await progressFreeAgents(leagueId, rng, {
         retirementEnabled: settings.retirementEnabled,
         progressionSpeed: settings.progressionSpeed,
       });
-      await prisma.league.update({ where: { id: leagueId }, data: { week: league.week + 1 } });
+      // The league year has not rolled yet at this step, so seasonYear still
+      // names the season that was just played — which is the one being closed.
+      const walked = retired > 0
+        ? `${retired} player${retired === 1 ? '' : 's'} retired, and everyone still playing is a year older`
+        : 'nobody retired, and every roster is a year older';
       return {
-        summary: 'Rosters have aged a year — some careers are over, the rest are a year further along.'
-          + (fa.retired > 0 ? ` ${fa.retired} unsigned player(s) are out of football.` : ''),
+        summary: `The ${league.seasonYear} season is in the books — ${walked}.`
+          + (fa.retired > 0 ? ` ${fa.retired} unsigned player${fa.retired === 1 ? ' is' : 's are'} out of football.` : ''),
       };
     }
     case 'RESET_STANDINGS': {
@@ -1327,14 +1452,14 @@ async function runOffseasonStepClaimed(
         where: { leagueId },
         data: { wins: 0, losses: 0, ties: 0, pointsFor: 0, pointsAgnst: 0, divWins: 0, divLosses: 0, confWins: 0, confLosses: 0, playoffSeed: null, eliminated: false },
       });
-      await prisma.league.update({ where: { id: leagueId }, data: { week: league.week + 1, seasonYear: league.seasonYear + 1 } });
+      await prisma.league.update({ where: { id: leagueId }, data: { seasonYear: league.seasonYear + 1 } });
       // This is the one line in the phase machine where seasonYear actually
       // moves, so it is where a per-season allowance turns over. Private
       // workout slots are stamped with the year they belong to and would read
       // as zero-used anyway; zeroing them here means the count on screen
       // changes with the calendar rather than on the next spend.
       await resetWorkoutSlots(leagueId, league.seasonYear + 1);
-      return { summary: 'Standings reset for the new league year.' };
+      return { summary: `Standings are wiped and the ${league.seasonYear + 1} league year is open.` };
     }
     case 'AGE_CONTRACTS': {
       // Normally a no-op now: the ledger already stepped onto this league year
@@ -1344,29 +1469,38 @@ async function runOffseasonStepClaimed(
       // idempotent rather than moving it outright.
       const aged = await ageContractsForYear(leagueId, league.seasonYear);
       await expireStaleCapCharges(leagueId, league.seasonYear);
-      await prisma.league.update({ where: { id: leagueId }, data: { week: league.week + 1 } });
       return {
         summary: aged
-          ? 'Contracts advanced a year — expiring deals are up for renegotiation.'
+          ? 'Every contract has advanced a year, and expiring deals are up for renegotiation.'
           : 'Expiring deals are up for renegotiation.',
       };
     }
     case 'ADD_DRAFT_CLASS': {
-      // This year's class was already added back at week 1 of the season
-      // that just ended, so it could be scouted all year — this step now
-      // only extends the rolling future-picks horizon for pick trading.
+      // The class itself was added back at week 1 of the season that just
+      // ended, so it could be scouted all year — this step only extends the
+      // rolling future-picks horizon for pick trading. It is still where the
+      // GM is told the board is there, because this is the advance that puts
+      // the draft in front of him.
       await addFutureDraftPicks(leagueId, league.seasonYear);
-      await prisma.league.update({ where: { id: leagueId }, data: { week: league.week + 1 } });
-      return { summary: 'Future draft pick slots extended.' };
+      const onTheBoard = await prisma.player.count({ where: { leagueId, isDraftee: true } });
+      return {
+        summary: (onTheBoard > 0
+          ? `The incoming draft class is on the board — ${onTheBoard} prospects, scouted all season.`
+          : 'The incoming draft class is on the board.')
+          + ` Future picks now run out to ${league.seasonYear + 3} for trading.`,
+      };
     }
     case 'RESIGN':
     default: {
       // AI teams make their own keep-or-let-walk calls before the user
       // lands on the re-sign screen, same as a real front office already
       // having a plan by the time the window opens.
-      await runAiResignWave(leagueId, league.seasonYear, league.week, settings.capMode, rng);
+      const kept = await runAiResignWave(leagueId, league.seasonYear, league.week, settings.capMode, rng);
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'RESIGN', week: 1 } });
-      return { summary: 'Re-sign your own expiring players, then advance to open free agency.' };
+      return {
+        summary: (kept > 0 ? `Around the league, clubs have already re-signed ${kept} of their own expiring players. ` : '')
+          + 'Re-sign yours, then advance to open free agency.',
+      };
     }
   }
 }
@@ -1454,8 +1588,9 @@ async function rollSeasonStatsIntoCareer(leagueId: string, seasonYear: number) {
   // club-he-played-for-that-year exists. One sweep, chunked writes, no
   // per-player round trip; a save that predates PlayerSeason gets its whole
   // played history caught up here the first time it advances. `seasonYear + 1`
-  // is the age basis: the offseason PROGRESS step ran one step ago and has
-  // already aged everyone for the season about to start. See
+  // is the age basis: PROGRESS is the step immediately before this one — the
+  // same press of Advance, since the two share one (see OFFSEASON_ADVANCES) —
+  // and has already aged everyone for the season about to start. See
   // lib/playerSeasons.ts and docs/player-seasons.md.
   await syncPlayerSeasons(leagueId, seasonYear, seasonYear + 1);
 
@@ -1482,13 +1617,18 @@ async function rollSeasonStatsIntoCareer(leagueId: string, seasonYear: number) {
  * it's visible well before the offseason, not delivered as one lump. Batched
  * into two updateMany calls instead of one round trip per player, matching
  * the bulk-write pattern used everywhere else a whole league gets touched.
+ *
+ * Returns how many careers ended. That number used to go nowhere and the step
+ * said only that "some" were over; it now shares one advance with the rest of
+ * the offseason bookkeeping, so the summary is the only place a GM learns his
+ * league lost anyone at all and it had better say how many.
  */
-async function progressAllPlayers(leagueId: string, rng: Rng, retirementEnabled: boolean) {
+async function progressAllPlayers(leagueId: string, rng: Rng, retirementEnabled: boolean): Promise<number> {
   const players = await prisma.player.findMany({
     where: { leagueId, status: 'ACTIVE' },
     select: { id: true, age: true, trueOvr: true, position: true },
   });
-  if (players.length === 0) return;
+  if (players.length === 0) return 0;
 
   const retiringIds: string[] = [];
   const survivorIds: string[] = [];
@@ -1513,6 +1653,7 @@ async function progressAllPlayers(leagueId: string, rng: Rng, retirementEnabled:
       data: { age: { increment: 1 }, experience: { increment: 1 }, fatigue: 0, injuryWeeks: 0 },
     });
   }
+  return retiringIds.length;
 }
 
 /**
@@ -2069,12 +2210,18 @@ export async function resignDecisionsForTeam(
  * this, no CPU team ever extends anyone: every expiring contract league-wide
  * would hit release at the end of RESIGN and dump the entire AI side of the
  * league into free agency every single year.
+ *
+ * Returns how many men the league kept, which is the one fact about this wave
+ * a GM can act on: it is the size of the market that is NOT about to open.
  */
-async function runAiResignWave(leagueId: string, seasonYear: number, week: number, capMode: LeagueSettings['capMode'], rng: Rng) {
+async function runAiResignWave(leagueId: string, seasonYear: number, week: number, capMode: LeagueSettings['capMode'], rng: Rng): Promise<number> {
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
+  let kept = 0;
   for (const team of teams) {
-    await resignDecisionsForTeam(leagueId, team.id, seasonYear, week, capMode, rng);
+    const decisions = await resignDecisionsForTeam(leagueId, team.id, seasonYear, week, capMode, rng);
+    kept += decisions.kept;
   }
+  return kept;
 }
 
 /**

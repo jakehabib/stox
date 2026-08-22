@@ -999,8 +999,8 @@ export async function buildTrophyMoment(leagueId: string, seasonYear: number, ro
    * draft", guarded only by `slot > 0`. But future picks are created with
    * `slot: i + 1` — the team's index in the creation loop — so that guard is
    * always true and the number was a placeholder wearing an ordinal.
-   * reseedDraftOrder does not replace it until FREE_AGENCY week 4, months of
-   * game time after this sentence is written.
+   * reseedDraftOrder does not replace it until the last week of free agency
+   * (FREE_AGENCY.WEEKS), months of game time after this sentence is written.
    *
    * The season has just ended and the standings columns are still populated
    * (RESET_STANDINGS has not run yet), so the real answer is available right

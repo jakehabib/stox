@@ -71,6 +71,23 @@ export function rosterMinFor(rosterMax: number): number {
  */
 export const FREE_AGENCY = {
   /**
+   * [TUNE] Weeks of open bidding before the draft goes on the clock. One AI
+   * wave runs per week (runAiFreeAgencyWave), and the FREE_AGENCY case in
+   * lib/season.ts starts the draft once the next week would exceed this.
+   *
+   * FOUR BECAME THREE with the offseason collapse. The app owner: *"then free
+   * agency itself is only 3 advances from 4"*. The fourth wave was picking
+   * over what three had already refused: driven twice from the same saved
+   * league, four waves and three waves signed the SAME 23 of the top 25
+   * unsigned players and the SAME 38 of the top 40, and differed only at the
+   * bottom of the top 60 — 57 of 60 against 55 of 60, with the best man left
+   * unsigned an 88 either way. Two extra fringe signings is what the press was
+   * buying, and both of those men remain signable all season (see IN_SEASON
+   * below). If a shorter window ever does strand somebody real, the fix is the
+   * wave's board size and per-team allowance, not a fourth press.
+   */
+  WEEKS: 3,
+  /**
    * Share of a full year's development roll an unsigned player gets. He is
    * still training, but he has no coaching staff, no scheme, and played no
    * snaps — half a year's growth, applied in one offseason roll (a rostered
@@ -190,16 +207,23 @@ export const FREE_AGENCY = {
    * good player is still a genuinely good player and there is a price below
    * which he would rather wait for next spring.
    *
-   * A LEAGUE YEAR IS 30 TICKS OF THIS CLOCK — measured over three simulated
-   * seasons, and 30 rather than 33 because the first three playoff rounds do
-   * not move League.week and so do not age the wire (see advanceWeekStep in
-   * lib/season.ts, which ticks on the league's own clock and nothing else;
-   * those rounds are twelve clubs playing, not a league-wide week). Against
-   * that year, a man who hits the wire when free agency opens holds ~98% of
-   * his price through the whole offseason bidding window — so nothing about
-   * the offseason market moves — and is at ~90% on opening day, ~72% by week
-   * 5, ~55% by week 9 and ~43% by week 13. A full year unsigned puts him on
-   * the floor.
+   * A LEAGUE YEAR IS 26 TICKS OF THIS CLOCK — measured by driving a league
+   * a full year round, and 26 rather than the 30 presses that year takes
+   * because the first three playoff rounds do not move League.week and so do
+   * not age the wire (see advanceWeekStep in lib/season.ts, which ticks on the
+   * league's own clock and nothing else; those rounds are twelve clubs
+   * playing, not a league-wide week).
+   *
+   * IT WAS 30 UNTIL THE OFFSEASON WAS COLLAPSED — five bookkeeping presses
+   * became two (OFFSEASON_ADVANCES in lib/season.ts) and free agency four
+   * weeks became three (WEEKS above), so the same calendar now costs the wire
+   * four fewer ticks. That makes an unsigned man very slightly dearer at every
+   * point of the year, and measured it is small enough to leave the curve
+   * alone: a man released the day free agency opens is at 99% when the window
+   * opens and 95% when the draft goes on the clock (it was 92%) — so nothing
+   * about the offseason market moves either way — and he is at ~90% on opening
+   * day, ~74% by week 5, ~55% by week 9 and ~43% by week 13. A full year
+   * unsigned still puts him on the floor.
    *
    * THE FLOOR IS A SHARE, AND THERE IS A SECOND FLOOR UNDER IT. This one
    * stops a 97 being available for pocket change — a star signing for
@@ -719,6 +743,14 @@ export const CAP = {
    * (RESET_STANDINGS, see OFFSEASON_STEPS in lib/season.ts). Cap charges
    * booked at or before it belong to the NEXT league year — see
    * capChargeYear() in lib/cap.ts. Keep in step with OFFSEASON_STEPS.
+   *
+   * It is an index into the STEP list, not a count of Advances, and that
+   * survived the offseason being collapsed into two presses: one press now
+   * carries several steps, so a league goes from week 1 straight to week 4
+   * without ever sitting on 2 or 3, but the step at week 2 is still
+   * RESET_STANDINGS and "week 1 is before the roll, week 4 is after it" is
+   * still what this number says. Move it only if RESET_STANDINGS moves within
+   * OFFSEASON_STEPS — not if the steps are regrouped into different presses.
    */
   OFFSEASON_YEAR_ROLL_WEEK: 2,
   /** How far a team may exceed the cap before signings are blocked. */

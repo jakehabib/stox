@@ -104,9 +104,11 @@ function optionsFor(phase: string): { mode: AdvanceMode; label: string }[] {
     ];
   }
   if (phase === 'FREE_AGENCY') {
+    // No "Advance 3 Weeks" here any more: free agency is FREE_AGENCY.WEEKS
+    // long and that is now three, so the option was a second button that did
+    // exactly what "Advance to Draft" does — two ways to spell one jump.
     return [
       { mode: 'week', label: 'Advance 1 Week' },
-      { mode: '3weeks', label: 'Advance 3 Weeks' },
       { mode: 'nextstage', label: 'Advance to Draft' },
     ];
   }

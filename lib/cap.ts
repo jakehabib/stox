@@ -559,6 +559,13 @@ export function restructureContract(
  * PRESEASON week 1 and exactly nothing in OFFSEASON week 1 — a timing trick,
  * not a decision, and invisible in the UI.
  *
+ * The WEEK below is a step index, not a count of Advances, and stayed one when
+ * the offseason was collapsed into two presses (OFFSEASON_ADVANCES in
+ * lib/season.ts). One press now carries three steps, so a league goes from
+ * week 1 to week 4 and the pre-roll window is a single observable week rather
+ * than two — but the step at week 2 is still RESET_STANDINGS, so this boundary
+ * is unmoved and a save stranded mid-roll by the old build still reads right.
+ *
  * Real football has the same boundary and answers it the same way: a player
  * released after the season ends but before the new league year opens counts
  * against the NEW year. So do we.

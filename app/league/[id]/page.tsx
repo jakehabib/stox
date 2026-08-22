@@ -127,12 +127,15 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   // away on its own rather than being cleaned up by anything.
   //
   // WHICH year: League.seasonYear moves inside this phase, not at the end of
-  // it. The RESET_STANDINGS step (OFFSEASON week 2 -> 3) is the single line in
+  // it. RESET_STANDINGS — the step at OFFSEASON week 2 — is the single line in
   // the phase machine that increments it, so through weeks 1-2 seasonYear still
   // names the season that just finished and from week 3 on it names the one
   // about to start. Both windows are handled rather than only the first, so the
   // recap stays on screen for the whole offseason roll — which is exactly when
-  // a GM is deciding who to keep.
+  // a GM is deciding who to keep. (A league on this build only ever renders at
+  // week 1 and week 4 of the offseason: one Advance carries the first three
+  // steps, so the week jumps. The test is on the step index, which is what
+  // makes it right on both sides of that jump and on saves stranded between.)
   const reviewYear = league.phase === 'OFFSEASON'
     ? (league.week <= 2 ? league.seasonYear : league.seasonYear - 1)
     : null;

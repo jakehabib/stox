@@ -1,3 +1,5 @@
+import { FREE_AGENCY } from '@/lib/tuning';
+
 /**
  * The offseason is a chain of distinct League.phase values (not one big
  * "OFFSEASON" blob) — this makes that chain visible, since the only other
@@ -11,32 +13,46 @@
  * when we advance weeks in the offseason on the roadmap (free agent week #1
  * of 4) or week 2 of resign etc so players can keep track"*.
  *
- * The step counts here are NOT decoration and must not drift from
- * lib/season.ts:
- *   OFFSEASON runs OFFSEASON_STEPS, five of them, indexed by League.week.
- *   FREE_AGENCY runs a bidding wave per week and opens the draft once
- *     `nextWeek > 4`, so four.
+ * The counts here are NOT decoration and must not drift from lib/season.ts:
+ *   OFFSEASON runs OFFSEASON_STEPS, five of them, in TWO advances —
+ *     PROGRESS + RESET_STANDINGS + AGE_CONTRACTS, then ADD_DRAFT_CLASS +
+ *     RESIGN. See OFFSEASON_ADVANCES there for why they are grouped.
+ *   FREE_AGENCY runs a bidding wave per week and opens the draft once the
+ *     next week would exceed FREE_AGENCY.WEEKS, which is imported above rather
+ *     than copied, because it is a plain number with no grouping in it.
  *   RESIGN, DRAFT and PRESEASON are single windows — RESIGN is one step that
  *     ends when you advance out of it, and the draft's own progress is picks
  *     rather than weeks. A "week 2 of re-sign" would be a number this game
  *     does not have, so the stage says what it actually is instead.
  *
+ * LEAGUE.WEEK COUNTS STEPS, THIS BAR COUNTS PRESSES, and in the offseason
+ * those are no longer the same number: one press carries a whole group, so the
+ * week jumps 1 -> 4 and a bar drawn straight off it would read "step 4 of 2".
+ * `advanceSteps` is how many steps each press takes, in order, which is the
+ * only thing needed to turn a week back into a press — and it also means a
+ * save left mid-offseason by the old one-step-per-press build (week 2, 3 or 5)
+ * still lights the press it is actually inside.
+ *
  * THE NAMES LOOK FORWARD, because League.week does. `runOffseasonStep` runs
- * `OFFSEASON_STEPS[week - 1]` and increments the week as part of running it,
- * so a league sitting at week 1 has NOT yet aged its rosters — that is what
- * the next Advance will do. Free agency works the same way: week 1 of 4 means
- * the first wave has yet to be bid. So each line here says what the next click
- * brings, phrased from the summaries those steps return, and the roadmap
- * cannot end up describing the same click in a different tense from the
- * advance message.
+ * the steps from `OFFSEASON_STEPS[week - 1]` onward and moves the week as part
+ * of running them, so a league sitting at week 1 has NOT yet aged its rosters —
+ * that is what the next Advance will do. Free agency works the same way: week
+ * 1 of 3 means the first wave has yet to be bid. So each line here says what
+ * the next click brings, phrased from the summaries those steps return, and
+ * the roadmap cannot end up describing the same click in a different tense
+ * from the advance message.
  */
 const STAGES: {
   phase: string;
   label: string;
   desc: string;
-  /** Advances this stage takes. Absent means one window, not a countdown. */
-  steps?: number;
-  /** What each advance in a multi-step stage does. Same order as League.week. */
+  /**
+   * Steps each Advance in this stage takes, in order. Length is the number of
+   * presses the stage costs; the entries are how many League.week steps each
+   * press moves. Absent means one window, not a countdown.
+   */
+  advanceSteps?: number[];
+  /** What each advance in a multi-step stage does. Same order as advanceSteps. */
   stepNames?: string[];
   /** The word for one advance here — the offseason moves in steps, free agency in weeks. */
   unit?: 'step' | 'week';
@@ -45,14 +61,11 @@ const STAGES: {
     phase: 'OFFSEASON',
     label: 'Housekeeping',
     desc: 'Rosters age, standings reset, contracts advance a year.',
-    steps: 5,
+    advanceSteps: [3, 2],
     unit: 'step',
     stepNames: [
-      'Next: rosters age a year — some careers end here',
-      'Next: standings reset for the new league year',
-      'Next: contracts advance a year',
-      'Next: the incoming draft class arrives',
-      'Next: the re-sign window opens',
+      'Next: the season is settled — rosters age, careers end, standings and contracts roll',
+      'Next: the draft class comes on the board and the re-sign window opens',
     ],
   },
   { phase: 'RESIGN', label: 'Re-sign Window', desc: 'Decide which of your own expiring players to keep before they hit the market.' },
@@ -60,18 +73,32 @@ const STAGES: {
     phase: 'FREE_AGENCY',
     label: 'Free Agency',
     desc: 'Sign from the league-wide pool — AI teams are bidding too.',
-    steps: 4,
+    advanceSteps: Array.from({ length: FREE_AGENCY.WEEKS }, () => 1),
     unit: 'week',
     stepNames: [
       'The market is open — the best names go first',
-      'Second week of bidding',
-      'Third week — the market is thinning',
+      'Second week of bidding — the market is thinning',
       'Last week before the draft goes on the clock',
     ],
   },
   { phase: 'DRAFT', label: 'Rookie Draft', desc: "Draft this year's incoming class." },
   { phase: 'PRESEASON', label: 'New Season', desc: 'Back to football.' },
 ];
+
+/**
+ * Which Advance of this stage a League.week falls in, 1-based. Walks the group
+ * sizes rather than dividing, since they differ (3 then 2 in the offseason),
+ * and clamps at both ends the way lib/season.ts clamps its own step index — a
+ * save that ran past the end of the list must not render "step 7 of 2".
+ */
+function advanceNumberFor(advanceSteps: number[], week: number): number {
+  let seen = 0;
+  for (let i = 0; i < advanceSteps.length; i++) {
+    seen += advanceSteps[i];
+    if (week <= seen) return i + 1;
+  }
+  return advanceSteps.length;
+}
 
 export function OffseasonRoadmap({ currentPhase, week }: {
   currentPhase: string;
@@ -82,10 +109,11 @@ export function OffseasonRoadmap({ currentPhase, week }: {
   if (currentIdx === -1) return null;
 
   const stage = STAGES[currentIdx];
-  // Clamped rather than trusted: League.week is the offseason step index and
-  // lib/season.ts itself clamps it (`Math.min(league.week - 1, ...)`), so a
-  // save that ran past the end of the list must not render "step 7 of 5".
-  const stepNow = stage.steps && week ? Math.min(Math.max(week, 1), stage.steps) : null;
+  // Clamped rather than trusted, at both ends: League.week is a step index and
+  // lib/season.ts clamps its own reading of it, so a save that ran past the end
+  // of the list must not render "step 7 of 2".
+  const stepCount = stage.advanceSteps?.length ?? null;
+  const stepNow = stage.advanceSteps && week ? advanceNumberFor(stage.advanceSteps, Math.max(week, 1)) : null;
   const stepName = stepNow && stage.stepNames ? stage.stepNames[stepNow - 1] : null;
 
   return (
@@ -94,7 +122,7 @@ export function OffseasonRoadmap({ currentPhase, week }: {
         <h2 className="font-semibold">Offseason Roadmap</h2>
         {stepNow !== null && (
           <span className="text-xs text-accent2 font-mono">
-            {stage.unit === 'week' ? 'Week' : 'Step'} {stepNow} of {stage.steps}
+            {stage.unit === 'week' ? 'Week' : 'Step'} {stepNow} of {stepCount}
           </span>
         )}
       </div>
@@ -106,9 +134,9 @@ export function OffseasonRoadmap({ currentPhase, week }: {
               {/* The current stage's bar is subdivided into its own advances,
                   so progress WITHIN a stage reads at a glance and three
                   Advances in a row stop looking identical. */}
-              {state === 'current' && stage.steps ? (
+              {state === 'current' && stepCount ? (
                 <div className="flex gap-0.5 mb-2">
-                  {Array.from({ length: stage.steps }).map((_, k) => (
+                  {Array.from({ length: stepCount }).map((_, k) => (
                     <div
                       key={k}
                       className={`h-1.5 flex-1 rounded-full ${k < (stepNow ?? 0) ? 'bg-accent2' : 'bg-accent2/25'}`}

@@ -98,7 +98,13 @@ async function runOneLeague(idx: number): Promise<{ violations: TaggedViolation[
       // draft is done — fall through to advanceWeek so it transitions phase (INV-18)
     }
 
-    const statsBefore = (league.phase === 'OFFSEASON' && league.week === 2) ? await snapshotStatTotals(leagueId) : null;
+    // INV-T1 is checked across the advance that carries RESET_STANDINGS, which
+    // is the one that rolls season stats into career. That is now the FIRST
+    // offseason advance — OFFSEASON_ADVANCES in lib/season.ts groups PROGRESS,
+    // RESET_STANDINGS and AGE_CONTRACTS into it — so the snapshot is taken at
+    // week 1. Left at week 2 this check would simply never fire again: a
+    // league on this build goes 1 -> 4 and never sits on 2.
+    const statsBefore = (league.phase === 'OFFSEASON' && league.week === 1) ? await snapshotStatTotals(leagueId) : null;
     await advanceWeek(leagueId);
     if (statsBefore) {
       const statsAfter = await snapshotStatTotals(leagueId);

@@ -282,7 +282,10 @@ export async function reconstructPlayerSeasons(
  *     that is simply League.seasonYear. In the one-step window between
  *     PROGRESS and RESET_STANDINGS — which is exactly when the rollover runs
  *     — PROGRESS has already bumped him for the season about to start, so the
- *     caller passes seasonYear + 1.
+ *     caller passes seasonYear + 1. The rollover is that caller and passes it
+ *     directly; nothing reaches ageBasisYear() from inside the window, because
+ *     the two steps now share one press of Advance and no page can be rendered
+ *     between them (see OFFSEASON_ADVANCES in lib/season.ts).
  *   - RETIRED: PROGRESS deliberately does not age him, so his number froze
  *     the year he walked away. `retiredBasisYear` carries that year (his last
  *     played season, plus any offseasons he spent unsigned first, which
@@ -303,6 +306,13 @@ export function ageInSeason(currentAge: number, basisYear: number, year: number)
  * The league year Player.age is stated in for a player still in football.
  * See ageInSeason() — the offset exists only in the single offseason step
  * between aging and the season-year increment.
+ *
+ * A league running this build never sits in that window: PROGRESS and
+ * RESET_STANDINGS are steps 1 and 2 of the same Advance, so League.week goes
+ * from 1 to 4 and week 2 is only ever seen on a save left mid-offseason by the
+ * old one-step-per-press build. The test stays exactly as it was FOR those
+ * saves — it is a step index either way, and a wrong basis prints a wrong age
+ * on every season line the player has.
  */
 export function ageBasisYear(league: { seasonYear: number; phase: string; week: number }): number {
   return league.phase === 'OFFSEASON' && league.week === 2 ? league.seasonYear + 1 : league.seasonYear;
