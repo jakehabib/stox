@@ -13,8 +13,9 @@ import { TeamLogo } from './TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { Tooltip } from './Tooltip';
 import { positionBadgeClass } from './ds/positionColor';
-import { TradePickBoard } from './ds/TradePickBoard';
+import { TradePickBoard, pickTier } from './ds/TradePickBoard';
 import { TradeVerdict } from './ds/TradeVerdict';
+import { TradeRecapCard, type TradeRecapData } from './ds/TradeRecapCard';
 import { IconSwap } from './ds/icons';
 import type { PhilosophySummary } from '@/lib/ai/gm';
 import type { TradePartnerSuggestion } from '@/lib/trade';
@@ -39,6 +40,9 @@ interface Pick {
 }
 interface Team { id: string; name: string; abbr: string; philosophy?: PhilosophySummary }
 
+/** What the server actions take: an asset by id and kind, nothing else. */
+type TradeAssetRef = { type: 'PLAYER' | 'PICK'; id: string };
+
 /** One selected asset, resolved for display on the deal sheet. */
 interface DealItem {
   id: string;
@@ -46,13 +50,15 @@ interface DealItem {
   label: string;
   position?: string;
   ovr?: number;
+  /** Picks: the round, so the sheet tiers a first away from a seventh exactly as the board does. */
+  round?: number;
   /** Cap consequence for THIS side of the deal, or a pick's projected slot / origin. */
   sub?: string;
 }
 
 export function TradeBuilder({
-  leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks, initialGive, initialGet, capSpace, capMode,
-  deadlinePassed, tradeDeadlineWeek, initialPartnerPos, draftRounds, imminentYear,
+  leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks, initialGive, initialGet, capSpace, partnerCapSpace, capMode,
+  deadlinePassed, tradeDeadlineWeek, initialPartnerPos, draftRounds, imminentYear, lastTrade,
 }: {
   leagueId: string; myTeam: Team; partners: Team[]; partnerId: string;
   /** Position being shopped, carried in the URL so it survives changing club. See TeamPanel's initialPosFilter. */
@@ -61,11 +67,21 @@ export function TradeBuilder({
   /** Pre-select assets when arriving to review a specific incoming AI offer. */
   initialGive?: string[]; initialGet?: string[];
   /** Current cap space, so the impact of this exact trade is visible before accepting it. */
-  capSpace: number; capMode: string;
+  capSpace: number;
+  /** The partner club's room. Null only when the cap is switched off for the league. */
+  partnerCapSpace: number | null;
+  capMode: string;
   /** Trade deadline (see lib/trade.ts isTradeDeadlinePassed) — when true, the builder stays visible for browsing but can't submit or execute anything. */
   deadlinePassed?: boolean; tradeDeadlineWeek?: number;
   /** The league's round count and the next draft that will actually run — the pick board's column count, and which year carries a live slot projection. */
   draftRounds: number; imminentYear: number | null;
+  /**
+   * The most recent trade this club has made, rebuilt by the page on every
+   * render. It is only ever SHOWN when its id differs from the one that was
+   * already on screen at mount — i.e. when a deal has just gone through under
+   * this session — so an old trade can never announce itself on a page load.
+   */
+  lastTrade: TradeRecapData | null;
 }) {
   const router = useRouter();
   // Held here rather than in the panel because the club switcher has to read it
@@ -90,6 +106,15 @@ export function TradeBuilder({
   const [insider, setInsider] = useState<string | null>(null);
   const [execError, setExecError] = useState<string | null>(null);
   const [partnerSuggestions, setPartnerSuggestions] = useState<TradePartnerSuggestion[] | null>(null);
+  // The trade already in the books when this screen loaded. Anything newer
+  // than it arrived because of a button on this page.
+  const [tradeIdAtMount] = useState(lastTrade?.id ?? null);
+  const [showRecap, setShowRecap] = useState(false);
+  // Cap space as the server last reported it BEFORE the deal — captured at the
+  // moment of Confirm, so the recap can state before and after without either
+  // figure being worked out here. Both clubs, since a deal moves both books.
+  const [capBefore, setCapBefore] = useState<number | null>(null);
+  const [partnerCapBefore, setPartnerCapBefore] = useState<number | null>(null);
 
   const toggle = (set: Set<string>, setFn: (s: Set<string>) => void, id: string) => {
     const next = new Set(set);
@@ -113,18 +138,40 @@ export function TradeBuilder({
   // pass, so the per-side lines on the deal sheet and the figure underneath
   // them cannot drift apart. Two derivations of one number is precisely how
   // this app has repeatedly shipped a screen quoting a figure it wasn't using.
+  //
+  // BOTH CLUBS, because a deal the other club has no room for is not a deal —
+  // and the AI only says so at Propose time. `freedIfSent` and
+  // `addedIfAcquired` are properties of the CONTRACT, not of a side, so the
+  // partner's arithmetic is the mirror of yours off the same two fields: they
+  // free what they send and take on what they receive. Those two fields are
+  // the per-player halves of `tradeCapDeltas` (lib/capEnforcement.ts) — the
+  // function the executor and the AI's own cap refusal both run — which is why
+  // this readout and that refusal quote the same figures.
   const capFlow = useMemo(() => {
     let freed = 0;
     let dead = 0;
+    let partnerAdds = 0;
     for (const id of give) {
       const r = myRoster.find((x) => x.id === id);
       if (!r) continue;
       freed += r.freedIfSent;
       dead += r.capHit - r.freedIfSent;
+      partnerAdds += r.addedIfAcquired;
     }
-    const added = [...get].reduce((sum, id) => sum + (partnerRoster.find((r) => r.id === id)?.addedIfAcquired ?? 0), 0);
-    return { freed, dead, added, after: capSpace + freed - added };
-  }, [give, get, myRoster, partnerRoster, capSpace]);
+    let added = 0;
+    let partnerFrees = 0;
+    for (const id of get) {
+      const r = partnerRoster.find((x) => x.id === id);
+      if (!r) continue;
+      added += r.addedIfAcquired;
+      partnerFrees += r.freedIfSent;
+    }
+    return {
+      freed, dead, added, partnerAdds, partnerFrees,
+      after: capSpace + freed - added,
+      partnerAfter: partnerCapSpace === null ? null : partnerCapSpace + partnerFrees - partnerAdds,
+    };
+  }, [give, get, myRoster, partnerRoster, capSpace, partnerCapSpace]);
 
   const giveItems = useMemo(() => dealItems(give, myRoster, myPicks, 'SEND', capMode), [give, myRoster, myPicks, capMode]);
   const getItems = useMemo(() => dealItems(get, partnerRoster, partnerPicks, 'RECEIVE', capMode), [get, partnerRoster, partnerPicks, capMode]);
@@ -159,23 +206,29 @@ export function TradeBuilder({
     });
   };
 
-  const propose = () => {
+  // The two asset lists are arguments rather than closure reads so a caller
+  // that has just built a selection can evaluate THAT selection. Reviewing an
+  // offer sets state and asks for an evaluation in the same pass, and the
+  // state it just set is not visible to its own closure — reading giveAssets
+  // there would price the PREVIOUS offer.
+  const propose = (giveA: TradeAssetRef[] = giveAssets, getA: TradeAssetRef[] = getAssets) => {
     startTransition(async () => {
       // Dynasty NEGOTIATION -> Trade Intel. Read-only: this runs the same
       // evaluation the accept/reject path runs and reports the numbers behind
       // the bar. It cannot change what the AI will take.
-      tradeIntelAction(leagueId, partnerId, giveAssets, getAssets).then(setIntel).catch(() => setIntel(null));
+      tradeIntelAction(leagueId, partnerId, giveA, getA).then(setIntel).catch(() => setIntel(null));
       setInsider(null);
-      const evaluation = await evaluateTradeAction(leagueId, partnerId, giveAssets, getAssets);
+      const evaluation = await evaluateTradeAction(leagueId, partnerId, giveA, getA);
       setResult({
         accepted: evaluation.accepted,
         ratio: evaluation.ratio,
         requiredRatio: evaluation.requiredRatio,
         sendValue: evaluation.sendValue,
         receiveValue: evaluation.receiveValue,
-        message: evaluation.accepted
-          ? 'Deal accepted! Click confirm to execute the trade.'
-          : evaluation.counter?.message ?? 'Rejected.',
+        // Their answer in their own words. Empty on acceptance because there
+        // is nothing to answer — evaluateTrade writes no line for a yes, and
+        // the verdict's own headline already says so.
+        message: evaluation.accepted ? '' : evaluation.counter?.message ?? 'Rejected.',
         explanation: evaluation.explanation,
         // Carried through so the verdict can draw a cap refusal as its own
         // state. The figures behind "we can't fit this" are the evaluator's
@@ -185,17 +238,37 @@ export function TradeBuilder({
     });
   };
 
-  // Arriving via a "Review" link on an incoming offer — surface the trade
-  // meter immediately instead of making the user click Propose to see what
-  // was actually offered.
+  /**
+   * REVIEW HAS TO ACTUALLY BUILD THE TRADE.
+   * ==========================================================================
+   * The offers panel sits on THIS page, so its Review link is a client-side
+   * navigation to the same route with a different `reviewOffer` — React keeps
+   * the mounted component and reuses its state. `useState(new Set(initialGive))`
+   * runs on first mount and never again, so the assets the server had just
+   * resolved off the offer were handed to a component that had already decided
+   * its selection was empty: the app owner pressed Review and the builder came
+   * up blank.
+   *
+   * Keyed on the ids themselves rather than a mount key, so this syncs when a
+   * DIFFERENT offer is reviewed but does not wipe a selection the user is in
+   * the middle of assembling. The evaluation goes with it — what was offered
+   * is the whole question, and making him press Propose to see it is a click
+   * that answers nothing.
+   */
+  const reviewKey = `${initialGive?.join(',') ?? ''}|${initialGet?.join(',') ?? ''}`;
   useEffect(() => {
-    if ((initialGive?.length || initialGet?.length) && (giveAssets.length > 0 || getAssets.length > 0)) {
-      propose();
-    }
+    if (!initialGive?.length && !initialGet?.length) return;
+    setGive(new Set(initialGive));
+    setGet(new Set(initialGet));
+    const g = assetList(new Set(initialGive), myRoster, myPicks);
+    const r = assetList(new Set(initialGet), partnerRoster, partnerPicks);
+    if (g.length > 0 || r.length > 0) propose(g, r);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [reviewKey]);
 
   const execute = () => {
+    const spaceBefore = capSpace;
+    const partnerSpaceBefore = partnerCapSpace;
     startTransition(async () => {
       const res = await executeTradeAction(leagueId, myTeam.id, partnerId, giveAssets, getAssets);
       if (!res.ok) {
@@ -207,12 +280,21 @@ export function TradeBuilder({
       }
       setExecError(null);
       setGive(new Set()); setGet(new Set()); setResult(null);
+      setCapBefore(spaceBefore);
+      setPartnerCapBefore(partnerSpaceBefore);
+      setShowRecap(true);
+      // The recap rides in on this: the page rebuilds `lastTrade` server-side
+      // and the refreshed props carry both the new trade and the post-trade
+      // cap sheet.
       router.refresh();
     });
   };
 
   const currentPartner = partners.find((p) => p.id === partnerId);
   const nothingSelected = giveAssets.length === 0 && getAssets.length === 0;
+  // Only a record the refresh actually brought back counts as "just done" —
+  // which also guarantees the cap figure beside it is the post-trade one.
+  const recap = showRecap && lastTrade && lastTrade.id !== tradeIdAtMount ? lastTrade : null;
 
   return (
     <div className="space-y-4">
@@ -261,12 +343,16 @@ export function TradeBuilder({
           leagueId={leagueId} title="You send" teamId={myTeam.id} teamAbbr={myTeam.abbr} teamName={myTeam.name}
           roster={myRoster} picks={myPicks} draftRounds={draftRounds} imminentYear={imminentYear}
           selected={give} onToggle={(id) => toggle(give, setGive, id)}
+          // Same wrapper as the partner's, so the two headers are the same
+          // height to the pixel and the pick boards below start on one line.
           meta={capMode !== 'OFF' ? (
-            <span className="pill border-line text-muted inline-flex items-center gap-1.5">
-              Cap space
-              <span className={`font-mono ${capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(capSpace)}</span>
-              <Tooltip text={tip('capSpace')} />
-            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="pill border-line text-muted inline-flex items-center gap-1.5">
+                Cap space
+                <span className={`font-mono ${capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(capSpace)}</span>
+                <Tooltip text={tip('capSpace')} />
+              </span>
+            </div>
           ) : null}
         />
         <TeamPanel
@@ -285,7 +371,18 @@ export function TradeBuilder({
               {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           }
-          meta={currentPartner?.philosophy ? <PhilosophyBadges p={currentPartner.philosophy} /> : null}
+          meta={
+            <div className="flex flex-wrap items-center gap-1.5">
+              {partnerCapSpace !== null && (
+                <span className="pill border-line text-muted inline-flex items-center gap-1.5">
+                  Cap space
+                  <span className={`font-mono ${partnerCapSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(partnerCapSpace)}</span>
+                  <Tooltip text={tip('capSpace')} />
+                </span>
+              )}
+              {currentPartner?.philosophy && <PhilosophyBadges p={currentPartner.philosophy} />}
+            </div>
+          }
         />
       </div>
 
@@ -296,7 +393,7 @@ export function TradeBuilder({
         <div className="grid md:grid-cols-[1fr_auto_1fr]">
           <DealSide
             teamId={myTeam.id} abbr={myTeam.abbr} heading="You send" items={giveItems}
-            footer={capMode !== 'OFF' && giveItems.length > 0 ? (
+            footer={capMode !== 'OFF' && (capFlow.freed > 0 || capFlow.partnerAdds > 0) ? (
               <>
                 Frees <span className="font-mono text-accent">{formatMoney(capFlow.freed)}</span>
                 {capMode === 'REALISTIC' && capFlow.dead > 0 && (
@@ -308,6 +405,9 @@ export function TradeBuilder({
                     </span>
                   </>
                 )}
+                {capFlow.partnerAdds > 0 && (
+                  <> · costs {currentPartner?.abbr} <span className="font-mono text-bad">{formatMoney(capFlow.partnerAdds)}</span></>
+                )}
               </>
             ) : null}
             onRemove={(id) => toggle(give, setGive, id)}
@@ -317,8 +417,16 @@ export function TradeBuilder({
           </div>
           <DealSide
             teamId={partnerId} abbr={currentPartner?.abbr ?? ''} heading="You receive" items={getItems}
-            footer={capMode !== 'OFF' && getItems.length > 0 ? (
-              <>Adds <span className="font-mono text-bad">{formatMoney(capFlow.added)}</span> to your books</>
+            // Picks carry no salary, so a side that is all picks moves neither
+            // club's books. "Costs you $0" is a line about nothing; there is
+            // nothing to say, so nothing is said.
+            footer={capMode !== 'OFF' && (capFlow.added > 0 || capFlow.partnerFrees > 0) ? (
+              <>
+                Costs you <span className="font-mono text-bad">{formatMoney(capFlow.added)}</span>
+                {capFlow.partnerFrees > 0 && (
+                  <> · frees {currentPartner?.abbr} <span className="font-mono text-accent">{formatMoney(capFlow.partnerFrees)}</span></>
+                )}
+              </>
             ) : null}
             onRemove={(id) => toggle(get, setGet, id)}
           />
@@ -332,18 +440,22 @@ export function TradeBuilder({
                 {giveItems.length} <span className="text-muted text-sm font-sans">out</span> · {getItems.length} <span className="text-muted text-sm font-sans">in</span>
               </div>
             </div>
+            {/* "after" only once there is something for it to be after. An
+                empty board saying "cap space after $29.9M" is a claim about a
+                deal that doesn't exist. */}
             {capMode !== 'OFF' && (
-              <div>
-                <div className="label-sm inline-flex items-center gap-1.5">
-                  Your cap space after
-                  <Tooltip text={tip('capSpace')} />
-                </div>
-                <div className={`stat-value text-stat-sm mt-1 ${capFlow.after < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(capFlow.after)}</div>
-              </div>
+              <CapAfter label={nothingSelected ? `${myTeam.abbr} cap space` : `${myTeam.abbr} cap space after`} before={capSpace} after={capFlow.after} />
+            )}
+            {capMode !== 'OFF' && capFlow.partnerAfter !== null && partnerCapSpace !== null && (
+              <CapAfter
+                label={`${currentPartner?.abbr ?? 'Their'} cap space${nothingSelected ? '' : ' after'}`}
+                before={partnerCapSpace}
+                after={capFlow.partnerAfter}
+              />
             )}
           </div>
           <div className="flex gap-2">
-            <button className="btn-secondary" disabled={pending || deadlinePassed || nothingSelected} onClick={propose}>
+            <button className="btn-secondary" disabled={pending || deadlinePassed || nothingSelected} onClick={() => propose()}>
               {pending ? 'Evaluating…' : deadlinePassed ? 'Deadline Passed' : 'Propose Trade'}
             </button>
             {result?.accepted && !deadlinePassed && (
@@ -358,6 +470,26 @@ export function TradeBuilder({
           <div className="label-sm text-bad">Trade blocked</div>
           <p className="text-muted">{execError}</p>
         </div>
+      )}
+
+      {/* Lands exactly where the verdict was, under the button that was just
+          pressed — and dismisses out of the way for the next deal. */}
+      {recap && (
+        <TradeRecapCard
+          recap={recap}
+          myTeamId={myTeam.id}
+          myAbbr={myTeam.abbr}
+          myName={myTeam.name}
+          capBefore={capBefore}
+          capAfter={capSpace}
+          partnerCapBefore={partnerCapBefore}
+          // Only while the screen is still pointed at the club the deal was
+          // done with — walk on to the next partner and this prop is somebody
+          // else's cap sheet, which would be a figure about the wrong team.
+          partnerCapAfter={recap.partnerId === partnerId ? partnerCapSpace : null}
+          capMode={capMode}
+          onDismiss={() => setShowRecap(false)}
+        />
       )}
 
       {result && currentPartner && (
@@ -375,6 +507,28 @@ export function TradeBuilder({
           </div>
         </TradeVerdict>
       )}
+    </div>
+  );
+}
+
+/**
+ * A club's room once this deal lands. The figure it started from is only
+ * printed when the deal actually moves it, so an empty board reads as one
+ * number rather than as a change that hasn't happened.
+ */
+function CapAfter({ label, before, after }: { label: string; before: number; after: number }) {
+  return (
+    <div>
+      <div className="label-sm inline-flex items-center gap-1.5">
+        {label}
+        <Tooltip text={tip('capSpace')} />
+      </div>
+      <div className="flex items-baseline gap-2 mt-1">
+        <span className={`stat-value text-stat-sm ${after < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(after)}</span>
+        {Math.round(after) !== Math.round(before) && (
+          <span className="text-[11px] text-muted whitespace-nowrap">from {formatMoney(before)}</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -411,7 +565,10 @@ function DealSide({ teamId, abbr, heading, items, footer, onRemove }: {
                   <span className={`stat-value text-[13px] ${ratingColor(it.ovr ?? 0)}`}>{it.ovr}</span>
                 </>
               ) : (
-                <span className="stat-value text-[10px] text-gold uppercase tracking-wider">Pick</span>
+                // Same tier the board just drew it in, so a first stays a
+                // first once it is on the table and a seventh does not borrow
+                // its colour.
+                <span className={`stat-value text-[10px] uppercase tracking-wider ${pickTier(it.round ?? 7).text}`}>Pick</span>
               )}
               <span className="text-xs text-chalk">{it.label}</span>
               {it.sub && <span className="text-[10px] text-muted font-mono">{it.sub}</span>}
@@ -486,7 +643,7 @@ function dealItems(selected: Set<string>, roster: RosterP[], picks: Pick[], side
     const pick = picks.find((x) => x.id === id);
     if (pick) {
       chosenPicks.push({
-        id, kind: 'PICK', label: `${pick.year} R${pick.round}`,
+        id, kind: 'PICK', label: `${pick.year} R${pick.round}`, round: pick.round,
         sub: pick.projectedSlot ? `#${pick.projectedSlot}` : pick.via ? `via ${pick.via}` : undefined,
       });
     }
@@ -645,7 +802,12 @@ function TeamPanel({
               <span className="font-display font-bold uppercase tracking-wide text-base text-team truncate">{teamName}</span>
             )}
           </div>
-          {meta && <div className="mt-2">{meta}</div>}
+          {/* Reserved for two rows of pills, because the partner's side carries
+              its front office's leanings as well as its books and wraps onto a
+              second line at this width. Holding the height on BOTH sides is
+              what keeps the two draft boards below on the same line as each
+              other — which is the whole point of fixing the round column. */}
+          <div className="mt-2 min-h-[3.25rem]">{meta}</div>
         </div>
       </div>
 

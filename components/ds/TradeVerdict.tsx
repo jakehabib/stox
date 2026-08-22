@@ -153,8 +153,9 @@ export function TradeVerdict({ result, intel, partner, children }: {
       </div>
 
       {/* Their answer in their own voice — the sentence lib/trade.ts wrote,
-          given the width to be read rather than run in as a status line. */}
-      <p className="text-sm leading-relaxed text-chalk border-l-2 border-line pl-3">{result.message}</p>
+          given the width to be read rather than run in as a status line. A yes
+          carries no such sentence, and the headline above has already said it. */}
+      {result.message && <p className="text-sm leading-relaxed text-chalk border-l-2 border-line pl-3">{result.message}</p>}
 
       {result.capBlock && <CapBlockTiles block={result.capBlock} />}
 

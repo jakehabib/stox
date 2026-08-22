@@ -24,33 +24,63 @@ export interface PickAsset {
  * (see RatingBadge): gold, sky, chalk, then muted. Accent green is
  * conspicuously absent — that colour means "in the deal" on this screen, and
  * a second-rounder must never be mistaken for a selected one.
+ *
+ * No number goes on a chip beyond its round and, where one exists, its
+ * projected slot. The AI's value points for a pick sit behind the Trade Intel
+ * upgrade (see TradeVerdict), so printing them here would give away the one
+ * thing that upgrade sells.
  */
 const ROUND_TIER: Record<number, { text: string; edge: string; bar: string; wash: string }> = {
-  1: { text: 'text-gold', edge: 'border-gold/50', bar: 'bg-gold', wash: 'bg-gold/[0.07]' },
-  2: { text: 'text-accent2', edge: 'border-accent2/45', bar: 'bg-accent2', wash: 'bg-accent2/[0.06]' },
+  1: { text: 'text-gold', edge: 'border-gold/55', bar: 'bg-gold', wash: 'bg-gold/[0.10]' },
+  2: { text: 'text-accent2', edge: 'border-accent2/45', bar: 'bg-accent2', wash: 'bg-accent2/[0.07]' },
   3: { text: 'text-chalk', edge: 'border-line', bar: 'bg-chalk/60', wash: 'bg-raised/40' },
 };
 const LATE_ROUND = { text: 'text-muted', edge: 'border-line/60', bar: 'bg-muted/45', wash: 'bg-raised/25' };
 
-function tierFor(round: number) {
+/**
+ * The round's chip colours. Exported so a pick rendered anywhere else on this
+ * screen — the deal sheet, the recap of a completed trade — is the same object
+ * the board just showed, rather than a second opinion about what a third-round
+ * pick looks like.
+ */
+export function pickTier(round: number) {
   return ROUND_TIER[round] ?? LATE_ROUND;
 }
 
-function PickChip({ pick, selected, showSlot, showVia, onToggle }: {
-  pick: PickAsset; selected: boolean; showSlot: boolean; showVia: boolean; onToggle: (id: string) => void;
+/** "R1–R7", "R2, R4–R7" — a set of rounds collapsed into runs. */
+function roundRuns(rounds: number[]): string {
+  const sorted = [...new Set(rounds)].sort((a, b) => a - b);
+  if (sorted.length === 0) return '—';
+  const parts: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (const r of sorted.slice(1)) {
+    if (r === prev + 1) { prev = r; continue; }
+    parts.push(start === prev ? `R${start}` : `R${start}–R${prev}`);
+    start = r;
+    prev = r;
+  }
+  parts.push(start === prev ? `R${start}` : `R${start}–R${prev}`);
+  return parts.join(', ');
+}
+
+function PickChip({ pick, selected, showSlot, showVia, compact, onToggle }: {
+  pick: PickAsset; selected: boolean; showSlot: boolean; showVia: boolean; compact?: boolean; onToggle: (id: string) => void;
 }) {
-  const tier = tierFor(pick.round);
+  const tier = pickTier(pick.round);
   return (
     <button
       type="button"
       onClick={() => onToggle(pick.id)}
       aria-pressed={selected}
-      aria-label={`${pick.year} round ${pick.round}${pick.via ? ` via ${pick.via}` : ''}`}
-      className={`relative w-full overflow-hidden rounded-md border px-1.5 pt-1 pb-1.5 text-left transition-colors ${
-        selected ? 'border-accent bg-accent/20' : `${tier.edge} ${tier.wash} hover:bg-raised`
-      }`}
+      aria-label={`${pick.year} round ${pick.round}${pick.via ? ` via ${pick.via}` : ''}${pick.projectedSlot ? `, projected pick ${pick.projectedSlot}` : ''}`}
+      className={`relative overflow-hidden rounded-md border text-left transition-colors ${
+        compact ? 'px-2 pt-1 pb-1.5' : 'w-full px-1.5 pt-1 pb-1.5'
+      } ${selected ? 'border-accent bg-accent/20' : `${tier.edge} ${tier.wash} hover:bg-raised`}`}
     >
-      <div className={`stat-value text-[15px] leading-none ${selected ? 'text-accent' : tier.text}`}>R{pick.round}</div>
+      <div className={`stat-value leading-none ${compact ? 'text-[13px]' : 'text-[15px]'} ${selected ? 'text-accent' : tier.text}`}>
+        R{pick.round}
+      </div>
       {/* Reserved per YEAR rather than per chip: a row where nothing carries a
           projection stays compact instead of holding open a line for a number
           that year can never have. */}
@@ -76,15 +106,58 @@ function PickChip({ pick, selected, showSlot, showVia, onToggle }: {
 }
 
 /**
+ * A year earns the round-by-round ladder when there is something in it to
+ * read: selection numbers, a round held twice, a round that is gone, a pick
+ * that came from another club. A future year holding one plain pick per round
+ * has none of that, and seven boxes reading R1…R7 for the third year running
+ * is a shape rather than information — the app owner, on exactly that on the
+ * draft page: *"there is also no reason to show this in the draft years prior.
+ * it doesn't add or do anything"*. Those years get one line.
+ *
+ * They still get their CHIPS on that line, unlike the draft page's collapsed
+ * years, because here every pick is something you can put in a deal. What
+ * collapses is the scaffolding — the fixed grid, the empty cells, the space
+ * held open for a slot number that year cannot have — never the assets.
+ */
+/**
+ * How deep one round's cell may stack before the ladder stops being the right
+ * shape. Two or three picks in a round is a rebuild and reads perfectly as a
+ * stack; a column tens deep turns the board into a tower — a probe league here
+ * put eighty-three fourth-rounders on one club and drew a thirteen-thousand
+ * pixel page. Past this the year flows instead, which wraps sideways, stays
+ * bounded, and keeps every pick clickable.
+ */
+const MAX_STACK = 4;
+
+function deepestRound(yearPicks: PickAsset[]): number {
+  const perRound = new Map<number, number>();
+  for (const p of yearPicks) perRound.set(p.round, (perRound.get(p.round) ?? 0) + 1);
+  return Math.max(0, ...perRound.values());
+}
+
+function earnsLadder(yearPicks: PickAsset[], rounds: number, isNext: boolean): boolean {
+  if (deepestRound(yearPicks) > MAX_STACK) return false;
+  if (isNext) return true;
+  if (yearPicks.some((p) => p.via)) return true;
+  const held = yearPicks.map((p) => p.round);
+  if (new Set(held).size !== held.length) return true;
+  // A club starts life with exactly one pick in every round of every year it
+  // holds, so a round that isn't here left in a trade. That earns the ladder —
+  // it shows WHICH round is gone, in place, instead of leaving the reader to
+  // notice an absence.
+  return new Set(held).size < rounds;
+}
+
+/**
  * A club's draft capital as a board: years down, rounds across.
  *
  * The flat wrap of identical pills this replaces ("2027 R1  2027 R2  2027 R3
- * …") gave a club holding twenty-one picks four rows of undifferentiated
- * text, with no grouping, no sense of which were worth anything, and a
- * first-rounder rendered exactly like a seventh. Fixing the round column in
- * place does two things at once: a missing pick reads as a gap rather than as
- * something you have to notice isn't there, and the two clubs' boards line up
- * with each other across the screen.
+ * …") gave a club holding thirty picks five rows of undifferentiated text,
+ * with no grouping, no sense of which were worth anything, and a first-rounder
+ * rendered exactly like a seventh. Fixing the round column in place does two
+ * things at once: a missing pick reads as a gap rather than as something you
+ * have to notice isn't there, and the two clubs' boards line up with each
+ * other across the screen.
  */
 export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle }: {
   picks: PickAsset[];
@@ -98,8 +171,19 @@ export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle
   // A pick outside the configured round count would otherwise fall off the
   // right edge of the grid without a trace, so the grid widens to hold it.
   const cols = picks.reduce((m, p) => Math.max(m, p.round), rounds);
-  const years = Array.from(new Set(picks.map((p) => p.year))).sort((a, b) => a - b);
-  const cols100 = { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` };
+  const colStyle = { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` };
+
+  /**
+   * Every year from the next draft to the last one this club holds anything
+   * in — INCLUDING the ones it holds nothing in, which are the years worth
+   * knowing about. Listing only the years with picks in them renders a club
+   * that has traded away its entire 2028 as though 2028 did not exist.
+   * Bounded, so a stray far-future pick cannot draw a decade of empty rows.
+   */
+  const held = picks.map((p) => p.year);
+  const last = Math.max(...held);
+  const first = Math.min(imminentYear && imminentYear <= last ? imminentYear : last, ...held);
+  const years = Array.from({ length: Math.min(last - first + 1, 8) }, (_, i) => first + i);
 
   return (
     <div className="mb-4">
@@ -120,42 +204,93 @@ export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle
       ) : (
         <div className="space-y-1.5">
           {years.map((year) => {
-            const held = picks.filter((p) => p.year === year);
-            const showSlot = held.some((p) => p.projectedSlot);
-            const showVia = held.some((p) => p.via);
+            const yearPicks = picks.filter((p) => p.year === year);
+            const isNext = year === imminentYear;
+            const showSlot = yearPicks.some((p) => p.projectedSlot);
+            const showVia = yearPicks.some((p) => p.via);
+            const ladder = yearPicks.length > 0 && earnsLadder(yearPicks, rounds, isNext);
             return (
               <div key={year} className="flex items-stretch gap-1.5">
                 <div className="w-[40px] shrink-0 pt-0.5">
                   <div className="stat-value text-[13px] leading-none text-chalk">{year}</div>
-                  {year === imminentYear && (
+                  {isNext && (
                     <div className="mt-1 inline-flex items-center gap-1 text-[9px] leading-none text-accent2 uppercase tracking-wide">
                       Next
                       <Tooltip text="The next draft to actually run, so these picks carry where they would land if the season ended today. Later years have no standings behind them yet." />
                     </div>
                   )}
                 </div>
-                <div className="grid flex-1 gap-1.5" style={cols100}>
-                  {Array.from({ length: cols }, (_, i) => {
-                    const inRound = held.filter((p) => p.round === i + 1);
-                    if (inRound.length === 0) {
-                      return <div key={i} className="rounded-md border border-dashed border-line/30 min-h-[30px]" />;
-                    }
-                    return (
-                      <div key={i} className="flex flex-col gap-1">
-                        {inRound.map((p) => (
-                          <PickChip
-                            key={p.id}
-                            pick={p}
-                            selected={selected.has(p.id)}
-                            showSlot={showSlot}
-                            showVia={showVia}
-                            onToggle={onToggle}
-                          />
-                        ))}
-                      </div>
-                    );
-                  })}
-                </div>
+
+                {/* A year the club owns nothing in is one line, not seven
+                    empty boxes. The fact is "there is nothing here", and a
+                    ladder of dashes takes a row of space to say it. */}
+                {yearPicks.length === 0 ? (
+                  <div className="flex-1 flex items-center rounded-md border border-dashed border-line/30 px-2 text-[11px] text-muted min-h-[30px]">
+                    Nothing held — every round gone
+                  </div>
+                ) : ladder ? (
+                  <div className="grid flex-1 gap-1.5" style={colStyle}>
+                    {Array.from({ length: cols }, (_, i) => {
+                      // Earliest selection first where both are known, so a
+                      // stacked cell reads in the order the picks would be made.
+                      const inRound = yearPicks
+                        .filter((p) => p.round === i + 1)
+                        .sort((a, b) => (a.projectedSlot ?? 99) - (b.projectedSlot ?? 99));
+                      if (inRound.length === 0) {
+                        return (
+                          <div
+                            key={i}
+                            title={`No ${year} round ${i + 1} pick`}
+                            className="flex items-start justify-center rounded-md border border-dashed border-line/35 min-h-[30px] pt-1 text-[13px] leading-none text-muted/45"
+                          >
+                            –
+                          </div>
+                        );
+                      }
+                      return (
+                        <div key={i} className="flex flex-col gap-1">
+                          {inRound.map((p) => (
+                            <PickChip
+                              key={p.id}
+                              pick={p}
+                              selected={selected.has(p.id)}
+                              showSlot={showSlot}
+                              showVia={showVia}
+                              onToggle={onToggle}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* THE QUIET YEAR. A full, plain set with no slot to project
+                     and nothing that has happened to it — so it states its own
+                     shape once, in words, and carries the picks themselves on
+                     the same line to be clicked. Flowing rather than gridded is
+                     also the fallback for a year too deep in one round to
+                     column sensibly; it carries whatever those picks know, so
+                     nothing is lost by arriving here. */
+                  <div className="flex-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 min-h-[26px]">
+                    {yearPicks
+                      .slice()
+                      .sort((a, b) => a.round - b.round || (a.projectedSlot ?? 99) - (b.projectedSlot ?? 99))
+                      .map((p) => (
+                        <PickChip
+                          key={p.id}
+                          pick={p}
+                          selected={selected.has(p.id)}
+                          showSlot={showSlot}
+                          showVia={showVia}
+                          compact
+                          onToggle={onToggle}
+                        />
+                      ))}
+                    <span className="text-[11px] text-muted ml-auto tabular-nums whitespace-nowrap">
+                      {yearPicks.length} picks · {roundRuns(yearPicks.map((p) => p.round))}
+                    </span>
+                  </div>
+                )}
               </div>
             );
           })}

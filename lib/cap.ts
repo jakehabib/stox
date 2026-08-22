@@ -377,6 +377,43 @@ export function capSavingsOnCut(c: ContractLike | null | undefined, mode: CapMod
   return capHit(c, mode) - deadMoneyOnCut(c, mode);
 }
 
+/**
+ * WHAT MOVING ONE CONTRACT DOES TO THE TWO CAP SHEETS IT TOUCHES.
+ *
+ * The two sides of a trade are NOT mirror images, and this is the single
+ * place that says so: in REALISTIC the signing bonus does not travel — the
+ * club giving him up eats the whole remaining proration immediately, and the
+ * club acquiring him inherits base salary only. In SIMPLIFIED the flat-APY
+ * contract travels intact and nothing accelerates.
+ *
+ * It lives in lib/cap.ts, with the rest of the pure math, precisely so the
+ * SCREEN and the EXECUTOR can share it: `tradeCapDeltas` (lib/capEnforcement)
+ * — which the cap gate, the executor and the AI's own cap refusal all run —
+ * is nothing but this function summed over the assets, and the trade
+ * builder's live "space after" readout is the same call made per player on
+ * the server. Two derivations of one figure is exactly how this app has
+ * repeatedly shipped a panel quoting a number it was not using.
+ */
+export interface TradeCapEffect {
+  /** Cap the club SENDING him actually frees — his hit less the bonus that accelerates onto them. */
+  frees: number;
+  /** Cap the club RECEIVING him actually takes on — base salary only in REALISTIC. */
+  takesOn: number;
+  /** Bonus that accelerates onto the sending club as an immediate dead-money charge. Always 0 outside REALISTIC. */
+  dead: number;
+}
+
+export function tradeCapEffect(c: ContractLike | null | undefined, mode: CapMode): TradeCapEffect {
+  if (!c || mode === 'OFF') return { frees: 0, takesOn: 0, dead: 0 };
+  const hit = capHit(c, mode);
+  const dead = deadMoneyOnCut(c, mode);
+  return {
+    frees: hit - dead,
+    takesOn: hit - (mode === 'REALISTIC' ? proration(c) : 0),
+    dead,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Market value
 // ---------------------------------------------------------------------------

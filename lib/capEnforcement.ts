@@ -7,8 +7,8 @@ import {
   capSavingsOnCut,
   deadMoneyOnCut,
   formatMoney,
-  proration,
   restructureContract as computeRestructure,
+  tradeCapEffect,
   ContractLike,
 } from './cap';
 import { teamCapSummary } from './cap-summary';
@@ -400,18 +400,14 @@ export async function tradeCapDeltas(
     if (a.type !== 'PLAYER') continue; // picks carry no cap weight
     const contract = await prisma.contract.findUnique({ where: { playerId: a.id } });
     if (!contract) continue;
-    const currentHit = capHit(contract, capMode);
-    if (capMode === 'REALISTIC') {
-      const accelerated = deadMoneyOnCut(contract, capMode);
-      const inheritedBase = currentHit - proration(contract);
-      // Seller: drops the live hit, immediately books the accelerated bonus.
-      out.push({ teamId: fromTeam, delta: accelerated - currentHit });
-      out.push({ teamId: toTeam, delta: inheritedBase });
-    } else {
-      // SIMPLIFIED: the flat-APY contract travels intact, nothing accelerates.
-      out.push({ teamId: fromTeam, delta: -currentHit });
-      out.push({ teamId: toTeam, delta: currentHit });
-    }
+    // One derivation, in lib/cap.ts, shared with the trade screen's live
+    // "space after" readout — so what the builder shows and what this gate
+    // enforces cannot drift apart.
+    const effect = tradeCapEffect(contract, capMode);
+    // Seller drops the live hit and immediately books the accelerated bonus;
+    // buyer takes on what actually travels.
+    out.push({ teamId: fromTeam, delta: -effect.frees });
+    out.push({ teamId: toTeam, delta: effect.takesOn });
   }
   return out;
 }
