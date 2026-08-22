@@ -1321,6 +1321,17 @@ async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: 
  * the user is over the limit the advance is blocked instead, the same shape the
  * cap-compliance gate already uses, and he cuts whoever he wants to cut.
  */
+/**
+ * [TUNE] What a dollar of dead money is worth, in rating points, when a club
+ * decides who to waive. $1.5M ~ one point: a 61 who costs $3.0M to release is
+ * treated as a 63, so an equally-rated man on a minimum deal goes first.
+ *
+ * Calibrated to be decisive without being absolute — it stops a club torching
+ * cap space over a one-point difference, and still lets it cut a genuinely
+ * expensive player who is genuinely bad.
+ */
+const CUT_DEAD_MONEY_PER_OVR = 1_500_000;
+
 async function trimRostersToLimit(
   leagueId: string, seasonYear: number, settings: LeagueSettings,
 ): Promise<{ trimmed: number; userOverflow: { abbr: string; over: number; rosterSize: number } | null }> {
@@ -1342,7 +1353,35 @@ async function trimRostersToLimit(
       continue;
     }
 
-    const cuts = roster.slice(0, overflow);
+    /*
+     * FINAL CUTS WEIGH WHAT A RELEASE COSTS, NOT JUST THE RATING.
+     *
+     * This cut strictly by lowest trueOvr, so a club would eat a large
+     * guaranteed hit to waive a 61 while a 63 on a minimum deal — free to
+     * release — sat next to him. No front office does that; the whole point of
+     * cut-down day is that money is part of the decision.
+     *
+     * It survived because AI clubs used to draft on true ratings, so their own
+     * picks were never the worst men on the roster and the expensive-to-cut
+     * players were never in the firing line. Once clubs started drafting off a
+     * fallible board (see AI CLUBS DRAFT OFF A READ in lib/draft.ts), late
+     * picks could genuinely be bad — and measured, clubs began waiving men they
+     * had drafted days earlier, writing the rookie bonus off as dead money and
+     * going over the cap on cut-down day. sim:health INV-19 rose from 6 hits to
+     * 28-50, and nothing re-checks AI compliance between the draft and week 1,
+     * so a club that went over STAYED over for all seventeen weeks.
+     *
+     * Dead money is converted into rating points rather than compared against
+     * them directly, because the two are not otherwise commensurable and a
+     * ratio would need its own scale anyway. CUT_DEAD_MONEY_PER_OVR is that
+     * exchange rate: a player costing this much to release is as hard to cut as
+     * a man one rating point better.
+     */
+    const cutScore = (p: (typeof roster)[number]) =>
+      p.trueOvr + deadMoneyOnCut(p.contract, settings.capMode) / CUT_DEAD_MONEY_PER_OVR;
+    const cuts = [...roster]
+      .sort((a, b) => cutScore(a) - cutScore(b) || a.trueOvr - b.trueOvr || a.id.localeCompare(b.id))
+      .slice(0, overflow);
     for (const p of cuts) {
       const dead = deadMoneyOnCut(p.contract, settings.capMode);
       if (dead > 0) {

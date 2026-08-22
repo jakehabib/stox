@@ -310,8 +310,14 @@ something here, the principle wins and the change is wrong.
   — run out of patience on a contested free agent and he signs with the team
   that was bidding against you, which is a real transaction and permanent.
 - AI teams don't carry their own `ScoutingReport` rows — they evaluate free
-  agents/trades/draft prospects off true ratings. Modeling AI fog-of-war
-  would 32x the scouting data for no gameplay benefit in a single-player game.
+  agents and trades off true ratings. Modeling AI fog-of-war there would 32x
+  the scouting data for no gameplay benefit in a single-player game, and a
+  veteran is a known quantity anyway. **The rookie draft is the exception**:
+  once the consensus board became deliberately fallible (`lib/consensus.ts`),
+  clubs picking off true ratings meant the board the user is shown predicted
+  nothing about the order players actually came off it. AI clubs now draft
+  off the public board plus a private per-club lean, with no scouting rows
+  involved — see AI CLUBS DRAFT OFF A READ in `lib/draft.ts`.
 - The re-sign window doesn't give the original team an *exclusive*
   negotiating period before a player hits the open market — expiring
   contracts go straight to the free agent pool, which anyone (including
