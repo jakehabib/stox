@@ -13,6 +13,9 @@ import { TeamLogo } from './TeamLogo';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { Tooltip } from './Tooltip';
 import { positionBadgeClass } from './ds/positionColor';
+import { TradePickBoard } from './ds/TradePickBoard';
+import { TradeVerdict } from './ds/TradeVerdict';
+import { IconSwap } from './ds/icons';
 import type { PhilosophySummary } from '@/lib/ai/gm';
 import type { TradePartnerSuggestion } from '@/lib/trade';
 import { tip } from '@/lib/glossary';
@@ -29,12 +32,27 @@ interface RosterP {
   seasonStats: Record<string, number>;
 }
 /** projectedSlot: where this pick would land "if the season ended today" — only ever set for a current-year pick, since a future year has no standings yet to project from. */
-interface Pick { id: string; year: number; round: number; slot: number; projectedSlot?: number }
+interface Pick {
+  id: string; year: number; round: number; slot: number; projectedSlot?: number;
+  /** Club it originally belonged to, when that isn't the club holding it — a pick that changed hands is not the same object as one a club has always owned. */
+  via?: string;
+}
 interface Team { id: string; name: string; abbr: string; philosophy?: PhilosophySummary }
+
+/** One selected asset, resolved for display on the deal sheet. */
+interface DealItem {
+  id: string;
+  kind: 'PLAYER' | 'PICK';
+  label: string;
+  position?: string;
+  ovr?: number;
+  /** Cap consequence for THIS side of the deal, or a pick's projected slot / origin. */
+  sub?: string;
+}
 
 export function TradeBuilder({
   leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks, initialGive, initialGet, capSpace, capMode,
-  deadlinePassed, tradeDeadlineWeek, initialPartnerPos,
+  deadlinePassed, tradeDeadlineWeek, initialPartnerPos, draftRounds, imminentYear,
 }: {
   leagueId: string; myTeam: Team; partners: Team[]; partnerId: string;
   /** Position being shopped, carried in the URL so it survives changing club. See TeamPanel's initialPosFilter. */
@@ -46,6 +64,8 @@ export function TradeBuilder({
   capSpace: number; capMode: string;
   /** Trade deadline (see lib/trade.ts isTradeDeadlinePassed) — when true, the builder stays visible for browsing but can't submit or execute anything. */
   deadlinePassed?: boolean; tradeDeadlineWeek?: number;
+  /** The league's round count and the next draft that will actually run — the pick board's column count, and which year carries a live slot projection. */
+  draftRounds: number; imminentYear: number | null;
 }) {
   const router = useRouter();
   // Held here rather than in the panel because the club switcher has to read it
@@ -59,31 +79,12 @@ export function TradeBuilder({
     router.push(`?with=${id}${partnerPos !== 'ALL' ? `&pos=${partnerPos}` : ''}`, { scroll: false });
   const [give, setGive] = useState<Set<string>>(new Set(initialGive));
   const [get, setGet] = useState<Set<string>>(new Set(initialGet));
-  // REVIEW HAS TO ACTUALLY BUILD THE TRADE.
-  // ==========================================================================
-  // The offers panel sits on THIS page, so its Review link is a client-side
-  // navigation to the same route with a different `reviewOffer` — React keeps
-  // the mounted component and reuses its state. `useState(new Set(initialGive))`
-  // runs on first mount and never again, so the assets the server had just
-  // resolved off the offer were handed to a component that had already decided
-  // its selection was empty: the app owner pressed Review and the builder came
-  // up blank.
-  //
-  // Keyed on the ids themselves rather than a mount key, so this syncs when a
-  // DIFFERENT offer is reviewed but does not wipe a selection the user is in
-  // the middle of assembling.
-  const reviewKey = `${initialGive?.join(',') ?? ''}|${initialGet?.join(',') ?? ''}`;
-  useEffect(() => {
-    if (!initialGive?.length && !initialGet?.length) return;
-    setGive(new Set(initialGive));
-    setGet(new Set(initialGet));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reviewKey]);
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<{
     accepted: boolean; message: string; ratio: number; requiredRatio: number;
     sendValue: number; receiveValue: number;
     explanation?: { give: string[]; receive: string[] };
+    capBlock?: { shortfall: number; added: number; available: number };
   } | null>(null);
   const [intel, setIntel] = useState<TradeIntelRead | null>(null);
   const [insider, setInsider] = useState<string | null>(null);
@@ -107,21 +108,26 @@ export function TradeBuilder({
   // that accelerates onto your cap, and acquiring one adds base salary only
   // (his bonus stays behind with his old team). Using his raw cap hit for both
   // sides would overstate what a bonus-heavy contract actually saves you.
-  const capAfter = useMemo(() => {
-    const freed = [...give].reduce((sum, id) => sum + (myRoster.find((r) => r.id === id)?.freedIfSent ?? 0), 0);
+  //
+  // The freed / added / dead totals and the space they leave are summed in one
+  // pass, so the per-side lines on the deal sheet and the figure underneath
+  // them cannot drift apart. Two derivations of one number is precisely how
+  // this app has repeatedly shipped a screen quoting a figure it wasn't using.
+  const capFlow = useMemo(() => {
+    let freed = 0;
+    let dead = 0;
+    for (const id of give) {
+      const r = myRoster.find((x) => x.id === id);
+      if (!r) continue;
+      freed += r.freedIfSent;
+      dead += r.capHit - r.freedIfSent;
+    }
     const added = [...get].reduce((sum, id) => sum + (partnerRoster.find((r) => r.id === id)?.addedIfAcquired ?? 0), 0);
-    return capSpace + freed - added;
+    return { freed, dead, added, after: capSpace + freed - added };
   }, [give, get, myRoster, partnerRoster, capSpace]);
 
-  // Dead money you'd eat by sending these players out — surfaced separately
-  // because it's the part a raw "cap space after" number hides.
-  const deadIncurred = useMemo(
-    () => [...give].reduce((sum, id) => {
-      const r = myRoster.find((x) => x.id === id);
-      return sum + (r ? r.capHit - r.freedIfSent : 0);
-    }, 0),
-    [give, myRoster],
-  );
+  const giveItems = useMemo(() => dealItems(give, myRoster, myPicks, 'SEND', capMode), [give, myRoster, myPicks, capMode]);
+  const getItems = useMemo(() => dealItems(get, partnerRoster, partnerPicks, 'RECEIVE', capMode), [get, partnerRoster, partnerPicks, capMode]);
 
   // "Best trade partners" — when exactly one player is selected to shop,
   // surface which other teams actually need that position instead of making
@@ -133,7 +139,7 @@ export function TradeBuilder({
     const playerIds = [...give].filter((id) => myRoster.find((r) => r.id === id));
     if (playerIds.length !== 1) return null;
     const p = myRoster.find((r) => r.id === playerIds[0]);
-    return p ? { position: p.position, ovr: p.ovr } : null;
+    return p ? { name: p.name, position: p.position, ovr: p.ovr } : null;
   }, [give, myRoster]);
   const shoppedPosition = shopped?.position ?? null;
 
@@ -171,6 +177,10 @@ export function TradeBuilder({
           ? 'Deal accepted! Click confirm to execute the trade.'
           : evaluation.counter?.message ?? 'Rejected.',
         explanation: evaluation.explanation,
+        // Carried through so the verdict can draw a cap refusal as its own
+        // state. The figures behind "we can't fit this" are the evaluator's
+        // own, never a second sum taken on this side of the wire.
+        capBlock: evaluation.capBlock,
       });
     });
   };
@@ -202,41 +212,38 @@ export function TradeBuilder({
   };
 
   const currentPartner = partners.find((p) => p.id === partnerId);
+  const nothingSelected = giveAssets.length === 0 && getAssets.length === 0;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="label-sm">Trading with</span>
-        <select
-          className="input"
-          value={partnerId}
-          onChange={(e) => goToPartner(e.target.value)}
-        >
-          {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        {currentPartner?.philosophy && <PhilosophyBadges p={currentPartner.philosophy} />}
-      </div>
-
       {deadlinePassed && (
-        <div className="panel p-4 border-warn/40 bg-warn/5 text-sm">
-          <span className="text-warn font-semibold">Trade deadline has passed.</span>
-          <span className="text-muted"> Trades reopen once free agency opens for the new league year{tradeDeadlineWeek ? ` — the deadline was week ${tradeDeadlineWeek}` : ''}. You can still browse rosters and picks below.</span>
+        <div className="panel p-3 border-warn/40 bg-warn/5 text-sm flex flex-wrap items-baseline gap-x-2">
+          <span className="text-warn font-semibold">Trade deadline passed{tradeDeadlineWeek ? ` — week ${tradeDeadlineWeek}` : ''}.</span>
+          <span className="text-muted">Reopens with free agency. Rosters and picks stay open below.</span>
         </div>
       )}
 
-      {shoppedPosition && (
-        <div className="panel p-4">
-          <h3 className="font-semibold text-sm mb-2">Best trade partners for a {shoppedPosition}</h3>
+      {shopped && (
+        <div className="panel p-3 flex items-center gap-x-3 gap-y-2 flex-wrap">
+          <span className="label-sm shrink-0">Who needs a {shoppedPosition}</span>
+          <span className="text-xs text-chalk shrink-0">
+            {shopped.name} <span className={`stat-value text-[13px] ${ratingColor(shopped.ovr)}`}>{shopped.ovr}</span>
+          </span>
+          <span className="w-px h-4 bg-line hidden sm:block" />
           {partnerSuggestions === null ? (
-            <p className="text-xs text-muted">Checking around the league…</p>
+            <span className="text-xs text-muted">Checking around the league…</span>
           ) : partnerSuggestions.length === 0 ? (
-            <p className="text-xs text-muted">No team is showing significant need at {shoppedPosition} right now.</p>
+            <span className="text-xs text-muted">No club is showing significant need at {shoppedPosition} right now.</span>
           ) : (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               {partnerSuggestions.map((s) => (
                 <button
                   key={s.teamId}
-                  onClick={() => { window.location.href = `?with=${s.teamId}`; }}
+                  // The same soft navigation the club switcher uses. This was a
+                  // window.location.href assignment, which reloaded the whole
+                  // document, dropped the position being shopped and threw the
+                  // reader back to the top of the page.
+                  onClick={() => goToPartner(s.teamId)}
                   className={`pill flex items-center gap-1.5 ${s.teamId === partnerId ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}
                 >
                   <TeamLogo seed={s.teamId} abbr={s.teamAbbr} size={16} />
@@ -250,38 +257,99 @@ export function TradeBuilder({
       )}
 
       <div className="grid md:grid-cols-2 gap-4">
-        <TeamPanel leagueId={leagueId} title="You send" teamId={myTeam.id} teamAbbr={myTeam.abbr} teamName={myTeam.name} roster={myRoster} picks={myPicks} selected={give} onToggle={(id) => toggle(give, setGive, id)} />
+        <TeamPanel
+          leagueId={leagueId} title="You send" teamId={myTeam.id} teamAbbr={myTeam.abbr} teamName={myTeam.name}
+          roster={myRoster} picks={myPicks} draftRounds={draftRounds} imminentYear={imminentYear}
+          selected={give} onToggle={(id) => toggle(give, setGive, id)}
+          meta={capMode !== 'OFF' ? (
+            <span className="pill border-line text-muted inline-flex items-center gap-1.5">
+              Cap space
+              <span className={`font-mono ${capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(capSpace)}</span>
+              <Tooltip text={tip('capSpace')} />
+            </span>
+          ) : null}
+        />
         <TeamPanel
           leagueId={leagueId} title="You receive" teamId={partnerId}
           teamAbbr={currentPartner?.abbr ?? ''} teamName={currentPartner?.name ?? ''}
-          roster={partnerRoster} picks={partnerPicks} selected={get} onToggle={(id) => toggle(get, setGet, id)}
+          roster={partnerRoster} picks={partnerPicks} draftRounds={draftRounds} imminentYear={imminentYear}
+          selected={get} onToggle={(id) => toggle(get, setGet, id)}
           initialPosFilter={initialPartnerPos}
           onPosFilter={setPartnerPos}
           switcher={<PartnerStepper partners={partners} partnerId={partnerId} onGo={goToPartner} />}
+          // The club <select> sits in this header rather than at the top of the
+          // page for the same reason the stepper does: every way of changing
+          // club belongs beside the roster it changes, not a scroll away.
+          selector={
+            <select className="input py-1 text-sm w-full max-w-[16rem]" value={partnerId} onChange={(e) => goToPartner(e.target.value)}>
+              {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          }
+          meta={currentPartner?.philosophy ? <PhilosophyBadges p={currentPartner.philosophy} /> : null}
         />
       </div>
 
-      <div className="panel p-4 flex items-center justify-between flex-wrap gap-3">
-        <div className="text-sm text-muted flex items-center gap-3 flex-wrap">
-          <span>{giveAssets.length} asset(s) out · {getAssets.length} asset(s) in</span>
-          {capMode !== 'OFF' && (
-            <span>
-              Your cap space after: <span className={`stat-value text-stat-sm ${capAfter < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(capAfter)}</span>
-            </span>
-          )}
-          {capMode === 'REALISTIC' && deadIncurred > 0 && (
-            <span title="Signing-bonus proration on the players you're sending out accelerates onto your cap the moment the trade goes through — it does not follow them to their new team.">
-              Dead money you'd eat: <span className="stat-value text-stat-sm text-bad">{formatMoney(deadIncurred)}</span>
-            </span>
-          )}
+      {/* THE DEAL SHEET. What is actually on the table, what it does to your
+          books, and the verdict once it has been put to them — one object,
+          because they are one thought. */}
+      <div className="panel overflow-hidden">
+        <div className="grid md:grid-cols-[1fr_auto_1fr]">
+          <DealSide
+            teamId={myTeam.id} abbr={myTeam.abbr} heading="You send" items={giveItems}
+            footer={capMode !== 'OFF' && giveItems.length > 0 ? (
+              <>
+                Frees <span className="font-mono text-accent">{formatMoney(capFlow.freed)}</span>
+                {capMode === 'REALISTIC' && capFlow.dead > 0 && (
+                  <>
+                    {' · '}
+                    <span className="inline-flex items-center gap-1">
+                      dead money <span className="font-mono text-bad">{formatMoney(capFlow.dead)}</span>
+                      <Tooltip text={tip('deadMoney')} />
+                    </span>
+                  </>
+                )}
+              </>
+            ) : null}
+            onRemove={(id) => toggle(give, setGive, id)}
+          />
+          <div className="flex md:flex-col items-center justify-center px-4 py-2 md:py-6 border-y md:border-y-0 md:border-x border-line/60 bg-ink/20">
+            <IconSwap className="text-muted" size={22} />
+          </div>
+          <DealSide
+            teamId={partnerId} abbr={currentPartner?.abbr ?? ''} heading="You receive" items={getItems}
+            footer={capMode !== 'OFF' && getItems.length > 0 ? (
+              <>Adds <span className="font-mono text-bad">{formatMoney(capFlow.added)}</span> to your books</>
+            ) : null}
+            onRemove={(id) => toggle(get, setGet, id)}
+          />
         </div>
-        <div className="flex gap-2">
-          <button className="btn-secondary" disabled={pending || deadlinePassed || (giveAssets.length === 0 && getAssets.length === 0)} onClick={propose}>
-            {pending ? 'Evaluating…' : deadlinePassed ? 'Deadline Passed' : 'Propose Trade'}
-          </button>
-          {result?.accepted && !deadlinePassed && (
-            <button className="btn-primary" disabled={pending} onClick={execute}>Confirm & Execute</button>
-          )}
+
+        <div className="border-t border-line/60 bg-ink/30 px-4 py-3 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-8 flex-wrap">
+            <div>
+              <div className="label-sm">On the table</div>
+              <div className="stat-value text-stat-sm mt-1 text-chalk tabular-nums">
+                {giveItems.length} <span className="text-muted text-sm font-sans">out</span> · {getItems.length} <span className="text-muted text-sm font-sans">in</span>
+              </div>
+            </div>
+            {capMode !== 'OFF' && (
+              <div>
+                <div className="label-sm inline-flex items-center gap-1.5">
+                  Your cap space after
+                  <Tooltip text={tip('capSpace')} />
+                </div>
+                <div className={`stat-value text-stat-sm mt-1 ${capFlow.after < 0 ? 'text-bad' : 'text-accent'}`}>{formatMoney(capFlow.after)}</div>
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button className="btn-secondary" disabled={pending || deadlinePassed || nothingSelected} onClick={propose}>
+              {pending ? 'Evaluating…' : deadlinePassed ? 'Deadline Passed' : 'Propose Trade'}
+            </button>
+            {result?.accepted && !deadlinePassed && (
+              <button className="btn-primary" disabled={pending} onClick={execute}>Confirm &amp; Execute</button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -292,71 +360,67 @@ export function TradeBuilder({
         </div>
       )}
 
-      {result && (
-        <div className={`panel p-4 text-sm space-y-3 ${result.accepted ? 'border-accent/40' : 'border-bad/30'}`}>
-          <div className={result.accepted ? 'text-accent' : 'text-bad'}>{result.message}</div>
-          <TradeScoreBar ratio={result.ratio} requiredRatio={result.requiredRatio} accepted={result.accepted} />
-
-          {intel?.unlocked && (
-            <div className="text-xs border-t border-line/60 pt-2 space-y-0.5">
-              <div className="label-sm text-accent2 inline-flex items-center gap-1.5">
-                Trade Intel
-                <Tooltip text={tip('tradeValue')} />
-              </div>
-              <div className="text-muted">
-                They price what you&apos;re asking for at <span className="font-mono text-chalk">{intel.theirValue.toLocaleString()}</span>{' '}
-                and your offer at <span className="font-mono text-chalk">{intel.yourValue.toLocaleString()}</span>.
-                {intel.shortfall > 0
-                  ? <> You are <span className="font-mono text-bad">{intel.shortfall.toLocaleString()}</span> short of their bar.</>
-                  : <> That clears their bar.</>}
-              </div>
-            </div>
-          )}
-
-          <div className="border-t border-line/60 pt-2 flex items-center gap-2 flex-wrap">
+      {result && currentPartner && (
+        <TradeVerdict
+          result={result}
+          intel={intel}
+          partner={{ id: partnerId, abbr: currentPartner.abbr, name: currentPartner.name }}
+        >
+          <div className="border-t border-line/60 pt-3 flex items-center gap-3 flex-wrap">
             <button type="button" className="btn-secondary text-xs" disabled={pending} onClick={callInsider}>
               Call your Insider
             </button>
-            <span className="text-[11px] text-muted">Spends one of your season&apos;s Insider calls for a concrete asking price. Requires the Insider upgrade.</span>
+            <span className="text-[11px] text-muted">Costs one of this season&apos;s Insider calls.</span>
+            {insider && <span className="text-xs text-accent2 basis-full">{insider}</span>}
           </div>
-          {insider && <div className="text-xs text-accent2">{insider}</div>}
-          {(result.explanation?.give.length || result.explanation?.receive.length) ? (
-            <div className="text-xs text-muted space-y-1 pt-1 border-t border-line/60">
-              {result.explanation.receive.map((r, i) => <div key={`r${i}`}>• {r}</div>)}
-              {result.explanation.give.map((r, i) => <div key={`g${i}`}>• {r}</div>)}
-            </div>
-          ) : null}
-        </div>
+        </TradeVerdict>
       )}
     </div>
   );
 }
 
-/**
- * The AI accepts once (value you're offering) / (value it gives up) clears
- * `requiredRatio`. Normalizing to that threshold ("100" = exactly clears the
- * bar the AI actually applies) is what makes this readable — the raw value
- * points are meaningless to a player with nothing to compare them against.
- */
-function TradeScoreBar({ ratio, requiredRatio, accepted }: { ratio: number; requiredRatio: number; accepted: boolean }) {
-  const pct = Number.isFinite(ratio) ? (ratio / requiredRatio) * 100 : 150;
-  const fillPct = Math.max(2, Math.min(150, pct));
-  const barColor = accepted ? 'bg-accent' : pct >= 80 ? 'bg-warn' : 'bg-bad';
-  const thresholdLeft = (100 / 150) * 100; // requiredRatio always sits at the 100-of-150 mark on this scale
-
+/** One side of the deal sheet: what is on the table, and what it does to that club's books. */
+function DealSide({ teamId, abbr, heading, items, footer, onRemove }: {
+  teamId: string; abbr: string; heading: string; items: DealItem[];
+  footer: ReactNode; onRemove: (id: string) => void;
+}) {
   return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <span className="label-sm inline-flex items-center gap-1.5">
-          Trade Score
-          <Tooltip text={tip('tradeAcceptance')} />
-        </span>
-        <span className={`text-xs font-mono ${accepted ? 'text-accent' : 'text-muted'}`}>{Math.round(pct)}% of what they need</span>
+    <div className="p-4 min-w-0">
+      <div className="flex items-center gap-2 mb-3">
+        <TeamLogo seed={teamId} abbr={abbr} size={22} />
+        <span className="label-sm">{heading}</span>
+        <span className="text-[11px] text-muted tabular-nums ml-auto">{items.length} {items.length === 1 ? 'asset' : 'assets'}</span>
       </div>
-      <div className="relative h-2.5 rounded-full bg-raised overflow-hidden">
-        <div className={`h-full rounded-full ${barColor}`} style={{ width: `${(fillPct / 150) * 100}%` }} />
-        <div className="absolute top-0 bottom-0 w-px bg-line" style={{ left: `${thresholdLeft}%` }} title="Acceptance threshold" />
-      </div>
+      {items.length === 0 ? (
+        <div className="rounded-md border border-dashed border-line/60 px-3 py-2.5 text-xs text-muted">
+          Nothing on the table.
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {items.map((it) => (
+            <button
+              key={it.id}
+              type="button"
+              onClick={() => onRemove(it.id)}
+              aria-label={`Remove ${it.label} from the deal`}
+              className="group flex items-center gap-2 rounded-md border border-accent/40 bg-accent/10 pl-2 pr-1.5 py-1.5 hover:border-bad/60 hover:bg-bad/10 transition-colors"
+            >
+              {it.kind === 'PLAYER' ? (
+                <>
+                  <span className={`text-[10px] font-semibold ${positionBadgeClass(it.position ?? '')}`}>{it.position}</span>
+                  <span className={`stat-value text-[13px] ${ratingColor(it.ovr ?? 0)}`}>{it.ovr}</span>
+                </>
+              ) : (
+                <span className="stat-value text-[10px] text-gold uppercase tracking-wider">Pick</span>
+              )}
+              <span className="text-xs text-chalk">{it.label}</span>
+              {it.sub && <span className="text-[10px] text-muted font-mono">{it.sub}</span>}
+              <span className="text-muted group-hover:text-bad text-sm leading-none">×</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {footer && <div className="text-[11px] text-muted mt-3">{footer}</div>}
     </div>
   );
 }
@@ -394,6 +458,42 @@ function assetList(selected: Set<string>, roster: RosterP[], picks: Pick[]) {
     else if (picks.find((p) => p.id === id)) out.push({ type: 'PICK', id });
   }
   return out;
+}
+
+/**
+ * The selected ids resolved into what the deal sheet renders. Sorted for
+ * display: a Set iterates in click order, which makes the sheet a log of what
+ * you clicked rather than a statement of what the deal is.
+ *
+ * The cap figure on a player is the one for HIS side of the trade — what
+ * sending him frees, or what acquiring him costs — and both are read off the
+ * row the server built (see toRosterP on the page), the same fields the
+ * space-after total is summed from.
+ */
+function dealItems(selected: Set<string>, roster: RosterP[], picks: Pick[], side: 'SEND' | 'RECEIVE', capMode: string): DealItem[] {
+  const players: DealItem[] = [];
+  const chosenPicks: DealItem[] = [];
+  for (const id of selected) {
+    const p = roster.find((r) => r.id === id);
+    if (p) {
+      const cap = side === 'SEND' ? p.freedIfSent : p.addedIfAcquired;
+      players.push({
+        id, kind: 'PLAYER', label: p.name, position: p.position, ovr: p.ovr,
+        sub: capMode !== 'OFF' && cap !== 0 ? `${side === 'SEND' ? '+' : '−'}${formatMoney(Math.abs(cap))}` : undefined,
+      });
+      continue;
+    }
+    const pick = picks.find((x) => x.id === id);
+    if (pick) {
+      chosenPicks.push({
+        id, kind: 'PICK', label: `${pick.year} R${pick.round}`,
+        sub: pick.projectedSlot ? `#${pick.projectedSlot}` : pick.via ? `via ${pick.via}` : undefined,
+      });
+    }
+  }
+  players.sort((a, b) => (b.ovr ?? 0) - (a.ovr ?? 0));
+  chosenPicks.sort((a, b) => a.label.localeCompare(b.label));
+  return [...players, ...chosenPicks];
 }
 
 type SortKey = 'pos' | 'ovr' | 'age' | 'cap' | 'years';
@@ -449,7 +549,7 @@ function PartnerStepper({ partners, partnerId, onGo }: {
   if (i < 0 || partners.length < 2) return null;
   const step = (d: number) => onGo(partners[(i + d + partners.length) % partners.length].id);
   return (
-    <span className="ml-auto inline-flex items-center gap-1 font-normal">
+    <span className="inline-flex items-center gap-1 font-normal shrink-0">
       <button type="button" onClick={() => step(-1)} aria-label="Previous club"
         className="pill border-line text-muted hover:text-chalk px-2 py-0.5 leading-none">‹</button>
       <span className="text-[11px] text-muted tabular-nums">{i + 1}/{partners.length}</span>
@@ -459,8 +559,13 @@ function PartnerStepper({ partners, partnerId, onGo }: {
   );
 }
 
-function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks, selected, onToggle, initialPosFilter, onPosFilter, switcher }: {
-  leagueId: string; title: string; teamId: string; teamAbbr: string; teamName: string; roster: RosterP[]; picks: Pick[]; selected: Set<string>; onToggle: (id: string) => void;
+function TeamPanel({
+  leagueId, title, teamId, teamAbbr, teamName, roster, picks, draftRounds, imminentYear, selected, onToggle,
+  initialPosFilter, onPosFilter, switcher, selector, meta,
+}: {
+  leagueId: string; title: string; teamId: string; teamAbbr: string; teamName: string; roster: RosterP[]; picks: Pick[];
+  draftRounds: number; imminentYear: number | null;
+  selected: Set<string>; onToggle: (id: string) => void;
   /**
    * SHOPPING A POSITION SURVIVES CHANGING CLUB. Switching partner is a real
    * navigation — the other roster has to be fetched — so this panel remounts
@@ -472,10 +577,14 @@ function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks,
    */
   initialPosFilter?: string;
   onPosFilter?: (pos: string) => void;
-  /** Club switcher rendered in this panel's header, so changing club never means scrolling away from the list. */
+  /** Club stepper rendered in this panel's header, so changing club never means scrolling away from the list. */
   switcher?: ReactNode;
+  /** Club chooser, rendered where the club's name sits on the user's own side. */
+  selector?: ReactNode;
+  /** A line of context about this club — its books, or the front office running it. */
+  meta?: ReactNode;
 }) {
-  const teamColor = generateTeamLogoParams(teamId).primary;
+  const teamColor = generateTeamLogoParams(teamAbbr || teamId).primary;
   const [search, setSearch] = useState('');
   const [posFilter, setPosFilter] = useState(initialPosFilter ?? 'ALL');
   const [sortKey, setSortKey] = useState<SortKey>('ovr');
@@ -509,31 +618,44 @@ function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks,
     });
   }, [roster, posFilter, search, sortKey, dir]);
 
+  const selectedHere = roster.filter((p) => selected.has(p.id)).length + picks.filter((p) => selected.has(p.id)).length;
+
   return (
-    <div className="panel p-4">
-      <h3 className="font-semibold text-sm mb-3 flex items-center gap-2 flex-wrap">
-        <TeamLogo seed={teamId} abbr={teamAbbr} size={24} />
-        {title} <span className="text-muted font-normal">({teamName})</span>
-        {switcher}
-      </h3>
-      <div className="label-sm mb-1.5 inline-flex items-center gap-1.5">
-        Draft Picks
-        <Tooltip text={tip('pickValue')} />
+    <div
+      className="panel border-l-[3px] p-4"
+      style={{ ['--team-accent' as never]: teamColor, borderLeftColor: teamColor }}
+    >
+      <div className="flex items-start gap-3 mb-4">
+        <TeamLogo seed={teamId} abbr={teamAbbr} size={38} className="shrink-0 mt-0.5" />
+        <div className="min-w-0 flex-1">
+          {/* min-h holds the row open on the side with no stepper in it, so
+              the two panels' contents stay level with each other. */}
+          <div className="flex items-center gap-2 min-h-[22px]">
+            <span className="label-sm">{title}</span>
+            {selectedHere > 0 && (
+              <span className="pill border-accent/40 text-accent bg-accent/10 tabular-nums">{selectedHere} in the deal</span>
+            )}
+            {switcher && <span className="ml-auto">{switcher}</span>}
+          </div>
+          {/* Both panels hold the same height here whether the club is named or
+              chosen, so the two pick boards below stay on one line as the eye
+              crosses the screen. */}
+          <div className="min-h-[34px] flex items-center mt-1">
+            {selector ?? (
+              <span className="font-display font-bold uppercase tracking-wide text-base text-team truncate">{teamName}</span>
+            )}
+          </div>
+          {meta && <div className="mt-2">{meta}</div>}
+        </div>
       </div>
-      <div className="flex flex-wrap gap-1.5 mb-4">
-        {picks.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => onToggle(p.id)}
-            title={p.projectedSlot ? `Projected pick ${p.projectedSlot} of 32 if the season ended today` : undefined}
-            className={`pill ${selected.has(p.id) ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}
-          >
-            {p.year} R{p.round}
-            {p.projectedSlot && <span className="text-[10px] opacity-70 ml-1">(proj. #{p.projectedSlot})</span>}
-          </button>
-        ))}
-        {picks.length === 0 && <span className="text-xs text-muted">No picks owned.</span>}
-      </div>
+
+      <TradePickBoard
+        picks={picks}
+        rounds={draftRounds}
+        imminentYear={imminentYear}
+        selected={selected}
+        onToggle={onToggle}
+      />
 
       <div className="flex items-center gap-2 mb-2">
         <input
@@ -583,7 +705,7 @@ function TeamPanel({ leagueId, title, teamId, teamAbbr, teamName, roster, picks,
             aria-pressed={selected.has(p.id)}
             onClick={() => onToggle(p.id)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(p.id); } }}
-            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm cursor-pointer ${selected.has(p.id) ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised border border-transparent'}`}
+            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm cursor-pointer ${selected.has(p.id) ? 'bg-accent/10 border border-accent/30 border-l-[3px] border-l-accent' : 'hover:bg-raised border border-transparent'}`}
           >
             <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />
             <span className={`text-xs font-semibold w-8 shrink-0 ${positionBadgeClass(p.position)}`}>{p.position}</span>

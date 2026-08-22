@@ -1519,9 +1519,9 @@ export function decideOffer(
   // 'EXTENSION'`, which was right for as long as a re-sign replaced the deal
   // outright; `extendContract` (lib/freeagency.ts) appends a walk-year deal
   // now, and a flag keyed on the screen would have this quoting a year-1 cap
-  // hit of a fresh contract the signing does not write. Measured on ATL's
-  // Kwame Swearingen, one season left at $7.70M: the panel said $5.73M, the
-  // row that landed said $9.76M.
+  // hit of a fresh contract the signing does not write. Both halves measured
+  // on ATL's Kwame Swearingen with one season left at $7.70M: the fresh-deal
+  // preview reads $5.73M, and the appended row that actually lands is $9.76M.
   const appending = ctx.currentContract !== null && ctx.controlYears > 0;
   const ext = appending
     ? buildExtension({
@@ -1585,7 +1585,7 @@ export function decideOffer(
   } else if (committedTerm(ctx, offer) > ctx.willingYears) {
     // HIS refusal, not the rulebook's, and it is on screen beside the term
     // control before anybody drags it. Money does not move this.
-    //
+    blocked = 'WILLING';
     // KEYED ON THE MODE, NOT ON `appending`, and deliberately: the test above
     // it is `committedTerm`, which folds the years he is already owed into
     // what he is committing to only on an EXTENSION. A re-sign is still priced
@@ -1781,13 +1781,26 @@ export interface SignedDeal {
   teamAbbr: string;
   teamId: string;
   mode: NegotiationMode;
-  /** Length of the CONTRACT that now exists — on an extension, old years included. */
+  /** Length of the CONTRACT that now exists — when it appended, old years included. */
   years: number;
   /** Everything it is worth, off the stored base salaries and bonus. */
   totalValue: number;
   /** The years just added, where that differs. Equal to `totalValue` on a fresh deal. */
   newMoneyValue: number;
-  /** APY he agreed to — new money on an extension. */
+  /**
+   * How many of `years` were just BOUGHT. Equal to `years` on a fresh contract;
+   * fewer when the deal appended onto one he was already on.
+   *
+   * The partner of `newMoneyValue`, and the confirmation cannot tell the truth
+   * without it. `apy` is the rate on the NEW years, `totalValue` is the WHOLE
+   * contract, and with only `years` on hand the card printed the two beside
+   * each other under "Per year" and "Total value" — $6.43M/yr and $34.82M over
+   * 5 yrs, which do not multiply out, because 4 of those years were bought and
+   * the fifth was already owed. Mode could not stand in for this: a walk-year
+   * re-sign appends (see extendContract) and is not an EXTENSION.
+   */
+  newYears: number;
+  /** APY he agreed to — the rate on the `newYears`, which is the whole deal only when nothing was appended. */
   apy: number;
   guaranteed: number;
   /** This season's charge, off the row that was written. */

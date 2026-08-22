@@ -7,15 +7,19 @@ import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE } from '@/lib/tuning';
 import { consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
-import { imminentDraftYear } from '@/lib/draft';
+import { imminentDraftYear, projectedDraftOrder } from '@/lib/draft';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
-import { DraftPickButton } from '@/components/DraftPickButton';
+import { DraftSelectionButton } from '@/components/DraftSelectionButton';
 import { LiveDraftTicker } from '@/components/LiveDraftTicker';
 import { ShortlistStar } from '@/components/ShortlistStar';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { DraftCapitalPanel } from '@/components/ds/DraftCapitalPanel';
+import type { DraftCapitalPick, DraftCapitalForfeit, DraftCapitalYear } from '@/components/ds/DraftCapitalPanel';
+import { DraftRecap } from '@/components/ds/DraftRecap';
+import type { RecapSelection, RecapLeaguePick, RecapNote } from '@/components/ds/DraftRecap';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { Tooltip } from '@/components/Tooltip';
 import { define, tip } from '@/lib/glossary';
@@ -57,8 +61,16 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   const onClockTeam = onClockTeamId ? await prisma.team.findUnique({ where: { id: onClockTeamId } }) : null;
   const isUserOnClock = !!state && onClockTeamId === team.id;
 
-  const allTeams = state?.kind === 'ROOKIE' ? await prisma.team.findMany({ where: { leagueId: league.id } }) : [];
+  // Every club, unconditionally: the picks panel below has to name whoever a
+  // traded pick came from or went to, which is a question this page now asks
+  // in every phase, not just during a live rookie draft.
+  const allTeams = await prisma.team.findMany({ where: { leagueId: league.id } });
   const teamById = new Map(allTeams.map((t) => [t.id, t]));
+  // Whether there is anything to project a draft order FROM. Every club sits
+  // at 0-0-0 from RESET_STANDINGS until week 1 kicks off (see lib/season.ts),
+  // and standingsOrder would then be ranking 32 identical records by nothing
+  // at all — so no number is offered rather than a fabricated one.
+  const standingsPlayed = allTeams.some((t) => t.wins + t.losses + t.ties > 0);
   const upcomingPicks = state && totalPicks > 0
     ? Array.from({ length: Math.min(32, totalPicks - state.pickIndex) }, (_, i) => {
         const idx = state.pickIndex + i;
@@ -70,6 +82,10 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         return { idx, round: p ? p.round : Math.floor(idx / roundSize) + 1, team: p ? teamById.get(p.ownerTeamId) : undefined };
       })
     : [];
+
+  // Picks for the NEXT draft, not the current season year — once a draft has
+  // happened, seasonYear and the upcoming draft year diverge (see lib/draft.ts).
+  const upcomingDraftYear = await imminentDraftYear(league.id);
 
   const shortlistEntries = await prisma.shortlistEntry.findMany({ where: { teamId: team.id }, select: { playerId: true } });
   const shortlistIds = new Set(shortlistEntries.map((s) => s.playerId));
@@ -128,19 +144,46 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // private board wearing the word consensus, where two teams saw different
   // "#1 overall" for the same player.
   //
-  // Queried by draftYear over the WHOLE class, drafted prospects INCLUDED, so
-  // a prospect's rank never moves because somebody else came off the board.
-  // Filters on this page (position, shortlist) narrow the rows, never the
-  // ranking pool.
+  // Ranked over the WHOLE class, drafted prospects INCLUDED, so a prospect's
+  // rank never moves because somebody else came off the board. Filters on this
+  // page (position, shortlist) narrow the rows, never the ranking pool.
+  //
+  // THE POOL IS THE CLASS, WHICH `draftYear` ALONE CANNOT SAY. draftPlayer()
+  // overwrites a prospect's draftYear with the year he was SELECTED in, which
+  // is one higher than the year his class was generated under — so a plain
+  // `draftYear: classYear` query is two different cohorts at once and misses
+  // the one it means. Measured both ways on the same save (DCM 1):
+  //
+  //   live draft, 89 picks in : pool 311 of 400 — every man still on the board
+  //                             had drifted up in rank as others were taken,
+  //                             the exact thing the paragraph above forbids
+  //   week 11, no draft running: pool 624 — the 400-man class PLUS the 224
+  //                             rookies drafted out of the previous class, who
+  //                             now carry this class's draftYear. The class's
+  //                             real #7 showed as #16, and two blue chips
+  //                             rendered in the first-round band instead.
+  //
+  // Still on the board plus already taken by this draft is the class itself,
+  // in every phase, and it is 400 in both cases above.
   const classYearRow = await prisma.player.findFirst({
     where: { leagueId: league.id, isDraftee: true },
     orderBy: { draftYear: 'desc' },
     select: { draftYear: true },
   });
   const classYear = classYearRow?.draftYear ?? league.seasonYear;
+  const takenThisDraft = upcomingDraftYear === null ? [] : await prisma.draftPick.findMany({
+    where: { leagueId: league.id, year: upcomingDraftYear, used: true, playerId: { not: null } },
+    select: { playerId: true },
+  });
   const consensus = consensusBoardMap(
     await prisma.player.findMany({
-      where: { leagueId: league.id, draftYear: classYear },
+      where: {
+        leagueId: league.id,
+        OR: [
+          { draftYear: classYear, isDraftee: true },
+          { id: { in: takenThisDraft.map((p) => p.playerId!) } },
+        ],
+      },
       select: {
         id: true, position: true, trueOvr: true, potential: true,
         trueAttrs: true, collegeStats: true, combineTesting: true, injuryWeeks: true,
@@ -207,17 +250,270 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // marked the entire class scouted and told you nothing. This matches the
   // threshold ScoutingRange itself labels HIGH.
   const scoutedCount = rows.filter(({ view }) => view.confidence >= 75).length;
-  // Picks for the NEXT draft, not the current season year — once a draft has
-  // happened, seasonYear and the upcoming draft year diverge (see lib/draft.ts).
-  // Null once no future draft is scheduled — fall back to counting every
-  // unused pick rather than silently reporting zero.
-  const upcomingDraftYear = await imminentDraftYear(league.id);
-  const myPickCount = await prisma.draftPick.count({
+
+  // -------------------------------------------------------------------------
+  // YOUR PICKS
+  // -------------------------------------------------------------------------
+  // Every pick the club holds in every scheduled draft, every original pick of
+  // its own that somebody else now holds, and — during a live draft — how far
+  // away the next one is. This replaces a bare count, which named no round, no
+  // selection number and no year, and so could not be planned from.
+  //
+  // A SELECTION NUMBER IS EITHER REAL OR PROJECTED, NEVER BOTH.
+  // DraftPick.slot is the placeholder the row was created with (the club's
+  // index in the team list) right up until reseedDraftOrder() rewrites it from
+  // final standings on the way out of free agency — so it is a real selection
+  // number only in the DRAFT phase, for that year's draft. Everywhere else the
+  // current draft's picks carry a live "if the season ended today" projection
+  // instead, off the ORIGINAL club's record, and a further-future year gets no
+  // number at all because there are no standings to project it from.
+  const projectedOrder = await projectedDraftOrder(league.id);
+  const myPickRows = upcomingDraftYear === null ? [] : await prisma.draftPick.findMany({
     where: {
-      leagueId: league.id, ownerTeamId: team.id, used: false,
-      ...(upcomingDraftYear !== null ? { year: upcomingDraftYear } : {}),
+      leagueId: league.id,
+      year: { gte: upcomingDraftYear },
+      OR: [{ ownerTeamId: team.id }, { originalTeamId: team.id }],
     },
+    include: { player: { select: { firstName: true, lastName: true, position: true } } },
+    orderBy: [{ year: 'asc' }, { round: 'asc' }],
   });
+  const overallOf = (round: number, slot: number) => (round - 1) * roundSize + slot;
+  // The one year whose order has actually been reseeded: the draft that is
+  // open right now. reseedDraftOrder(leagueId, seasonYear) runs immediately
+  // before startRookieDraft, so DRAFT phase — and only DRAFT phase — means the
+  // stored slots for league.seasonYear are the real running order.
+  const settledYear = league.phase === 'DRAFT' ? league.seasonYear : null;
+
+  const capitalYears = new Map<number, DraftCapitalYear>();
+  const yearBucket = (year: number) => {
+    let y = capitalYears.get(year);
+    if (!y) {
+      const settled = year === settledYear;
+      const projected = !settled && standingsPlayed && year === upcomingDraftYear;
+      y = {
+        year,
+        settled,
+        projected,
+        // Draft year Y is seeded by the season played in Y-1 (the offseason
+        // that runs the draft has already rolled seasonYear forward).
+        orderFromSeason: settled || projected ? undefined : year - 1,
+        picks: [],
+        forfeited: [],
+      };
+      capitalYears.set(year, y);
+    }
+    return y;
+  };
+
+  for (const p of myPickRows) {
+    const bucket = yearBucket(p.year);
+    const spentOn = p.used && p.player
+      ? { name: `${p.player.firstName} ${p.player.lastName}`, position: p.player.position }
+      : undefined;
+    if (p.ownerTeamId === team.id) {
+      const projSlot = bucket.projected ? projectedOrder.get(p.originalTeamId) : undefined;
+      const origin = p.originalTeamId === team.id ? undefined : teamById.get(p.originalTeamId);
+      // Selections between the pick on the clock and this one. Only a rookie
+      // draft has DraftPick rows to be on the clock with.
+      const away = draftLive && !isFantasy && p.year === league.seasonYear && !p.used && bucket.settled
+        ? overallOf(p.round, p.slot) - 1 - state!.pickIndex
+        : undefined;
+      const pick: DraftCapitalPick = {
+        id: p.id,
+        year: p.year,
+        round: p.round,
+        overall: bucket.settled ? overallOf(p.round, p.slot) : undefined,
+        projectedSlot: projSlot,
+        projectedOverall: projSlot === undefined ? undefined : overallOf(p.round, projSlot),
+        from: origin ? { teamId: origin.id, abbr: origin.abbr } : undefined,
+        picksAway: away !== undefined && away >= 0 ? away : undefined,
+        spentOn,
+      };
+      bucket.picks.push(pick);
+    } else if (p.originalTeamId === team.id) {
+      const holder = teamById.get(p.ownerTeamId);
+      const forfeit: DraftCapitalForfeit = {
+        id: p.id,
+        year: p.year,
+        round: p.round,
+        overall: bucket.settled ? overallOf(p.round, p.slot) : undefined,
+        to: { teamId: holder?.id ?? p.ownerTeamId, abbr: holder?.abbr ?? '???' },
+        spentOn,
+      };
+      bucket.forfeited.push(forfeit);
+    }
+  }
+
+  const capitalList = [...capitalYears.values()].sort((a, b) => a.year - b.year);
+  for (const y of capitalList) {
+    y.picks.sort((a, b) => a.round - b.round || (a.overall ?? a.projectedOverall ?? 0) - (b.overall ?? b.projectedOverall ?? 0));
+    y.forfeited.sort((a, b) => a.round - b.round);
+  }
+  const imminentPicks = capitalList.find((y) => y.year === upcomingDraftYear)?.picks.filter((p) => !p.spentOn) ?? [];
+  const nextUpPick = imminentPicks
+    .filter((p) => p.picksAway !== undefined)
+    .sort((a, b) => a.picksAway! - b.picksAway!)[0];
+  const nextUp = nextUpPick
+    ? { picksAway: nextUpPick.picksAway!, round: nextUpPick.round, overall: nextUpPick.overall!, onTheClock: nextUpPick.picksAway === 0 }
+    : undefined;
+  const firstPick = imminentPicks[0];
+  const pickTileDetail = nextUp
+    ? (nextUp.onTheClock ? 'you are on the clock' : `next in ${nextUp.picksAway} selection${nextUp.picksAway === 1 ? '' : 's'}`)
+    : firstPick?.overall !== undefined
+    ? `first at #${firstPick.overall} overall`
+    : firstPick?.projectedOverall !== undefined
+    ? `first at proj. #${firstPick.projectedOverall}`
+    : upcomingDraftYear !== null
+    ? `owned in the ${upcomingDraftYear} draft`
+    : 'unused picks owned';
+
+  // -------------------------------------------------------------------------
+  // DRAFT RECAP
+  // -------------------------------------------------------------------------
+  // The most recent draft that has actually finished. Held back while one is
+  // running — a recap of a room still in session is a scoreboard at half time.
+  const lastDraftRow = await prisma.draftPick.findFirst({
+    where: { leagueId: league.id, used: true }, orderBy: { year: 'desc' }, select: { year: true },
+  });
+  const recapYear = lastDraftRow && !(draftLive && lastDraftRow.year === league.seasonYear) ? lastDraftRow.year : null;
+  const recapPickRows = recapYear === null ? [] : await prisma.draftPick.findMany({
+    where: { leagueId: league.id, year: recapYear, used: true, playerId: { not: null } },
+    include: {
+      player: {
+        select: {
+          id: true, firstName: true, lastName: true, position: true, age: true,
+          college: true, heightIn: true, weightLb: true,
+        },
+      },
+    },
+    orderBy: [{ round: 'asc' }, { slot: 'asc' }],
+  });
+  // That draft's board, over that draft's class: everyone it took, plus
+  // everyone it left. The leftovers keep the draftYear their class was
+  // generated under, which is one BELOW the year they were drafted in — the
+  // same off-by-one the big board above has to work around.
+  const recapBoard = recapYear === null ? null : consensusBoardMap(
+    await prisma.player.findMany({
+      where: {
+        leagueId: league.id,
+        OR: [
+          { id: { in: recapPickRows.map((p) => p.playerId!) } },
+          { draftYear: recapYear - 1, draftRound: null },
+        ],
+      },
+      select: {
+        id: true, position: true, trueOvr: true, potential: true,
+        trueAttrs: true, collegeStats: true, combineTesting: true, injuryWeeks: true,
+      },
+    }),
+    { teams: LEAGUE.TEAM_COUNT, rounds: settings.draftRounds },
+  );
+
+  const recapSelections: RecapSelection[] = recapPickRows
+    .filter((p) => p.ownerTeamId === team.id && p.player)
+    .map((p) => {
+      const read = recapBoard?.get(p.player!.id);
+      const origin = p.originalTeamId === team.id ? undefined : teamById.get(p.originalTeamId);
+      return {
+        playerId: p.player!.id,
+        overall: overallOf(p.round, p.slot),
+        round: p.round,
+        firstName: p.player!.firstName,
+        lastName: p.player!.lastName,
+        position: p.player!.position,
+        age: p.player!.age,
+        college: p.player!.college,
+        heightIn: p.player!.heightIn,
+        weightLb: p.player!.weightLb,
+        boardRank: read?.rank,
+        boardGrade: read?.grade,
+        bandLabel: read?.bandLabel,
+        from: origin ? { teamId: origin.id, abbr: origin.abbr } : undefined,
+      };
+    });
+
+  const recapRoundOne: RecapLeaguePick[] = recapPickRows
+    .filter((p) => p.round === 1 && p.player)
+    .map((p) => {
+      const club = teamById.get(p.ownerTeamId);
+      return {
+        overall: overallOf(p.round, p.slot),
+        teamId: club?.id ?? p.ownerTeamId,
+        teamAbbr: club?.abbr ?? '???',
+        isUser: p.ownerTeamId === team.id,
+        firstName: p.player!.firstName,
+        lastName: p.player!.lastName,
+        position: p.player!.position,
+        boardRank: recapBoard?.get(p.player!.id)?.rank,
+      };
+    });
+
+  // What was true in the room, and nothing about how any of it turns out —
+  // that story belongs to the careers these men have not had yet.
+  const recapNotes: RecapNote[] = [];
+  if (recapYear !== null && recapPickRows.length > 0) {
+    const first = recapRoundOne[0];
+    if (first) {
+      recapNotes.push({
+        label: 'First Off The Board',
+        value: `${first.firstName} ${first.lastName}`,
+        detail: `${first.position} · ${first.teamAbbr} · #1 overall`,
+      });
+    }
+    const runCounts = new Map<string, number>();
+    for (const p of recapRoundOne) runCounts.set(p.position, (runCounts.get(p.position) ?? 0) + 1);
+    const topRun = [...runCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (topRun && topRun[1] >= 3) {
+      recapNotes.push({ label: 'Round One Run', value: `${topRun[1]} ${topRun[0]}`, detail: 'off the board in the first round' });
+    }
+    // Longest wait for a man the board had in its first round. Restricted to
+    // first-round grades on purpose: a #250 board card taken at #224 is not a
+    // slide, it is the seventh round doing what it does.
+    const slides = recapPickRows
+      .filter((p) => p.player && (recapBoard?.get(p.player.id)?.rank ?? Infinity) <= roundSize)
+      .map((p) => ({ p, rank: recapBoard!.get(p.player!.id)!.rank, overall: overallOf(p.round, p.slot) }))
+      .sort((a, b) => (b.overall - b.rank) - (a.overall - a.rank))[0];
+    if (slides && slides.overall > slides.rank) {
+      const club = teamById.get(slides.p.ownerTeamId);
+      recapNotes.push({
+        label: 'Longest Slide',
+        value: `${slides.p.player!.firstName} ${slides.p.player!.lastName}`,
+        detail: `board #${slides.rank}, taken #${slides.overall} by ${club?.abbr ?? '???'}`,
+      });
+    }
+    const acquiredCount = recapSelections.filter((s) => s.from).length;
+    const forfeitedCount = recapPickRows.filter((p) => p.originalTeamId === team.id && p.ownerTeamId !== team.id).length;
+    recapNotes.push({
+      label: 'Your Class',
+      value: `${recapSelections.length} selection${recapSelections.length === 1 ? '' : 's'}`,
+      detail: [
+        recapSelections[0] ? `first at #${recapSelections[0].overall}` : null,
+        acquiredCount > 0 ? `${acquiredCount} acquired by trade` : null,
+        forfeitedCount > 0 ? `${forfeitedCount} traded away` : null,
+      ].filter(Boolean).join(' · ') || undefined,
+    });
+  }
+
+  // The draft has just ended and the league has not moved on yet — the recap
+  // is the whole reason to be on this page, so it leads.
+  const draftJustFinished = league.phase === 'DRAFT' && !!stateRow?.complete;
+  const recap = recapYear !== null && recapPickRows.length > 0 ? (
+    <DraftRecap
+      year={recapYear}
+      teamId={team.id}
+      teamAbbr={team.abbr}
+      selections={recapSelections}
+      roundOne={recapRoundOne}
+      notes={recapNotes}
+    />
+  ) : null;
+
+  // The pick the user is on the clock with, for the selection card. Round and
+  // slot come off the DraftPick row that currentPick() itself resolves, so the
+  // number on the card is the number the rookie deal is scaled from.
+  const onClockRookiePick = state && !isFantasy ? rookiePickByIndex.get(state.pickIndex) : undefined;
+  const onClockRound = onClockRookiePick?.round
+    ?? (isFantasy && order.length > 0 ? Math.floor((state?.pickIndex ?? 0) / order.length) + 1 : state?.round ?? 1);
 
   return (
     <div className="space-y-6">
@@ -250,7 +546,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
               detail: shortlistIds.size > 0 ? 'flagged to watch' : 'star anyone to track them',
               color: shortlistIds.size > 0 ? 'text-gold' : undefined,
             },
-            { label: 'Your Picks', value: String(myPickCount), detail: upcomingDraftYear !== null ? `owned in the ${upcomingDraftYear} draft` : 'unused picks owned', tip: tip('pickValue') },
+            { label: 'Your Picks', value: String(imminentPicks.length), detail: pickTileDetail, tip: tip('pickValue') },
             {
               label: 'Well Scouted',
               tip: tip('scoutingConfidence'),
@@ -292,6 +588,12 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             <LiveDraftTicker leagueId={league.id} userTeamId={team.id} isUserOnClock={isUserOnClock} draftComplete={false} />
           </div>
         </div>
+      )}
+
+      {draftJustFinished && recap}
+
+      {capitalList.length > 0 && (
+        <DraftCapitalPanel years={capitalList} nextUp={nextUp} teamAbbr={team.abbr} />
       )}
 
       {upcomingPicks.length > 1 && (
@@ -426,7 +728,43 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                       {read && <div className="text-[10px] text-muted leading-none mt-0.5">{read.bandLabel}</div>}
                     </td>
                     <td><span className={`text-xs font-medium ${label.className}`}>{label.label}</span></td>
-                    <td>{isUserOnClock && <DraftPickButton leagueId={league.id} teamId={team.id} playerId={p.id} />}</td>
+                    <td>
+                      {isUserOnClock && (
+                        <DraftSelectionButton
+                          leagueId={league.id}
+                          teamId={team.id}
+                          team={{ id: team.id, abbr: team.abbr, city: team.city, nickname: team.nickname }}
+                          pick={{ year: league.seasonYear, round: onClockRound, overall: state!.pickIndex + 1 }}
+                          player={{
+                            id: p.id,
+                            firstName: p.firstName,
+                            lastName: p.lastName,
+                            position: p.position,
+                            age: p.age,
+                            college: p.college,
+                            heightIn: p.heightIn,
+                            weightLb: p.weightLb,
+                            // The card carries the file this pick was MADE on.
+                            // Drafting him clears Player.isDraftee, which is
+                            // buildScoutedView's scope gate, so a view rebuilt
+                            // a moment later would print his true rating on the
+                            // one screen that exists to celebrate not knowing.
+                            ovrLow: view.ovrLow,
+                            ovrHigh: view.ovrHigh,
+                            ovrExact: view.revealed ? view.scoutedOvr : undefined,
+                            potLow: view.potLow,
+                            potHigh: view.potHigh,
+                            potExact: view.potentialRevealed ? p.potential : undefined,
+                            confidence: view.confidence,
+                            label: label.label,
+                            labelClass: label.className,
+                            boardRank: read?.rank,
+                            boardGrade: read?.grade,
+                            bandLabel: read?.bandLabel,
+                          }}
+                        />
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -434,6 +772,8 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           </table>
         </div>
       </div>
+
+      {!draftJustFinished && recap}
 
       <div className="section">
         <SectionHeading title="Recent Picks" />

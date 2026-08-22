@@ -1674,6 +1674,14 @@ export async function negotiateOffer(opts: {
           years: written.contract.years,
           totalValue: writtenBases.reduce((a, b) => a + b, 0) + written.contract.signingBonus,
           newMoneyValue: decision.newMoneyValue,
+          // WHICH OF THOSE YEARS WERE BOUGHT. `offer.years` is the term he
+          // agreed to, and on a deal that appended it is only part of the row
+          // above it — the rest is the season he was already owed. The
+          // confirmation needs both or it prints a per-year rate against a
+          // term that rate was never quoted over; see SignedDeal.newYears.
+          // The clamped offer, not the raw one, because that is the term that
+          // was signed.
+          newYears: appended ? offer.years : written.contract.years,
           apy: offer.apy,
           guaranteed: written.contract.guaranteed,
           capHitThisYear: capHit(written.contract, settings.capMode),

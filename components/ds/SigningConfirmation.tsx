@@ -33,9 +33,10 @@ import { StatNumber } from './StatNumber';
  *
  * EVERY FIGURE HERE WAS READ BACK OFF THE CONTRACT ROW after it was written
  * (see SignedDeal), not off what the panel had staged. Between the two sit a
- * clamp, a contract builder, a bonus split and — on an extension — an append
- * onto an existing deal. Confirming the staged numbers would differ only in
- * the cases nobody ever checks, which is the worst possible place to be wrong.
+ * clamp, a contract builder, a bonus split and — whenever he was still under
+ * contract — an append onto the deal he was already on. Confirming the staged
+ * numbers would differ only in the cases nobody ever checks, which is the
+ * worst possible place to be wrong.
  *
  * Nothing here delays anything: it renders in the same commit that receives
  * the server's answer, and the button that produced it is already re-enabled.
@@ -61,8 +62,32 @@ export function SigningConfirmation({ deal, answeredAt, onDismiss }: {
   }, [answeredAt]);
 
   const capDelta = deal.capSpaceAfter - deal.capSpaceBefore;
-  const extension = deal.mode === 'EXTENSION';
-  const verb = extension ? 'Extended' : deal.mode === 'RESIGN' ? 'Re-signed' : 'Signed';
+  const verb = deal.mode === 'EXTENSION' ? 'Extended' : deal.mode === 'RESIGN' ? 'Re-signed' : 'Signed';
+  /**
+   * DID THIS DEAL APPEND? Read off the deal itself — how many of the contract's
+   * years were actually bought — and never off the mode, because the two are no
+   * longer the same question. `extendContract` appends whenever he was still
+   * under contract, so a walk-year RESIGN produces an appended deal on a screen
+   * that is not the extension screen.
+   *
+   * Keyed on the mode, this card printed three figures that did not close.
+   * Measured, ATL re-signing Kwame Swearingen (one season left at $7.70M) at
+   * $6.43M/yr x 4: "Term 5 yrs", "Total value $34.82M", "Per year $6.43M" —
+   * and 6.43 x 5 is 32.15, not 34.82, because four of those years were bought
+   * and the fifth was already owed. The rate and the total were each correct
+   * and were describing different contracts.
+   */
+  const appended = deal.newYears < deal.years;
+  /** Seasons he was already owed, which this deal did not buy and did not re-price. */
+  const owedYears = deal.years - deal.newYears;
+  /**
+   * What those seasons are worth on the books — remaining salary plus the old
+   * signing bonus still amortising, which the append carried rather than
+   * erasing. Derived rather than passed because it is exactly the part of the
+   * contract that is not new money, and deriving it is what guarantees the two
+   * figures on screen add up to the third.
+   */
+  const owedValue = deal.totalValue - deal.newMoneyValue;
 
   return (
     <div
@@ -85,25 +110,33 @@ export function SigningConfirmation({ deal, answeredAt, onDismiss }: {
         <TeamLogo seed={deal.teamId} abbr={deal.teamAbbr} size={38} />
       </div>
 
+      {/* EVERY MONEY FIGURE HERE CARRIES THE TERM IT IS QUOTED OVER. On an
+          appended deal the rate and the new-money total are both about the
+          `newYears` he just bought, and the label says so; the contract length
+          beside them is the whole deal and its label says that. The sentence
+          underneath is what closes the two together. */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatNumber
           value={`${deal.years} yr${deal.years === 1 ? '' : 's'}`}
-          label={extension ? 'Under contract' : 'Term'}
+          label={appended ? 'Under contract' : 'Term'}
           size="sm"
         />
         <StatNumber
-          value={formatMoney(extension ? deal.newMoneyValue : deal.totalValue)}
-          label={extension ? 'New money' : 'Total value'}
+          value={formatMoney(appended ? deal.newMoneyValue : deal.totalValue)}
+          label={appended ? `New money — ${deal.newYears} yr${deal.newYears === 1 ? '' : 's'}` : 'Total value'}
           size="sm"
         />
-        <StatNumber value={`${formatMoney(deal.apy)}/yr`} label={extension ? 'On the new years' : 'Per year'} size="sm" />
+        <StatNumber value={`${formatMoney(deal.apy)}/yr`} label={appended ? 'On the new years' : 'Per year'} size="sm" />
         <StatNumber value={formatMoney(deal.guaranteed)} label="Guaranteed" size="sm" />
       </div>
 
-      {extension && (
+      {appended && (
         <p className="text-xs text-muted">
-          His existing years kept their salaries; the new money went on the end. The whole contract is
-          worth {formatMoney(deal.totalValue)} across {deal.years} years.
+          {owedYears === 1
+            ? 'The season he was already owed kept the salary he had already been promised'
+            : `The ${owedYears} years he was already owed kept the salaries he had already been promised`}
+          , and the new money went on the end. Full contract {formatMoney(deal.totalValue)} across {deal.years} years
+          — the {formatMoney(deal.newMoneyValue)} just agreed, on top of the {formatMoney(owedValue)} he was still owed.
         </p>
       )}
 

@@ -69,6 +69,12 @@ export default async function TradePage({ params, searchParams }: { params: { id
     };
   };
 
+  // A pick that changed hands is a different object to one a club has always
+  // held — which club it came from is half of what makes a stack of draft
+  // capital interesting to read. Every club in the league is in the map,
+  // including the user's own, since the partner may be holding YOUR pick.
+  const abbrById = new Map([team, ...otherTeams].map((t) => [t.id, t.abbr]));
+
   // Only the next draft that hasn't happened yet gets a live projection — a
   // further-future year has no standings to project from at all. This is
   // deliberately keyed off imminentDraftYear rather than league.seasonYear;
@@ -76,6 +82,7 @@ export default async function TradePage({ params, searchParams }: { params: { id
   const toPickP = (p: (typeof myPicks)[number]) => ({
     id: p.id, year: p.year, round: p.round, slot: p.slot,
     projectedSlot: p.year === imminentYear ? projectedOrder.get(p.originalTeamId) : undefined,
+    via: p.originalTeamId === p.ownerTeamId ? undefined : abbrById.get(p.originalTeamId),
   });
 
   return (
@@ -85,7 +92,6 @@ export default async function TradePage({ params, searchParams }: { params: { id
         teamAbbr={team.abbr}
         eyebrow={deadlinePassed ? `${league.seasonYear} · Deadline Passed` : `${league.seasonYear} Trade Market`}
         title="Trade Center"
-        subtitle="Build an offer. The AI values players and picks the same way it does everywhere else — no free lunches."
         facts={[
           {
             label: 'Pending Offers',
@@ -131,6 +137,8 @@ export default async function TradePage({ params, searchParams }: { params: { id
         capMode={settings.capMode}
         deadlinePassed={deadlinePassed}
         tradeDeadlineWeek={settings.tradeDeadlineWeek}
+        draftRounds={settings.draftRounds}
+        imminentYear={imminentYear}
       />
 
       <TradeRetrospectives myAbbr={team.abbr} retrospectives={retrospectives} />
