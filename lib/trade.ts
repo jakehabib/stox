@@ -347,8 +347,13 @@ export async function evaluateTrade(opts: {
    * so a user who added exactly what he was told was still refused, and the
    * screen looked like it was moving the goalposts. One derivation, used by
    * both messages.
+   *
+   * Floored at 1% because every branch that prints this number is a refusal.
+   * A gap under half a percent rounded to a flat "we're about 0% short on
+   * value" — a club turning down a deal while saying it needs nothing more,
+   * which reads as broken rather than close.
    */
-  const shortPct = Math.round((requiredRatio / Math.max(ratio, 0.01) - 1) * 100);
+  const shortPct = Math.max(1, Math.round((requiredRatio / Math.max(ratio, 0.01) - 1) * 100));
 
   /**
    * A deal the club has no room for is not a deal, however good the value.
@@ -461,6 +466,82 @@ async function aiCapShortfall(
   return { shortfall: added - capSpace, added, available: capSpace };
 }
 
+/**
+ * ===========================================================================
+ * NOBODY TRADES WHAT THEY DON'T HAVE
+ * ===========================================================================
+ * executeTrade used to move whatever ids it was handed. It checked the salary
+ * cap and nothing else — so an offer naming a player on a third club's
+ * roster, a pick that had already been spent, a free agent, or a retired
+ * player moved him anyway. Every server action is a public HTTP endpoint, so
+ * "the screen would never build that offer" was never a guarantee.
+ *
+ * And one of these was reachable in ordinary play with no tampering at all:
+ * an AI offer sits on the table for a week, the club cuts the player it had
+ * offered, and accepting the stale offer hands the user a free agent with no
+ * contract — a permanent, free roster spot. Trading a retired player
+ * manufactured INV-02, an error-level invariant violation.
+ *
+ * This is the up-front half of the fix: it refuses an impossible trade before
+ * recordTrade() writes a retrospective for a deal that never happened, and it
+ * is where the player-facing explanation comes from. The half that actually
+ * guarantees the rule is the claim inside the transaction below — a read
+ * here, however careful, is only advice by the time the write lands.
+ */
+export class TradeAssetError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TradeAssetError';
+  }
+}
+
+type TradeSide = { assets: TradeAsset[]; fromTeam: string };
+
+async function assertAssetsTradable(leagueId: string, sides: TradeSide[]): Promise<void> {
+  const seen = new Set<string>();
+  for (const side of sides) {
+    for (const a of side.assets) {
+      /*
+       * The same asset listed twice — on one side, or on both sides of the
+       * same offer — would be moved twice and land wherever the last write
+       * put it, which for a both-sides listing means a club "trades" a player
+       * and keeps him.
+       */
+      const key = `${a.type}:${a.id}`;
+      if (seen.has(key)) throw new TradeAssetError('That offer lists the same asset twice.');
+      seen.add(key);
+
+      if (a.type === 'PLAYER') {
+        const p = await prisma.player.findUnique({
+          where: { id: a.id },
+          select: { leagueId: true, teamId: true, status: true, firstName: true, lastName: true },
+        });
+        if (!p || p.leagueId !== leagueId) throw new TradeAssetError('That offer includes a player who is not in this league.');
+        const name = `${p.firstName} ${p.lastName}`;
+        if (p.status === 'RETIRED') throw new TradeAssetError(`${name} has retired — he can't be part of a trade.`);
+        if (p.teamId !== side.fromTeam) {
+          const club = await prisma.team.findUnique({ where: { id: side.fromTeam }, select: { city: true, nickname: true } });
+          const where = club ? `${club.city} ${club.nickname}` : 'the club offering him';
+          throw new TradeAssetError(
+            p.teamId === null
+              ? `${name} is a free agent now — ${where} can't trade a player they don't have under contract.`
+              : `${name} isn't on ${where}'s roster any more — this deal is off the table.`,
+          );
+        }
+      } else {
+        const pick = await prisma.draftPick.findUnique({
+          where: { id: a.id },
+          select: { leagueId: true, ownerTeamId: true, used: true, year: true, round: true },
+        });
+        if (!pick || pick.leagueId !== leagueId) throw new TradeAssetError('That offer includes a draft pick that is not in this league.');
+        const label = `the ${pick.year} round-${pick.round} pick`;
+        if (pick.used) throw new TradeAssetError(`${label} has already been spent — it can't be traded.`);
+        if (pick.ownerTeamId !== side.fromTeam) throw new TradeAssetError(`${label} doesn't belong to the club offering it any more.`);
+      }
+    }
+  }
+}
+
 export async function executeTrade(opts: {
   leagueId: string; teamA: string; teamB: string; aToB: TradeAsset[]; bToA: TradeAsset[]; seasonYear: number; week: number;
 }) {
@@ -470,6 +551,14 @@ export async function executeTrade(opts: {
     prisma.team.findUniqueOrThrow({ where: { id: opts.teamB } }),
   ]);
   const capMode: CapMode = JSON.parse(league.settings).capMode ?? 'REALISTIC';
+
+  // Before anything is charged, recorded or moved: does either club actually
+  // have what it is offering? See NOBODY TRADES WHAT THEY DON'T HAVE above.
+  const sides: TradeSide[] = [
+    { assets: opts.aToB, fromTeam: opts.teamA },
+    { assets: opts.bToA, fromTeam: opts.teamB },
+  ];
+  await assertAssetsTradable(opts.leagueId, sides);
 
   /**
    * A trade can be comfortably legal for the side shedding salary and
@@ -484,6 +573,36 @@ export async function executeTrade(opts: {
     ...(await tradeCapDeltas(opts.bToA, opts.teamB, opts.teamA, capMode)),
   ];
   await assertCapRoom({ action: 'Trade', seasonYear: opts.seasonYear, capMode, charges: deltas });
+
+  /*
+   * A 53-MAN LIMIT THAT ONLY EXISTED ON CUT-DOWN DAY.
+   *
+   * Nothing on the trade path had ever read rosterMax, so a club could take
+   * on twelve players for nothing and carry 58 into week one — measured. The
+   * limit did get enforced, but not until the following offseason's final
+   * cuts (trimRostersToLimit), which means the overflow survives a whole
+   * season and is then resolved by the game waiving five men on the user's
+   * behalf. That is a worse experience than being told no.
+   *
+   * Counted on `status: 'ACTIVE'` because that is exactly what
+   * trimRostersToLimit counts. If the two disagreed, the screen would refuse
+   * trades cut-down day would have allowed, or allow ones it later punished.
+   */
+  const rosterLimit = parseSettings(league.settings).rosterMax || LEAGUE.ROSTER_MAX;
+  const playerCount = (assets: TradeAsset[]) => assets.filter((a) => a.type === 'PLAYER').length;
+  for (const [teamId, info, sends, gets] of [
+    [opts.teamA, teamAInfo, opts.aToB, opts.bToA],
+    [opts.teamB, teamBInfo, opts.bToA, opts.aToB],
+  ] as const) {
+    const after = await prisma.player.count({ where: { teamId, status: 'ACTIVE' } })
+      - playerCount(sends) + playerCount(gets);
+    if (after > rosterLimit) {
+      throw new TradeAssetError(
+        `${info.city} ${info.nickname} would carry ${after} players against a ${rosterLimit}-man limit. `
+        + `Release ${after - rosterLimit} before making this deal.`,
+      );
+    }
+  }
 
   // Snapshot what's being traded (and what it's worth right now) BEFORE
   // ownership changes — this is the only record of asset identity a trade
@@ -506,6 +625,31 @@ export async function executeTrade(opts: {
     const move = async (assets: TradeAsset[], fromTeam: string, toTeam: string) => {
       for (const a of assets) {
         if (a.type === 'PLAYER') {
+          /*
+           * THE CLAIM, and it is the first write for this asset on purpose.
+           *
+           * `updateMany` with the current owner in the WHERE is an atomic
+           * compare-and-set, which is the only thing that actually enforces
+           * ownership here. The read in assertAssetsTradable() cannot: this
+           * transaction runs at READ COMMITTED, so two confirms of the same
+           * trade both read a valid roster and both proceed, and the second
+           * update would simply set teamId to a value it already had. Matching
+           * on `teamId: fromTeam` means exactly one of them writes a row; the
+           * loser matches zero and throws, rolling the whole thing back.
+           *
+           * That is what stops a double-clicked Confirm from filing the
+           * accelerated bonus twice (measured: two CapCharge rows for one
+           * player), and it is why the charge below is written AFTER the
+           * claim rather than before it.
+           */
+          const claimed = await tx.player.updateMany({
+            where: { id: a.id, leagueId: opts.leagueId, teamId: fromTeam },
+            data: { teamId: toTeam },
+          });
+          if (claimed.count === 0) {
+            throw new TradeAssetError('That trade has already gone through, or one of the players in it has moved.');
+          }
+
           const contract = await tx.contract.findUnique({ where: { playerId: a.id } });
           if (contract && capMode === 'REALISTIC') {
             const accelerated = deadMoneyOnCut(contract, capMode);
@@ -521,7 +665,6 @@ export async function executeTrade(opts: {
               });
             }
           }
-          await tx.player.update({ where: { id: a.id }, data: { teamId: toTeam } });
           // Bonus stays behind with the old team as the charge above, so the
           // contract that travels carries base salary and nothing else.
           await tx.contract.updateMany({
@@ -531,7 +674,15 @@ export async function executeTrade(opts: {
               : { teamId: toTeam },
           });
         } else {
-          await tx.draftPick.update({ where: { id: a.id }, data: { ownerTeamId: toTeam } });
+          // Same claim, same reason — plus `used: false`, so a pick that was
+          // spent between building the offer and confirming it can't move.
+          const claimed = await tx.draftPick.updateMany({
+            where: { id: a.id, leagueId: opts.leagueId, ownerTeamId: fromTeam, used: false },
+            data: { ownerTeamId: toTeam },
+          });
+          if (claimed.count === 0) {
+            throw new TradeAssetError('That trade has already gone through, or one of the picks in it has moved.');
+          }
         }
       }
     };

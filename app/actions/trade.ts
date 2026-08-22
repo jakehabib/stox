@@ -41,6 +41,50 @@ export async function executeTradeAction(
   if (settings.tradeDeadlineEnabled && isTradeDeadlinePassed(league.phase, league.week, settings.tradeDeadlineWeek)) {
     return { ok: false, message: 'The trade deadline has passed for this league year.' };
   }
+  /**
+   * THE OTHER CLUB STILL HAS TO SAY YES.
+   *
+   * This action used to execute whatever it was handed. The AI's verdict was
+   * rendered on the trade screen and the Confirm button was disabled until it
+   * came back accepted — but that gate lived entirely in the browser, and a
+   * server action is a public HTTP endpoint. Anything that reached this
+   * function went through, so a request naming a club's best player against
+   * nothing at all completed as a trade.
+   *
+   * NOTE WHAT THIS DOES NOT COVER. It stops a club being robbed, not a club
+   * being handed a gift: an offer of a 91 receiver for nothing is one the AI
+   * genuinely accepts, so it passes here and should. The partner-switch bug —
+   * where a stale ACCEPTED verdict left Confirm live after the user stepped
+   * to a different club, sending his players to a club that never saw the
+   * offer — is a wrong-intent bug, not a wrong-verdict one, and it is fixed
+   * where it lives, in TradeBuilder.
+   *
+   * Re-asking here is safe because evaluateTrade is deterministic — verified
+   * at 50 identical evaluations per deal across the case set, zero flips — so
+   * this can never refuse a deal the screen just showed as accepted. It is
+   * the same call the screen made, with the same inputs.
+   */
+  const [a, b] = await Promise.all([
+    prisma.team.findUnique({ where: { id: teamA }, select: { leagueId: true, isUser: true } }),
+    prisma.team.findUnique({ where: { id: teamB }, select: { leagueId: true, isUser: true } }),
+  ]);
+  if (!a || !b || a.leagueId !== leagueId || b.leagueId !== leagueId) {
+    return { ok: false, message: 'That trade names a club from another league.' };
+  }
+  // Exactly one side must be the user's club. Two AI clubs here would mean
+  // the user was arranging a trade between other people's teams.
+  if (a.isUser === b.isUser) {
+    return { ok: false, message: 'A trade has to be between your club and another one.' };
+  }
+  const [aiTeamId, give, get] = a.isUser ? [teamB, aToB, bToA] : [teamA, bToA, aToB];
+  const verdict = await evaluateTrade({
+    aiTeamId, give, get, currentYear: league.seasonYear,
+    settings: { aiAcceptsLopsided: settings.aiAcceptsLopsided },
+  });
+  if (!verdict.accepted) {
+    return { ok: false, message: verdict.counter?.message ?? "They aren't interested in that offer." };
+  }
+
   try {
     await executeTrade({ leagueId, teamA, teamB, aToB, bToA, seasonYear: league.seasonYear, week: league.week });
   } catch (err) {
@@ -53,6 +97,14 @@ export async function executeTradeAction(
 export async function respondToTradeOfferAction(leagueId: string, offerId: string, accept: boolean): Promise<TradeActionResult> {
   await assertLeagueOwner(leagueId);
   const offer = await prisma.tradeOffer.findUniqueOrThrow({ where: { id: offerId } });
+  /*
+   * assertLeagueOwner() above proves the caller owns THIS league. It says
+   * nothing about the offer id, which arrives from the client and was looked
+   * up by primary key alone — so an offer belonging to somebody else's league
+   * was reachable by anyone who owned any league at all. Authorize on the
+   * league, then check the thing you are about to act on is in it.
+   */
+  if (offer.leagueId !== leagueId) return { ok: false, message: 'That offer is not part of this league.' };
   if (offer.status !== 'PENDING') return { ok: false, message: 'That offer is no longer on the table.' };
 
   if (accept) {

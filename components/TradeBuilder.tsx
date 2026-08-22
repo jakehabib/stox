@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { evaluateTradeAction, executeTradeAction, rankTradePartnersAction } from '@/app/actions/trade';
@@ -255,6 +255,34 @@ export function TradeBuilder({
    * is the whole question, and making him press Propose to see it is a click
    * that answers nothing.
    */
+  /*
+   * CHANGING CLUB THROWS AWAY THE OLD CLUB'S ANSWER.
+   *
+   * The verdict on screen belongs to the club that gave it. Switching partner
+   * re-renders this component with new props but does NOT remount it, so an
+   * ACCEPTED verdict from Cleveland used to still be sitting there — with
+   * Confirm live — after the user stepped to Denver. The players in "you
+   * receive" are on the old club's roster, so they silently drop out, and
+   * Confirm then sent the user's own players to a club that had never seen
+   * the offer, for nothing.
+   *
+   * What the user is giving survives on purpose: shopping the same player
+   * around the league is the normal way this screen gets used, and clearing
+   * his side every step would make that miserable.
+   *
+   * A ref rather than a plain effect body because this must NOT fire on the
+   * first render — the Review deep-link below seeds both sides from props,
+   * and a mount-time clear would wipe the offer the user clicked Review on.
+   */
+  const lastPartner = useRef(partnerId);
+  useEffect(() => {
+    if (lastPartner.current === partnerId) return;
+    lastPartner.current = partnerId;
+    setGet(new Set());
+    setResult(null);
+    setIntel(null);
+  }, [partnerId]);
+
   const reviewKey = `${initialGive?.join(',') ?? ''}|${initialGet?.join(',') ?? ''}`;
   useEffect(() => {
     if (!initialGive?.length && !initialGet?.length) return;

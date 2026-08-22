@@ -1073,6 +1073,66 @@ async function runOffseasonStep(leagueId: string, rng: Rng) {
   const settings = parseSettings(league.settings);
   const step = OFFSEASON_STEPS[Math.min(league.week - 1, OFFSEASON_STEPS.length - 1)];
 
+  /**
+   * ===========================================================================
+   * ONE CLICK, ONE OFFSEASON STEP
+   * ===========================================================================
+   * Same bug as the regular season's duplicate advance (see ONE WEEK, ONE SET
+   * OF LEAGUE-WIDE EFFECTS), and worse here, because none of these steps has a
+   * per-row guard to fall back on. Every case below ends by ASSIGNING
+   * `week: league.week + 1`, so two concurrent clicks both read the same week,
+   * both do the whole step, and both write the same number — the league looks
+   * fine and the damage is invisible:
+   *
+   *   PROGRESS         every player ages twice, develops twice, and gets two
+   *                    retirement rolls in one offseason.
+   *   RESET_STANDINGS  rollSeasonStatsIntoCareer runs twice, so every career
+   *                    total in the league is permanently doubled.
+   *   ADD_DRAFT_CLASS  a second set of future picks.
+   *
+   * (AGE_CONTRACTS is already immune — it stamps League.contractsAgedYear.)
+   *
+   * THE CLAIM IS AT THE TOP HERE, WHICH IS THE OPPOSITE OF THE REGULAR SEASON,
+   * and the difference is deliberate. A week's sixteen games are individually
+   * claimed, so claiming the week late costs a duplicate click some wasted CPU
+   * and nothing else. An offseason step has no such inner guard: by the time
+   * the work is done it is already done twice. So the step is claimed before
+   * the work, and rolled back if the work throws.
+   *
+   * The residual risk is a HARD kill — a serverless timeout, not an
+   * exception — between the claim and the rollback, which would skip the step
+   * outright. That is the trade being made, and it is the right way round:
+   * these steps are bulk updates measured in hundreds of milliseconds, where a
+   * week is sixteen simulated games, and a skipped step is visible and
+   * re-runnable while doubled career stats are silent and permanent.
+   */
+  const claimed = await prisma.league.updateMany({
+    where: { id: leagueId, phase: 'OFFSEASON', week: league.week },
+    data: { week: league.week + 1 },
+  });
+  if (claimed.count === 0) {
+    return { summary: 'That offseason step has already been taken.' };
+  }
+  try {
+    return await runOffseasonStepClaimed(leagueId, league, settings, step, rng);
+  } catch (err) {
+    // Put the step back so the user can retry it, rather than leaving the
+    // league a week further on with the work never done.
+    await prisma.league.updateMany({
+      where: { id: leagueId, phase: 'OFFSEASON', week: league.week + 1 },
+      data: { week: league.week },
+    });
+    throw err;
+  }
+}
+
+async function runOffseasonStepClaimed(
+  leagueId: string,
+  league: Awaited<ReturnType<typeof prisma.league.findUniqueOrThrow>>,
+  settings: ReturnType<typeof parseSettings>,
+  step: (typeof OFFSEASON_STEPS)[number],
+  rng: Rng,
+) {
   switch (step) {
     case 'PROGRESS': {
       await progressAllPlayers(leagueId, rng, settings.retirementEnabled);
