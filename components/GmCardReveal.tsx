@@ -19,7 +19,7 @@ import { createPortal } from 'react-dom';
  * header's backdrop-filter would otherwise become this overlay's containing
  * block and trap it under the nav.
  */
-export function GmCardReveal({ children, label = 'GM Card' }: { children: ReactNode; label?: string }) {
+export function GmCardReveal({ children, label = 'Your GM Card ▸' }: { children: ReactNode; label?: string }) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -34,7 +34,16 @@ export function GmCardReveal({ children, label = 'GM Card' }: { children: ReactN
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="btn-secondary">
+      {/* PRIMARY WEIGHT, ON PURPOSE. This shipped as a grey btn-secondary in
+          the corner of the masthead, sitting over the club watermark, and the
+          app owner could not find it — *"how do you get to the card? i dont
+          see it on the GM profile"*. It is the only thing on this page that
+          leaves the game, so it is the page's action, not a footnote on it. */}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="btn-primary whitespace-nowrap"
+      >
         {label}
       </button>
 

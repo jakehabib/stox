@@ -156,7 +156,13 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
           {/* Everything the card prints is handed to it from this page's own
               summary — it is a second VIEW of these numbers, never a second
               source for them. */}
-          <div className="shrink-0">
+          <div className="shrink-0 text-right">
+            {/* Says what the button makes, because "GM Card" alone does not.
+                No instruction and no verb aimed at the reader — the sentence
+                describes the artefact, and what he does with it is his. */}
+            <p className="text-xs text-muted mb-2 max-w-[13rem] ml-auto leading-snug">
+              {s.tenureYears} season{s.tenureYears === 1 ? '' : 's'} on one card, sized for a screenshot.
+            </p>
             <GmCardReveal>
               <GmCard
                 team={team}
