@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
@@ -35,6 +36,8 @@ import type { FeedRow } from '@/components/draft/SelectionFeed';
 import { BoardDepletion, RunWatch, WarRoomPanel } from '@/components/draft/DraftIntel';
 import type { PositionStock, RunEntry, WarRoomPick } from '@/components/draft/DraftIntel';
 import { BestAvailable } from '@/components/draft/BestAvailable';
+import { DraftViewToggle } from '@/components/draft/DraftViewToggle';
+import { ProspectSearch } from '@/components/draft/ProspectSearch';
 import type { AvailableRow } from '@/components/draft/BestAvailable';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { Tooltip } from '@/components/Tooltip';
@@ -47,7 +50,7 @@ const RUN_WINDOW = 12;
 /** Clubs shown in the hero's order-of-selection strip. */
 const UPCOMING_SLOTS = 20;
 
-export default async function DraftPage({ params, searchParams }: { params: { id: string }; searchParams: { pos?: string; sort?: string; dir?: string; shortlist?: string } }) {
+export default async function DraftPage({ params, searchParams }: { params: { id: string }; searchParams: { pos?: string; sort?: string; dir?: string; shortlist?: string; q?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
 
@@ -117,12 +120,29 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   const shortlistIds = new Set(shortlistEntries.map((s) => s.playerId));
   const shortlistOnly = searchParams.shortlist === '1';
 
+  // THE NAME SEARCH. The app owner: *"we should be able to search by name for
+  // prospects in the draft board"*. Capped in length because it is echoed back
+  // into the empty state, and every token has to match a first or a last name
+  // so that "smith" finds him, "john smith" finds him, and "smith john" does
+  // too — a GM typing a name he half-remembers is not required to know which
+  // half he is typing.
+  const query = (searchParams.q ?? '').trim().slice(0, 40);
+  const queryTokens = query.split(/\s+/).filter(Boolean);
+
   // During a live draft, only the top of the board matters pick-to-pick.
   // Off the clock, this is the whole-class scouting hub — show a lot more
   // of it (the class is ~400 deep now that a real UDFA share exists).
   const where: any = { leagueId: league.id, teamId: null, status: 'FREE_AGENT', isDraftee: true };
   if (searchParams.pos) where.position = searchParams.pos;
   if (shortlistOnly) where.id = { in: Array.from(shortlistIds) };
+  if (queryTokens.length > 0) {
+    where.AND = queryTokens.map((t) => ({
+      OR: [
+        { firstName: { contains: t, mode: 'insensitive' } },
+        { lastName: { contains: t, mode: 'insensitive' } },
+      ],
+    }));
+  }
   // Same rule as Free Agency: the headline count describes the whole class,
   // not the slice below it. Reporting slice.length claimed "300 prospects"
   // against a 400-deep class — and during a live draft the slice narrows to
@@ -133,12 +153,26 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     // board matters pick to pick. A draft that has not started yet is the
     // opposite: it is the last full look at the class, so it gets the whole
     // scouting-hub depth.
-    prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: shortlistOnly ? undefined : (draftLive && draftStarted ? 80 : 300) }),
+    //
+    // A NAME SEARCH LIFTS THE CAP, like the shortlist does and for the same
+    // reason: it is already a narrow question. Capped, "find me Okafor" would
+    // have searched the top eighty men by rating and reported that a sixth-
+    // round name does not exist — which is the one search a GM actually needs
+    // on the clock.
+    prisma.player.findMany({ where, orderBy: { trueOvr: 'desc' }, take: shortlistOnly || queryTokens.length > 0 ? undefined : (draftLive && draftStarted ? 80 : 300) }),
     prisma.player.count({ where: classWhere }),
   ]);
   const reports = await prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: pool.map((p) => p.id) } } });
   const reportMap = new Map(reports.map((r) => [r.playerId, r]));
-  const positions = Array.from(new Set(pool.map((p) => p.position))).sort((a, b) => positionSortKey(a) - positionSortKey(b));
+  // THE PILLS DESCRIBE THE CLASS, NOT THE SLICE IN FRONT OF YOU. Built from
+  // `pool`, every filter ate the row of pills that was supposed to undo it:
+  // clicking QB left "All" and "QB" as the only positions on the page, and a
+  // name search would have cut it to whatever the matches happened to play.
+  // Distinct over the unfiltered class, the pills are the same every time, so
+  // a filter is always one click from being changed rather than only cleared.
+  const positions = (await prisma.player.findMany({ where: classWhere, select: { position: true }, distinct: ['position'] }))
+    .map((p) => p.position)
+    .sort((a, b) => positionSortKey(a) - positionSortKey(b));
 
   const recentPicks = await prisma.transaction.findMany({ where: { leagueId: league.id, type: 'DRAFT' }, orderBy: { createdAt: 'desc' }, take: 10 });
   const classOutlook = await prisma.transaction.findFirst({
@@ -318,21 +352,41 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     }
   });
 
-  const shortlistQuery = shortlistOnly ? 'shortlist=1&' : '';
-  const posQuery = (searchParams.pos ? `pos=${searchParams.pos}&` : '') + shortlistQuery;
-  const sortHref = (key: SortKey) => {
-    const nextDir = sortKey === key && dir === -1 ? 'asc' : 'desc';
-    return `/league/${league.id}/draft?${posQuery}sort=${key}&dir=${nextDir}`;
+  /**
+   * EVERY LINK ON THIS BOARD IS THE WHOLE BOARD, MINUS ONE THING.
+   *
+   * One builder rather than three string recipes, because the filters have to
+   * compose: a position pill has to keep the search, the search has to keep
+   * the shortlist, and a column header has to keep both. Three hand-rolled
+   * suffixes were already dropping things across each other — the sort links
+   * carried position and shortlist, the shortlist link dropped nothing but
+   * would have silently dropped a search the moment one existed. Pass what
+   * changes; everything else rides along.
+   *
+   * EVERY ONE OF THEM IS FOLLOWED SOFTLY — `next/link`, `scroll={false}`, and
+   * that is now load-bearing rather than a nicety. A plain `<a>` reloads the
+   * document, and a reload throws away the view the GM is standing in: the
+   * BOARD/ROOM choice is client state (see DraftViewToggle), so filtering by
+   * position from the board used to drop him back into the broadcast, at the
+   * top of the page, holding a filter he could no longer see. A soft
+   * navigation re-renders the server half and leaves the client half alone,
+   * so the rows change under him and nothing else moves.
+   */
+  const boardHref = (patch: { pos?: string | null; shortlist?: boolean; sort?: SortKey; dir?: 'asc' | 'desc'; q?: string } = {}) => {
+    const p = new URLSearchParams();
+    const pos = patch.pos !== undefined ? patch.pos : searchParams.pos;
+    const short = patch.shortlist !== undefined ? patch.shortlist : shortlistOnly;
+    const q = patch.q !== undefined ? patch.q : query;
+    if (pos) p.set('pos', pos);
+    if (short) p.set('shortlist', '1');
+    if (q) p.set('q', q);
+    p.set('sort', patch.sort ?? sortKey);
+    p.set('dir', patch.dir ?? (dir === -1 ? 'desc' : 'asc'));
+    return `/league/${league.id}/draft?${p.toString()}`;
   };
-  const posHref = (pos?: string) => {
-    const suffix = `${shortlistQuery}sort=${sortKey}&dir=${dir === -1 ? 'desc' : 'asc'}`;
-    return pos ? `/league/${league.id}/draft?pos=${pos}&${suffix}` : `/league/${league.id}/draft?${suffix}`;
-  };
-  const shortlistHref = () => {
-    const posP = searchParams.pos ? `pos=${searchParams.pos}&` : '';
-    const suffix = `sort=${sortKey}&dir=${dir === -1 ? 'desc' : 'asc'}`;
-    return `/league/${league.id}/draft?${posP}${shortlistOnly ? '' : 'shortlist=1&'}${suffix}`;
-  };
+  const sortHref = (key: SortKey) => boardHref({ sort: key, dir: sortKey === key && dir === -1 ? 'asc' : 'desc' });
+  const posHref = (pos?: string) => boardHref({ pos: pos ?? null });
+  const shortlistHref = () => boardHref({ shortlist: !shortlistOnly });
 
   const onClockColor = onClockTeam ? generateTeamLogoParams(onClockTeam.abbr).primary : undefined;
 
@@ -345,6 +399,14 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // marked the entire class scouted and told you nothing. This matches the
   // threshold ScoutingRange itself labels HIGH.
   const scoutedCount = rows.filter(({ view }) => view.confidence >= 75).length;
+  // What that count is a count OF. Normally the board is the top N of the
+  // class by rating, so "of the top 80 shown" is exact — but a search or a
+  // filter makes the slice a set of MATCHES instead, where "of the top 3"
+  // would misdescribe both the rows and the ranking they came from.
+  const boardFiltered = !!query || shortlistOnly || !!searchParams.pos;
+  const scoutedScope = pool.length === 0
+    ? 'nobody yet'
+    : boardFiltered ? `of the ${pool.length} shown` : `of the top ${pool.length} shown`;
 
   // -------------------------------------------------------------------------
   // YOUR PICKS
@@ -1073,223 +1135,55 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     };
   });
 
-  return (
-    // The selection card is raised from inside the board but must outlive it:
-    // the pick action revalidates this route, and the row that raised it is
-    // gone from the board a moment later. The provider sits above all of that.
-    <DraftMomentProvider>
-    <div className="space-y-6">
+  // ===========================================================================
+  // THE TWO VIEWS
+  // ===========================================================================
+  // Read top to bottom, this page used to be: class outlook, the club on the
+  // clock, the pick on screen, the feed, the run watch, the war room panel,
+  // off the board, best available, your picks — and THEN the board. Everything
+  // above the board is something a GM reads; the board is the only thing he
+  // acts on, so the one object he needs was furthest from him at the exact
+  // moment he needed it. The app owner: *"theres a lot going on. the money
+  // item is the actual draft itself and its buried at the bottom of the
+  // screen. Can we maybe clean it up? or toggle 1 or 2 views?"*
+  //
+  // Each panel below is built once, here, and handed to whichever view it
+  // belongs to. Nothing is built twice and nothing is dropped: THE BOARD gets
+  // the big board and the club's draft capital, THE ROOM gets the broadcast,
+  // and the clock stands above both because whose pick it is is never behind a
+  // tab. Every page state that ISN'T a live rookie draft renders the same
+  // list, in the same order it always did — see `twoViews` below.
+
+  // The scouts' one-paragraph verdict on the class. It belongs to THE ROOM
+  // during a draft: it is the same sentence it was in September, and on the
+  // clock it is a banner between a GM and his board.
+  const classOutlookNode = (
+    <>
       {classOutlook && (
         <div className="panel px-4 py-3 flex items-start gap-3">
           <span className="label-sm text-accent2 shrink-0 mt-0.5">Class Outlook</span>
           <p className="text-sm text-chalk/90">{classOutlook.detail}</p>
         </div>
       )}
+    </>
+  );
 
-      {!(state && onClockTeam) && (
-        <PageMasthead
-          teamId={team.id}
-          teamAbbr={team.abbr}
-          eyebrow={state
-            ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft · Round ${state.round}`)
-            : draftJustFinished ? 'Rookie Draft' : 'Scouting Hub'}
-          // Named for the draft these prospects are actually selected in, not
-          // the season being played: they're generated during one season and
-          // drafted in the offseason after it, so seasonYear runs a year early
-          // and wouldn't match the picks you'd spend on them.
-          //
-          // EXCEPT in the window between the last selection and the phase
-          // advancing. The class that just went through the draft is still
-          // flagged isDraftee (the conversion runs on the way out of DRAFT,
-          // see lib/season.ts), while upcomingDraftYear has already moved to
-          // next year's picks — so the old title called 176 undrafted men
-          // "the 2028 Draft Class", a class that will not be generated until
-          // week 1 of the coming season.
-          title={state
-            ? `Pick ${state.pickIndex + 1} of ${totalPicks}`
-            : draftJustFinished ? `${recapYear} Draft Complete` : `${upcomingDraftYear ?? league.seasonYear} Draft Class`}
-          subtitle={state || draftJustFinished
-            ? undefined
-            : 'The incoming class is browsable all season — scout them now, the draft opens after free agency.'}
-          facts={[
-            {
-              label: draftJustFinished ? 'Undrafted' : 'Prospects',
-              value: String(classSize),
-              detail: searchParams.pos ? `filtered to ${searchParams.pos}` : draftJustFinished ? 'nobody called their name' : 'in the class',
-            },
-            {
-              label: 'Shortlisted',
-              tip: tip('shortlist'),
-              value: String(shortlistIds.size),
-              detail: shortlistIds.size > 0 ? 'flagged to watch' : 'star anyone to track them',
-              color: shortlistIds.size > 0 ? 'text-gold' : undefined,
-            },
-            { label: 'Your Picks', value: String(imminentPicks.length), detail: pickTileDetail, tip: tip('pickValue') },
-            {
-              label: 'Well Scouted',
-              tip: tip('scoutingConfidence'),
-              value: `${scoutedCount}`,
-              detail: pool.length > 0 ? `of the top ${pool.length} shown` : 'nobody yet',
-              color: scoutedCount === 0 ? 'text-warn' : undefined,
-            },
-          ]}
-        />
-      )}
-
-      {/*
-        THE WAR ROOM — the ten minutes before the commissioner walks out.
-        Everything is ready and nothing has happened yet, which is exactly what
-        this panel has to say. It stands in the on-clock hero's place (same
-        card treatment, so it reads as the same object a moment later) until
-        StartDraftButton flips DraftState.started.
-      */}
-      {warRoom && (
-        <div
-          className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
-          style={{
-            ['--team-accent' as never]: generateTeamLogoParams(team.abbr).primary,
-            borderColor: 'var(--team-accent)',
-            background: 'radial-gradient(ellipse 120% 140% at 0% 50%, color-mix(in srgb, var(--team-accent) 18%, transparent), transparent 70%)',
-          }}
-        >
-          <div
-            className="absolute inset-0 opacity-[0.05] pointer-events-none"
-            style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
-          />
-          <TeamLogo seed={team.id} abbr={team.abbr} size={240} className="watermark-logo opacity-[0.06] -right-16 -top-16" />
-
-          <div className="relative px-6 py-6 space-y-5">
-            <div className="flex items-center gap-4">
-              <TeamLogo seed={team.id} abbr={team.abbr} size={56} />
-              <div>
-                <div className="label-sm">{league.seasonYear} Rookie Draft · {settings.draftRounds} rounds · {totalPicks} selections</div>
-                <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1 text-team">
-                  The War Room
-                </div>
-              </div>
-            </div>
-
-            <p className="text-sm text-chalk/90 leading-snug max-w-2xl">
-              The class is graded and the order is set{onClockTeam ? `, with ${onClockTeam.city} first to the podium` : ''}.
-              {' '}
-              {imminentPicks.length === 0
-                ? 'You hold no selections in this draft — you can still watch it, and the board comes to you if a deal happens.'
-                : firstSelection
-                ? `You hold ${imminentPicks.length} selection${imminentPicks.length === 1 ? '' : 's'}, the first at ${firstSelection}.`
-                : `You hold ${imminentPicks.length} selection${imminentPicks.length === 1 ? '' : 's'}.`}
-              {' '}
-              Nothing goes on the clock until you send it.
-            </p>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-4">
-              <div>
-                <div className="label-sm">Your Picks</div>
-                <div className="stat-value text-stat-md text-chalk mt-1">{imminentPicks.length}</div>
-                <div className="text-[11px] text-muted mt-1">{firstSelection ? `first at #${firstPick!.overall}` : 'none in this draft'}</div>
-              </div>
-              <div>
-                <div className="label-sm">On the Board</div>
-                <div className="stat-value text-stat-md text-chalk mt-1">{classSize}</div>
-                <div className="text-[11px] text-muted mt-1">prospects in the class</div>
-              </div>
-              <div>
-                <div className="label-sm">Shortlisted</div>
-                <div className={`stat-value text-stat-md mt-1 ${shortlistIds.size > 0 ? 'text-gold' : 'text-chalk'}`}>{shortlistIds.size}</div>
-                <div className="text-[11px] text-muted mt-1">{shortlistIds.size > 0 ? 'flagged to watch' : 'star anyone to track them'}</div>
-              </div>
-              <div>
-                <div className="label-sm">Well Scouted</div>
-                <div className={`stat-value text-stat-md mt-1 ${scoutedCount === 0 ? 'text-warn' : 'text-chalk'}`}>{scoutedCount}</div>
-                <div className="text-[11px] text-muted mt-1">{pool.length > 0 ? `of the top ${pool.length} shown` : 'nobody yet'}</div>
-              </div>
-            </div>
-
-            {/* The scouting department's unspent budget, stated before he
-                spends the night regretting it rather than after. */}
-            {(workoutSlots.remaining) > 0 && (
-              <p className="text-sm text-warn/90 leading-snug">
-                {workoutSlots.remaining} private workout{workoutSlots.remaining === 1 ? '' : 's'} unused —
-                the window closes when this draft opens.
-              </p>
-            )}
-
-            <div className="flex flex-wrap items-start gap-3">
-              <StartDraftButton
-                leagueId={league.id}
-                unusedWorkouts={workoutSlots.remaining}
-                fullScoutsLeft={warRoomDynasty?.fullScout.remaining ?? 0}
-                scoutingHref={`/league/${league.id}/scouting`}
-              />
-            </div>
-
-            <p className="text-[11px] text-muted leading-snug">
-              Clubs go on a short clock once it starts. You can pause the board or fast-forward to your
-              selection at any point, and every pick is announced as it is made.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* A live ROOKIE draft gets the broadcast band: the same club-coloured
-          hero, plus the order of selection running out to your own pick. A
-          fantasy draft keeps the plain band below it — it has no DraftPick
-          rows, so there is no order to run out. */}
-      {broadcastHero && (
-        <BroadcastHero
-          eyebrow={`Round ${state!.round} · Pick ${state!.pickIndex + 1} of ${totalPicks}`}
-          headline={isUserOnClock ? 'You Are On The Clock' : `${onClockTeam!.city} On The Clock`}
-          team={{ id: onClockTeam!.id, abbr: onClockTeam!.abbr, city: onClockTeam!.city, nickname: onClockTeam!.nickname }}
-          yourNext={bcastYourNext}
-          upcoming={bcastUpcoming}
-          clock={
-            <LiveDraftTicker leagueId={league.id} userTeamId={team.id} isUserOnClock={isUserOnClock} draftComplete={false} started={draftStarted} />
-          }
-        />
-      )}
-
-      {!broadcastHero && state && onClockTeam && draftStarted && (
-        <div
-          className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
-          style={{
-            ['--team-accent' as never]: onClockColor,
-            borderColor: 'var(--team-accent)',
-            background: 'radial-gradient(ellipse 120% 140% at 0% 50%, color-mix(in srgb, var(--team-accent) 18%, transparent), transparent 70%)',
-          }}
-        >
-          <div
-            className="absolute inset-0 opacity-[0.05] pointer-events-none"
-            style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
-          />
-          <TeamLogo seed={onClockTeam.id} abbr={onClockTeam.abbr} size={240} className="watermark-logo opacity-[0.06] -right-16 -top-16" />
-
-          <div className="relative flex flex-wrap items-center justify-between gap-4 px-6 py-6">
-            <div className="flex items-center gap-4 min-w-[260px]">
-              <TeamLogo seed={onClockTeam.id} abbr={onClockTeam.abbr} size={56} />
-              <div>
-                <div className="label-sm">
-                  {state.kind === 'FANTASY' ? 'Fantasy Draft' : `Round ${state.round}`} · Pick {state.pickIndex + 1} of {totalPicks}
-                </div>
-                <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1 text-team">
-                  {isUserOnClock ? 'You Are On The Clock' : `${onClockTeam.city} On The Clock`}
-                </div>
-              </div>
-            </div>
-            <LiveDraftTicker leagueId={league.id} userTeamId={team.id} isUserOnClock={isUserOnClock} draftComplete={false} started={draftStarted} />
-          </div>
-        </div>
-      )}
-
-      {draftJustFinished && recap}
-
+  const broadcastBodyNode = (
+    <>
       {/*
         THE BROADCAST BODY.
 
         THE FEED IS A TICKER, NOT A DOCUMENT. It is capped to the viewport and
-        scrolls inside its own rail, so the height of this page is a constant
+        scrolls inside its own rail, so the height of this view is a constant
         rather than a function of how many picks have been made — at pick 200
         an uncapped column would have run for thousands of pixels beside a left
         column that stopped one screen in. Pinned below the sticky header, too:
         it is the thing you keep half an eye on while reading anything else.
+
+        All of this is THE ROOM's half of the page during a live draft (see
+        THE TWO VIEWS above), and the whole broadcast in every other state that
+        has one. It is built here either way — the toggle is handed nodes, it
+        does not decide what is in them.
       */}
       {broadcast && (
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
@@ -1330,13 +1224,30 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           </div>
         </div>
       )}
+    </>
+  );
 
+  // Both best-available columns — the room's board and ours, side by side.
+  const bestAvailableNode = (
+    <>
       {broadcast && <BestAvailable leagueId={league.id} ours={ourBest} room={roomBest} verdict={bcastVerdict} />}
+    </>
+  );
 
+  // Every pick this club holds, in every scheduled draft. It sits UNDER the
+  // big board in THE BOARD view rather than over it: the point of the view is
+  // that the men are the first thing on it, and the hero above already says
+  // which selection is yours and how many names are in front of it.
+  const capitalPanelNode = (
+    <>
       {capitalList.length > 0 && (
         <DraftCapitalPanel years={capitalList} nextUp={nextUp} liveOrder={capitalLiveOrder} />
       )}
+    </>
+  );
 
+  const upcomingStripNode = (
+    <>
       {/* Not while the broadcast band is up — it carries the same running order
           inside the hero, alongside the count of names until your own pick. */}
       {!broadcastHero && upcomingPicks.length > 1 && (
@@ -1366,20 +1277,76 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           </div>
         </div>
       )}
+    </>
+  );
 
-      <div className="section">
+  /**
+   * WHEN THE BOARD COMES BACK EMPTY.
+   *
+   * A table with a header and no rows says "broken" far more readily than it
+   * says "no matches", and with three filters now able to compose — position,
+   * shortlist, and a name — the useful thing to say is which of them is doing
+   * it, with the undo for each one attached. It also names the one thing a
+   * search cannot explain by itself: during a live draft this board is the men
+   * still available, so a prospect who has already been called is not missing,
+   * he is in the feed on the other view.
+   */
+  const boardEmptyState = (() => {
+    const posLabel = searchParams.pos ? `${searchParams.pos} ` : '';
+    const headline = query
+      ? `No ${posLabel}prospect${shortlistOnly ? ' on your shortlist' : ''} matching “${query}”.`
+      : shortlistOnly
+        ? `Nothing on your shortlist is ${posLabel ? `a ${searchParams.pos} still on the board` : 'still on the board'}.`
+        : searchParams.pos
+          ? `No ${searchParams.pos}s left on this board.`
+          : 'Nobody is on this board.';
+    const undo: { href: string; label: string }[] = [];
+    if (query) undo.push({ href: boardHref({ q: '' }), label: 'Clear the search' });
+    if (searchParams.pos) undo.push({ href: boardHref({ pos: null }), label: 'Every position' });
+    if (shortlistOnly) undo.push({ href: boardHref({ shortlist: false }), label: 'The whole class' });
+    return (
+      <tr>
+        <td colSpan={workoutSlots.open ? 12 : 11} className="px-3 py-10 text-center">
+          <p className="text-sm text-chalk/90">{headline}</p>
+          {query && broadcast && !bcastComplete && (
+            <p className="text-xs text-muted mt-1.5">
+              This board is the men still available — if his name has been called, he is in the feed in The Room.
+            </p>
+          )}
+          {undo.length > 0 && (
+            <div className="flex items-center justify-center gap-4 mt-3">
+              {undo.map((u) => (
+                <Link key={u.label} href={u.href} scroll={false} prefetch={false} className="text-xs text-accent2 hover:text-accent">{u.label}</Link>
+              ))}
+            </div>
+          )}
+        </td>
+      </tr>
+    );
+  })();
+
+  const boardSectionNode = (
+    <>
+      {/* `id` so the rest of the app can link straight at the men — and so a
+          screenshot run can prove where the first row lands. */}
+      <div className="section" id="big-board">
         <SectionHeading
           title={broadcast ? 'Still On The Board' : 'Big Board'}
           tip={tip('consensusBoard')}
           action={
-            <div className="flex gap-2 flex-wrap items-center">
-              <a href={posHref()} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</a>
+            <div className="flex gap-2 flex-wrap items-center justify-end">
+              {/* THE SEARCH SITS WITH THE FILTERS BECAUSE IT IS ONE. It carries
+                  the position pill and the shortlist with it (see boardHref),
+                  so typing narrows whatever is already on screen instead of
+                  quietly resetting it. */}
+              <ProspectSearch initial={query} baseHref={boardHref({ q: '' })} matches={sorted.length} />
+              <Link href={posHref()} scroll={false} prefetch={false} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</Link>
               {positions.map((pos) => (
-                <a key={pos} href={posHref(pos)} className={`pill ${searchParams.pos === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</a>
+                <Link key={pos} href={posHref(pos)} scroll={false} prefetch={false} className={`pill ${searchParams.pos === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</Link>
               ))}
-              <a href={shortlistHref()} className={`pill ${shortlistOnly ? 'border-gold text-gold bg-gold/10' : 'border-line text-muted'}`}>
+              <Link href={shortlistHref()} scroll={false} prefetch={false} className={`pill ${shortlistOnly ? 'border-gold text-gold bg-gold/10' : 'border-line text-muted'}`}>
                 ★ Shortlist {shortlistIds.size > 0 && `(${shortlistIds.size})`}
-              </a>
+              </Link>
             </div>
           }
         />
@@ -1409,13 +1376,19 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           </div>
         )}
 
-        {/* Capped and scrolled. During a draft this table sits under a whole
-            broadcast and eighty rows would push the page to four screens; out
-            of it, the scouting hub shows three hundred and ran to twenty-one
-            thousand pixels of one table. Nothing is dropped either way — the
-            rows scroll inside the box, and `.table-clean th` is already
-            sticky, so it pins to this container instead of the viewport and
-            the column names stay over the numbers. */}
+        {/* Capped and scrolled, in every state. The scouting hub shows three
+            hundred men and ran to twenty-one thousand pixels of one table;
+            during a draft the slice is eighty, or every man whose name matches
+            a search. Nothing is dropped either way — the rows scroll inside
+            the box, and `.table-clean th` is already sticky, so it pins to
+            this container instead of the viewport and the column names stay
+            over the numbers.
+
+            THE CAP IS ALSO WHY THE BOARD VIEW IS ONE SCREEN. Under the toggle
+            this table is the first thing on the page after the clock, and a
+            forty-four-rem box means the rows a GM is choosing between are
+            above the fold rather than somewhere down an eighty-row document
+            that the page grows and shrinks with. */}
         <div className="panel max-h-[44rem] overflow-y-auto">
           <table className="table-clean">
             <thead>
@@ -1423,23 +1396,23 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th></th>
                 <th className="text-right">
                   <span className="inline-flex items-center gap-1">
-                    <a href={sortHref('ours')} className="hover:text-chalk">Ours{sortKey === 'ours' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                    <Link href={sortHref('ours')} scroll={false} prefetch={false} className="hover:text-chalk">Ours{sortKey === 'ours' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
                     <Tooltip placement="bottom" align="start" text="Where this club's own scouts have him, ranked by our grade on the same blend of present and ceiling the room uses. Only men we have a real file on are on it." />
                   </span>
                 </th>
-                <th className="text-right"><a href={sortHref('consensus')} className="hover:text-chalk">Board{sortKey === 'consensus' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-                <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th className="text-right"><Link href={sortHref('consensus')} scroll={false} prefetch={false} className="hover:text-chalk">Board{sortKey === 'consensus' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
+                <th><Link href={sortHref('pos')} scroll={false} prefetch={false} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
                 <th>Name</th>
-                <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th><Link href={sortHref('age')} scroll={false} prefetch={false} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
                 <th>
                   <span className="inline-flex items-center gap-1">
-                    <a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                    <Link href={sortHref('ovr')} scroll={false} prefetch={false} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
                     <Tooltip placement="bottom" text={settings.scoutingEnabled ? tip('scoutedRange') : tip('overall')} />
                   </span>
                 </th>
                 <th>
                   <span className="inline-flex items-center gap-1">
-                    <a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                    <Link href={sortHref('potential')} scroll={false} prefetch={false} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
                     {/* Downward: this table is wrapped in `panel
                         overflow-hidden`, which clips anything opening above
                         the header row. */}
@@ -1626,10 +1599,278 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                   </tr>
                 );
               })}
+              {sorted.length === 0 && boardEmptyState}
             </tbody>
           </table>
         </div>
       </div>
+    </>
+  );
+
+  /**
+   * WHICH STATES GET A TOGGLE, AND WHY THE REST DO NOT.
+   *
+   * Only a live rookie draft — a board that has been sent to the podium and
+   * has picks left in it. That is the one state where reading and acting
+   * compete for the same screen under a clock, which is the whole problem the
+   * toggle solves. `broadcastHero` is the exact condition (see above) and is
+   * used rather than `broadcast` on purpose: it also guarantees there is a
+   * club on the clock to head both views with, so neither view can ever be a
+   * draft page that cannot say whose pick it is.
+   *
+   *   THE WAR ROOM (board set, clock stopped) — no toggle. Nothing can be
+   *     taken yet; the panel that starts the draft IS the page, and a "watch
+   *     the broadcast" view of a draft that has not begun would be an empty
+   *     room. The board is already the next thing under it.
+   *   PRE-DRAFT SCOUTING (no draft running) — no toggle. There is no
+   *     broadcast to split off: the page is a masthead, your picks and the
+   *     class. It is all board already.
+   *   THE RECAP (last card in, phase still DRAFT) — no toggle. The clock is
+   *     gone and there is nothing left to act on, so the page stops being two
+   *     jobs and becomes one document: the recap leads and the leftovers —
+   *     tomorrow's priority free agents — are read at the bottom of it.
+   *   A FANTASY DRAFT — no toggle. It has no DraftPick rows and therefore no
+   *     broadcast at all, so its board is already second on the page.
+   */
+  const twoViews = broadcastHero;
+
+  /**
+   * IS IT ABOUT TO BE YOUR TURN? The one input the situational default takes.
+   * One name away counts as your turn: the point is to be ALREADY looking at
+   * the board when the room turns to you, not to start scrolling once it has.
+   */
+  const boardUrgent = twoViews && (isUserOnClock || (bcastYourNext?.picksAway ?? Infinity) <= 1);
+  const urgentNote = !boardUrgent
+    ? undefined
+    : isUserOnClock || bcastYourNext?.picksAway === 0
+      ? 'You are on the clock.'
+      : 'One name to go.';
+
+  return (
+    // The selection card is raised from inside the board but must outlive it:
+    // the pick action revalidates this route, and the row that raised it is
+    // gone from the board a moment later. The provider sits above all of that.
+    <DraftMomentProvider>
+    <div className="space-y-6">
+      {/* In the two-view states this banner rides with the broadcast; see
+          classOutlookNode. */}
+      {!twoViews && classOutlookNode}
+
+      {!(state && onClockTeam) && (
+        <PageMasthead
+          teamId={team.id}
+          teamAbbr={team.abbr}
+          eyebrow={state
+            ? (state.kind === 'FANTASY' ? 'Fantasy Draft' : `Rookie Draft · Round ${state.round}`)
+            : draftJustFinished ? 'Rookie Draft' : 'Scouting Hub'}
+          // Named for the draft these prospects are actually selected in, not
+          // the season being played: they're generated during one season and
+          // drafted in the offseason after it, so seasonYear runs a year early
+          // and wouldn't match the picks you'd spend on them.
+          //
+          // EXCEPT in the window between the last selection and the phase
+          // advancing. The class that just went through the draft is still
+          // flagged isDraftee (the conversion runs on the way out of DRAFT,
+          // see lib/season.ts), while upcomingDraftYear has already moved to
+          // next year's picks — so the old title called 176 undrafted men
+          // "the 2028 Draft Class", a class that will not be generated until
+          // week 1 of the coming season.
+          title={state
+            ? `Pick ${state.pickIndex + 1} of ${totalPicks}`
+            : draftJustFinished ? `${recapYear} Draft Complete` : `${upcomingDraftYear ?? league.seasonYear} Draft Class`}
+          subtitle={state || draftJustFinished
+            ? undefined
+            : 'The incoming class is browsable all season — scout them now, the draft opens after free agency.'}
+          facts={[
+            {
+              label: draftJustFinished ? 'Undrafted' : 'Prospects',
+              value: String(classSize),
+              detail: [searchParams.pos ? `filtered to ${searchParams.pos}` : null, query ? `searching “${query}”` : null]
+                .filter(Boolean)
+                .join(' · ') || (draftJustFinished ? 'nobody called their name' : 'in the class'),
+            },
+            {
+              label: 'Shortlisted',
+              tip: tip('shortlist'),
+              value: String(shortlistIds.size),
+              detail: shortlistIds.size > 0 ? 'flagged to watch' : 'star anyone to track them',
+              color: shortlistIds.size > 0 ? 'text-gold' : undefined,
+            },
+            { label: 'Your Picks', value: String(imminentPicks.length), detail: pickTileDetail, tip: tip('pickValue') },
+            {
+              label: 'Well Scouted',
+              tip: tip('scoutingConfidence'),
+              value: `${scoutedCount}`,
+              detail: scoutedScope,
+              color: scoutedCount === 0 ? 'text-warn' : undefined,
+            },
+          ]}
+        />
+      )}
+
+      {/*
+        THE WAR ROOM — the ten minutes before the commissioner walks out.
+        Everything is ready and nothing has happened yet, which is exactly what
+        this panel has to say. It stands in the on-clock hero's place (same
+        card treatment, so it reads as the same object a moment later) until
+        StartDraftButton flips DraftState.started.
+      */}
+      {warRoom && (
+        <div
+          className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
+          style={{
+            ['--team-accent' as never]: generateTeamLogoParams(team.abbr).primary,
+            borderColor: 'var(--team-accent)',
+            background: 'radial-gradient(ellipse 120% 140% at 0% 50%, color-mix(in srgb, var(--team-accent) 18%, transparent), transparent 70%)',
+          }}
+        >
+          <div
+            className="absolute inset-0 opacity-[0.05] pointer-events-none"
+            style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
+          />
+          <TeamLogo seed={team.id} abbr={team.abbr} size={240} className="watermark-logo opacity-[0.06] -right-16 -top-16" />
+
+          <div className="relative px-6 py-6 space-y-5">
+            <div className="flex items-center gap-4">
+              <TeamLogo seed={team.id} abbr={team.abbr} size={56} />
+              <div>
+                <div className="label-sm">{league.seasonYear} Rookie Draft · {settings.draftRounds} rounds · {totalPicks} selections</div>
+                <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1 text-team">
+                  The War Room
+                </div>
+              </div>
+            </div>
+
+            <p className="text-sm text-chalk/90 leading-snug max-w-2xl">
+              The class is graded and the order is set{onClockTeam ? `, with ${onClockTeam.city} first to the podium` : ''}.
+              {' '}
+              {imminentPicks.length === 0
+                ? 'You hold no selections in this draft — you can still watch it, and the board comes to you if a deal happens.'
+                : firstSelection
+                ? `You hold ${imminentPicks.length} selection${imminentPicks.length === 1 ? '' : 's'}, the first at ${firstSelection}.`
+                : `You hold ${imminentPicks.length} selection${imminentPicks.length === 1 ? '' : 's'}.`}
+              {' '}
+              Nothing goes on the clock until you send it.
+            </p>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-4">
+              <div>
+                <div className="label-sm">Your Picks</div>
+                <div className="stat-value text-stat-md text-chalk mt-1">{imminentPicks.length}</div>
+                <div className="text-[11px] text-muted mt-1">{firstSelection ? `first at #${firstPick!.overall}` : 'none in this draft'}</div>
+              </div>
+              <div>
+                <div className="label-sm">On the Board</div>
+                <div className="stat-value text-stat-md text-chalk mt-1">{classSize}</div>
+                <div className="text-[11px] text-muted mt-1">prospects in the class</div>
+              </div>
+              <div>
+                <div className="label-sm">Shortlisted</div>
+                <div className={`stat-value text-stat-md mt-1 ${shortlistIds.size > 0 ? 'text-gold' : 'text-chalk'}`}>{shortlistIds.size}</div>
+                <div className="text-[11px] text-muted mt-1">{shortlistIds.size > 0 ? 'flagged to watch' : 'star anyone to track them'}</div>
+              </div>
+              <div>
+                <div className="label-sm">Well Scouted</div>
+                <div className={`stat-value text-stat-md mt-1 ${scoutedCount === 0 ? 'text-warn' : 'text-chalk'}`}>{scoutedCount}</div>
+                <div className="text-[11px] text-muted mt-1">{scoutedScope}</div>
+              </div>
+            </div>
+
+            {/* The scouting department's unspent budget, stated before he
+                spends the night regretting it rather than after. */}
+            {(workoutSlots.remaining) > 0 && (
+              <p className="text-sm text-warn/90 leading-snug">
+                {workoutSlots.remaining} private workout{workoutSlots.remaining === 1 ? '' : 's'} unused —
+                the window closes when this draft opens.
+              </p>
+            )}
+
+            <div className="flex flex-wrap items-start gap-3">
+              <StartDraftButton
+                leagueId={league.id}
+                unusedWorkouts={workoutSlots.remaining}
+                fullScoutsLeft={warRoomDynasty?.fullScout.remaining ?? 0}
+                scoutingHref={`/league/${league.id}/scouting`}
+              />
+            </div>
+
+            <p className="text-[11px] text-muted leading-snug">
+              Clubs go on a short clock once it starts. You can pause the board or fast-forward to your
+              selection at any point, and every pick is announced as it is made.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* A live ROOKIE draft gets the broadcast band: the same club-coloured
+          hero, plus the order of selection running out to your own pick. A
+          fantasy draft keeps the plain band below it — it has no DraftPick
+          rows, so there is no order to run out. */}
+      {broadcastHero && (
+        <BroadcastHero
+          eyebrow={`Round ${state!.round} · Pick ${state!.pickIndex + 1} of ${totalPicks}`}
+          headline={isUserOnClock ? 'You Are On The Clock' : `${onClockTeam!.city} On The Clock`}
+          team={{ id: onClockTeam!.id, abbr: onClockTeam!.abbr, city: onClockTeam!.city, nickname: onClockTeam!.nickname }}
+          yourNext={bcastYourNext}
+          upcoming={bcastUpcoming}
+          clock={
+            <LiveDraftTicker leagueId={league.id} userTeamId={team.id} isUserOnClock={isUserOnClock} draftComplete={false} started={draftStarted} />
+          }
+        />
+      )}
+
+      {!broadcastHero && state && onClockTeam && draftStarted && (
+        <div
+          className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
+          style={{
+            ['--team-accent' as never]: onClockColor,
+            borderColor: 'var(--team-accent)',
+            background: 'radial-gradient(ellipse 120% 140% at 0% 50%, color-mix(in srgb, var(--team-accent) 18%, transparent), transparent 70%)',
+          }}
+        >
+          <div
+            className="absolute inset-0 opacity-[0.05] pointer-events-none"
+            style={{ backgroundImage: 'repeating-linear-gradient(115deg, currentColor 0px, currentColor 1px, transparent 1px, transparent 14px)', color: 'var(--team-accent)' }}
+          />
+          <TeamLogo seed={onClockTeam.id} abbr={onClockTeam.abbr} size={240} className="watermark-logo opacity-[0.06] -right-16 -top-16" />
+
+          <div className="relative flex flex-wrap items-center justify-between gap-4 px-6 py-6">
+            <div className="flex items-center gap-4 min-w-[260px]">
+              <TeamLogo seed={onClockTeam.id} abbr={onClockTeam.abbr} size={56} />
+              <div>
+                <div className="label-sm">
+                  {state.kind === 'FANTASY' ? 'Fantasy Draft' : `Round ${state.round}`} · Pick {state.pickIndex + 1} of {totalPicks}
+                </div>
+                <div className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1 text-team">
+                  {isUserOnClock ? 'You Are On The Clock' : `${onClockTeam.city} On The Clock`}
+                </div>
+              </div>
+            </div>
+            <LiveDraftTicker leagueId={league.id} userTeamId={team.id} isUserOnClock={isUserOnClock} draftComplete={false} started={draftStarted} />
+          </div>
+        </div>
+      )}
+
+      {draftJustFinished && recap}
+
+      {twoViews ? (
+        <DraftViewToggle
+          urgent={boardUrgent}
+          urgentNote={urgentNote}
+          boardHint={`${stillOnBoard.length} still available`}
+          roomHint={`pick ${bcastIndex + 1} of ${bcastPicks.length}`}
+          board={<>{boardSectionNode}{capitalPanelNode}</>}
+          room={<>{classOutlookNode}{broadcastBodyNode}{bestAvailableNode}</>}
+        />
+      ) : (
+        <>
+          {broadcastBodyNode}
+          {bestAvailableNode}
+          {capitalPanelNode}
+          {upcomingStripNode}
+          {boardSectionNode}
+        </>
+      )}
 
       {!draftJustFinished && recap}
 

@@ -25,6 +25,14 @@ export interface UpcomingSlot {
  * It stands only while a draft is actually running. A finished draft gets the
  * page masthead and the recap instead, which is where the story of a class
  * that has already been taken belongs.
+ *
+ * ABOVE THE TOGGLE, NOT INSIDE IT. While a draft runs the page splits into THE
+ * BOARD and THE ROOM (DraftViewToggle), and this band sits over both of them:
+ * whose pick it is, and how close yours is, is the one thing a GM must never
+ * have to go and look for. It is also rendered exactly once for a harder
+ * reason — the clock it carries is LiveDraftTicker, which is what actually
+ * runs the AI picks. A second copy behind a hidden tab would be a second
+ * clock, taking a second pick every time the first one did.
  */
 export function BroadcastHero({ eyebrow, headline, team, clock, yourNext, upcoming }: {
   eyebrow: string;

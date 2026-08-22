@@ -241,7 +241,13 @@ function SelectionCard({ moment, onDismiss }: { moment: SelectionMoment; onDismi
 
         <div className="relative border-t border-line/60 px-6 py-3 flex items-center justify-between gap-3">
           <span className="text-[11px] text-muted">Esc</span>
-          <button autoFocus className="btn-primary text-sm" onClick={onDismiss}>Back to the board</button>
+          {/* Not "back to the board" any more: dismissing this card refreshes
+              the page, and the page you land on is draft day as it stands —
+              which, now that your selection is in and the wait has started
+              again, is the broadcast rather than the board (see the draft
+              page's THE TWO VIEWS). Naming a view you may not land in is a
+              button that lies about where it goes. */}
+          <button autoFocus className="btn-primary text-sm" onClick={onDismiss}>Back to draft day</button>
         </div>
       </div>
     </div>
