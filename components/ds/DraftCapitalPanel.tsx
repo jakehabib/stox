@@ -52,6 +52,15 @@ export interface DraftCapitalYear {
   /** A live projection exists for this year (current draft, real standings behind it). */
   projected: boolean;
   /**
+   * The next draft that will actually run. It is itemised pick by pick even
+   * when it has no selection numbers yet, because it is the one a GM is
+   * PLANNING against: "3 picks — R2, R6-R7" tells him he owns something in the
+   * second round somewhere, which is not a thing anyone can trade up from.
+   * Later drafts stay summarised — the app owner's own call, and the trade
+   * hub treats them the same way.
+   */
+  upcoming?: boolean;
+  /**
    * The season whose standings will set this order, when that season has not
    * been played out yet. Left unset once it has: at that point the order is
    * simply waiting for the draft to open, and naming a finished season as the
@@ -104,7 +113,9 @@ function statusLabel(y: DraftCapitalYear): string {
 }
 
 /** A year has real selection numbers on every row, so every row is worth a row. */
-const isNumbered = (y: DraftCapitalYear) => y.settled || y.projected;
+// Which drafts get a row per pick. Numbers are not the qualifier — being the
+// draft you are about to spend in is. See DraftCapitalYear.upcoming.
+const isItemised = (y: DraftCapitalYear) => y.settled || y.projected || y.upcoming === true;
 
 /**
  * WHAT YOU HOLD, WHAT YOU GAVE UP, AND WHEN YOU ARE NEXT UP.
@@ -120,13 +131,19 @@ const isNumbered = (y: DraftCapitalYear) => y.settled || y.projected;
  * `projected` come from the page, which knows whether that year's order has
  * actually been reseeded.
  *
- * A YEAR WITH NO NUMBERS DOES NOT GET A LADDER. A future draft has no
- * standings to project from, so a round-by-round ladder for it is seven rows
- * of "R4 —": a shape, not information. The app owner, on seeing exactly that:
- * *"there is also no reason to show this in the draft years prior. it doesn't
- * add or do anything"*. Those years get one dense line — how many picks, which
- * rounds — and then only the rows that carry actual news: a round that is
- * gone, a pick that came in from another club.
+ * THE NEXT DRAFT IS ALWAYS ITEMISED; LATER ONES ARE NOT. This started as a
+ * numbers rule — a ladder only where real selection numbers existed — and the
+ * app owner corrected it to a planning rule: *"it needs to show your current
+ * picks for the draft year so you can plan instead of guessing 'oh i have a
+ * pick somewhere in R2'."* A summary hides the two things you plan around:
+ * that a round is doubled up and that a round is gone. So the imminent draft
+ * gets a row per pick whether or not its order has been seeded, and a row with
+ * no selection number simply prints none rather than a placeholder dash.
+ *
+ * Drafts beyond the next one stay on one dense line — how many picks, which
+ * rounds — plus only the rows that carry news: a round that is gone, a pick
+ * that came in from another club. Two years out there is nothing to plan
+ * against yet, and the trade hub summarises them the same way.
  */
 export function DraftCapitalPanel({ years, nextUp, liveOrder }: {
   years: DraftCapitalYear[];
@@ -145,9 +162,9 @@ export function DraftCapitalPanel({ years, nextUp, liveOrder }: {
   // as capital is how the header ends up disagreeing with the panel under it.
   const unused = years.reduce((n, y) => n + y.picks.filter((p) => !p.spentOn).length, 0);
   const made = years.reduce((n, y) => n + y.picks.filter((p) => p.spentOn).length, 0);
-  const numbered = years.filter(isNumbered);
-  const rest = years.filter((y) => !isNumbered(y));
-  const cells = numbered.length + (rest.length > 0 || (liveOrder && liveOrder.length > 0) ? 1 : 0);
+  const itemised = years.filter(isItemised);
+  const rest = years.filter((y) => !isItemised(y));
+  const cells = itemised.length + (rest.length > 0 || (liveOrder && liveOrder.length > 0) ? 1 : 0);
 
   return (
     <div className="section">
@@ -189,8 +206,8 @@ export function DraftCapitalPanel({ years, nextUp, liveOrder }: {
 
         {/* The drafts that have selection numbers get a column each; everything
             further out shares the last column, one line per year. */}
-        <div className={`grid gap-3 items-start ${cells >= 2 ? 'md:grid-cols-2' : 'md:max-w-2xl'} ${numbered.length >= 2 ? 'lg:grid-cols-3' : ''}`}>
-          {numbered.map((y) => (
+        <div className={`grid gap-3 items-start ${cells >= 2 ? 'md:grid-cols-2' : 'md:max-w-2xl'} ${itemised.length >= 2 ? 'lg:grid-cols-3' : ''}`}>
+          {itemised.map((y) => (
             <div key={y.year} className="rounded-md border border-line/70 bg-raised/30 px-3 py-2.5">
               <YearHeading year={y.year} status={statusLabel(y)} projected={y.projected} />
               <div className="divide-y divide-line/40">
@@ -333,10 +350,12 @@ function HeldRow({ pick }: { pick: DraftCapitalPick }) {
       {pick.overall !== undefined ? (
         <span className="stat-value text-stat-sm text-chalk">#{pick.overall}</span>
       ) : pick.projectedOverall === undefined ? (
-        // Belt and braces: a year with neither number never reaches a ladder
-        // (see isNumbered), and if one ever did it would say nothing rather
-        // than dress a missing value up as a selection.
-        <span className="font-mono text-sm text-muted">—</span>
+        // The upcoming draft is itemised before its order exists, so this is a
+        // normal state now rather than the impossible one it used to be. No
+        // number is printed at all: the year heading already says the order
+        // lands when the draft opens, and a dash in a column of selection
+        // numbers reads like a value that failed to load.
+        null
       ) : (
         // The trade screen's exact wording for the same idea, extended with the
         // overall number this panel is actually showing, so one term never gets

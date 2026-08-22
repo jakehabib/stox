@@ -303,6 +303,9 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         year,
         settled,
         projected,
+        // The draft being planned for gets a row per pick whether or not it has
+        // numbers yet — see DraftCapitalYear.upcoming.
+        upcoming: year === upcomingDraftYear,
         // Draft year Y is seeded by the season played in Y-1 (the offseason
         // that runs the draft has already rolled seasonYear forward) — but
         // only while that season is still ahead of us. Between RESET_STANDINGS
