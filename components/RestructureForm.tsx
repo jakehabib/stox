@@ -3,7 +3,15 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { restructureContractAction } from '@/app/actions/roster';
-import { formatMoney, capHit, capHitSchedule, deadMoneyOnCut, restructureContract as computeRestructure } from '@/lib/cap';
+import { formatMoney, capHit, capHitSchedule, deadMoneyOnCut, restructureContract as computeRestructure, usableVoidYears } from '@/lib/cap';
+import { CAP } from '@/lib/tuning';
+
+/**
+ * The most void years this control will ever offer to ADD. The real ceiling is
+ * always CAP.MAX_PRORATION_YEARS minus the years the deal still has to run;
+ * this is just the top of the slider before that clamp bites.
+ */
+const MAX_ADD_VOID_YEARS = 3;
 
 interface ContractShape {
   years: number; yearsRemaining: number; signedYear: number;
@@ -36,8 +44,22 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
   // already passes `contract` and nothing else needs changing.)
   const nowYear = contract.signedYear + yearIdx;
 
+  /*
+   * The number the PREVIEW uses and the number the ACTION is handed have to be
+   * the same one. The slider is clamped to its room below; clamping here too
+   * means a stale state value (drag to +3 on a short deal, then the deal
+   * changes under you) can never send the server something the panel did not
+   * price.
+   */
+  const voidRoom = Math.max(
+    0,
+    usableVoidYears(contract.yearsRemaining, MAX_ADD_VOID_YEARS)
+      - usableVoidYears(contract.yearsRemaining, contract.voidYears ?? 0),
+  );
+  const submittedVoidYears = Math.min(addVoidYears, voidRoom);
+
   const preview = useMemo(() => {
-    const next = computeRestructure(contract, convert, { addVoidYears, nowYear });
+    const next = computeRestructure(contract, convert, { addVoidYears: submittedVoidYears, nowYear });
     const nextShaped = { ...next, baseSalaries: JSON.stringify(next.baseSalaries) };
     /*
      * ONE FUNCTION, SO THE PANEL CAN'T DISAGREE WITH ITSELF.
@@ -70,11 +92,11 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
       /** Extra cap charged in future years to buy this year's relief. */
       futureCost: newSchedule.slice(1).reduce((a, b) => a + b, 0) - oldSchedule.slice(1).reduce((a, b) => a + b, 0),
     };
-  }, [convert, addVoidYears]);
+  }, [convert, submittedVoidYears]);
 
   const submit = () => {
     startTransition(async () => {
-      const result = await restructureContractAction(leagueId, playerId, convert, addVoidYears);
+      const result = await restructureContractAction(leagueId, playerId, convert, submittedVoidYears);
       setMsg({ ok: result.ok, text: result.message });
       if (result.ok) { router.refresh(); onDone?.(); }
     });
@@ -94,14 +116,61 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
         <input type="range" min={0} max={maxConvert} step={100000} value={convert} onChange={(e) => setConvert(Number(e.target.value))} className="w-full accent-accent" />
       </div>
 
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <label className="label-sm">Add void years</label>
-          <span className="text-xs font-mono">{addVoidYears === 0 ? 'None' : `+${addVoidYears}`}</span>
-        </div>
-        <input type="range" min={0} max={3} step={1} value={addVoidYears} onChange={(e) => setAddVoidYears(Number(e.target.value))} className="w-full accent-warn" />
-        <p className="text-[11px] text-muted mt-1">More void years spread the new bonus thinner (more relief now), but every bit of it hits as dead money at once when the real deal ends.</p>
-      </div>
+      {/*
+        * THE SLIDER MAY NOT OFFER A POSITION THE CONTRACT WILL DROP.
+        *
+        * It ran 0-3 on every deal. A restructure rebases the contract onto the
+        * years that are LEFT, and proration stops at CAP.MAX_PRORATION_YEARS —
+        * so `restructureContract` clamps through `usableVoidYears` and quietly
+        * discards anything past the room. Measured, converting $15M on a $20M
+        * base:
+        *
+        *     2yr left:  +0 $17.50M  +1 $13.33M  +2 $11.25M  +3 $10.00M
+        *     3yr left:  +0 $13.33M  +1 $11.25M  +2 $10.00M  +3 $10.00M
+        *     4yr left:  +0 $11.25M  +1 $10.00M  +2 $10.00M  +3 $10.00M
+        *     5yr left:  +0 $10.00M  +1 $10.00M  +2 $10.00M  +3 $10.00M  <- inert
+        *
+        * The app owner, on a long deal: *"Adding void years on a restructure
+        * doesn't seem to move the cap at all."* He was right, and the numbers
+        * were right — the control was lying about what it could do. This is the
+        * same fix DealStructureControls already carries for the extension
+        * slider, through the same clamp, so the two screens cannot disagree
+        * about what a void year is worth.
+        *
+        * `existingVoid` matters because the action ADDS to what the deal already
+        * carries: a 3+2 deal has no room left for a third.
+        */}
+      {(() => {
+        // Same two numbers the preview and the submit are built from, above.
+        // Recomputing them here is how a slider ends up offering a position
+        // the panel does not price.
+        const existingVoid = usableVoidYears(contract.yearsRemaining, contract.voidYears ?? 0);
+        const room = voidRoom;
+        const shown = submittedVoidYears;
+        return (
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="label-sm">Add void years</label>
+              <span className={`text-xs font-mono ${room === 0 ? 'text-muted' : ''}`}>
+                {room === 0 ? `None — ${contract.yearsRemaining}yr left` : shown === 0 ? 'None' : `+${shown}`}
+              </span>
+            </div>
+            {room === 0 ? (
+              <p className="text-[11px] text-muted mt-1">
+                A signing bonus spreads over {CAP.MAX_PRORATION_YEARS} years at most, and this deal still has{' '}
+                {contract.yearsRemaining}{existingVoid > 0 ? ` plus ${existingVoid} void` : ''} to run — there is
+                nothing further to spread it over. Void years are a short-deal tool: they buy you room on a contract
+                with {CAP.MAX_PRORATION_YEARS - 1} years or fewer left.
+              </p>
+            ) : (
+              <>
+                <input type="range" min={0} max={room} step={1} value={shown} onChange={(e) => setAddVoidYears(Number(e.target.value))} className="w-full accent-warn" />
+                <p className="text-[11px] text-muted mt-1">More void years spread the new bonus thinner (more relief now), but every bit of it hits as dead money at once when the real deal ends.</p>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       <div className="card-pad !p-3 rounded-lg bg-raised space-y-1.5 text-sm">
         <div className="flex justify-between"><span className="text-muted">This year's cap hit</span><span className="font-mono">{formatMoney(preview.oldHit)} → <span className="text-accent font-semibold">{formatMoney(preview.newHit)}</span></span></div>
