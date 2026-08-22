@@ -20,7 +20,19 @@ export default async function ResignPage({ params }: { params: { id: string } })
   const expiring = await prisma.player.findMany({
     where: { teamId: team.id, status: 'ACTIVE', contract: { yearsRemaining: { lte: 1 } } },
     include: { contract: true },
-    orderBy: [{ contract: { yearsRemaining: 'asc' } }, { trueOvr: 'desc' }],
+    /*
+     * BEST MAN FIRST. This used to lead on `yearsRemaining`, so the list ran
+     * expired-then-walk-year and the rating column started over halfway down.
+     * The app owner read that as no order at all: *"on the contracts running
+     * out page, its sorted randomly. we should have it sort by overall from
+     * top to bottom."*
+     *
+     * Rating leads now and the deadline is the tiebreak. Nothing is lost by
+     * it — every row already wears its own Expired or Walk Year pill, so the
+     * urgent ones are still marked; they are just no longer allowed to bury
+     * the best player on the list under men you were always going to let go.
+     */
+    orderBy: [{ trueOvr: 'desc' }, { contract: { yearsRemaining: 'asc' } }],
   });
   const trulyExpiringCount = expiring.filter((p) => p.contract?.yearsRemaining === 0).length;
 

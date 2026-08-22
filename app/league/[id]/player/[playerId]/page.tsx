@@ -57,6 +57,29 @@ const AWARD_LABEL: Record<string, string> = {
   AWARD_ROTY: 'Rookie of the Year', AWARD_SBMVP: 'Championship MVP',
 };
 
+/**
+ * What the honours pill says when a man has won more than one thing.
+ *
+ * Repeats of the SAME award collapse to a count, because winning a thing
+ * twice is the headline. Different awards are named in the order he won
+ * them. Past three distinct names the pill would stop being a pill, so it
+ * takes the two most recent and counts the remainder — the full cabinet,
+ * with years, is in Career & Honors further down the page.
+ */
+function awardPillLabel(awards: { label: string; year: number }[]): string {
+  if (awards.length === 1) return awards[0].label;
+  const names: string[] = [];
+  const counts = new Map<string, number>();
+  for (const a of awards) {
+    if (!counts.has(a.label)) names.push(a.label);
+    counts.set(a.label, (counts.get(a.label) ?? 0) + 1);
+  }
+  const withCounts = names.map((n) => (counts.get(n)! > 1 ? `${counts.get(n)}× ${n}` : n));
+  if (withCounts.length <= 3) return withCounts.join(' · ');
+  const shown = withCounts.slice(-2);
+  return `${shown.join(' · ')} +${withCounts.length - 2} more`;
+}
+
 export default async function PlayerPage({
   params,
   searchParams,
@@ -594,7 +617,15 @@ export default async function PlayerPage({
             )}
             {honorAwards.length > 0 && (
               <span className="pill border-accent2/40 text-accent2 bg-accent2/10 gap-1.5">
-                {honorAwards.length === 1 ? honorAwards[0].label : `${honorAwards.length}× Award winner`}
+                {/* NAME THEM. This read "2x Award winner", which is the one
+                    thing about a trophy nobody wants to know — the app owner:
+                    *"says 2x award winner, we should say what the awards
+                    are."* Repeats of the same award collapse ("2x MVP",
+                    because winning it twice is the story), different ones are
+                    listed, and a cabinet too full for the pill names the two
+                    biggest and counts the rest. Career & Honors below still
+                    lists every one with its year. */}
+                {awardPillLabel(honorAwards)}
                 <span className="text-muted font-normal">{honorAwards[honorAwards.length - 1].year}</span>
               </span>
             )}
@@ -988,14 +1019,16 @@ export default async function PlayerPage({
                 rest of the deal, and what does it cost to get out" — and that
                 is a per-year table. The dead-money column is what turns it
                 from a statement into a decision. */}
-            <ContractLedger
-              contract={player.contract}
-              capMode={settings.capMode}
-              seasonYear={league.seasonYear}
-            />
-
+            {/* WHAT YOU CAN DO, THEN WHAT IT COSTS — in that order.
+                Release sat at the very bottom of this pane, under a
+                year-by-year ledger tall enough to push it off the screen. The
+                app owner: *"the release button on the player card needs to be
+                near the top. right now it's buried."* The decisions are the
+                reason a GM opens this tab; the table is the evidence he reads
+                them against, and evidence belongs under the decision it
+                supports. */}
             {isOwnRoster && userTeam && (
-              <div className="pt-3 space-y-3 border-t border-line/60">
+              <div className="space-y-3 pb-3 border-b border-line/60">
                 <ContractActions
                   leagueId={league.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age}
                   contract={{
@@ -1014,6 +1047,12 @@ export default async function PlayerPage({
                 <CutButton leagueId={league.id} playerId={player.id} />
               </div>
             )}
+
+            <ContractLedger
+              contract={player.contract}
+              capMode={settings.capMode}
+              seasonYear={league.seasonYear}
+            />
           </div>
         </div>
       ) : player.status === 'FREE_AGENT' && userTeam ? (
