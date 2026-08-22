@@ -412,7 +412,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
         honors={myAllStars}
         nearMiss={snub}
       />
-      <OffseasonRoadmap currentPhase={league.phase} />
+      <OffseasonRoadmap currentPhase={league.phase} week={league.week} />
       {league.phase === 'RESIGN' && (
         <Link href={`/league/${league.id}/resign`} className="card card-pad flex items-center justify-between gap-4 border-warn/40 hover:bg-raised transition-colors">
           <div>
