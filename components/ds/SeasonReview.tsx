@@ -78,7 +78,6 @@ export function SeasonReview({ review, leagueId, teamColor }: {
     <div className="card card-pad space-y-4">
       <div className="flex items-baseline gap-3 flex-wrap">
         <h2 className="text-lg font-semibold tracking-tight">The {review.seasonYear} season, player by player</h2>
-        <span className="text-xs text-muted">Your club only</span>
       </div>
 
       <p
@@ -109,12 +108,6 @@ export function SeasonReview({ review, leagueId, teamColor }: {
         </div>
       )}
 
-      <p className="text-[11px] text-muted leading-relaxed">
-        Every line here is something the year actually did — the halves of a season held against
-        each other, a man against his own previous best, what he was paid against what he produced,
-        and where a rating sits against the ceiling our people put on it. Nobody appears twice, and
-        a quiet season is left quiet.
-      </p>
     </div>
   );
 }

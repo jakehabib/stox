@@ -5,7 +5,6 @@ import { Rng } from './rng';
 import { canonicalPosition } from './tuning';
 import { gradeLine, playedEnough, statLine, UNIT_OF } from './coachRoom';
 import { leadColumnKey } from './statLabels';
-import { positionRelativeScore } from './performanceScore';
 import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS } from './awards';
 import { ageBasisYear, ageInSeason } from './playerSeasons';
 import type { BoxScore, SeasonStats } from './types';
@@ -229,7 +228,7 @@ const PAY_GAP_OVER = -72;     // produced that far above what he is paid
 const RATE_HIGH = 70;
 const RATE_LOW = 45;
 const RATE_GAP_UNDER = 66;
-const RATE_GAP_OVER = -66;
+const RATE_GAP_OVER = -70;
 
 /**
  * [TUNE] Missing this many games puts a man in the bottom 8% of availability
@@ -290,6 +289,42 @@ const POOR_SEASON = 25;
  * standard of his football.
  */
 const NO_LEVEL_VERDICT = new Set(['LB']);
+
+/**
+ * A defender may not be PRAISED on tackle volume.
+ *
+ * The narrower half of the same rule, and it is needed because the linebacker
+ * exclusion above does not reach far enough. `allocateStats` splits a defence's
+ * tackles by depth-chart share, and a season's worth of that share is a large,
+ * low-variance number: measured, a club running a thin defensive rotation hands
+ * each of its front seven around 6.6 tackles a game against a league mean of
+ * 4.5 with a standard deviation of 0.59, which is nearly four standard
+ * deviations of pure roster construction. On a winless team in this database it
+ * put three men on one sheet badged "top 1% at his position", two of whom had
+ * four sacks and none between them.
+ *
+ * So a praise-side verdict at a defensive position additionally asks for
+ * PLAYS — sacks, takeaways, forced fumbles, break-ups; the things the engine
+ * only writes when something actually happened — at a rate at least the MEDIAN
+ * for his position. Measured over every defensive season in this database with
+ * eight or more graded weeks, and per position because the rates are not
+ * comparable: a safety's median is 0.60 a game and an interior lineman's is
+ * 0.25, which is a fact about what the engine gives each job rather than about
+ * the men doing it.
+ *
+ * The criticism side is deliberately NOT gated this way. Tackle share inflates
+ * a grade upward, so a verdict that a man fell short of his pay or his rating
+ * is if anything conservative under it, and demanding he made plays before he
+ * may be criticised would be exactly backwards.
+ */
+const PLAY_RATE_BAR: Record<string, number> = { EDGE: 0.41, DT: 0.25, LB: 0.06, CB: 0.47, S: 0.60 };
+
+function madePlays(position: string, stats: SeasonStats, gp: number): boolean {
+  const bar = PLAY_RATE_BAR[canonicalPosition(position)];
+  if (bar === undefined) return true; // offence and kicking carry no tackle term
+  const plays = (stats.sacks ?? 0) + (stats.defInt ?? 0) + (stats.ff ?? 0) + Math.floor((stats.pd ?? 0) / 2);
+  return plays / Math.max(1, gp) >= bar;
+}
 
 /**
  * [TUNE] Development bars, measured over the 240,567 active players in this
@@ -981,6 +1016,8 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
   // See NO_LEVEL_VERDICT: at linebacker the ranker's case is a depth-chart
   // share and a coin flip, so nothing here may grade the standard of his year.
   const levelOk = !NO_LEVEL_VERDICT.has(pos);
+  // See madePlays(): praise at a defensive position needs plays, not tackles.
+  const praiseOk = levelOk && madePlays(pos, p.stats, p.gp);
 
   // --- Trajectory ----------------------------------------------------------
   if (bothHalves) {
@@ -1058,7 +1095,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
           () => `Only ${Math.max(1, Math.round(100 - p.payPct!))}% of ${plural(pos)} in this league cost more than his ${money}. Very few of them produced less than ${spoken(pos, p.stats)}.`,
         ])(),
       });
-    } else if (p.payPct <= PAY_LOW && gap <= PAY_GAP_OVER) {
+    } else if (praiseOk && p.payPct <= PAY_LOW && gap <= PAY_GAP_OVER) {
       const money = MONEY(p.apy);
       out.push({
         kind: 'BARGAIN', shape: sh, margin: (PAY_GAP_OVER - gap) / 30,
@@ -1085,7 +1122,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
           () => `We rate him ${p.rating}. The season says ${spoken(pos, p.stats)}, and the season is the part that counted.`,
         ])(),
       });
-    } else if (p.ratingPct <= RATE_LOW && gap <= RATE_GAP_OVER) {
+    } else if (praiseOk && p.ratingPct <= RATE_LOW && gap <= RATE_GAP_OVER) {
       out.push({
         kind: 'ABOVE_RATING', shape: sh, margin: (RATE_GAP_OVER - gap) / 30,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
@@ -1130,7 +1167,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
       return better ? mineLead >= theirs : mineLead <= theirs;
     };
 
-    if (overBest >= bestBar && sh.pct >= SOLID_SEASON && agrees(bestPrior, true)) {
+    if (praiseOk && overBest >= bestBar && sh.pct >= SOLID_SEASON && agrees(bestPrior, true)) {
       const years = solidPrior.length + 1;
       out.push({
         kind: 'CAREER_YEAR', shape: sh, margin: (overBest - bestBar) / Math.max(0.1, bestBar),
@@ -1166,7 +1203,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
   }
 
   // --- Arriving ------------------------------------------------------------
-  if (levelOk && enoughSeason && p.experience === 0 && sh.pct >= GOOD_SEASON) {
+  if (praiseOk && enoughSeason && p.experience === 0 && sh.pct >= GOOD_SEASON) {
     const origin = p.draftRound === null ? 'Undrafted' : `A round ${p.draftRound} pick`;
     out.push({
       kind: 'ROOKIE_ARRIVAL', shape: sh, margin: (sh.pct - GOOD_SEASON) / 15,
@@ -1178,7 +1215,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
       ])(),
     });
   }
-  if (levelOk && p.gp >= CAREER_MIN_GP && p.experience === 1 && sh.z !== null && sh.pct >= 70 && solidPrior.length === 1) {
+  if (praiseOk && p.gp >= CAREER_MIN_GP && p.experience === 1 && sh.z !== null && sh.pct >= 70 && solidPrior.length === 1) {
     const rookieYear = solidPrior[0];
     const jump = sh.z - rookieYear.z;
     const bar = CAREER_BEST_MARGIN[pos] ?? 0.3;
@@ -1202,7 +1239,9 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
   }
 
   // --- Available, or not ---------------------------------------------------
-  if (sh.missed >= MISSED_GAMES_BAR && sh.graded.length >= 6 && sh.pct >= 50) {
+  // Gated with the praise reads: its premise is that losing him cost us
+  // something, which at a defensive position may not rest on tackle volume.
+  if (praiseOk && sh.missed >= MISSED_GAMES_BAR && sh.graded.length >= 6 && sh.pct >= 50) {
     const hurt = p.injuries.slice().sort((a, b) => b.weeks - a.weeks)[0];
     // Always "the hamstring strain", never "a" — the engine's injury names run
     // from "Hamstring strain" to "MCL sprain" to "Torn ACL", and no indefinite
@@ -1221,7 +1260,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
       () => `${p.gp} of our ${team.teamGames} — ${cause} took the rest of it. In the ones he played: ${spoken(pos, p.stats)}.`,
       () => `${capitalise(cause)} ended his year in ${p.gp} games. What we had until then was ${spoken(pos, p.stats)}.`,
     ] : sh.fullYear ? [
-      () => `${p.gp} of our ${team.teamGames}${cause ? `, ${cause} among the reasons` : ''}. In the ones he played: ${spoken(pos, p.stats)}.`,
+      () => `${p.gp} of our ${team.teamGames}${cause ? ` — ${cause} among the reasons` : ''}. In the ones he played: ${spoken(pos, p.stats)}.`,
     ] : [];
     out.push({
       kind: 'MISSED_TIME', shape: sh, margin: (sh.missed - MISSED_GAMES_BAR) / 4,
@@ -1234,7 +1273,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
     });
   }
 
-  if (levelOk && sh.graded.length >= 12 && sh.pct >= SOLID_SEASON) {
+  if (praiseOk && sh.graded.length >= 12 && sh.pct >= SOLID_SEASON) {
     const worst = sh.graded.reduce((a, b) => (b.grade! < a.grade! ? b : a));
     if (worst.grade! >= 50) {
       out.push({
@@ -1449,8 +1488,30 @@ export function buildReview(input: ReviewInput): SeasonReview {
     };
   };
 
-  const stories = chosen.map(toStory);
-  const outlook = outlookChosen.map(toStory);
+  /**
+   * Nothing that reads the same twice in a row.
+   *
+   * Two career-best reads landed adjacent on a real sheet — "Four seasons on
+   * the books now and this is the one" directly above "Nothing on his record
+   * touches this" — and although the sentences are different frames, the two
+   * verdicts rhyme, which is the exact moment a reader notices a machine. The
+   * cap allows a kind twice; this only stops the pair being neighbours. It is a
+   * stable reordering, so the strongest read still opens the recap.
+   */
+  const spread = (list: Candidate[]): Candidate[] => {
+    const out: Candidate[] = [];
+    const rest = [...list];
+    while (rest.length > 0) {
+      const last = out[out.length - 1];
+      let i = last ? rest.findIndex((c) => c.kind !== last.kind) : 0;
+      if (i < 0) i = 0;
+      out.push(rest.splice(i, 1)[0]);
+    }
+    return out;
+  };
+
+  const stories = spread(chosen).map(toStory);
+  const outlook = spread(outlookChosen).map(toStory);
 
   return {
     seasonYear: team.seasonYear,
@@ -1833,14 +1894,24 @@ function developmentCandidates(sh: Shape): Candidate[] {
   // NO_LEVEL_VERDICT). The model really did give him the accelerated roll; what
   // this file will not do is print "one of the best linebackers in the league"
   // as the reason.
-  if (!NO_LEVEL_VERDICT.has(pos)
+  if (!NO_LEVEL_VERDICT.has(pos) && madePlays(pos, p.stats, p.gp)
     && p.growthRank !== null && p.growthRank <= BREAKOUT_BAND
     && p.age <= BREAKOUT_MAX_AGE && sh.graded.length >= MIN_SEASON_WEEKS) {
     const band = Math.max(1, Math.round(p.growthRank * 100));
     // Only worth appending when there is a real distance to report — "he is at
     // 80 with 82 in him" reads as headroom and is two points of noise.
+    //
+    // Drawn per PLAYER rather than from the section's rotation, because two
+    // breakouts in one recap both ended "He is at 91 with 99 in him" / "He is
+    // at 90 with 99 in him" — different templates above, identical tails, and
+    // the tail is the part a reader's eye lands on. Seeded on his id, so it is
+    // stable forever and different from the man beside him.
     const ceiling = p.potential !== null && p.rating !== null && p.potential - p.rating >= 5
-      ? ` He is at ${p.rating} with ${p.potential} in him.`
+      ? new Rng(`ceil:${p.playerId}`).pick([
+        ` He is at ${p.rating} with ${p.potential} in him.`,
+        ` Our people have him at ${p.rating} and think he finishes nearer ${p.potential}.`,
+        ` ${p.rating} today, and ${p.potential} on his file as the ceiling.`,
+      ])
       : '';
     out.push({
       // No standing badge: the sentence already carries a position standing,
