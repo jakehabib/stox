@@ -82,7 +82,22 @@ export const POSITION_WEIGHTS: Record<Position, AttrMap> = {
   RT: { passBlock: 0.36, runBlock: 0.26, strength: 0.16, footwork: 0.16, awareness: 0.06 },
   EDGE: { passRush: 0.36, blockShed: 0.16, speed: 0.14, strength: 0.12, runStop: 0.12, pursuit: 0.10 },
   DT: { runStop: 0.28, blockShed: 0.22, strength: 0.24, passRush: 0.18, pursuit: 0.08 },
-  LB: { tackling: 0.20, pursuit: 0.16, coverage: 0.16, blockShed: 0.12, awareness: 0.14, speed: 0.12, football_iq: 0.10 },
+  /*
+   * LB CARRIED NO RUN-DEFENCE GRADE AT ALL, which is how the position-change
+   * card ended up telling the owner that moving a linebacker to EDGE would
+   * expose him at "run defense, which nobody has ever coached him in". Of
+   * course somebody has — stopping the run is most of an off-ball
+   * linebacker's job. The card was reading the model correctly; the model was
+   * wrong.
+   *
+   * These deliberately sum to 1.18 rather than 1.00. computeOverall
+   * normalises by the weights actually present, so a linebacker in an
+   * existing save — who has no runStop attribute — renormalises over exactly
+   * the seven weights he had before and grades out to the identical number.
+   * Rebalancing to 1.00 instead would have shifted every linebacker's rating
+   * in every live save to make the arithmetic tidy.
+   */
+  LB: { tackling: 0.20, pursuit: 0.16, coverage: 0.16, blockShed: 0.12, awareness: 0.14, speed: 0.12, football_iq: 0.10, runStop: 0.18 },
   CB: { coverage: 0.26, speed: 0.20, press: 0.14, ballHawk: 0.14, zone: 0.14, agility: 0.08, tackling: 0.04 },
   S:  { zone: 0.22, coverage: 0.18, tackling: 0.16, awareness: 0.16, ballHawk: 0.14, speed: 0.14 },
   K:  { kickPower: 0.45, kickAccuracy: 0.55 },
@@ -208,6 +223,7 @@ export const UNCOACHED_ATTR_FRACTION = 0.85;
  */
 export const CONVERSION_ATTR_FRACTION = 0.85;
 
+
 /**
  * Which positions a player may be moved to. A menu, deliberately NOT a cost
  * model — there is not a number in it, because the numbers come from
@@ -266,6 +282,12 @@ export const RELATED_POSITIONS: Partial<Record<Position, Position[]>> = {
   LB: ['EDGE'],
   S: ['CB'],
   CB: ['S'],
+  // Clubs really do this — a kicker handles punts and a punter handles
+  // kickoffs, and on a short roster one man does both. Neither is graded on
+  // anything the other needs, so the move prices itself the same way every
+  // other conversion does.
+  K: ['P'],
+  P: ['K'],
 };
 
 /**
@@ -390,6 +412,17 @@ export function convertedAttributes(
   const learned: string[] = [];
   for (const key of attrsForPosition(to)) if (attrs[key] == null) learned.push(key);
 
+  /*
+   * A MOVE IS REVERSIBLE, ON PURPOSE.
+   *
+   * A version of this decayed the grades the old job valued and the new one
+   * ignores, so a round trip cost about four points and compounded. It worked,
+   * and it was the wrong call: the cost of playing a man out of position is
+   * already real and already felt — he is eight points worse the whole time he
+   * is there — and there is nothing to defend against, because
+   * assertNoProfitableConversion guarantees no switch can raise what he is
+   * worth. A permanent tax on top of that only punishes finding out.
+   */
   const fill = (fraction: number): AttrMap => {
     const out: AttrMap = { ...attrs };
     const seed = Math.max(20, Math.min(99, Math.round(trueOvr * fraction)));

@@ -663,8 +663,36 @@ export function loyaltyBand(discount: number): 'NONE' | 'SLIGHT' | 'REAL' | 'LAR
  * `tolerance` is folded into the exponent: a tighter tolerance is a steeper
  * curve, so money can stay strict while term and guarantee stay forgiving.
  */
+/**
+ * BEATING HIS ASK HAS TO BE WORTH SOMETHING.
+ *
+ * This branch read `Math.min(1, 1 + (ratio - 1) * 0.25)`, which computes a
+ * bonus for exceeding what he asked for and then clamps it straight back off:
+ * the expression can never return anything but 1. Every axis saturated the
+ * instant it met his number, so going past it did nothing at all.
+ *
+ * The app owner hit it on guarantee, and that is where it bites hardest:
+ * `desiredGuarantee` is 0.5-0.6, well inside the slider's travel, so dragging
+ * it past about half moved the meter not one point. Measured on a real free
+ * agent, 60/75/90/100% guaranteed all read 81. Now they read 81/82/83/84.
+ *
+ * Salary and term saturate the same way, but at their own asks, so the dead
+ * zone there starts higher: 110% of the asking price already reads 96 and 125%
+ * reads 100. Worth fixing all the same — the interest number is what
+ * `winsContest` compares, so any flat region is a stretch where paying more
+ * cannot win a contested free agent. Note the ceiling is still 100 either way;
+ * this widens where the meter responds, it does not remove the top.
+ *
+ * Capped rather than unbounded, because a man is not four times happier for
+ * four times the money — this is the shape of a diminishing return, not a
+ * removal of the ceiling. [TUNE] 1.2 means the very best offer he could be
+ * handed is worth about a fifth more to him than simply meeting his number.
+ */
+const OVERSHOOT_CREDIT = 0.25;
+const OVERSHOOT_MAX = 1.2;
+
 function satisfaction(ratio: number, tolerance: number): number {
-  if (ratio >= 1) return Math.min(1, 1 + (ratio - 1) * 0.25);
+  if (ratio >= 1) return Math.min(OVERSHOOT_MAX, 1 + (ratio - 1) * OVERSHOOT_CREDIT);
   const exponent = 1 + 0.6 / tolerance;
   return Math.pow(Math.max(0, ratio), exponent);
 }

@@ -106,8 +106,8 @@ export function PositionChangeCard({ leagueId, playerId, playerName, currentPosi
           designer's. It has to be said once: a GM who does not know the
           rating moves will read the first negative number as a bug. */}
       <p className="text-xs text-muted">
-        A rating is what a position asks of a man, so moving him re-grades him against the new job. Nothing is charged
-        for the switch itself — what he loses is whatever the new position values and he was never built for.
+        A rating is what a position asks of a man, so moving him re-grades him against the new job. He is the same
+        player either way — what changes is which of his qualities get counted, and nothing about it is permanent.
       </p>
 
       <div className="space-y-1">
@@ -167,10 +167,23 @@ export function PositionChangeCard({ leagueId, playerId, playerName, currentPosi
                     )}
                   </p>
 
-                  {chosen.learned.length > 0 && (
+                  {/* This used to read "{position} asks for {traits}, which nobody
+                      has ever coached him in" — and it named run defence at a
+                      linebacker, which is most of his job. The model was the
+                      thing that was wrong (LB carried no runStop weight at
+                      all; see POSITION_WEIGHTS in lib/ratings.ts), and it is
+                      fixed there. The copy no longer claims to know what he
+                      has and has not been taught: it names the drop, and says
+                      it is not a one-way door. */}
+                  {chosen.delta < 0 && (
                     <p className="text-xs text-muted">
-                      {chosen.position} asks for {chosen.learned.join(', ').toLowerCase()}, which nobody has ever coached
-                      him in. He is graded at those the way any player is at something his position never required.
+                      Playing out of position costs him — he grades{' '}
+                      <span className="text-bad">{Math.abs(chosen.delta)}</span> lower at {chosen.position} than at{' '}
+                      {currentPosition}
+                      {chosen.learned.length > 0
+                        ? <>, most of it in {chosen.learned.join(' and ').toLowerCase()}, which {currentPosition} never asked of him</>
+                        : null}
+                      . Move him back whenever you like and he is the {currentPosition} he was.
                     </p>
                   )}
 

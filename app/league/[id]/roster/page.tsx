@@ -8,6 +8,7 @@ import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
 import { positionSortKey } from '@/lib/league-data';
 import { POSITION_GROUPS, PositionGroup, positionGroup } from '@/lib/positionGroups';
+import type { Position } from '@/lib/tuning';
 import { SeasonStats } from '@/lib/types';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -34,6 +35,33 @@ const GROUP_LABEL: Record<PositionGroup, string> = {
   LB: 'Linebackers',
   DB: 'Secondary',
   ST: 'Special Teams',
+};
+
+/*
+ * GROUPS THAT ARE REALLY SEVERAL JOBS GET SPLIT ON THIS PAGE.
+ *
+ * "Offensive Line" over five men reads as one interchangeable block, and the
+ * app owner's note is that it is confusing to look at — a left tackle and a
+ * right guard are not the same job, and the roster page was the one screen
+ * that implied they were. Same for the two ends of a defensive line and for
+ * corners against safeties.
+ *
+ * Split HERE and not in lib/positionGroups.ts on purpose: that taxonomy is
+ * shared with the analytics charts (where 17 series is unreadable, and worse
+ * under colour-vision deficiency) and with STARTERS_AT_GROUP in lib/lineup.ts,
+ * which is the single definition of the starting eleven. This is a display
+ * decision about one table, so it lives with that table.
+ */
+const SPLIT_INTO_POSITIONS: Partial<Record<PositionGroup, Position[]>> = {
+  OL: ['LT', 'LG', 'C', 'RG', 'RT'],
+  DL: ['EDGE', 'DT'],
+  DB: ['CB', 'S'],
+};
+
+const POSITION_LABEL: Partial<Record<Position, string>> = {
+  LT: 'Left Tackle', LG: 'Left Guard', C: 'Center', RG: 'Right Guard', RT: 'Right Tackle',
+  EDGE: 'Edge Rushers', DT: 'Interior Line',
+  CB: 'Cornerbacks', S: 'Safeties',
 };
 
 // Which broadcast-style "unit" banner a group falls under — purely a display
@@ -181,6 +209,60 @@ export default async function RosterPage({ params, searchParams }: { params: { i
   // flips which end of the squad leads.
   const groupOrder = sortKey === 'pos' && dir === 1 ? [...POSITION_GROUPS].reverse() : POSITION_GROUPS;
 
+  // ONE definition of a roster line, so the split sections (offensive line,
+  // defensive line, secondary) and the whole-group sections render exactly
+  // the same row. It was inline in the group loop, which meant a split
+  // section would have needed a second copy of it.
+  const renderRow = ({ p, view, hit }: (typeof sorted)[number]) => {
+    const isStarter = starterIdByPosition.get(p.position) === p.id;
+    // Regular season only — seasonStats is the regular-season bucket (see
+    // Player.seasonStats in the schema). A roster line is a "what has he
+    // done for me lately", and folding in a January run would make two
+    // players with identical seasons read differently.
+    const production = productionLine(p.position, readJson<SeasonStats>(p.seasonStats, {}));
+    return (
+      <tr key={p.id} style={isStarter ? { background: `${teamColor}0d` } : undefined}>
+        <td style={{ borderLeft: `3px solid ${isStarter ? teamColor : 'transparent'}` }}>
+          <span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span>
+        </td>
+        <td>
+          <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2.5">
+            <PlayerAvatar seed={p.id} age={p.age} size={30} teamColor={teamColor} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className={isStarter ? 'font-semibold' : 'font-medium'}>{p.firstName} {p.lastName}</span>
+                {isStarter && <span className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: teamColor }}>Starter</span>}
+              </div>
+              {production && <div className="text-[11px] text-muted font-mono mt-0.5 truncate">{production}</div>}
+            </div>
+          </Link>
+        </td>
+        <td className="text-muted">{p.age}</td>
+        <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>
+          {view.revealed || view.confidence >= 90 ? (
+            // The mark is the non-colour channel for the top two steps; it
+            // only appears when we are actually showing a number, never
+            // beside a scouting range.
+            <span className={ratingPlateClass(view.scoutedOvr) ?? undefined}>
+              {view.scoutedOvr}
+              {ratingMark(view.scoutedOvr) && <span className="ml-0.5 text-[0.7em] align-super not-italic">{ratingMark(view.scoutedOvr)}</span>}
+            </span>
+          ) : `${view.ovrLow}-${view.ovrHigh}`}
+        </td>
+        <td className="text-muted font-mono">{view.potentialRevealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+        <td>
+          {p.injuryWeeks > 0 ? (
+            <span title={p.injuryType ?? 'Injured'} className="pill border-bad/30 text-bad bg-bad/10 cursor-help">Injured · {p.injuryWeeks}w</span>
+          ) : (
+            <span className="pill border-accent/30 text-accent bg-accent/10">Active</span>
+          )}
+        </td>
+        <td className="font-mono text-muted">{settings.capMode === 'OFF' ? '—' : formatMoney(hit)}</td>
+        <td className="text-muted">{p.contract?.yearsRemaining ?? '—'}</td>
+      </tr>
+    );
+  };
+
   let lastUnit: string | null = null;
   const bodyRows: React.ReactNode[] = [];
   for (const group of groupOrder) {
@@ -197,6 +279,49 @@ export default async function RosterPage({ params, searchParams }: { params: { i
         </tr>
       );
       lastUnit = unit;
+    }
+
+    // A split group emits one header per position instead of one for the
+    // block. Everything below — the totals, the thin check — is computed off
+    // whichever set of rows the header is actually describing, so a section
+    // never summarises men it isn't showing.
+    const split = SPLIT_INTO_POSITIONS[group];
+    if (split) {
+      const seen = new Set<string>();
+      const order = sortKey === 'pos' && dir === 1 ? [...split].reverse() : split;
+      for (const pos of order) {
+        const posRows = groupRows.filter(({ p }) => p.position === pos);
+        if (posRows.length === 0) continue;
+        posRows.forEach(({ p }) => seen.add(p.id));
+        bodyRows.push(
+          <RosterGroupHeader
+            key={`group-${group}-${pos}`}
+            label={POSITION_LABEL[pos] ?? pos}
+            count={posRows.length}
+            avgOvr={posRows.reduce((s, r) => s + r.view.scoutedOvr, 0) / posRows.length}
+            capHit={settings.capMode === 'OFF' ? null : posRows.reduce((s, r) => s + r.hit, 0)}
+            thin={posRows.length <= 1}
+          />
+        );
+        for (const row of posRows) bodyRows.push(renderRow(row));
+      }
+      // Anything the split table doesn't name still has to appear — a roster
+      // is not allowed to hide a man because a display list is out of date.
+      const orphans = groupRows.filter(({ p }) => !seen.has(p.id));
+      if (orphans.length > 0) {
+        bodyRows.push(
+          <RosterGroupHeader
+            key={`group-${group}-other`}
+            label={GROUP_LABEL[group]}
+            count={orphans.length}
+            avgOvr={orphans.reduce((s, r) => s + r.view.scoutedOvr, 0) / orphans.length}
+            capHit={settings.capMode === 'OFF' ? null : orphans.reduce((s, r) => s + r.hit, 0)}
+            thin={false}
+          />
+        );
+        for (const row of orphans) bodyRows.push(renderRow(row));
+      }
+      continue;
     }
 
     const groupAvgOvr = groupRows.reduce((s, r) => s + r.view.scoutedOvr, 0) / groupRows.length;
@@ -216,54 +341,8 @@ export default async function RosterPage({ params, searchParams }: { params: { i
       />
     );
 
-    for (const { p, view, hit } of groupRows) {
-      const isStarter = starterIdByPosition.get(p.position) === p.id;
-      // Regular season only — seasonStats is the regular-season bucket (see
-      // Player.seasonStats in the schema). A roster line is a "what has he
-      // done for me lately", and folding in a January run would make two
-      // players with identical seasons read differently.
-      const production = productionLine(p.position, readJson<SeasonStats>(p.seasonStats, {}));
-      bodyRows.push(
-        <tr key={p.id} style={isStarter ? { background: `${teamColor}0d` } : undefined}>
-          <td style={{ borderLeft: `3px solid ${isStarter ? teamColor : 'transparent'}` }}>
-            <span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span>
-          </td>
-          <td>
-            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2.5">
-              <PlayerAvatar seed={p.id} age={p.age} size={30} teamColor={teamColor} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className={isStarter ? 'font-semibold' : 'font-medium'}>{p.firstName} {p.lastName}</span>
-                  {isStarter && <span className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: teamColor }}>Starter</span>}
-                </div>
-                {production && <div className="text-[11px] text-muted font-mono mt-0.5 truncate">{production}</div>}
-              </div>
-            </Link>
-          </td>
-          <td className="text-muted">{p.age}</td>
-          <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>
-            {view.revealed || view.confidence >= 90 ? (
-              // The mark is the non-colour channel for the top two steps; it
-              // only appears when we are actually showing a number, never
-              // beside a scouting range.
-              <span className={ratingPlateClass(view.scoutedOvr) ?? undefined}>
-                {view.scoutedOvr}
-                {ratingMark(view.scoutedOvr) && <span className="ml-0.5 text-[0.7em] align-super not-italic">{ratingMark(view.scoutedOvr)}</span>}
-              </span>
-            ) : `${view.ovrLow}-${view.ovrHigh}`}
-          </td>
-          <td className="text-muted font-mono">{view.potentialRevealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
-          <td>
-            {p.injuryWeeks > 0 ? (
-              <span title={p.injuryType ?? 'Injured'} className="pill border-bad/30 text-bad bg-bad/10 cursor-help">Injured · {p.injuryWeeks}w</span>
-            ) : (
-              <span className="pill border-accent/30 text-accent bg-accent/10">Active</span>
-            )}
-          </td>
-          <td className="font-mono text-muted">{settings.capMode === 'OFF' ? '—' : formatMoney(hit)}</td>
-          <td className="text-muted">{p.contract?.yearsRemaining ?? '—'}</td>
-        </tr>
-      );
+    for (const row of groupRows) {
+      bodyRows.push(renderRow(row));
     }
   }
 

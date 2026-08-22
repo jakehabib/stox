@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState, useTransition } from 'react';
 import { setDepthChartAction } from '@/app/actions/roster';
 import { ratingColor } from '@/lib/ratings';
@@ -31,7 +32,7 @@ interface P { id: string; name: string; ovr: number; age: number; injured: boole
  * short bench", it is a hole in the lineup, and a list that simply stops
  * after two rows shows those two cases identically.
  */
-export function DepthChartGroup({ teamId, position, players, order }: { teamId: string; position: string; players: P[]; order: string[] }) {
+export function DepthChartGroup({ leagueId, teamId, position, players, order }: { leagueId: string; teamId: string; position: string; players: P[]; order: string[] }) {
   const byId = new Map(players.map((p) => [p.id, p]));
   const teamColor = generateTeamLogoParams(teamId).primary;
   const [localOrder, setLocalOrder] = useState(order);
@@ -98,7 +99,17 @@ export function DepthChartGroup({ teamId, position, players, order }: { teamId: 
                 </span>
                 <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} weightLb={p.weightLb} heightIn={p.heightIn} position={position} />
                 <span className={`stat-value text-xs w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
-                <span className={`text-sm flex-1 truncate ${starts ? 'font-semibold' : ''}`}>{p.name}</span>
+                {/* THE NAME IS A DOOR. Every other screen in the game opens a
+                    player card from his name; this one rendered plain text, so
+                    the depth chart was the one place you could see a man and
+                    not be able to look at him. The arrows keep their own click
+                    because they sit outside the link. */}
+                <Link
+                  href={`/league/${leagueId}/player/${p.id}`}
+                  className={`text-sm flex-1 truncate hover:text-accent hover:underline underline-offset-2 ${starts ? 'font-semibold' : ''}`}
+                >
+                  {p.name}
+                </Link>
                 {p.injured && <span className="text-[10px] text-bad">INJ</span>}
                 <div className="flex flex-col">
                   <button onClick={() => move(idx, -1)} disabled={idx === 0} className="text-muted hover:text-chalk disabled:opacity-20 leading-none text-xs px-1" aria-label={`Move ${p.name} up`}>▲</button>
