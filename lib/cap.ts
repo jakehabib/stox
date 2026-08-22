@@ -419,11 +419,47 @@ export function tradeCapEffect(c: ContractLike | null | undefined, mode: CapMode
 // ---------------------------------------------------------------------------
 
 /**
+ * ---------------------------------------------------------------------------
+ * THE QUARTERBACK PREMIUM IS A PREMIUM ON THE JOB, NOT ON THE POSITION.
+ * ---------------------------------------------------------------------------
+ * Every other position multiplier can be flat because every other position
+ * plays several men: a fourth receiver and a third corner take real snaps, so
+ * quality and pay fall off together down the chart and one exponential
+ * describes the lot. A quarterback room does not work that way. One man plays
+ * every offensive snap and the others play none, so there are thirty-two jobs
+ * in the whole league and the price of a quarterback is overwhelmingly the
+ * price of holding one of them.
+ *
+ * Applying POSITION_MULT.QB flat — which is what this did — paid a man for
+ * being a quarterback rather than for being THE quarterback. Measured across
+ * two freshly generated leagues it produced a starter averaging $14.4M against
+ * a backup averaging $8.1M: a 1.79x gap, where real football runs closer to
+ * 10x ($40-55M against $2-5M). The league's third-most expensive contract was
+ * somebody's backup.
+ *
+ * So the multiplier is shaped by rating instead of flat, on a logistic that
+ * crosses over where the thirty-two jobs run out (MARKET.QB_JOB). Note what it
+ * is NOT keyed on: it does not ask where this man sits on HIS OWN depth chart.
+ * A 93 stuck behind a 95 is still worth starter money — to the other
+ * thirty-one clubs — and that is exactly why a club in that position trades
+ * him rather than banking a discount. Depth-blindness here is the model being
+ * right, not the model being lazy.
+ */
+export function qbJobShare(ovr: number): number {
+  const { BACKUP, STARTER, STARTABLE_ABOVE_PIVOT, WIDTH } = MARKET.QB_JOB;
+  const startable = MARKET.PIVOT + STARTABLE_ABOVE_PIVOT;
+  return BACKUP + (STARTER - BACKUP) / (1 + Math.exp((startable - ovr) / WIDTH));
+}
+
+/**
  * What a player of this overall/position/age commands per year on the open
  * market. [FRAGILE PLACEHOLDER] — piecewise exponential: gentle growth above
  * PIVOT (a 99 OVR neutral-position unicorn still lands well under $40M/yr),
  * steeper decay below it (so a 53-man roster's worth of below-average depth
  * doesn't blow the cap before a single good player is even signed).
+ *
+ * Quarterbacks additionally carry `qbJobShare` on top of their position
+ * multiplier — see the block above it for why that position alone needs one.
  */
 export function marketValue(opts: {
   ovr: number;
@@ -434,7 +470,7 @@ export function marketValue(opts: {
   const { ovr, position, age } = opts;
   const steepness = ovr >= MARKET.PIVOT ? MARKET.STEEPNESS : MARKET.STEEPNESS_LOW;
   const base = Math.exp((ovr - MARKET.PIVOT) * steepness) * MARKET.SCALE;
-  const posMult = MARKET.POSITION_MULT[position] ?? 1;
+  const posMult = (MARKET.POSITION_MULT[position] ?? 1) * (position === 'QB' ? qbJobShare(ovr) : 1);
 
   let ageMult = 1;
   if (age > MARKET.AGE_DISCOUNT_START) {

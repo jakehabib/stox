@@ -348,8 +348,22 @@ export const GENERATION = {
    * 10-12. The 90+ tail barely moves either way: several stars landing at one
    * club's quarterback slot just overwrite each other, so that tail is set by
    * STAR_OVR_MEAN and STAR_OVR_SD below, not by this share. [TUNE]
+   *
+   * THE INTERIOR LINE AND THE RIGHT TACKLE WERE MISSING ENTIRELY, and an
+   * absent key is weight zero — so no generated league had ever contained an
+   * elite guard, centre or right tackle, at any rating, ever. That is not a
+   * defensible reading of football (the highest-paid lineman in the real game
+   * plays right tackle, and elite guards sign for more than elite centres),
+   * and it is half of why the biggest cap hits in a new league were always the
+   * same four or five positions. They are in now, at weights matching how many
+   * genuinely elite men exist at each spot — a handful each, well short of the
+   * receiver and edge pools. Adding them also dilutes every other share,
+   * quarterback included, which pulls the same way as the 2.2 -> 1.5 cut.
    */
-  STAR_POSITION_WEIGHTS: { QB: 1.5, WR: 1.8, EDGE: 1.6, CB: 1.3, DT: 1.1, LB: 0.9, LT: 0.7, S: 0.7, RB: 0.6, TE: 0.45 } as Record<string, number>,
+  STAR_POSITION_WEIGHTS: {
+    QB: 1.5, WR: 1.8, EDGE: 1.6, CB: 1.3, DT: 1.1, LB: 0.9,
+    LT: 0.7, S: 0.7, RB: 0.6, RT: 0.5, TE: 0.45, LG: 0.35, RG: 0.35, C: 0.35,
+  } as Record<string, number>,
   /** Draft-class tier ramp: top of round one down to the last pick. */
   DRAFT_TIER_SPREAD: 17,
   DRAFT_TIER_OFFSET: 9,
@@ -733,21 +747,108 @@ export const MARKET = {
    * frenzy, the user's own offers) pays full market, so rosters could only
    * ever shrink back toward affordability.
    *
-   * Recalibrated over 32 generated rosters so a full 53 at market lands near
+   * Recalibrated over 32 generated rosters so a roster at market lands near
    * 92% of BASE_CAP: enough that a team can field a legal roster, tight
    * enough that keeping everyone good is a real choice. The steeper
    * STEEPNESS_LOW is what pays for it — bottom-of-roster depth collapses
    * toward the league minimum (a 62 OVR LB now costs ~$1.9M rather than
    * ~$3.4M) while a genuine star's price is nearly unchanged.
+   *
+   * THAT 92% IS A 44-MAN ROSTER, NOT A 53-MAN ONE, and this comment used to
+   * say 53. `generateRoster` returns about 44 men and the calibration was run
+   * on its output; `topUpRoster` — which arrived later, to stop clubs being
+   * born below the legal minimum — then adds five or six more. Re-measured
+   * over 160 freshly generated clubs, what a club actually carries is 47.4
+   * men costing 99% of BASE_CAP at market (median 94%), and only the
+   * generator's own scale-down to a club's payroll target keeps books that
+   * open legal: 0 of 160 clubs were over the cap, at a mean payroll of 78%.
+   * So the cap is TIGHTER than the old wording claimed, not looser. Left as
+   * a measured fact rather than retuned, because moving SCALE reprices every
+   * contract in the game and that is its own piece of work.
    */
   SCALE: 7_000_000,
-  /** Positional value multipliers — the premium-position tax. */
+  /**
+   * Positional value multipliers — the premium-position tax.
+   *
+   * QB is the multiplier for a man who HOLDS the job; QB_JOB below scales it
+   * down the further a quarterback is from being able to hold one. Every other
+   * entry here applies flat, because every other position plays several men.
+   * This entry is also read by `acceptableStarter` (lib/ai/gm.ts) to set how
+   * good a starter each position needs, so it is the one number that says how
+   * much this game thinks a position matters — leave it meaning that.
+   *
+   * ANCHORED, AND UNDER A FIXED BUDGET. Each entry is set from the average
+   * APY of the thirty-two STARTERS at that position in the real NFL, since
+   * that is the same quantity this multiplier prices: what one job at this
+   * spot costs. The whole non-QB vector is then multiplied by one constant
+   * (0.9904, folded in below) so the league-wide bill does not move — this
+   * table decides how the money is SPLIT, never how much of it there is.
+   * Re-solve that constant with scripts/_qbp_posmult.ts after any edit here,
+   * or the roster-affordability calibration under MARKET.SCALE quietly rots.
+   *
+   * What moved and why, against the real market:
+   *   WR   1.15 -> 1.27  receivers are the second-biggest market in football
+   *                      and this table had them below left tackles.
+   *   RB   0.62 -> 0.54  the one position the real market has repriced DOWN.
+   *   LB   0.82 -> 0.73  off-ball linebacker pay has gone the same way.
+   *   S    0.85 -> 0.77  the safety market fell away with it.
+   *   DT   1.05 -> 1.11  the best interior rushers now clear the best corners.
+   *   LG/RG 0.80 -> 0.85, C 0.85 -> 0.79  guards out-earn centres now; this
+   *                      table had it backwards.
+   *   RT   1.05 -> 1.09  the tackle gap has narrowed — the highest-paid
+   *                      lineman in football plays on the right.
+   *   TE   0.85 -> 0.79, K 0.30 -> 0.32, P 0.25 -> 0.22, EDGE/LT/CB ~flat.
+   *
+   * KNOWN LIMITATION: one multiplier scales a position's WHOLE curve, so it
+   * cannot say "top-heavy". The real receiver market is far more top-heavy
+   * than this — a genuine WR1 is worth more than 1.27 says and a fifth
+   * receiver less. Fixing that needs a per-position curve shape, not a bigger
+   * number here, which would just overpay the depth.
+   */
   POSITION_MULT: {
-    QB: 1.85, RB: 0.62, WR: 1.15, TE: 0.85,
-    LT: 1.30, LG: 0.80, C: 0.85, RG: 0.80, RT: 1.05,
-    EDGE: 1.45, DT: 1.05, LB: 0.82, CB: 1.25, S: 0.85,
-    K: 0.30, P: 0.25,
+    QB: 1.85, RB: 0.54, WR: 1.27, TE: 0.79,
+    LT: 1.29, LG: 0.85, C: 0.79, RG: 0.85, RT: 1.09,
+    EDGE: 1.47, DT: 1.11, LB: 0.73, CB: 1.24, S: 0.77,
+    K: 0.32, P: 0.22,
   } as Record<Position, number>,
+  /**
+   * THE THIRTY-TWO JOBS. [TUNE]
+   *
+   * A logistic on POSITION_MULT.QB — see `qbJobShare` (lib/cap.ts) for why
+   * quarterback alone is priced on a curve rather than a constant.
+   *
+   *   effective QB multiplier = POSITION_MULT.QB x (BACKUP .. STARTER)
+   *
+   * Calibrated against the quarterbacks a generated league actually contains,
+   * not against a wish. Sorting every quarterback in a 32-club league by
+   * rating, the thirty-second — the last man who could hold a job if talent
+   * were distributed one per club — grades right around PIVOT + 1, so that is
+   * where the crossover sits. WIDTH is the softness of that edge in rating
+   * points: narrow enough that the drop from a starter to a backup is a cliff
+   * rather than a slope, wide enough that one rating point either side of the
+   * bar is not worth $20M. At 2.6 the steep zone runs about $2.5M per rating
+   * point against $1.2M for a premium edge rusher at the top of his curve —
+   * twice the slope, which is the intended difference between the two.
+   *
+   * STARTER is set so the whole thing is CAP-NEUTRAL: measured over 320
+   * generated quarterback rooms, a club's total spend on quarterbacks is
+   * $27.2M flat and $27.2M on this curve. The money is not new; it is taken
+   * off the two men who do not play and handed to the one who does.
+   *
+   * What that buys at age 27: a 72 goes from $6.4M to $2.5M, a 76 from $11.3M
+   * to $7.2M, an 80 from $15.4M to $15.9M, an 85 from $20.6M to $27.0M, a 90
+   * from $27.5M to $37.7M and a 95 from $36.8M to $50.7M.
+   */
+  QB_JOB: {
+    /** Share of the starter multiplier a man who will not play commands. */
+    BACKUP: 0.29,
+    /** ...and what the man taking every snap commands. */
+    STARTER: 1.38,
+    /** Where the jobs run out, as an offset from PIVOT so it tracks the rating curve. */
+    STARTABLE_ABOVE_PIVOT: 1,
+    /** Softness of the crossover, in rating points. */
+    WIDTH: 2.6,
+  },
   /** Age discount applied per year past this age. */
   AGE_DISCOUNT_START: 28,
   AGE_DISCOUNT_PER_YEAR: 0.07,

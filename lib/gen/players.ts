@@ -188,6 +188,14 @@ export function toPlayerCreate(p: GeneratedPlayer, leagueId: string, extra: Reco
 }
 
 /**
+ * Positions that field exactly one man, so a second good one is a luxury
+ * nobody buys rather than depth. Used by the star seeding below, and it is
+ * why ROSTER_TARGETS lets a club carry three quarterbacks without wanting
+ * three good ones.
+ */
+const ONE_JOB: Position[] = ['QB', 'K', 'P'];
+
+/**
  * Build a full 53-man roster's worth of players for one team, respecting the
  * roster targets and giving each team a couple of genuinely good players so no
  * team is uniformly gray.
@@ -239,19 +247,39 @@ export function generateRoster(rng: Rng, teamStrength: number, names?: NameRegis
       ageOverride,
       names,
     });
-    // Replace the WEAKEST man at the position, and only if the star is
-    // actually an upgrade. This was findIndex(), which — because `out` is
-    // built depth-slot-0 first — returned the team's BEST player at the
-    // position: measured over 660 star seeds, 8% of them overwrote someone
-    // already as good or better, and the mean net gain was +12.5 rather than
-    // the ~+20 it should have been.
+    // WHO THE STAR DISPLACES DEPENDS ON HOW MANY MEN THE POSITION PLAYS.
+    //
+    // At a position that rotates — receiver, corner, edge — a star joins the
+    // rotation and the man he costs a roster spot is the WEAKEST one there.
+    // (This was findIndex(), which, because `out` is built depth-slot-0 first,
+    // returned the team's BEST player at the position: measured over 660 star
+    // seeds, 8% of them overwrote someone already as good or better, and the
+    // mean net gain was +12.5 rather than the ~+20 it should have been.)
+    //
+    // At a ONE_JOB position he displaces the INCUMBENT instead, because there
+    // is nothing else for him to do — a franchise quarterback does not hold a
+    // clipboard. Seeding him against the weakest arm was how 27% of clubs came
+    // out of generation with a second quarterback grading 80 or better, and it
+    // is where the $32M backup the owner reported came from: the displaced
+    // starter stayed on the roster and kept his starter's price. If the club's
+    // incumbent is already the better man the seed is spent and nothing
+    // changes — it already has its franchise quarterback.
+    const oneJob = ONE_JOB.includes(pos);
     let replaceIdx = -1;
-    let weakest = Infinity;
+    let incumbent = oneJob ? -Infinity : Infinity;
     for (let j = 0; j < out.length; j++) {
-      if (out[j].position === pos && out[j].trueOvr < weakest) { weakest = out[j].trueOvr; replaceIdx = j; }
+      if (out[j].position !== pos) continue;
+      if (oneJob ? out[j].trueOvr > incumbent : out[j].trueOvr < incumbent) {
+        incumbent = out[j].trueOvr;
+        replaceIdx = j;
+      }
     }
-    if (replaceIdx >= 0 && weakest < star.trueOvr) out[replaceIdx] = star;
-    else out.push(star);
+    if (replaceIdx >= 0) {
+      if (incumbent < star.trueOvr) out[replaceIdx] = star;
+      else if (!oneJob) out.push(star);
+    } else {
+      out.push(star);
+    }
   }
 
   return out;
