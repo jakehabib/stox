@@ -2,12 +2,14 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
+import type { ScoutedPlayerView } from '@/lib/scouting';
 import { loadScoutMods, buildDynastyState } from '@/lib/dynasty';
 import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE } from '@/lib/tuning';
-import { consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
+import { bandCutoffs, consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
 import { imminentDraftYear, projectedDraftOrder, draftIsStarted } from '@/lib/draft';
+import { needSeverity, teamNeeds } from '@/lib/ai/gm';
 import { loadWorkoutSlots } from '@/lib/workouts';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { DraftSelectionButton } from '@/components/DraftSelectionButton';
@@ -19,15 +21,31 @@ import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { WorkoutButton } from '@/components/ds/WorkoutButton';
 import { DraftCapitalPanel } from '@/components/ds/DraftCapitalPanel';
 import type { DraftCapitalPick, DraftCapitalForfeit, DraftCapitalYear } from '@/components/ds/DraftCapitalPanel';
 import { DraftRecap } from '@/components/ds/DraftRecap';
 import type { RecapSelection, RecapLeaguePick, RecapNote } from '@/components/ds/DraftRecap';
+import { BroadcastHero } from '@/components/draft/BroadcastHero';
+import type { UpcomingSlot } from '@/components/draft/BroadcastHero';
+import { TheSelection } from '@/components/draft/TheSelection';
+import type { SelectionCardData } from '@/components/draft/TheSelection';
+import { SelectionFeed } from '@/components/draft/SelectionFeed';
+import type { FeedRow } from '@/components/draft/SelectionFeed';
+import { BoardDepletion, RunWatch, WarRoomPanel } from '@/components/draft/DraftIntel';
+import type { PositionStock, RunEntry, WarRoomPick } from '@/components/draft/DraftIntel';
+import { BestAvailable } from '@/components/draft/BestAvailable';
+import type { AvailableRow } from '@/components/draft/BestAvailable';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { Tooltip } from '@/components/Tooltip';
 import { define, tip } from '@/lib/glossary';
 
-type SortKey = 'consensus' | 'pos' | 'ovr' | 'age' | 'potential';
+type SortKey = 'consensus' | 'ours' | 'pos' | 'ovr' | 'age' | 'potential';
+
+/** How many selections back the run detector looks. [TUNE] */
+const RUN_WINDOW = 12;
+/** Clubs shown in the hero's order-of-selection strip. */
+const UPCOMING_SLOTS = 20;
 
 export default async function DraftPage({ params, searchParams }: { params: { id: string }; searchParams: { pos?: string; sort?: string; dir?: string; shortlist?: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -133,18 +151,34 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // report row). Omitting the argument means "no skills", so this is additive.
   const scoutMods = await loadScoutMods(league.id);
 
-  const rows = pool.map((p) => {
-    const view = buildScoutedView({
-      // KEEPS ITS FOG. This is the draft board — the one screen where "we
-      // don't know yet" is the whole story, so every range on it is earned.
-      // `where` above already filters to isDraftee, so this is true for every
-      // row; read off the record anyway so the claim is checkable, not assumed.
-      isProspect: p.isDraftee,
-      position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
-      report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
-    });
-    return { p, view };
-  });
+  /**
+   * OUR FILE ON ONE PROSPECT, BUILT ONCE.
+   *
+   * `isProspect` is hardcoded true, and that is the whole point rather than a
+   * shortcut. This page now shows men who have ALREADY BEEN DRAFTED — the
+   * selection feed and the pick on screen — and drafting a player clears
+   * Player.isDraftee, which is the scope gate buildScoutedView reads. Passing
+   * the flag off the record would print a true overall the instant a man came
+   * off the board, on the one screen that exists to celebrate not knowing yet.
+   * What we knew about him at the podium is what we knew, and it does not
+   * improve because somebody else called his name.
+   *
+   * Memoised because the board rows, the feed, the best-available columns and
+   * the selection card all ask about overlapping sets of the same class.
+   */
+  const viewCache = new Map<string, ScoutedPlayerView>();
+  const viewOf = (p: { id: string; position: string; trueAttrs: string; trueOvr: number; potential: number }): ScoutedPlayerView => {
+    let v = viewCache.get(p.id);
+    if (!v) {
+      v = buildScoutedView({
+        isProspect: true,
+        position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
+        report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
+      });
+      viewCache.set(p.id, v);
+    }
+    return v;
+  };
 
   // THE CONSENSUS BOARD. This rank is the public one — lib/consensus.ts grades
   // every prospect off nothing but public signals (testing, program, the gap
@@ -183,26 +217,72 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     select: { draftYear: true },
   });
   const classYear = classYearRow?.draftYear ?? league.seasonYear;
-  const takenThisDraft = upcomingDraftYear === null ? [] : await prisma.draftPick.findMany({
-    where: { leagueId: league.id, year: upcomingDraftYear, used: true, playerId: { not: null } },
+  // WHICH DRAFT'S SELECTIONS COUNT AS "TAKEN OUT OF THIS CLASS".
+  //
+  // Not `upcomingDraftYear`. That is the smallest year with an UNUSED pick, so
+  // the moment the last card goes in it rolls forward to next spring and
+  // returns nothing — which dropped all 224 men this draft had just taken out
+  // of the ranking pool and re-ranked the 176 leftovers as if they were the
+  // whole class. In the DRAFT phase the draft on screen is this season's, and
+  // everywhere else the next one to run is the right answer.
+  const boardDraftYear = league.phase === 'DRAFT' ? league.seasonYear : upcomingDraftYear;
+  const takenThisDraft = boardDraftYear === null ? [] : await prisma.draftPick.findMany({
+    where: { leagueId: league.id, year: boardDraftYear, used: true, playerId: { not: null } },
     select: { playerId: true },
   });
-  const consensus = consensusBoardMap(
-    await prisma.player.findMany({
-      where: {
-        leagueId: league.id,
-        OR: [
-          { draftYear: classYear, isDraftee: true },
-          { id: { in: takenThisDraft.map((p) => p.playerId!) } },
-        ],
-      },
-      select: {
-        id: true, position: true, trueOvr: true, potential: true,
-        trueAttrs: true, collegeStats: true, combineTesting: true, injuryWeeks: true,
-      },
-    }),
-    { teams: LEAGUE.TEAM_COUNT, rounds: settings.draftRounds },
-  );
+  // The class as one object — still on the board plus already called. Carries
+  // the identity fields too, because the broadcast below names men who are no
+  // longer in `pool` at all: the feed, the pick on screen, and the run counts
+  // are all about players this draft has removed from it.
+  const classPool = await prisma.player.findMany({
+    where: {
+      leagueId: league.id,
+      OR: [
+        { draftYear: classYear, isDraftee: true },
+        { id: { in: takenThisDraft.map((p) => p.playerId!) } },
+      ],
+    },
+    select: {
+      id: true, firstName: true, lastName: true, position: true, age: true, college: true,
+      heightIn: true, weightLb: true, trueOvr: true, potential: true,
+      trueAttrs: true, collegeStats: true, combineTesting: true, injuryWeeks: true,
+      isDraftee: true, teamId: true,
+    },
+  });
+  const consensus = consensusBoardMap(classPool, { teams: LEAGUE.TEAM_COUNT, rounds: settings.draftRounds });
+
+  // Files on the rest of the class, folded into the same map the board rows
+  // read from. `reports` above only covers the slice on screen; our own board
+  // has to be ranked over everybody we have written up, drafted or not.
+  const classReports = await prisma.scoutingReport.findMany({
+    where: { teamId: team.id, playerId: { in: classPool.map((p) => p.id) } },
+  });
+  for (const r of classReports) reportMap.set(r.playerId, r);
+
+  const rows = pool.map((p) => ({ p, view: viewOf(p) }));
+
+  // -------------------------------------------------------------------------
+  // OUR BOARD
+  // -------------------------------------------------------------------------
+  // The consensus is free and every club in the league has it. This is the one
+  // that costs a season of scouting: the same blend of present and ceiling the
+  // room grades on (ownGradeFor), run over our own scouted read.
+  //
+  // Only men the department has an actual file on are on it. A rank derived
+  // from the baseline report every prospect carries is not an opinion, and
+  // putting one on the board would bury the men we really do have a read on.
+  // The threshold is disagreementNote's own floor, so this page cannot claim a
+  // disagreement it then refuses to explain.
+  const FILE_MIN = 25;
+  const ourGrade = new Map<string, number>();
+  for (const p of classPool) {
+    const view = viewOf(p);
+    if (view.confidence >= FILE_MIN) ourGrade.set(p.id, ownGradeFor(view));
+  }
+  const ourRank = new Map<string, number>();
+  [...ourGrade.entries()]
+    .sort((a, b) => b[1] - a[1] || (consensus.get(a[0])?.rank ?? 9e9) - (consensus.get(b[0])?.rank ?? 9e9))
+    .forEach(([id], i) => ourRank.set(id, i + 1));
 
   const rankBadge = (playerId: string): { label: string; className: string } | null => {
     const read = consensus.get(playerId);
@@ -214,7 +294,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     return null;
   };
 
-  const sortKey: SortKey = (['consensus', 'pos', 'ovr', 'age', 'potential'] as SortKey[]).includes(searchParams.sort as SortKey)
+  const sortKey: SortKey = (['consensus', 'ours', 'pos', 'ovr', 'age', 'potential'] as SortKey[]).includes(searchParams.sort as SortKey)
     ? (searchParams.sort as SortKey) : 'consensus';
   const dir = searchParams.dir === 'asc' ? 1 : -1;
 
@@ -224,6 +304,9 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       // means ascending rank number — the opposite direction of every other
       // column here, where higher is better. Flip the sign to match.
       case 'consensus': return ((consensus.get(a.p.id)?.rank ?? Infinity) - (consensus.get(b.p.id)?.rank ?? Infinity)) * -dir;
+      // Same direction rule as the consensus column, and men with no file of
+      // our own sort to the bottom either way round rather than to the top.
+      case 'ours': return ((ourRank.get(a.p.id) ?? Infinity) - (ourRank.get(b.p.id) ?? Infinity)) * -dir;
       case 'ovr': return (a.view.scoutedOvr - b.view.scoutedOvr) * dir;
       case 'age': return (a.p.age - b.p.age) * dir;
       case 'potential': {
@@ -611,13 +694,269 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // charges do not expire here; they are named alongside because the prospect
   // does — he comes off the board and is somebody else's.
   const warRoom = !!state && !draftStarted;
-  const [warRoomWorkouts, warRoomDynasty] = await Promise.all([
-    warRoom ? loadWorkoutSlots(league.id) : Promise.resolve(null),
+  // The workout ledger is read in EVERY state now, not just here. The board
+  // below carries the control that spends a slot (the app owner: *"we should
+  // be able to do workouts directly from the big board"*), so the count and
+  // the window's own sentence have to be on this page whether or not the war
+  // room is up. Full Scout charges stay a war-room-only read: they do not
+  // expire at the podium, so they are only worth naming at the podium.
+  const [workoutSlots, warRoomDynasty, workedOut] = await Promise.all([
+    loadWorkoutSlots(league.id),
     warRoom ? buildDynastyState(league.id) : Promise.resolve(null),
+    prisma.scoutingReport.findMany({
+      where: { teamId: team.id, workoutYear: league.seasonYear },
+      select: { playerId: true },
+    }),
   ]);
+  const workedOutIds = new Set(workedOut.map((w) => w.playerId));
   const firstSelection = firstPick?.overall !== undefined
     ? `Round ${firstPick.round}, #${firstPick.overall} overall`
     : null;
+
+  // ===========================================================================
+  // THE BROADCAST
+  // ===========================================================================
+  // Draft day is the one day of the football year that is televised, and until
+  // now this page reported it as a table with a banner on top: every club's
+  // pick arrived as a line of grey text at the bottom reading "Kansas City
+  // selects...". Everything below builds the other half — the pick on screen
+  // in the club's own colours, the names coming off in order with what each
+  // one did to your plan, the run that means the eighth-best receiver is about
+  // to go at a first-round price, and the clock walking toward your slot.
+  //
+  // It stands only for a ROOKIE draft that has actually been sent to the
+  // podium. A fantasy draft has no DraftPick rows to broadcast from (see
+  // currentPick in lib/draft.ts), and the war room deliberately holds this
+  // whole section back until the GM opens the board.
+  const broadcast = !!stateRow && stateRow.kind !== 'FANTASY' && league.phase === 'DRAFT' && draftStarted;
+  const bcastPicks = broadcast
+    ? await prisma.draftPick.findMany({
+        where: { leagueId: league.id, year: league.seasonYear },
+        include: {
+          player: {
+            select: { id: true, firstName: true, lastName: true, position: true, college: true, age: true, heightIn: true, weightLb: true },
+          },
+        },
+        orderBy: [{ round: 'asc' }, { slot: 'asc' }],
+      })
+    : [];
+  const madePicks = bcastPicks.filter((p) => p.used && p.player);
+  const bcastComplete = !!stateRow?.complete;
+  // Where the clock is. A complete draft has no "next", so it reads as the
+  // count of selections made rather than an index into a pick that is not
+  // coming — the same number, minus the off-by-one that would index past the
+  // end of the array.
+  const bcastIndex = stateRow && !stateRow.complete ? stateRow.pickIndex : madePicks.length;
+
+  // What this club came here to fix. The same 0..1 scores the AI bids and
+  // drafts on, so "a hole on our roster" means the same thing on both sides of
+  // the table rather than being a second, friendlier model invented for the UI.
+  const bcastRoster = broadcast
+    ? await prisma.player.findMany({ where: { teamId: team.id }, select: { id: true, position: true, trueOvr: true, age: true, potential: true } })
+    : [];
+  const needScores = teamNeeds(bcastRoster);
+  const needList = Object.entries(needScores)
+    .filter(([, v]) => v >= 0.15)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([position, value]) => ({ position, value, ...needSeverity(value) }));
+  // "A hole", for the purposes of a chip on a feed row, is a real one — the
+  // top of that list, not the fifth-mildest thing on a good roster.
+  const holes = new Set(needList.filter((n) => n.value >= 0.35).map((n) => n.position));
+
+  const positionGone = new Map<string, number>();
+  const feedRows: FeedRow[] = [];
+  for (const pick of madePicks) {
+    const p = pick.player!;
+    const overall = overallOf(pick.round, pick.slot);
+    const gone = (positionGone.get(p.position) ?? 0) + 1;
+    positionGone.set(p.position, gone);
+    const club = teamById.get(pick.ownerTeamId);
+    const read = consensus.get(p.id);
+    feedRows.push({
+      pickId: pick.id,
+      round: pick.round,
+      overall,
+      team: { id: club?.id ?? pick.ownerTeamId, abbr: club?.abbr ?? '???' },
+      isUser: pick.ownerTeamId === team.id,
+      player: { id: p.id, firstName: p.firstName, lastName: p.lastName, position: p.position, college: p.college },
+      boardRank: read?.rank,
+      ourRank: ourRank.get(p.id),
+      shortlisted: shortlistIds.has(p.id),
+      atOurNeed: holes.has(p.position) ? p.position : undefined,
+      slide: read ? overall - read.rank : undefined,
+      positionCount: gone,
+    });
+  }
+  const feed = [...feedRows].reverse();
+
+  // THE PICK THAT IS ON SCREEN RIGHT NOW.
+  const lastPick = madePicks[madePicks.length - 1];
+  let selection: SelectionCardData | undefined;
+  if (broadcast && lastPick?.player) {
+    const p = lastPick.player;
+    const record = classPool.find((c) => c.id === p.id);
+    const club = teamById.get(lastPick.ownerTeamId);
+    const read = consensus.get(p.id);
+    const view = record ? viewOf(record) : undefined;
+    const gone = positionGone.get(p.position) ?? 0;
+    const label = view && record
+      ? playerLabel({
+          ovr: view.scoutedOvr,
+          potential: view.potentialRevealed ? record.potential : (view.potLow + view.potHigh) / 2,
+          isDraftee: true, experience: 0, confidence: view.confidence,
+        })
+      : undefined;
+    const notes: string[] = [];
+    if (gone >= 3) notes.push(`${gone} ${p.position}s gone now.`);
+    if (holes.has(p.position)) notes.push(`${p.position} is a hole on this roster.`);
+    if (notes.length === 0 && read) notes.push(read.headline);
+    selection = {
+      pickId: lastPick.id,
+      leagueId: league.id,
+      year: league.seasonYear,
+      round: lastPick.round,
+      overall: overallOf(lastPick.round, lastPick.slot),
+      team: {
+        id: club?.id ?? lastPick.ownerTeamId,
+        abbr: club?.abbr ?? '???',
+        city: club?.city ?? 'The club',
+        nickname: club?.nickname ?? '',
+      },
+      isUser: lastPick.ownerTeamId === team.id,
+      player: {
+        id: p.id, firstName: p.firstName, lastName: p.lastName, position: p.position,
+        college: p.college, age: p.age, heightIn: p.heightIn, weightLb: p.weightLb,
+      },
+      board: read ? { rank: read.rank, grade: read.grade, bandLabel: read.bandLabel } : undefined,
+      our: view && label
+        ? {
+            rank: ourRank.get(p.id),
+            ovrLow: view.ovrLow, ovrHigh: view.ovrHigh,
+            potLow: view.potLow, potHigh: view.potHigh,
+            confidence: view.confidence,
+            label: label.label, labelClass: label.className,
+          }
+        : undefined,
+      shortlisted: shortlistIds.has(p.id),
+      slide: read ? overallOf(lastPick.round, lastPick.slot) - read.rank : undefined,
+      note: notes.join(' '),
+    };
+  }
+
+  // RUN WATCH, and the state of the board by position.
+  const cuts = bandCutoffs({ teams: LEAGUE.TEAM_COUNT, rounds: settings.draftRounds });
+  const stillOnBoard = classPool.filter((p) => p.isDraftee && p.teamId === null);
+  const stillOnBoardIds = new Set(stillOnBoard.map((p) => p.id));
+  const runWindow = madePicks.slice(-RUN_WINDOW);
+  const windowPositions = runWindow.map((p) => p.player!.position);
+  const runEntries: RunEntry[] = [...new Set(windowPositions)]
+    .map((position) => ({
+      position,
+      inWindow: windowPositions.filter((x) => x === position).length,
+      hits: windowPositions.map((x) => x === position),
+      totalGone: positionGone.get(position) ?? 0,
+      leftOnBoard: stillOnBoard.filter((p) => p.position === position && (consensus.get(p.id)?.rank ?? 9e9) <= cuts.DAY_TWO).length,
+      atOurNeed: holes.has(position),
+    }))
+    .sort((a, b) => b.inWindow - a.inWindow || a.position.localeCompare(b.position))
+    .slice(0, 4);
+
+  // Measured against the board's own day-two line while the draft is running:
+  // "forty tackles are still in the class" answers nothing, and "two tackles
+  // left with a day-two grade and four rounds to go" is what makes a GM move.
+  // Once every pick is in that tier is empty by definition and the panel would
+  // be sixteen zeroes — so the scope widens to the whole class, which is
+  // exactly the list priority free agency is about to be worked from.
+  const stockCut = bcastComplete ? Infinity : cuts.DAY_TWO;
+  const stockByPosition = new Map<string, PositionStock>();
+  if (broadcast) {
+    for (const p of classPool) {
+      const rank = consensus.get(p.id)?.rank;
+      if (rank === undefined || rank > stockCut) continue;
+      let row = stockByPosition.get(p.position);
+      if (!row) {
+        row = { position: p.position, gone: 0, left: 0, atOurNeed: holes.has(p.position) };
+        stockByPosition.set(p.position, row);
+      }
+      if (stillOnBoardIds.has(p.id)) row.left += 1;
+      else row.gone += 1;
+    }
+  }
+  const stock = [...stockByPosition.values()].sort((a, b) => positionSortKey(a.position) - positionSortKey(b.position));
+
+  // BEST AVAILABLE — ours and theirs.
+  const toAvailableRow = (p: (typeof classPool)[number]): AvailableRow => {
+    const view = viewOf(p);
+    const read = consensus.get(p.id);
+    return {
+      playerId: p.id,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      position: p.position,
+      college: p.college,
+      ourRank: ourRank.get(p.id),
+      boardRank: read?.rank,
+      bandLabel: read?.bandLabel,
+      ovrLow: view.ovrLow,
+      ovrHigh: view.ovrHigh,
+      revealed: view.revealed,
+      confidence: view.confidence,
+      shortlisted: shortlistIds.has(p.id),
+    };
+  };
+  const roomBest = broadcast
+    ? [...stillOnBoard].sort((a, b) => (consensus.get(a.id)?.rank ?? 9e9) - (consensus.get(b.id)?.rank ?? 9e9)).slice(0, 8).map(toAvailableRow)
+    : [];
+  const ourBest = broadcast
+    ? stillOnBoard.filter((p) => ourRank.has(p.id)).sort((a, b) => ourRank.get(a.id)! - ourRank.get(b.id)!).slice(0, 8).map(toAvailableRow)
+    : [];
+  // The sharpest live disagreement: a man inside our own top forty who the
+  // room has a long way further down. That gap is the entire return on a
+  // season of scouting, so it is stated in words rather than left to be found
+  // by comparing two columns.
+  const edge = broadcast
+    ? stillOnBoard
+        .filter((p) => (ourRank.get(p.id) ?? 9e9) <= 40 && consensus.get(p.id))
+        .map((p) => ({ p, gap: consensus.get(p.id)!.rank - ourRank.get(p.id)! }))
+        .sort((a, b) => b.gap - a.gap)[0]
+    : undefined;
+  const bcastVerdict = edge && edge.gap >= 12
+    ? `${edge.p.firstName} ${edge.p.lastName} is our #${ourRank.get(edge.p.id)} and the room's #${consensus.get(edge.p.id)!.rank}. `
+      + (disagreementNote(consensus.get(edge.p.id)!, viewOf(edge.p)) ?? 'Nobody else in the league is looking at him this way.')
+    : ourBest.length === 0
+      ? 'Both columns would be the same board if we had one of our own.'
+      : undefined;
+
+  // The club's own side of the room.
+  const bcastMyPicks = bcastPicks.filter((p) => p.ownerTeamId === team.id);
+  const warRoomPicks: WarRoomPick[] = bcastMyPicks.map((p) => ({
+    round: p.round,
+    overall: overallOf(p.round, p.slot),
+    picksAway: p.used ? undefined : Math.max(0, overallOf(p.round, p.slot) - 1 - bcastIndex),
+    spentOn: p.used && p.player ? `${p.player.firstName} ${p.player.lastName}` : undefined,
+  }));
+  const bcastNextMine = bcastMyPicks.find((p) => !p.used);
+  const bcastYourNext = bcastNextMine && !bcastComplete
+    ? {
+        round: bcastNextMine.round,
+        overall: overallOf(bcastNextMine.round, bcastNextMine.slot),
+        picksAway: Math.max(0, overallOf(bcastNextMine.round, bcastNextMine.slot) - 1 - bcastIndex),
+      }
+    : undefined;
+  /** The club-coloured band replaces the plain on-clock hero for a live rookie draft. */
+  const broadcastHero = broadcast && !bcastComplete && !!state && !!onClockTeam;
+  const bcastUpcoming: UpcomingSlot[] = bcastComplete ? [] : bcastPicks.slice(bcastIndex, bcastIndex + UPCOMING_SLOTS).map((p) => {
+    const club = teamById.get(p.ownerTeamId);
+    return {
+      overall: overallOf(p.round, p.slot),
+      round: p.round,
+      teamId: club?.id ?? p.ownerTeamId,
+      abbr: club?.abbr ?? '???',
+      isUser: p.ownerTeamId === team.id,
+      isOnClock: overallOf(p.round, p.slot) === bcastIndex + 1,
+    };
+  });
 
   return (
     // The selection card is raised from inside the board but must outlive it:
@@ -752,9 +1091,9 @@ export default async function DraftPage({ params, searchParams }: { params: { id
 
             {/* The scouting department's unspent budget, stated before he
                 spends the night regretting it rather than after. */}
-            {(warRoomWorkouts?.remaining ?? 0) > 0 && (
+            {(workoutSlots.remaining) > 0 && (
               <p className="text-sm text-warn/90 leading-snug">
-                {warRoomWorkouts!.remaining} private workout{warRoomWorkouts!.remaining === 1 ? '' : 's'} unused —
+                {workoutSlots.remaining} private workout{workoutSlots.remaining === 1 ? '' : 's'} unused —
                 the window closes when this draft opens.
               </p>
             )}
@@ -762,7 +1101,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             <div className="flex flex-wrap items-start gap-3">
               <StartDraftButton
                 leagueId={league.id}
-                unusedWorkouts={warRoomWorkouts?.remaining ?? 0}
+                unusedWorkouts={workoutSlots.remaining}
                 fullScoutsLeft={warRoomDynasty?.fullScout.remaining ?? 0}
                 scoutingHref={`/league/${league.id}/scouting`}
               />
@@ -776,7 +1115,24 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         </div>
       )}
 
-      {state && onClockTeam && draftStarted && (
+      {/* A live ROOKIE draft gets the broadcast band: the same club-coloured
+          hero, plus the order of selection running out to your own pick. A
+          fantasy draft keeps the plain band below it — it has no DraftPick
+          rows, so there is no order to run out. */}
+      {broadcastHero && (
+        <BroadcastHero
+          eyebrow={`Round ${state!.round} · Pick ${state!.pickIndex + 1} of ${totalPicks}`}
+          headline={isUserOnClock ? 'You Are On The Clock' : `${onClockTeam!.city} On The Clock`}
+          team={{ id: onClockTeam!.id, abbr: onClockTeam!.abbr, city: onClockTeam!.city, nickname: onClockTeam!.nickname }}
+          yourNext={bcastYourNext}
+          upcoming={bcastUpcoming}
+          clock={
+            <LiveDraftTicker leagueId={league.id} userTeamId={team.id} isUserOnClock={isUserOnClock} draftComplete={false} started={draftStarted} />
+          }
+        />
+      )}
+
+      {!broadcastHero && state && onClockTeam && draftStarted && (
         <div
           className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
           style={{
@@ -810,11 +1166,69 @@ export default async function DraftPage({ params, searchParams }: { params: { id
 
       {draftJustFinished && recap}
 
+      {/*
+        THE BROADCAST BODY.
+
+        THE FEED IS A TICKER, NOT A DOCUMENT. It is capped to the viewport and
+        scrolls inside its own rail, so the height of this page is a constant
+        rather than a function of how many picks have been made — at pick 200
+        an uncapped column would have run for thousands of pixels beside a left
+        column that stopped one screen in. Pinned below the sticky header, too:
+        it is the thing you keep half an eye on while reading anything else.
+      */}
+      {broadcast && (
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+          <div className="xl:col-span-8 space-y-5">
+            {selection ? (
+              <TheSelection data={selection} />
+            ) : (
+              <div className="panel p-6">
+                <h2 className="section-title">Nobody Is Off The Board Yet</h2>
+                <p className="text-sm text-muted mt-2 max-w-xl">
+                  The first name in the {league.seasonYear} draft goes in on the next clock. Until then the
+                  board below is the whole class, exactly as your department left it.
+                </p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
+              <RunWatch
+                entries={runEntries}
+                windowSize={runWindow.length || RUN_WINDOW}
+                order={windowPositions}
+                complete={bcastComplete}
+              />
+              <WarRoomPanel
+                picks={warRoomPicks}
+                needs={needList}
+                filed={ourRank.size}
+                classSize={classPool.length}
+                shortlistLeft={[...shortlistIds].filter((id) => stillOnBoardIds.has(id)).length}
+              />
+            </div>
+
+            {stock.length > 0 && (
+              <BoardDepletion stock={stock} tierLabel={bcastComplete ? 'the whole class' : 'day-two grade or better'} />
+            )}
+          </div>
+
+          <div className="xl:col-span-4">
+            <div className="xl:sticky xl:top-[11rem]">
+              <SelectionFeed rows={feed} made={madePicks.length} total={bcastPicks.length} leagueId={league.id} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {broadcast && <BestAvailable leagueId={league.id} ours={ourBest} room={roomBest} verdict={bcastVerdict} />}
+
       {capitalList.length > 0 && (
         <DraftCapitalPanel years={capitalList} nextUp={nextUp} liveOrder={capitalLiveOrder} />
       )}
 
-      {upcomingPicks.length > 1 && (
+      {/* Not while the broadcast band is up — it carries the same running order
+          inside the hero, alongside the count of names until your own pick. */}
+      {!broadcastHero && upcomingPicks.length > 1 && (
         <div className="panel p-4">
           <h2 className="label-sm mb-2 inline-flex items-center gap-1.5">
             Upcoming Picks
@@ -844,7 +1258,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
 
       <div className="section">
         <SectionHeading
-          title="Big Board"
+          title={broadcast ? 'Still On The Board' : 'Big Board'}
           tip={tip('consensusBoard')}
           action={
             <div className="flex gap-2 flex-wrap items-center">
@@ -859,12 +1273,41 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           }
         />
 
-        <div className="panel overflow-hidden">
+        {/* THE WORKOUT LEDGER, ON THE BOARD ITSELF.
+            The header has carried a "WORKOUTS 5/5" tile for a while and the
+            board gave no sign that spending one was two clicks away, so the
+            app owner read the whole mechanic as missing. The count and the
+            window's own sentence now sit directly above the men a slot would
+            be spent on, and the row control appears in the column on the
+            right whenever the window is open. */}
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 -mt-1">
+          <span className="label-sm">Private Workouts</span>
+          <span className={`text-sm font-semibold ${workoutSlots.remaining === 0 ? 'text-muted' : 'text-gold'}`}>
+            {workoutSlots.remaining} of {workoutSlots.max} left
+          </span>
+          <span className="text-xs text-muted">{workoutSlots.windowLabel}</span>
+          {workoutSlots.open && workoutSlots.remaining > 0 && (
+            <span className="text-xs text-muted">Fly a man in from his row.</span>
+          )}
+        </div>
+
+        {/* Capped and scrolled during a live draft, where this table sits under
+            a whole broadcast and eighty rows would push the page to four
+            screens. The sticky header on `.table-clean th` pins to this box
+            rather than the viewport once it is a scroller, which is what makes
+            the cap readable rather than a guessing game. */}
+        <div className={`panel ${broadcast ? 'max-h-[44rem] overflow-y-auto' : 'overflow-hidden'}`}>
           <table className="table-clean">
             <thead>
               <tr>
                 <th></th>
-                <th><a href={sortHref('consensus')} className="hover:text-chalk">Rank{sortKey === 'consensus' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+                <th className="text-right">
+                  <span className="inline-flex items-center gap-1">
+                    <a href={sortHref('ours')} className="hover:text-chalk">Ours{sortKey === 'ours' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                    <Tooltip placement="bottom" align="start" text="Where this club's own scouts have him, ranked by our grade on the same blend of present and ceiling the room uses. Only men we have a real file on are on it." />
+                  </span>
+                </th>
+                <th className="text-right"><a href={sortHref('consensus')} className="hover:text-chalk">Board{sortKey === 'consensus' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
                 <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
                 <th>Name</th>
                 <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
@@ -1005,15 +1448,22 @@ export default async function DraftPage({ params, searchParams }: { params: { id
 
       {!draftJustFinished && recap}
 
-      <div className="section">
-        <SectionHeading title="Recent Picks" />
-        <div className="panel px-4">
-          {recentPicks.map((t) => (
-            <div key={t.id} className="text-sm text-muted py-2 border-b border-line/60 last:border-0">{t.headline}</div>
-          ))}
-          {recentPicks.length === 0 && <p className="text-muted text-sm py-2">No picks yet.</p>}
+      {/* The transaction headlines, for every state the selection feed does not
+          cover — a fantasy draft, and the long stretch of the calendar when
+          the last rookie draft is a memory. During the broadcast the feed says
+          all of this and says what each pick meant, so the two together would
+          be the same list twice. */}
+      {!broadcast && (
+        <div className="section">
+          <SectionHeading title="Recent Picks" />
+          <div className="panel px-4">
+            {recentPicks.map((t) => (
+              <div key={t.id} className="text-sm text-muted py-2 border-b border-line/60 last:border-0">{t.headline}</div>
+            ))}
+            {recentPicks.length === 0 && <p className="text-muted text-sm py-2">No picks yet.</p>}
+          </div>
         </div>
-      </div>
+      )}
     </div>
     </DraftMomentProvider>
   );

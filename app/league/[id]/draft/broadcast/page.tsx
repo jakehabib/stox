@@ -302,10 +302,17 @@ export default async function DraftBroadcastPage({ params, searchParams }: { par
     .sort((a, b) => b.inWindow - a.inWindow || a.position.localeCompare(b.position))
     .slice(0, 4);
 
+  // Measured against the board's own day-two line while the draft is running:
+  // "forty tackles are still in the class" answers nothing, and "two tackles
+  // left with a day-two grade and four rounds to go" is what makes a GM move.
+  // Once every pick is in, that tier is by definition empty and the panel would
+  // be sixteen zeroes — so the scope widens to the whole class, which is
+  // exactly the list priority free agency is about to be worked from.
+  const stockCut = complete ? Infinity : cuts.DAY_TWO;
   const stockByPosition = new Map<string, PositionStock>();
   for (const p of classPlayers) {
     const rank = consensus.get(p.id)?.rank;
-    if (rank === undefined || rank > cuts.DAY_TWO) continue;
+    if (rank === undefined || rank > stockCut) continue;
     let row = stockByPosition.get(p.position);
     if (!row) {
       row = { position: p.position, gone: 0, left: 0, atOurNeed: holes.has(p.position) };
@@ -514,6 +521,14 @@ export default async function DraftBroadcastPage({ params, searchParams }: { par
           complete={complete}
           yourNext={yourNext}
           upcoming={upcoming}
+          yourClass={complete
+            ? myPicks.filter((p) => p.player).map((p) => ({
+                overall: overallOf(p.round, p.slot),
+                round: p.round,
+                name: `${p.player!.firstName} ${p.player!.lastName}`,
+                position: p.player!.position,
+              }))
+            : undefined}
           clock={
             <DraftClock
               leagueId={league.id}
@@ -543,7 +558,7 @@ export default async function DraftBroadcastPage({ params, searchParams }: { par
             )}
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
-              <RunWatch entries={runEntries} windowSize={window.length || RUN_WINDOW} />
+              <RunWatch entries={runEntries} windowSize={window.length || RUN_WINDOW} order={windowPositions} complete={complete} />
               <WarRoomPanel
                 picks={warRoomPicks}
                 needs={needList}
@@ -553,11 +568,15 @@ export default async function DraftBroadcastPage({ params, searchParams }: { par
               />
             </div>
 
-            <BoardDepletion stock={stock} tierLabel="day-two grade or better" />
+            <BoardDepletion stock={stock} tierLabel={complete ? 'the whole class' : 'day-two grade or better'} />
           </div>
 
-          <div className="xl:col-span-4 min-h-0">
-            <SelectionFeed rows={feed} made={madePicks.length} total={allPicks.length} leagueId={league.id} />
+          {/* Pinned below the sticky page header: the feed is the thing you
+              keep half an eye on while reading anything else on the screen. */}
+          <div className="xl:col-span-4">
+            <div className="xl:sticky xl:top-[11rem]">
+              <SelectionFeed rows={feed} made={madePicks.length} total={allPicks.length} leagueId={league.id} />
+            </div>
           </div>
         </div>
 

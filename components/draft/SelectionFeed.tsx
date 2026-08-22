@@ -49,7 +49,14 @@ function chipsFor(row: FeedRow): Chip[] {
     push(`We had him #${row.ourRank}`, 'border-accent2/50 text-accent2 bg-accent2/10');
   }
   if ((row.slide ?? 0) >= 12) push(`Slid ${row.slide} picks`, 'border-line text-muted');
-  if ((row.slide ?? 0) <= -12) push(`${-(row.slide ?? 0)} picks early`, 'border-warn/40 text-warn bg-warn/5');
+  if ((row.slide ?? 0) <= -100) {
+    // Past a hundred places the arithmetic stops being the story. The room did
+    // not rate him low, it was not looking at him at all, and "310 picks early"
+    // reads like a broken number rather than a club backing its own tape.
+    push('Off the board’s radar', 'border-warn/40 text-warn bg-warn/5');
+  } else if ((row.slide ?? 0) <= -12) {
+    push(`${-(row.slide ?? 0)} picks early`, 'border-warn/40 text-warn bg-warn/5');
+  }
   if ((row.positionCount ?? 0) >= 3) {
     push(`${ordinal(row.positionCount!)} ${row.player.position} gone`, 'border-line text-muted');
   }
@@ -77,7 +84,10 @@ export function SelectionFeed({ rows, made, total, leagueId }: {
   leagueId: string;
 }) {
   return (
-    <div className="panel flex flex-col min-h-0 h-full">
+    // Capped to the viewport rather than to the content, so the rail can be
+    // made sticky beside a much taller column of analysis without the feed's
+    // own length deciding how tall this row of the page is.
+    <div className="panel flex flex-col min-h-0 xl:max-h-[calc(100vh-12rem)]">
       <div className="flex items-baseline justify-between px-4 py-2.5 border-b border-line/70 shrink-0">
         <h2 className="section-title">Selection Feed</h2>
         <span className="text-[11px] font-mono text-muted">{made} of {total} in</span>

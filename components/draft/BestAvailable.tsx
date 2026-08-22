@@ -100,7 +100,9 @@ export function BestAvailable({ leagueId, ours, room, verdict }: {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* items-start, so the column with nothing in it stays the height of its
+          own message instead of being stretched to match eight rows beside it. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         <div className="panel overflow-hidden">
           <div className="flex items-baseline justify-between px-4 py-2.5 border-b border-line/70 bg-accent2/[0.06]">
             <h3 className="section-title text-accent2">Our Board</h3>

@@ -33,7 +33,14 @@ export interface RunEntry {
  * dressing two receivers up as a trend, because a run detector that always
  * detects a run is a decoration.
  */
-export function RunWatch({ entries, windowSize }: { entries: RunEntry[]; windowSize: number }) {
+export function RunWatch({ entries, windowSize, order, complete = false }: {
+  entries: RunEntry[];
+  windowSize: number;
+  /** The window's positions in the order they were called, oldest first. */
+  order: string[];
+  /** Every pick is in — there is no "left on the board" left to warn about. */
+  complete?: boolean;
+}) {
   const shown = entries.filter((e) => e.inWindow > 0).slice(0, 4);
   const lead = shown[0];
   const isRun = (lead?.inWindow ?? 0) >= 3;
@@ -41,7 +48,7 @@ export function RunWatch({ entries, windowSize }: { entries: RunEntry[]; windowS
   return (
     <div className="panel p-4 h-full">
       <div className="flex items-baseline justify-between gap-3 mb-3">
-        <h2 className="section-title">Run Watch</h2>
+        <h2 className="section-title">{complete ? 'How It Closed' : 'Run Watch'}</h2>
         <span className="text-[11px] font-mono text-muted">last {windowSize} selections</span>
       </div>
 
@@ -50,7 +57,12 @@ export function RunWatch({ entries, windowSize }: { entries: RunEntry[]; windowS
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-chalk/85">
-            {isRun ? (
+            {complete ? (
+              <>
+                The draft closed on a {lead.position} run — {lead.inWindow} of the last {windowSize}{' '}
+                names called. {lead.totalGone} came off the board there across the seven rounds.
+              </>
+            ) : isRun ? (
               <>
                 {lead.inWindow} {lead.position}
                 {lead.inWindow === 1 ? '' : 's'} in the last {windowSize}.{' '}
@@ -81,11 +93,33 @@ export function RunWatch({ entries, windowSize }: { entries: RunEntry[]; windowS
                 ))}
               </div>
               <span className="text-xs text-muted flex-1 text-right whitespace-nowrap">
-                {r.totalGone} gone ·{' '}
-                <span className={r.leftOnBoard <= 2 ? 'text-warn' : 'text-chalk'}>{r.leftOnBoard} left</span>
+                {complete ? (
+                  <>{r.totalGone} taken</>
+                ) : (
+                  <>
+                    {r.totalGone} gone ·{' '}
+                    <span className={r.leftOnBoard <= 2 ? 'text-warn' : 'text-chalk'}>{r.leftOnBoard} left</span>
+                  </>
+                )}
               </span>
             </div>
           ))}
+
+          {order.length > 0 && (
+            <div className="pt-3 mt-1 border-t border-line/50">
+              <div className="label-sm mb-2">In The Order They Went</div>
+              <div className="flex flex-wrap gap-1">
+                {order.map((pos, i) => (
+                  <span
+                    key={i}
+                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-raised/50 ${positionBadgeClass(pos)}`}
+                  >
+                    {pos}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -194,7 +228,7 @@ export function WarRoomPanel({ picks, needs, filed, classSize, shortlistLeft }: 
               title={p.spentOn ? `Spent on ${p.spentOn}` : undefined}
               className={`pill text-[11px] font-mono ${
                 p.spentOn
-                  ? 'border-line/60 text-muted line-through decoration-line'
+                  ? 'border-line/50 text-muted/60 bg-raised/40'
                   : p.picksAway === 0
                     ? 'border-accent text-accent bg-accent/10'
                     : 'border-gold/50 text-gold bg-gold/5'
