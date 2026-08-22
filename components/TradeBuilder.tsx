@@ -59,6 +59,26 @@ export function TradeBuilder({
     router.push(`?with=${id}${partnerPos !== 'ALL' ? `&pos=${partnerPos}` : ''}`, { scroll: false });
   const [give, setGive] = useState<Set<string>>(new Set(initialGive));
   const [get, setGet] = useState<Set<string>>(new Set(initialGet));
+  // REVIEW HAS TO ACTUALLY BUILD THE TRADE.
+  // ==========================================================================
+  // The offers panel sits on THIS page, so its Review link is a client-side
+  // navigation to the same route with a different `reviewOffer` — React keeps
+  // the mounted component and reuses its state. `useState(new Set(initialGive))`
+  // runs on first mount and never again, so the assets the server had just
+  // resolved off the offer were handed to a component that had already decided
+  // its selection was empty: the app owner pressed Review and the builder came
+  // up blank.
+  //
+  // Keyed on the ids themselves rather than a mount key, so this syncs when a
+  // DIFFERENT offer is reviewed but does not wipe a selection the user is in
+  // the middle of assembling.
+  const reviewKey = `${initialGive?.join(',') ?? ''}|${initialGet?.join(',') ?? ''}`;
+  useEffect(() => {
+    if (!initialGive?.length && !initialGet?.length) return;
+    setGive(new Set(initialGive));
+    setGet(new Set(initialGet));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewKey]);
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<{
     accepted: boolean; message: string; ratio: number; requiredRatio: number;
