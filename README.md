@@ -146,9 +146,13 @@ npm run build         # production build: generates the Prisma client,
    efficiency stats (completion %, Y/A, YPC, catch %, tackle+sack "impact,"
    INT+PD "playmaker" score, etc.) for every player you have that's
    recorded a stat.
-8. **Settings** covers every option from the design doc's settings screen —
-   cap mode, difficulty, scouting toggles, injury/progression rates, trade
-   rules, sim variance, recap verbosity, and more.
+8. **Settings** — cap mode, difficulty, scouting toggles, injury and
+   progression rates, trade rules, sim variance, recap verbosity, and more.
+   (This used to describe the list as "every option from the design doc's
+   settings screen". Commit `18e02c6` took the design-doc framing out of the
+   app as fiction-breaking, and removed three toggles from this form that
+   gated nothing; three more that still gate nothing are named under Known
+   simplifications below.)
 
 ## Where things live
 
@@ -166,7 +170,9 @@ npm run build         # production build: generates the Prisma client,
 - `lib/scouting.ts` — the fog-of-war system (section 6): observed values,
   error bands by attribute difficulty, confidence growth
 - `lib/cap.ts`, `lib/cap-summary.ts` — salary cap in Realistic / Simplified /
-  Off modes, market-value curve, rookie scale, franchise tag
+  Off modes, market-value curve, rookie scale, franchise tag, and
+  `askingPrice()` — the advertised number, which falls the longer a man sits
+  unsigned and is exactly market value in his first week on the wire
 - `lib/sim/` — unit ratings (`units.ts`), drive-based game resolution
   (`engine.ts`), recap text generation (`recap.ts`)
 - `lib/ai/gm.ts` — the shared AI GM brain used by free agency, trades, and
@@ -186,7 +192,7 @@ npm run build         # production build: generates the Prisma client,
 - `lib/negotiation.ts` — the ONE contract evaluator. `decideOffer` is called
   by the client interest meter and by the server on submit, so the meter can
   never promise something the server refuses. `scripts/checkNegotiationAgreement.ts`
-  proves it across ~974,000 swept offers
+  proves it across ~1,025,000 swept comparisons
 - `lib/consensus.ts` — the free public draft board, wrong in five learnable
   ways; `lib/shortlistAttention.ts` (weekly scouting attention split across
   whoever you star) and `lib/workouts.ts` (pre-draft private workouts)
@@ -209,6 +215,11 @@ npm run build         # production build: generates the Prisma client,
   a `definition` and a `why`. `tip(key)` renders it; every `?` bubble in the
   app reads from here, so a word cannot come to mean two things on two
   screens
+- `lib/awardTypes.ts` — **the one list of trophies**, in a leaf module that
+  imports nothing. The writer, the seeded backstory, the XP model, the
+  dynasty leaderboard, the GM career page, the wire, the history table and
+  the player card all read it, so a career page can never count four awards
+  above an honours list showing five
 - `lib/capEnforcement.ts` — what happens when a club cannot fit a contract,
   including `autoClearCapRoom` (an AI club short of a rookie deal releases
   the LEAST valuable men who cover the bill, never the biggest saving)
@@ -237,14 +248,21 @@ npm run build         # production build: generates the Prisma client,
   `Tooltip`, the position colours, the panels). Reach for one of these before
   writing new styling
 - `components/draft/` — Draft Day's broadcast: the hero, the live selection
-  feed, run watch, board depletion and both best-available boards
+  feed, run watch, board depletion and both best-available boards, plus
+  `DraftViewToggle.tsx` (the Board / Room split, with the clock standing
+  above both) and `ProspectSearch.tsx` (a search of the whole class, run on
+  the server, not a filter over the eighty rows on screen)
 - `components/analytics/` — one component per analytics panel
 - `components/charts/` — the small shared chart kit (bar/line/scatter) used
   by the Cap and Stats Advanced views
 - `scripts/benchmarkTradeValue.ts` — permanent, framework-free benchmark
   suite for trade valuation (`npx tsx scripts/benchmarkTradeValue.ts`);
-  `scripts/simHealth.ts` — the invariant-checking harness (see
-  `GAME_INVARIANTS.md`)
+  `scripts/checkRestructure.ts` — the restructure/extension gate (every
+  length x seasons played x bonus size x void years x conversion, asserting
+  that a zero-dollar restructure changes nothing and that total charged
+  equals money paid, INV-21); `scripts/simHealth.ts` — the invariant-checking
+  harness (see `GAME_INVARIANTS.md`), which builds every third league as a
+  fantasy draft so both start types are exercised
 
 ## Design principles (standing, not up for re-litigation)
 
@@ -377,6 +395,15 @@ something here, the principle wins and the change is wrong.
   the user can use it, but no AI path calls it — measured, a 99 QB whose club
   held $50.9M of room walked to the market because it could not fit his ask
   after reserve. A real club tags him.
+- A fantasy draft's player POOL is a league and a half of talent — about 1,956
+  undifferentiated draws with no camp-body tail, median 77 against the
+  randomized generator's 73. Priced at market, the 1,696 men who get drafted
+  are worth 167% of a 32-club cap where randomized rosters are worth 99%, so
+  every fantasy contract reads at roughly half of market. That is the pool
+  rather than the pricing — a fantasy pick is priced through the same rule the
+  league generator uses for a randomized roster, and bending the draft's curve
+  to flatter a deeper pool would leave the game with two disagreeing answers to
+  "what does a roster cost".
 
 ## Changelog
 
@@ -2023,3 +2050,377 @@ ever force-pushed over, so every state below still exists in git history).
   dead money by franchise seasons, but that ledger is only ever one or two
   years deep, so all 32 clubs scored near-perfect and a component advertised
   as part of the ranking was doing no ranking at all. Commit `b295a84`.
+- **2026-08-22 — The README audited against the code instead of read.** The
+  five screenshots were two days stale and the header image was a draft page
+  that no longer exists; all five were regenerated from the app at the commit
+  they ship with, and a note now says they always are, so a mismatch means the
+  README is the thing that is out of date. The build blurb said `npm run build`
+  syncs the schema when it applies migrations — different operations, and the
+  difference matters to whoever deploys. The module map had never heard of the
+  design system (67 files), the glossary every `?` bubble reads from, ratings,
+  analytics, cap enforcement, development, or the GM career, trade-retro and
+  dynasty-score modules, and its list of screens predated nine of them. And
+  three of the seven "known simplifications" described behaviour the app had
+  stopped having: patience is persisted in a real column, the re-sign window IS
+  exclusive, and the dead settings toggles are no longer offered on the form.
+  On that list a stale entry is worse than it is elsewhere in the file — it is
+  the section a reader trusts to tell them what is deliberately missing, so it
+  sends someone off to build a thing that already exists. One entry was added
+  that is true and was measured: no AI club has ever used the franchise tag.
+  Commits `ffe1094`, `b20ac5b`.
+- **2026-08-22 — The draft recap reviews the class instead of listing it.** The
+  app owner: *"it would be awesome if after the draft we had a summary but more
+  in depth."* YOUR CLASS leads the page now, a row per pick carrying the
+  overall, the ceiling with how far he has to grow, where the public board had
+  him, where the room had him, our own grade beside the room's on the room's
+  own scale, and — in the column that used to be empty — the same sentence his
+  big-board row showed on the night. The rest of the league's class is there
+  too: all 192 remaining picks grouped by round in a capped scrolling panel
+  with sticky headers, because flat they would have added about 5,800px and
+  this way they add 416, taking the completed-draft page from 4,346px to
+  4,965px for the whole thing. The fog boundary is keyed on where a man is NOW
+  rather than on whose pick he was, so anyone on your roster reads exact
+  because he is in the building, and a pick you made and later traded away goes
+  back to ranges. Deliberately still no class grade: the recap refuses to judge
+  a class against careers that have not happened, and our grade beside the
+  room's is a disagreement, not a result. Commit `e2cb7b3`.
+- **2026-08-22 — "Cap Wizard" was congratulating GMs for an empty ledger.**
+  Dead money per season summed the cap-charge table and divided by years in the
+  job, but that table is swept of everything older than the current season, so
+  it is a live sheet a year or two deep and never a career's worth. One year of
+  dead money spread across ten and called an average is how a long tenure
+  earned the badge by standing still. Underneath that was worse: 188 of 197
+  user clubs in this database have an entirely empty ledger, and zero over zero
+  reads as "$0 a season", which is exactly the Cap Wizard threshold — so the
+  compliment fired unconditionally for anybody two seasons in and Cap
+  Trainwreck was unreachable. The badge was not measuring a decision; it was
+  measuring nothing. The average now divides by the years the ledger actually
+  covers, the badge asks for two years that carry a charge rather than two
+  years of tenure, and the tile stops calling an empty ledger a clean sheet: it
+  reads "None on the books", and where there is a ledger it names its span,
+  because an average over an unstated number of years is the kind of figure
+  this codebase keeps getting wrong. Commit `d974e56`.
+- **2026-08-22 — The franchise tag existed and nothing on screen said so.** The
+  app owner: *"Is the franchise tag available for users? I haven't seen it
+  yet."* It was, behind four conditions that all had to hold at once — the
+  league in the re-sign phase, the setting on, the tag unused this year, and a
+  specific player's row clicked OPEN, which is where the control lives as a
+  small gold pill beside "let him walk". Nothing above it mentioned the tag
+  existed, so a GM could play a whole career without learning he had one. A
+  masthead tile says it now: "1 left — one a year, and only in this window"
+  while the window is open, who it was spent on once it is gone, and outside
+  the window a line that does not imply a control that is not there. Hidden
+  entirely when the setting is off. The rules are untouched — one a year,
+  re-sign window only is correct football and the right design; the defect was
+  the sign on the door, not the door. This was the fourth thing in one day that
+  was built, correct and invisible, after the GM card's button, the private
+  workouts and the shortlist control, which is worth naming as a pattern rather
+  than four coincidences. Commit `d166181`.
+- **2026-08-22 — Nobody sits out a season at his April price, and somebody is
+  now shopping.** The app owner, deep into a season: *"those same really high
+  overall ninety five, ninety six, ninety seven, ninety eight overall players
+  are still on the free agent list. Those players should gradually drop their
+  salary demand."* Two gaps, and that was half of it. A man's asking price
+  never read how long he had been unsigned, so his number on day 400 was his
+  number on day 1 — and the AI free agency wave was called from exactly one
+  place, the free agency phase, so once a league reached preseason nothing in
+  the game signed a free agent to an AI roster until the following spring.
+  Falling prices change nothing with no buyer; a buyer alone signs him at April
+  money. The ask now decays on weeks spent on the wire, on a curve rather than
+  a line because nothing has been learned in the first month: a man who hits
+  the wire when free agency opens keeps about 98% of his price through all four
+  bidding weeks, so THE OFFSEASON MARKET IS UNCHANGED, and it collapses only
+  once camp and then the season have proved nobody wants him. A 97 edge rusher
+  at 27 runs $32.8M at week 0, $24.2M at week 10, $18.1M at week 14 and $11.5M
+  at the floor, and the board prints "asking $38.3M/yr, was $46.4M" so the two
+  figures cannot disagree on release day. The buyer is deliberately not a
+  sweep: half of all weeks nothing happens, at most two clubs shop, one man
+  each, weighted by how bad the hole is, on one-year deals, never touching the
+  user's club — and in-season cap room is thin, so a club can only reach a star
+  once he has come down, which leaves the bargain to the GM who spotted it
+  first. Measured A/B across three simulated seasons on three of the owner's
+  own saves: 90+ player-weeks sitting on the board fell 29–32% and 85+ fell
+  50–61%. The baseline's signature is what makes the old behaviour plain — its
+  pool count was bit-identical week to week through every regular season, which
+  is what zero signings between April and April looks like. Commit `52d2156`.
+- **2026-08-22 — The restructure void-year slider offered three positions that
+  did nothing.** The app owner: *"Adding void years on a restructure doesn't
+  seem to move the cap at all."* He was right, and so were the numbers — the
+  control was lying about what it could do. A signing bonus spreads over five
+  years at most, and a restructure rebases the deal onto the years that are
+  left, so the function already discarded any void year past that room while
+  the slider went on offering them. Converting $15M of a $20M base on a deal
+  with five years to run reads $10.00M at every single slider position; with
+  two years to run it moves $17.50M / $13.33M / $11.25M / $10.00M. The maths is
+  right and is not touched — that five-year cap is the real rule, and it is why
+  real front offices hang void years off SHORT deals. The slider now runs from
+  zero to the room the deal actually has, and where there is no room it is
+  replaced by the reason, which is worth more than the dead control was. The
+  preview and the number handed to the server are the same clamped figure, and
+  it is the same clamp the extension screen already used, so the two cannot
+  disagree about what a void year is worth. Commit `64bff2e`.
+- **2026-08-22 — The lineup-gap banner, unstuck and dismissible.** The app
+  owner, on mobile: *"Found a bug. This banner persists even after signing a
+  new kicker."* His screenshot had the proof in it — an amber banner saying
+  nobody could line up at kicker, directly above that page's own tile reading
+  "every starting slot filled". The banner was stale rather than wrong: it is
+  drawn by the league layout, which Next reuses across client-side navigation,
+  and the free-agent signing path was the one roster mutation that did not
+  invalidate the layout. Its reason was sound — the confirmation card was
+  rendered inside the panel that dies the instant a man stops being a free
+  agent, so the refresh was deferred to dismissing the card, which works right
+  up until the GM taps the nav bar instead. A standing warning that says "it
+  will show in the result" must not depend on pressing a particular button
+  first. Fixed the way draft day already fixed the identical conflict: the card
+  is hoisted out of the subtree that unmounts, so the signing can invalidate
+  the layout like every other mutation and the card survives — and it reads
+  better as a moment than it did as an inline panel. Extensions and re-signings
+  were moved onto the same component so all three signings behave alike. Then
+  the second half, also his: *"I think the fix for that banner saying you have
+  no available players is to just give us a dismiss button."* Sometimes there
+  is nothing to be done, and a warning that cannot be acknowledged is noise
+  after the first read. The dismissal is keyed on the exact set of holes he was
+  looking at, so waving away "no healthy K" cannot hide "no healthy QB" next
+  week, and losing a second kicker changes the count and brings it back. He is
+  silencing one known fact, not switching the warning off. Kept in the browser
+  rather than the save, because it is a preference about being told something,
+  not a fact about the league, and it has no business in a file an export would
+  carry to somebody else. Commits `d90a48b`, `27aa934`.
+- **2026-08-22 — A restructure charged the signing bonus twice.** A restructure
+  rebases a deal onto the years that are left, but it carried the FULL original
+  signing bonus across — so the part already amortised over the seasons already
+  played was charged all over again. Proved with a conversion of zero dollars,
+  a move that should change nothing: on a five-year deal with a $25.0M bonus
+  two years in, the cap hit went from $25.0M to $28.3M for doing nothing. Over
+  that deal's life the old path charged $35M against a $25M bonus — ten million
+  billed twice. The one move whose entire purpose is to lower this year's hit
+  was inflating every year after it, and the deeper into a contract you were
+  the worse it got: at four years played it raised the hit from $23.4M to
+  $45.9M, which is ABOVE simply keeping him, and repeated every March on a
+  seven-year deal it charged $291.2M against $130.8M actually paid. The
+  arithmetic is one line — carry the unamortised bonus, not the original one —
+  and everything else was the consequences. Extensions had the same defect
+  wearing a different hat, wrong in both directions outside the proration
+  window. Guaranteed money is rebased with it, because pairing a full original
+  bonus with an unamortised one re-reads the gap as salary still owed and lands
+  it as dead money: the same double-count arriving through the other column.
+  There is a permanent gate on it now — every contract length, seasons played,
+  bonus size, void-year count and conversion including zero and past the
+  maximum, 55,683 of 55,683 passing, and 10,643 failing when it is run against
+  the old carry, so it is a real check rather than decoration (INV-21). One
+  shape genuinely cannot hold: a deal longer than the five-year proration
+  window has, partway through, more years left than bonus years, which a
+  rebased contract cannot express — the total charged and the payback stay
+  exact and a little money shifts later, which is documented rather than
+  hidden, because the alternative was the double-charge. Already-corrupted rows
+  are not repairable and no migration guesses at them; the damage is bounded
+  and each deal expires. Commit `ee4f6fb`.
+- **2026-08-22 — A fantasy draft handed out 1,696 players and not one
+  contract.** Found in a cap audit. The draft has two branches — the rookie one
+  builds a real deal, and the fantasy one wrote a wire entry and stopped.
+  Across 6,144 clubs in the dev database exactly 32 had nobody under contract,
+  and they were all 32 clubs of one fantasy league, each carrying 53 players at
+  0.0% of a $255M cap. So for one of the two ways this game tells you to start
+  a league, the cap page, cap space, cap-constrained trades, free agency and
+  extensions were all meaningless. A fantasy pick is priced as a veteran
+  signing, because that is what he is — a 28-year-old 91 is not a rookie and
+  rookie scale is the wrong instrument — and fitting 53 of those under a cap
+  reuses the league generator's own rule rather than inventing a second one,
+  since two ways of pricing a roster is how they end up disagreeing. Nothing is
+  cached between picks, so a draft resumed in a fresh process or split between
+  the user and the ticker prices identically, and a hard clamp holds back the
+  league minimum for every pick still to come so a draft nobody can decline
+  cannot push a club through the ceiling. Measured on a real 1,696-pick draft
+  against a freshly generated randomized league as the benchmark: median club
+  at 82.0% of the cap against the benchmark's 79–84%, maximum 92.7% against
+  92–93%, nobody over, and rostered players without a contract 1,696 before, 0
+  after. Simmed three seasons forward with the AI re-signing at full market it
+  holds — median 90.0%, nobody over, no invariant violations. Why it survived
+  is the more useful half: the invariant harness already calls an active player
+  with no contract an ERROR and would have caught this on day one, except every
+  league it built was a randomized one, so the fantasy path was never executed
+  by the thing whose whole job is executing paths. Every third league in the
+  harness is a fantasy draft now — one in three rather than every other,
+  because randomized is what most saves use and what most rules are written
+  against — and each league's start type is printed beside its result so a
+  violation can be read against the thing that produced it. Commits `4e8a731`,
+  `6fcc269`.
+- **2026-08-22 — The asking price is now a price that actually signs him.** Two
+  things were true at once and the wrong one had been named. The CPU was NOT
+  getting a discount: the AI's floor was a discard rule rather than a price,
+  and over four waves the 68 signings paid a median 1.15x the ask with exactly
+  one landing under it — thirty-one bidders clear a market well above any
+  floor. What was actually broken was the board. Offering exactly the
+  advertised price signed 13 of 60 free agents on the deal an AI club writes,
+  and 43 of 60 even when the man was handed his own preferred term and
+  guarantee; the user's median requirement was 1.04x the printed number with a
+  tail to 1.44x. The screen quoted a price you could not buy at, which is this
+  codebase's oldest failure wearing a new hat. The advertised ask is now the
+  TOP of a band and the AI's line is the bottom of the same band, anchored so
+  that the dearest man the model can produce still reads a certain yes at the
+  printed figure — the ask is a price that WORKS, never a price that is
+  MINIMAL, which removes the lie while keeping the reservation price hidden.
+  The haggling lives below the ask: a neutral man's certain yes sits near 0.87
+  of the printed figure and his band opens near 0.82, so four-fifths-to-full is
+  a genuine gamble. Proved at scale — 780 combinations of free agent and club
+  strength at maximum competition, every one of them a certain yes at the
+  advertised ask on his own terms, worst shortfall zero. Men who still refuse
+  are refusing the SHAPE of the offer, and the panel, the board and the
+  glossary all say so. The user's own bar is untouched. One knock-on caught by
+  measurement: the negotiation panel opened at 90% of the market estimate,
+  which after anchoring was a certain yes for 62 of 140 free agents — the
+  rubber stamp returning — so it opens at 90% of the anchored price instead, at
+  0 certain yes. And signings finally record WHO was signed: six contract
+  writers, awards, record breaks and game headlines all had the player id in
+  hand and stored none of it, so the trophy case matched on the text of a
+  headline and the All-Star tally de-duplicated a name parsed back out of one.
+  The agreement harness went from 14 disagreements to 0, independently re-run
+  at 1,025,128 comparisons. Commit `612b428`.
+- **2026-08-22 — Three things the player card and the re-sign list were
+  burying.** The hero pill read "2x Award winner", which is the one thing about
+  a trophy nobody wants to know; it names them now, collapsing repeats because
+  winning the same one twice is the story, so a ten-award career reads "Rookie
+  of the Year · 8x MVP · Offensive Player of the Year". Release sat at the very
+  bottom of the contract tab, under a year-by-year ledger tall enough to push
+  it off a laptop screen — measured at y=908 with the ledger starting at
+  y=1158. What you can DO now sits above what it costs, which is the order the
+  rest of the app already uses. And the re-sign list was sorted, just not
+  usefully: it led on years remaining and only then on rating, so it ran
+  expired-then-walk-year and the rating column started over halfway down, which
+  reads as no order at all. Rating leads now with the deadline as the tiebreak,
+  and nothing is lost because every row already wears its own Expired or Walk
+  Year pill — the urgent men are still marked, they just no longer bury the
+  best player on the list under men you were always going to let go. Commit
+  `22427d5`.
+- **2026-08-22 — The re-sign list showed next year's decisions beside this
+  year's.** It asked for one year or less remaining, which is two different
+  cohorts wearing one list. Contracts age when the season ends, so once the
+  offseason begins a man at one year has a whole season still to play — he is
+  next year's decision — and sitting beside men who genuinely walk in a few
+  clicks he reads as urgent. The app owner paid for exactly that: *"i just gave
+  a huge extension to someone thinking they needed it but really i had 1 more
+  year after to decide."* A screen that costs a GM real money by implying a
+  deadline twelve months away is worse than one that shows him less. The cohort
+  is pinned to the phase, and specifically to the rule that actually releases
+  people, so during the offseason cycle the window is about the men who walk
+  out of it and nobody else. Measured across the database before anything
+  changed: in preseason, the regular season, the playoffs, the draft and free
+  agency not one club has a player at zero years, so in-season the list is
+  unchanged; in the offseason and re-sign phases clubs carry about eleven of
+  each, which is the mix he was reading. Anyone already at zero in-season is
+  more urgent still and is never hidden — the cutoff moves, it is not an
+  equality test. The page also states who is NOT on it, because an unexplained
+  absence is the same failure as a misleading presence. Commit `e1b15cb`.
+- **2026-08-22 — The draft order was not reverse standings. It was database row
+  order.** The app owner, having just been handed the top selection: *"when you
+  start the draft does it automatically give you the first overall pick? im not
+  sure how i got #1 overall."* He got it because his row came back first. The
+  reseed sorted clubs on wins, losses, points for and points against — all four
+  of which the offseason's standings reset ZEROES, several advances before the
+  reseed runs. Every club was 0-0-0 with a zero differential, every comparison
+  returned a tie, and the sort left them in whatever order the database handed
+  back. Measured on five saves beforehand, pick #1 went to the worst club in
+  NONE of them: it went to Boston while Dallas finished 1-16, to Denver while
+  Pittsburgh finished 1-16, to Jacksonville while Miami finished 3-14, to
+  Minnesota while Indianapolis finished 2-14. The season's permanent record is
+  written before the wipe and still says what actually happened, so the order
+  reads that now — after the fix, on the same saves, #1 went to clubs at 2-15,
+  3-14, 3-14, 1-16 and 3-14, and the last pick of round one to 17-0, 13-4,
+  15-2, 15-2 and 13-4. Worst first, best last, every time. The fallback is
+  stated rather than silent: a league's first draft can precede any completed
+  season and a fantasy-start league may have no record on file, and it requires
+  EVERY club to have a record before trusting them, because sorting real
+  records against wiped ones is the same bug wearing a smaller hat. Existing
+  saves keep the arbitrary order already burned into their pick rows; this
+  fixes every draft seeded from here. Commit `c6cad32`.
+- **2026-08-22 — A trade blocked on the other club's roster limit, which the
+  user cannot fix.** "Charlotte Pumas would carry 54 players against a 53-man
+  limit. Release 1 before making this deal." He cannot release a Charlotte
+  Pumas player. The roster check threw for whichever club went over and worded
+  it identically for both, so a five-for-one with an AI partner died on an
+  instruction only the other club could follow, and a refusal that names no
+  action the reader can take is a dead end rather than a decision. The app
+  owner proposed the fix himself — *"maybe the AI logic drops their lowest ovr
+  player?"* — which is what a real front office does and what this codebase
+  already does one function away for money, where an AI club short of a rookie
+  deal releases its least valuable men rather than stall the draft. Same
+  principle, different unit: there the bill is dollars, here it is bodies. An
+  AI club makes room now and only the user is blocked, so his roster stays his
+  to manage and his message still names something he can do. Who goes is the
+  question cut-down day answers and now has the same answer — worst first, with
+  dead money folded into the ranking, because that is why a good contract
+  survives a cut and a bad one does not. Checked on a live roster, Phoenix
+  sheds a 46 receiver first and a 92 left tackle last. The limit they are
+  trimmed to is the one they must be under once the deal LANDS, not their
+  current one. Commit `a8d4bbc`.
+- **2026-08-22 — Injuries never healed in the playoffs.** The app owner: *"i
+  just had an injury occur at week 17, i simmed 2 weeks while on that player's
+  card and the injury remained until round 2 of playoffs"*, and then what it
+  actually cost him: *"by broke my game i mean all my injured players(starters)
+  were out for the playoffs. so i lost because of backups."* Recovery was
+  called from exactly one place, the regular-season path, and the postseason
+  routes somewhere else entirely — so the injury clock stopped dead the moment
+  the regular season ended. A man hurt in December was out for the whole run
+  however short his injury was, and the postseason was the one part of this
+  game where injury LENGTH meant nothing at all. Fatigue was the quieter half
+  of the same omission: four rounds of football with no recovery, accumulating
+  hardest on the club that keeps winning, which is to say biasing every playoff
+  result against whoever advances furthest. Recovery now rides inside the
+  postseason's own exactly-once-per-round lock, because run twice everyone in
+  the league heals twice as fast and nothing on any screen would say so. It
+  runs after the round's games rather than before, which is where the regular
+  season puts it and is also the football answer — a man carried off in the
+  wild-card round has the following week to get right, exactly as he would in
+  November — and not after the final, where there is no next round to be fit
+  for. Verified round by round on a live playoff league: 3 weeks to 2 to 1 to
+  0. Measured separately while diagnosing, 5.0% of players are injured in the
+  regular season against 6.3% in the playoffs, and that 26% excess is entirely
+  this bug rather than the injury rate. Commit `0c0baf8`.
+- **2026-08-22 — Four hand-written copies of the trophy list, and only one
+  rookie award.** Real football hands out two rookie awards, one for each side
+  of the ball. This game handed out one and decided the winner by comparing an
+  offensive score against a defensive one on the same scale, which is not a
+  comparison — it is a coin flip with extra steps. There are two now, each
+  ranked by the same score its veteran counterpart is ranked by, so a rookie
+  can never be judged on the wrong side of the ball and the two rookie trophies
+  can never disagree with the two veteran ones about which side a man plays.
+  The bigger problem was underneath: the award vocabulary was copy-pasted
+  across nine surfaces — two separate lists of award types and FOUR separate
+  label maps, each spelling out the same five strings — so the writer, the
+  seeded backstory, the XP model, the dynasty leaderboard, the GM career page,
+  the wire, the wire's ranking, the history table and the player card all had
+  to be edited in lockstep for a new trophy to exist. That is exactly how a
+  number ends up disagreeing with the cabinet sitting next to it: a career page
+  counting four awards above an honours list showing five. There is one list
+  now, in a module that imports nothing, and every one of those readers reads
+  it. The old undivided Rookie of the Year is retired but deliberately not
+  deleted — thousands of those rows sit in saves already played and a man who
+  won it still won it, so it is read everywhere and written nowhere. Commit
+  `99b06d7`.
+- **2026-08-22 — The war room's money item was the one thing at the bottom of
+  the page.** Everything above the big board on draft day is something a GM
+  READS — the pick on screen, the feed, the run watch, both best-available
+  columns, the war room panel. The board is the only thing he ACTS on, and it
+  was last on the page, furthest away at the exact moment it mattered most. The
+  app owner: *"theres a lot going on. the money item is the actual draft itself
+  and its buried at the bottom of the screen. Can we maybe clean it up? or
+  toggle 1 or 2 views?"* Two views now — THE BOARD is the men, the filters, the
+  search and your picks; THE ROOM is the broadcast. Nothing was dropped, every
+  panel that was on this page is in exactly one of the two, and the clock
+  stands above both always, because a GM must never be unable to see whose pick
+  it is. The default is situational rather than sticky, since a sticky default
+  is wrong in both directions: pinned to the room the board is buried when you
+  go on the clock, pinned to the board you never watch the draft happen. The
+  spectacle plays until you are on the clock or one name away, and then the
+  thing you decide with is already in front of you. A manual choice is scoped
+  to the situation it was made in, because this page refreshes itself every few
+  seconds while a draft runs and a plain "snap to the board when urgent" would
+  drag a GM who chose to watch the room back to the board a heartbeat later,
+  forever. And you can find a man by name: *"we should be able to search by
+  name for prospects in the draft board."* It searches the CLASS, not the
+  screen — the board renders the top eighty men left by rating, so a filter
+  running in the browser could only ever find someone already in that slice,
+  and the sixth-round name you wrote down in September would return nothing on
+  the one night it matters. The query goes to the server beside the position
+  and shortlist pills, and the server lifts the eighty-row cap while a search
+  is running. Commit `dfc3265`.
