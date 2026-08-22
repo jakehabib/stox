@@ -227,3 +227,45 @@ export function splitStarters<T>(position: string, ordered: T[]): { starters: T[
   const n = startersAt(position);
   return { starters: ordered.slice(0, n), backups: ordered.slice(n) };
 }
+
+/**
+ * ===========================================================================
+ * WHO IS MISSING FROM THE ELEVEN, COUNTING ONLY MEN WHO CAN PLAY
+ * ===========================================================================
+ * The depth-chart page already reports starting slots with nobody in them,
+ * but it counts BODIES: a club with one quarterback reads as covered even
+ * when that quarterback is hurt. The sim does not agree — it fields whoever
+ * is available and fills what is left at REPLACEMENT_LEVEL (48), which wrecks
+ * the unit — so a GM could walk into a week having lost his only passer and
+ * be told nothing at all.
+ *
+ * `injuryWeeks > 0` is the same test the engine applies (isAvailable, in
+ * lib/sim/units.ts). Asking the question a second way here would eventually
+ * produce a screen that disagrees with the game it describes.
+ * ===========================================================================
+ */
+export interface LineupGap {
+  position: Position;
+  /** How many of this position's starting slots have nobody healthy for them. */
+  missing: number;
+  /** True when NOBODY at the position can play — the worst version of it. */
+  none: boolean;
+}
+
+export function lineupGaps(
+  players: { position: string; injuryWeeks: number; status: string }[],
+): LineupGap[] {
+  const gaps: LineupGap[] = [];
+  for (const pos of POSITIONS) {
+    const needed = startersAt(pos);
+    if (needed === 0) continue;
+    const healthy = players.filter(
+      (p) => p.position === pos && p.status !== 'RETIRED' && p.injuryWeeks <= 0,
+    ).length;
+    const missing = Math.max(0, needed - healthy);
+    if (missing > 0) gaps.push({ position: pos as Position, missing, none: healthy === 0 });
+  }
+  // Worst first: a position with nobody at all outranks one that is a man
+  // short, and more missing slots outrank fewer.
+  return gaps.sort((a, b) => Number(b.none) - Number(a.none) || b.missing - a.missing);
+}

@@ -9,6 +9,8 @@ import { LeagueWireTicker } from '@/components/ds/LeagueWireTicker';
 import { isBreakingNews } from '@/lib/wireRank';
 import { loadWorkoutSlots } from '@/lib/workouts';
 import { CapAlertBanner } from '@/components/ds/CapAlertBanner';
+import { LineupGapBanner } from '@/components/ds/LineupGapBanner';
+import { lineupGaps } from '@/lib/lineup';
 import { capComplianceDueNow } from '@/lib/season';
 import { capComplianceReport } from '@/lib/capEnforcement';
 import { transactionCategory } from '@/lib/newsCategory';
@@ -35,7 +37,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // capComplianceReport wraps teamCapSummary and short-circuits the extra
   // roster scan when the team is compliant, so this is no more work than
   // the plain summary this used to call, and never two of them.
-  const [compliance, workouts, tickerTx, powerItems, wireTeamRows] = await Promise.all([
+  const [compliance, workouts, tickerTx, powerItems, wireTeamRows, lineupRoster] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : capComplianceReport(userTeam.id, league.seasonYear, ctx.settings.capMode),
     // Private workouts are the ONLY scarce thing left in scouting — the
     // consensus board is free and the shortlist costs nothing to work — which
@@ -90,6 +92,13 @@ export default async function LeagueLayout({ children, params }: { children: Rea
     // Id -> abbr for the wire strip. 32 rows of two columns, on a layout that
     // already runs four queries; the crest is what turns a name into news.
     prisma.team.findMany({ where: { leagueId: league.id }, select: { id: true, abbr: true } }),
+    // Only the three columns lineupGaps needs. A starting spot with nobody
+    // healthy for it costs a week, and the only screen that hinted at it was
+    // the depth chart — which counts bodies, not men who can actually play.
+    prisma.player.findMany({
+      where: { teamId: userTeam.id, status: { not: 'RETIRED' } },
+      select: { position: true, injuryWeeks: true, status: true },
+    }),
   ]);
 
   // Write this week's ranking down once, the first time any league page is
@@ -161,6 +170,12 @@ export default async function LeagueLayout({ children, params }: { children: Rea
     if (!added) break;
   }
 
+  // Only while games are being played. An empty slot in the offseason is a
+  // roster still being built, not a hole you are about to lose a game to.
+  const gaps = ['REGULAR', 'PLAYOFFS', 'PRESEASON'].includes(league.phase)
+    ? lineupGaps(lineupRoster)
+    : [];
+
   return (
     <div className="min-h-screen">
       <LeagueWireTicker items={tickerItems} />
@@ -213,6 +228,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
           </div>
         </div>
         <LeagueNav leagueId={league.id} />
+        {gaps.length > 0 && <LineupGapBanner leagueId={league.id} gaps={gaps} />}
         {compliance && !compliance.compliant && (
           <CapAlertBanner
             leagueId={league.id}
