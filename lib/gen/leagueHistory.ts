@@ -5,6 +5,7 @@ import { LEAGUE, Position } from '../tuning';
 import { NameRegistry, pickUniqueName } from './names';
 import { SeasonStats } from '../types';
 import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS } from '../awards';
+import { AWARDED_TYPES } from '../awardTypes';
 import { RECORD_CATEGORIES, RecordCategory } from '../records';
 import { mergeStats } from '../stats';
 import { writeJson } from '../json';
@@ -1102,7 +1103,24 @@ function collectCareerRecords(stars: HistPlayer[], seasonYear: number, abbrOf: (
 // Awards
 // ---------------------------------------------------------------------------
 
-const AWARD_ORDER = ['AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] as const;
+/**
+ * The trophies a seeded year hands out, in the order they are written.
+ * `AWARDED_TYPES` and not the full `AWARD_TYPES`, because the retired,
+ * undivided 'AWARD_ROTY' must never be GENERATED — only read.
+ *
+ * THE SEEDED PAST USES THE MODERN PAIR THROUGHOUT, including decades that
+ * notionally predate the split. Real football did split its rookie award at a
+ * date, so staging it — one trophy for the old years, two for the new — is
+ * defensible flavour, and it was the other candidate here. It loses because
+ * this backstory is fiction generated fresh, today, at league creation: there
+ * is no in-fiction event the game can show a user to explain why the history
+ * table has one rookie column down to 2019 and two from 2020, so a staged
+ * split reads as the app being inconsistent with itself rather than as a rule
+ * that changed. Saves created BEFORE this change keep the single 'AWARD_ROTY'
+ * rows they were seeded with and keep rendering them under their real name;
+ * this only governs what a newly seeded past looks like.
+ */
+const AWARD_ORDER = AWARDED_TYPES;
 
 /** Same wording as lib/awards.ts statLineFor, so seeded and live rows read identically. */
 function statLineFor(s: CoreLine, isDefensive: boolean): string {
@@ -1116,7 +1134,7 @@ function statLineFor(s: CoreLine, isDefensive: boolean): string {
  * Award winners for every seeded year, scored with the LIVE formulas
  * (lib/awards.ts offensiveScore/defensiveScore) rather than a second opinion
  * invented here — the seeded past is judged by the same standard the user's
- * own seasons will be. Five distinct players per year, so nothing in the
+ * own seasons will be. Six distinct players per year, so nothing in the
  * table ever reads as a duplicate.
  */
 function pickAwards(rng: Rng, stars: HistPlayer[], seasons: SeasonHistory[], teams: HistoryTeam[]): AwardRow[] {
@@ -1143,13 +1161,33 @@ function pickAwards(rng: Rng, stars: HistPlayer[], seasons: SeasonHistory[], tea
     };
 
     // Settle the narrow trophies first. Championship-game MVP can only come
-    // from one roster and Rookie of the Year from one draft class, so picking
-    // the open-field awards first strands them: the first version of this left
-    // two seasons with no championship MVP at all because a dominant club's
-    // whole cast had already been spent on the league-wide awards.
+    // from one roster and a Rookie of the Year from one draft class AND one
+    // side of the ball, so picking the open-field awards first strands them:
+    // the first version of this left two seasons with no championship MVP at
+    // all because a dominant club's whole cast had already been spent on the
+    // league-wide awards. The two rookie awards are now the narrowest pools
+    // in the list — a single class, halved — so they go first of all.
+    //
+    // The rookie split uses the SAME `isDef` partition as OPOY/DPOY two lines
+    // below, so a seeded rookie is never judged on the wrong side of the ball
+    // — the identical rule lib/awards.ts applies to a live season.
+    //
+    // Measured: roughly one seeded year in ten names no offensive rookie and
+    // one in eight no defensive one, because `stars` is a few dozen legends
+    // across two decades and some years simply have no first-year man on that
+    // side of the ball worth writing down. That is a real gap the undivided
+    // award did not have (any rookie filled it), and it is left alone: the
+    // history table is a LIST of rows, not a grid with a cell per year, so a
+    // year that hands out five trophies instead of six reads as a thin draft
+    // class rather than as a hole. Inventing a winner to fill the slot would
+    // put a name in the record the generated past cannot support — the exact
+    // dangling reference `ensureRecordHoldersAppear` below exists to prevent.
+    // A LIVE season never has this problem; it ranks every rostered rookie,
+    // not a star shortlist.
     const winners: Record<string, (typeof field)[number] | null> = {
+      AWARD_OROTY: take(field.filter((c) => c.rookie && !c.isDef)),
+      AWARD_DROTY: take(field.filter((c) => c.rookie && c.isDef)),
       AWARD_SBMVP: take(field.filter((c) => c.p.teamId === season.championId)),
-      AWARD_ROTY: take(field.filter((c) => c.rookie)),
       AWARD_MVP: take(field),
       AWARD_OPOY: take(field.filter((c) => !c.isDef)),
       AWARD_DPOY: take(field.filter((c) => c.isDef)),

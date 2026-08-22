@@ -3,6 +3,7 @@ import { Rng, clamp } from './rng';
 import { readJson, writeJson } from './json';
 import { resolveStartYear } from './leagueYear';
 import { AGE_CURVE, DEV_TRAIT_MULT, POSITION_AGE_PROFILE, DEFAULT_AGE_PROFILE, WORKOUTS, Position } from './tuning';
+import { AWARD_TYPES } from './awardTypes';
 
 /**
  * ===========================================================================
@@ -613,12 +614,17 @@ export interface DynastyXpBreakdown {
 }
 
 /**
- * Exported so lib/leaderboard.ts counts the SAME awards this file does. The
- * board recomputes XP in a batch rather than per league, and a second copy of
- * this list is exactly how a leaderboard number and a Dynasty screen number
- * start disagreeing about the same franchise.
+ * Re-exported, not redefined. This file used to hold its own copy of the list
+ * so lib/leaderboard.ts could count the SAME awards it does; the list now
+ * lives in lib/awardTypes.ts, where the seeded-history generator, the dynasty
+ * score and every label map read it too. Kept as a named export here because
+ * lib/leaderboard.ts imports it from this module, and because "the awards the
+ * XP model pays for" is a fact about THIS file worth being able to point at.
+ *
+ * It includes the retired 'AWARD_ROTY' on purpose: a pre-split Rookie of the
+ * Year already banked in a save must keep paying its XP.
  */
-export const AWARD_TYPES = ['AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'];
+export { AWARD_TYPES };
 
 interface XpInputs {
   /** One row per completed season the user was GM for. */

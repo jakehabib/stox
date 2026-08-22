@@ -7,6 +7,7 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { LeagueNav } from '@/components/LeagueNav';
 import { LeagueWireTicker } from '@/components/ds/LeagueWireTicker';
 import { isBreakingNews } from '@/lib/wireRank';
+import { AWARD_TYPES } from '@/lib/awardTypes';
 import { loadWorkoutSlots } from '@/lib/workouts';
 import { CapAlertBanner } from '@/components/ds/CapAlertBanner';
 import { LineupGapBanner } from '@/components/ds/LineupGapBanner';
@@ -73,7 +74,10 @@ export default async function LeagueLayout({ children, params }: { children: Rea
         // ticker-worthy half; the individual selections are the record, and
         // they are read where they belong — the player's card and the GM's
         // career page.
-        type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'POSITION', 'DRAFT', 'FIRE', 'CHAMPION', 'ALL_STAR_ROSTER', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] },
+        // ...AWARD_TYPES rather than the trophies spelled out again: the
+        // ticker is where a new award is least likely to be missed by a
+        // reader and most likely to be missed by a maintainer.
+        type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'POSITION', 'DRAFT', 'FIRE', 'CHAMPION', 'ALL_STAR_ROSTER', ...AWARD_TYPES] },
         seasonYear: { gte: league.seasonYear - 1 },
       },
       orderBy: { createdAt: 'desc' },

@@ -1,6 +1,12 @@
 import { prisma } from './db';
 import { resolveStartYear } from './leagueYear';
 import { allStarTallyForTeam, GmAllStarTally } from './allStars';
+// The trophy vocabulary lives in lib/awardTypes.ts, not here. This file both
+// QUERIES by `Object.keys(AWARD_LABEL)` and RENDERS from it, so a label map
+// that fell behind the writer would quietly drop a real award out of a GM's
+// career total AND out of the honours list under it — the count and the
+// cabinet lying together. Retired types are in the map on purpose.
+import { AWARD_LABEL } from './awardTypes';
 
 /**
  * ===========================================================================
@@ -99,14 +105,6 @@ export interface GmCareerSummary {
   allStars: GmAllStarTally;
   badges: GmBadge[];
 }
-
-const AWARD_LABEL: Record<string, string> = {
-  AWARD_MVP: 'MVP',
-  AWARD_OPOY: 'Offensive Player of the Year',
-  AWARD_DPOY: 'Defensive Player of the Year',
-  AWARD_ROTY: 'Rookie of the Year',
-  AWARD_SBMVP: 'Championship MVP',
-};
 
 /**
  * How a stored `playoffResult` is spelled anywhere it is shown to a GM. One

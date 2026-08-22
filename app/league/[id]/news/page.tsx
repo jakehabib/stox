@@ -3,12 +3,17 @@ import { getLeagueContext } from '@/lib/league-data';
 import Link from 'next/link';
 import { TeamLogo } from '@/components/TeamLogo';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { AWARD_TYPES, AWARD_CODE } from '@/lib/awardTypes';
 
 const TYPE_LABELS: Record<string, string> = {
   ALL: 'All', NEWS: 'Performances', TRADE: 'Trades', SIGN: 'Signings', CUT: 'Releases',
   DRAFT: 'Draft', INJURY: 'Injuries', RESIGN: 'Re-signs', TAG: 'Tags', CHAMPION: 'Championships', FIRE: 'Firings',
-  AWARD_MVP: 'MVP', AWARD_OPOY: 'OPOY', AWARD_DPOY: 'DPOY', AWARD_ROTY: 'ROTY', AWARD_SBMVP: 'SB MVP',
   DEV_MILESTONE: 'Development', POSITION: 'Position Changes',
+  // Trophies get the SHORT form here — these are filter chips and badges in a
+  // dense feed, the one place a full "Offensive Rookie of the Year" will not
+  // fit. Spread off the shared list so a new award cannot arrive with no
+  // badge text at all. See lib/awardTypes.ts.
+  ...AWARD_CODE,
 };
 // RESIGN belongs here now that something actually writes one — the label,
 // badge style and relevance weight for it already existed, but the type had
@@ -34,12 +39,11 @@ const TYPE_STYLE: Record<string, string> = {
   // borrowing the signing ink would make a reshuffled line read as business
   // the club did on the market.
   POSITION: 'border-line text-chalk bg-chalk/[0.06]',
-  AWARD_MVP: 'border-gold/40 text-gold bg-gold/10',
-  AWARD_OPOY: 'border-gold/40 text-gold bg-gold/10',
-  AWARD_DPOY: 'border-gold/40 text-gold bg-gold/10',
-  AWARD_ROTY: 'border-gold/40 text-gold bg-gold/10',
-  AWARD_SBMVP: 'border-gold/40 text-gold bg-gold/10',
   DEV_MILESTONE: 'border-accent2/30 text-accent2 bg-accent2/10',
+  // Every trophy wears the same gold, so this is generated off the one list
+  // rather than written out per type — five hand-copied identical lines is
+  // how the sixth award ends up rendering unstyled.
+  ...Object.fromEntries(AWARD_TYPES.map((t) => [t, 'border-gold/40 text-gold bg-gold/10'])),
 };
 
 /**
@@ -49,7 +53,11 @@ const TYPE_STYLE: Record<string, string> = {
  * a heavier treatment instead of rendering 80 identical rows.
  */
 const TYPE_WEIGHT: Record<string, number> = {
-  CHAMPION: 3, AWARD_MVP: 3, AWARD_SBMVP: 3, AWARD_OPOY: 2, AWARD_DPOY: 2, AWARD_ROTY: 2,
+  CHAMPION: 3, AWARD_MVP: 3, AWARD_SBMVP: 3,
+  // The individual trophies, all at the same weight the four originals had:
+  // splitting Rookie of the Year in two did not make either half a smaller
+  // story. AWARD_ROTY stays listed for saves played before the split.
+  AWARD_OPOY: 2, AWARD_DPOY: 2, AWARD_OROTY: 2, AWARD_DROTY: 2, AWARD_ROTY: 2,
   FIRE: 2, TRADE: 2, DRAFT: 2,
   SIGN: 1, RESIGN: 1, TAG: 1, CUT: 1, POSITION: 1,
   NEWS: 0, INJURY: 0, DEV_MILESTONE: 0,

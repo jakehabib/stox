@@ -31,7 +31,13 @@ export interface WireCandidate {
  */
 const TYPE_WEIGHT: Record<string, number> = {
   CHAMPION: 100,
-  AWARD_SBMVP: 90, AWARD_MVP: 90, AWARD_OPOY: 70, AWARD_DPOY: 70, AWARD_ROTY: 70,
+  AWARD_SBMVP: 90, AWARD_MVP: 90, AWARD_OPOY: 70, AWARD_DPOY: 70,
+  // The two rookie trophies carry the same weight the single, undivided
+  // Rookie of the Year did — splitting the award in two did not make either
+  // half a smaller story. AWARD_ROTY is still listed because saves played
+  // before the split have those rows in their wire and they must not silently
+  // fall through to the default weight. See lib/awardTypes.ts.
+  AWARD_OROTY: 70, AWARD_DROTY: 70, AWARD_ROTY: 70,
   // The All-Star rosters coming out is the story of the week the regular
   // season ends — below a title and the individual trophies, above a firing.
   ALL_STAR_ROSTER: 65,

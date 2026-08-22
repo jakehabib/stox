@@ -50,12 +50,15 @@ import { allStarYearsFor } from '@/lib/allStars';
 import { startersAt } from '@/lib/lineup';
 import { slotVerdict } from '@/components/ds/DepthCompare';
 import { PositionChangeCard, PositionOption } from '@/components/PositionChangeCard';
-
-/** Transaction types lib/season.ts writes one of per award, per season. */
-const AWARD_LABEL: Record<string, string> = {
-  AWARD_MVP: 'MVP', AWARD_OPOY: 'Offensive Player of the Year', AWARD_DPOY: 'Defensive Player of the Year',
-  AWARD_ROTY: 'Rookie of the Year', AWARD_SBMVP: 'Championship MVP',
-};
+/**
+ * Every season-award transaction type, and its full name. Imported, not
+ * re-listed: this page both QUERIES by `Object.keys(AWARD_LABEL)` and renders
+ * from it, so a stale copy would drop a real trophy off a man's card
+ * entirely. Includes retired types — a pre-split Rookie of the Year is still
+ * a Rookie of the Year on the card of the man who won it. See
+ * lib/awardTypes.ts.
+ */
+import { AWARD_LABEL } from '@/lib/awardTypes';
 
 /**
  * What the honours pill says when a man has won more than one thing.

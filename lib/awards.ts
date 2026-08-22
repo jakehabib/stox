@@ -9,10 +9,11 @@ import { SeasonStats, BoxScore } from './types';
  * Computed once, right when the championship game finishes, from that
  * season's accumulated Player.seasonStats — before those numbers get rolled
  * into career stats and reset for the new year. seasonStats is REGULAR SEASON
- * ONLY (the postseason has its own bucket, Player.playoffStats), so MVP/OPOY/
- * DPOY/ROTY are decided on regular-season production even though they are
- * announced after the final — which is both what the real awards do and what
- * stops a run to the title from outvoting a better year. Championship MVP is
+ * ONLY (the postseason has its own bucket, Player.playoffStats), so MVP,
+ * OPOY, DPOY and the two Rookie of the Year awards are decided on regular-
+ * season production even though they are announced after the final — which is
+ * both what the real awards do and what stops a run to the title from
+ * outvoting a better year. Championship MVP is
  * the deliberate exception and is scored off the final's own box line. [TUNE] weights are a rough
  * fantasy-points-style blend, not a real award-voting model — good enough to
  * produce a plausible, explainable winner without needing real ballots.
@@ -47,7 +48,15 @@ export interface SeasonAwards {
   mvp: AwardWinner | null;
   opoy: AwardWinner | null;
   dpoy: AwardWinner | null;
-  roty: AwardWinner | null;
+  /**
+   * Rookie of the Year, one per side of the ball, as real football hands it
+   * out. Both are picked from the SAME `isDefensive` partition that decides
+   * OPOY and DPOY, so a rookie can never be judged on the wrong side of the
+   * ball and the two rookie trophies always agree with the two veteran ones
+   * about who is a defender.
+   */
+  oroty: AwardWinner | null;
+  droty: AwardWinner | null;
   sbmvp: AwardWinner | null;
 }
 
@@ -120,7 +129,14 @@ export async function computeSeasonAwards(leagueId: string, seasonYear: number):
   const byOverall = [...scored].sort((a, b) => Math.max(b.off, b.def) - Math.max(a.off, a.def));
   const byOff = [...scored].filter((p) => !p.isDefensive).sort((a, b) => b.off - a.off);
   const byDef = [...scored].filter((p) => p.isDefensive).sort((a, b) => b.def - a.def);
-  const rookies = [...scored].filter((p) => p.experience === 0).sort((a, b) => Math.max(b.off, b.def) - Math.max(a.off, a.def));
+  // Rookies are split by the same `isDefensive` flag `byOff`/`byDef` use
+  // above, and each side is then ranked on ITS OWN score rather than on
+  // `Math.max(off, def)`. That matters: a rookie corner with a pick-six has a
+  // non-zero offensive score, and ranking him on the better of his two
+  // numbers would let a defender's receiving line decide an offensive
+  // trophy. One partition, two awards, no crossover.
+  const rookieOff = [...scored].filter((p) => p.experience === 0 && !p.isDefensive).sort((a, b) => b.off - a.off);
+  const rookieDef = [...scored].filter((p) => p.experience === 0 && p.isDefensive).sort((a, b) => b.def - a.def);
 
   const toWinner = (w: (typeof scored)[number] | undefined): AwardWinner | null =>
     w ? { playerId: w.playerId, name: w.name, position: w.position, teamId: w.teamId, teamAbbr: w.teamAbbr, score: Math.round(Math.max(w.off, w.def)), statLine: w.statLine } : null;
@@ -129,7 +145,8 @@ export async function computeSeasonAwards(leagueId: string, seasonYear: number):
     mvp: toWinner(byOverall[0]),
     opoy: toWinner(byOff[0]),
     dpoy: toWinner(byDef[0]),
-    roty: toWinner(rookies[0]),
+    oroty: toWinner(rookieOff[0]),
+    droty: toWinner(rookieDef[0]),
     sbmvp: await computeSuperBowlMvp(leagueId, seasonYear),
   };
 }

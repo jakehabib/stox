@@ -9,15 +9,15 @@ import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
+// One shared trophy vocabulary — this table is queried by
+// `Object.keys(AWARD_LABEL)` and its "Awards Handed Out" tally is counted off
+// the same rows, so a label map that fell behind the writer would under-count
+// the league's own history in a stat box. See lib/awardTypes.ts.
+import { AWARD_LABEL } from '@/lib/awardTypes';
 
 const RESULT_LABEL: Record<string, string> = {
   MISSED: 'Missed Playoffs', WILDCARD: 'Lost Wild Card', DIVISIONAL: 'Lost Divisional',
   CONFERENCE: 'Lost Conference', RUNNER_UP: 'Runner-Up', CHAMPION: 'Champion',
-};
-
-const AWARD_LABEL: Record<string, string> = {
-  AWARD_MVP: 'MVP', AWARD_OPOY: 'Offensive Player of the Year', AWARD_DPOY: 'Defensive Player of the Year',
-  AWARD_ROTY: 'Rookie of the Year', AWARD_SBMVP: 'Championship MVP',
 };
 
 export default async function HistoryPage({ params, searchParams }: { params: { id: string }; searchParams: { team?: string } }) {

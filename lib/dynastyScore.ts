@@ -1,4 +1,10 @@
 import { prisma } from './db';
+// Imported, never re-listed here: this file and lib/dynasty.ts once held two
+// separate copies of the same five strings, which is how a new trophy gets
+// counted on the Dynasty screen and silently missed by this leaderboard.
+// Retired types are in the list on purpose — an old award is still an award
+// in the club's cabinet. See lib/awardTypes.ts.
+import { AWARD_TYPES } from './awardTypes';
 
 /**
  * ===========================================================================
@@ -44,8 +50,6 @@ import { prisma } from './db';
  * the breakdown a team can see exactly why its score is what it is.
  * ===========================================================================
  */
-
-const AWARD_TYPES = ['AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'];
 
 export interface DynastyScoreEntry {
   teamId: string;

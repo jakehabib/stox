@@ -33,14 +33,17 @@ import { SeasonStats } from '@/lib/types';
 import { AllStarHonorRoll, AllStarHonor } from '@/components/ds/AllStarHonorRoll';
 import { ALL_STAR_TYPE, allStarSnubFor } from '@/lib/allStars';
 import { tip } from '@/lib/glossary';
+import { AWARD_TYPES, AWARD_LABEL, AWARD_CODE } from '@/lib/awardTypes';
 
-const AWARD_TYPES: { type: string; code: string; label: string }[] = [
-  { type: 'AWARD_MVP', code: 'MVP', label: 'MVP' },
-  { type: 'AWARD_OPOY', code: 'OPOY', label: 'Offensive Player of the Year' },
-  { type: 'AWARD_DPOY', code: 'DPOY', label: 'Defensive Player of the Year' },
-  { type: 'AWARD_ROTY', code: 'ROTY', label: 'Rookie of the Year' },
-  { type: 'AWARD_SBMVP', code: 'SB MVP', label: 'Championship MVP' },
-];
+/**
+ * The season's trophies, in announcement order, built off the one shared list
+ * in lib/awardTypes.ts rather than a fourth hand-written copy of it. Retired
+ * types are included deliberately: this reads a REAL season's rows, and a
+ * save part-played before the rookie award was split still has an
+ * 'AWARD_ROTY' row to announce.
+ */
+const AWARD_META: { type: string; code: string; label: string }[] =
+  AWARD_TYPES.map((type) => ({ type, code: AWARD_CODE[type], label: AWARD_LABEL[type] }));
 
 const ORDINAL = (n: number) => {
   const s = ['th', 'st', 'nd', 'rd'];
@@ -91,7 +94,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   if (league.phase === 'OFFSEASON') {
     const [championTx, awardTxs] = await Promise.all([
       prisma.transaction.findFirst({ where: { leagueId: league.id, seasonYear: league.seasonYear, type: 'CHAMPION' } }),
-      prisma.transaction.findMany({ where: { leagueId: league.id, seasonYear: league.seasonYear, type: { in: AWARD_TYPES.map((a) => a.type) } } }),
+      prisma.transaction.findMany({ where: { leagueId: league.id, seasonYear: league.seasonYear, type: { in: AWARD_TYPES } } }),
     ]);
     if (championTx?.teamId) {
       const awardTeamIds = Array.from(new Set(awardTxs.map((t) => t.teamId).filter(Boolean))) as string[];
@@ -106,7 +109,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           championTeamId: champTeam.id,
           championAbbr: champTeam.abbr,
           awards: awardTxs.map((t) => {
-            const meta = AWARD_TYPES.find((a) => a.type === t.type)!;
+            const meta = AWARD_META.find((a) => a.type === t.type)!;
             return { code: meta.code, label: meta.label, name: t.headline.replace(/\s*\([^)]+\)\s*$/, ''), teamAbbr: t.teamId ? (teamById.get(t.teamId)?.abbr ?? 'FA') : 'FA', detail: t.detail };
           }),
         };

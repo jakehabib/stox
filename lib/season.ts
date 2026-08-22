@@ -1070,7 +1070,13 @@ async function recordSeasonAwards(leagueId: string, seasonYear: number, week: nu
     ['AWARD_MVP', awards.mvp],
     ['AWARD_OPOY', awards.opoy],
     ['AWARD_DPOY', awards.dpoy],
-    ['AWARD_ROTY', awards.roty],
+    // Two rookie trophies, one per side of the ball, exactly as real football
+    // hands them out. The retired single 'AWARD_ROTY' is deliberately absent:
+    // it is read-only history now — thousands of rows in already-played saves
+    // still carry it, and every reader still spells it "Rookie of the Year".
+    // See lib/awardTypes.ts.
+    ['AWARD_OROTY', awards.oroty],
+    ['AWARD_DROTY', awards.droty],
     ['AWARD_SBMVP', awards.sbmvp],
   ];
   for (const [type, winner] of entries) {
