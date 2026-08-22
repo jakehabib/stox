@@ -147,8 +147,8 @@ function PitchView({ signedIn }: { signedIn: boolean }) {
             Football
           </h1>
           <p className="text-chalk/80 mt-5 text-base sm:text-lg leading-relaxed">
-            You take the chair. Thirty-two clubs, about fifteen hundred generated players, a salary cap that remembers
-            every promise you made, and a draft class nobody has scouted yet.
+            You take the chair. Thirty-two clubs, about fifteen hundred players you have never heard of, a salary cap
+            that remembers every promise you made, and a draft class nobody has scouted yet.
           </p>
           <p className="text-muted mt-3 text-sm sm:text-base leading-relaxed">
             Sim the season a week at a time. Work the phones at the deadline. Find out how long you can keep a winner

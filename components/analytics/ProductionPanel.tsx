@@ -79,7 +79,7 @@ export function ProductionPanel({ men, leagueId, teamAccent, teamAbbr, seasonYea
         <p className="text-sm text-muted py-6 max-w-[62ch]">
           None of your biggest cap hits has a full season behind him yet, so there is nothing to chart. It fills in
           as they get through a year.
-          {linemen.length > 0 && ' Linemen would not appear in any case — we do not track their snaps.'}
+          {linemen.length > 0 && ' Linemen never appear here — line play doesn\'t produce a stat line to chart.'}
         </p>
       ) : (
         <>
@@ -90,8 +90,8 @@ export function ProductionPanel({ men, leagueId, teamAccent, teamAbbr, seasonYea
           {(linemen.length > 0 || tooNew.length > 0) && (
             <NotOnRecord>
               {linemen.length > 0 && (
-                <>No line for <b className="text-chalk">{linemen.map((m) => m.name).join(', ')}</b> — we do not
-                  track linemen&apos;s snaps, so there is nothing to plot.{' '}</>
+                <>No line for <b className="text-chalk">{linemen.map((m) => m.name).join(', ')}</b> — line play
+                  doesn&apos;t produce a stat line, so there is nothing to plot.{' '}</>
               )}
               {tooNew.length > 0 && (
                 <><b className="text-chalk">{tooNew.map((m) => m.name).join(', ')}</b>

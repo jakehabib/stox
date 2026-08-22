@@ -84,7 +84,7 @@ function blockShape(result: {
 }
 
 const PHASE_NOUN: Record<string, string> = {
-  PRESEASON: 'preseason', REGULAR: 'week', PLAYOFFS: 'playoff round', OFFSEASON: 'offseason step',
+  PRESEASON: 'preseason week', REGULAR: 'week', PLAYOFFS: 'playoff round', OFFSEASON: 'offseason step',
   FREE_AGENCY: 'free agency week',
 };
 
@@ -173,7 +173,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
   const runSingle = () => {
     setMenuOpen(false);
     startTransition(async () => {
-      setProgress('Simulating…');
+      setProgress('Working…');
       const result = await advanceWeekAction(leagueId);
       setProgress(null);
       if (result.blocked) { showBlock(result.summary, blockShape(result)); return; }
@@ -205,10 +205,10 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
       let earnedTrophy: TrophyData | null = null;
       // Driving this one week at a time from the client (instead of one
       // opaque server-side loop) is what makes real progress visible —
-      // "Simulating Week 3…" — instead of a single static spinner label
+      // "Working through week 3…" — instead of a single static spinner label
       // for however long the whole batch takes.
       while (iterations < MAX_ITERATIONS) {
-        setProgress(`Simulating ${PHASE_NOUN[phase] ?? 'step'} ${week}…`);
+        setProgress(`Working through ${PHASE_NOUN[phase] ?? 'step'} ${week}…`);
         const result = await advanceWeekAction(leagueId);
         // The cap gate refused to move time — stop the batch immediately
         // rather than spinning MAX_ITERATIONS times against a closed door.
@@ -297,7 +297,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
       )}
       <div className="flex">
         <button onClick={runSingle} disabled={pending} className={`btn-primary ${OPTIONS.length > 0 ? 'rounded-r-none' : ''}`}>
-          {pending ? (progress ?? 'Simulating…') : 'Advance ▸'}
+          {pending ? (progress ?? 'Working…') : 'Advance ▸'}
         </button>
         {OPTIONS.length > 0 && (
           <button

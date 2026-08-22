@@ -111,7 +111,7 @@ export function CreateLeagueForm({
               Choose Your Franchise
             </h1>
             <p className="text-muted text-sm mt-2 max-w-xl">
-              Thirty-two clubs, none of them real. Pick the one you want to run for the next twenty years — the
+              Thirty-two clubs, no history but the one you write. Pick the one you want to run for the next twenty years — the
               league builds itself around your answer.
             </p>
           </div>

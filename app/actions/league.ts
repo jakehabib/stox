@@ -129,9 +129,10 @@ export async function updateSettingsAction(leagueId: string, formData: FormData)
     simVariance: Number(formData.get('simVariance') || current.simVariance),
     homeFieldAdvantage: formData.get('homeFieldAdvantage') === 'on',
     recapVerbosity: String(formData.get('recapVerbosity') || current.recapVerbosity) as LeagueSettings['recapVerbosity'],
-    showAdvancedStats: formData.get('showAdvancedStats') === 'on',
-    autoAdvanceWeeks: formData.get('autoAdvanceWeeks') === 'on',
-    confirmRiskyMoves: formData.get('confirmRiskyMoves') === 'on',
+    // showAdvancedStats / autoAdvanceWeeks / confirmRiskyMoves are no longer
+    // on the form — no system reads them, so the screen stopped offering
+    // controls that do nothing. The `...current` spread above keeps whatever
+    // an existing save already stored.
   };
 
   await prisma.league.update({ where: { id: leagueId }, data: { settings: serializeSettings(next) } });

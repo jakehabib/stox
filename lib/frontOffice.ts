@@ -90,7 +90,11 @@ export async function buildFrontOfficeBrief(
       category: 'Contracts',
       headline: `${expiring.firstName} ${expiring.lastName}'s contract expires soon`,
       detail: `Market rate is around ${formatMoney(mv)}/yr — get ahead of it before he hits the open market.`,
-      action: 'Open Extension',
+      // NOT 'Open Extension'. This query is yearsRemaining <= 1, and a man in
+      // the last year of his deal is a re-sign, not an extension — his card
+      // shows a Re-sign button and no extension form at all. The brief was
+      // naming a button that is never on the screen it links to.
+      action: 'Re-sign him',
       href: `/player/${expiring.id}`,
     });
   }

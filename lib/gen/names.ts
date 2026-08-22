@@ -123,7 +123,7 @@ export const TEAM_SEEDS: TeamSeed[] = [
   { city: 'Atlanta',      nickname: 'Blaze',       abbr: 'ATL', conference: 'NFC', division: 'South' },
   { city: 'Charlotte',    nickname: 'Pumas',       abbr: 'CLT', conference: 'NFC', division: 'South' },
   // NFC West
-  { city: 'San Francisco',nickname: 'Prospect',    abbr: 'SFO', conference: 'NFC', division: 'West' },
+  { city: 'San Francisco',nickname: 'Seals',       abbr: 'SFO', conference: 'NFC', division: 'West' },
   { city: 'Los Angeles',  nickname: 'Stars',       abbr: 'LAX', conference: 'NFC', division: 'West' },
   { city: 'Seattle',      nickname: 'Cascades',    abbr: 'SEA', conference: 'NFC', division: 'West' },
   { city: 'San Diego',    nickname: 'Privateers',  abbr: 'SDG', conference: 'NFC', division: 'West' },

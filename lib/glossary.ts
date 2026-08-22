@@ -584,7 +584,7 @@ export const GLOSSARY = {
   skillTree: {
     term: 'Skill branches',
     definition: 'Three lines of upgrade — scouting, negotiation and player development. No prerequisites; spend where you like.',
-    why: 'Nothing in here touches a rating, a development roll or a game result. A level 50 GM and a level 1 GM play the same football; the level 50 one just sees more of it.',
+    why: 'Nothing in here touches a rating, a player\'s development or a game result. A level 50 GM and a level 1 GM play the same football; the level 50 one just sees more of it.',
   },
   gmBadge: {
     term: 'GM badge',

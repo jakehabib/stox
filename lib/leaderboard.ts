@@ -84,9 +84,9 @@ export function sportLabel(sport: string): string {
  * this string does not, the diff is in one file and obvious.
  */
 export const LEADERBOARD_CAVEAT =
-  'Every number here comes from a single-player simulation the player controls. ' +
-  'Seasons can be simulated as fast as you can click, so a bigger total often means more time spent advancing, ' +
-  'not better front-office work. That is why every row shows how many seasons it took, and why "Per Season" is one tab away.';
+  'Everyone here runs their own league at their own pace, and seasons go by as fast as you care to click. ' +
+  'So a big career total can just mean more years played, not better front-office work. ' +
+  'Every row shows how many seasons it took, and Per Season is one tab away.';
 
 /**
  * How many rows the board will hold at once. A ceiling on work, not on

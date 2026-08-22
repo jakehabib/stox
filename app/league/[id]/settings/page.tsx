@@ -12,7 +12,7 @@ export default async function SettingsPage({ params }: { params: { id: string } 
     <div className="max-w-3xl space-y-6">
       <div>
         <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">League Settings</h1>
-        <p className="text-muted text-sm mt-1">Full control surface from the design doc. A few toggles marked "stored only" are recorded but not yet wired into a system.</p>
+        <p className="text-muted text-sm mt-1">How this league plays. Changes take effect from your next advance — nothing already on the books is rewritten.</p>
       </div>
 
       <form action={action} className="space-y-6">
@@ -110,18 +110,6 @@ export default async function SettingsPage({ params }: { params: { id: string } 
             label="Recap verbosity" name="recapVerbosity" defaultValue={settings.recapVerbosity}
             options={[['SHORT', 'Short'], ['NORMAL', 'Normal'], ['DETAILED', 'Detailed']]}
             tip="How much detail the auto-generated write-up after each game includes."
-          />
-          <Toggle
-            label="Show advanced stats (stored only)" name="showAdvancedStats" defaultChecked={settings.showAdvancedStats}
-            tip="Recorded but not wired into any screen yet — toggling it has no visible effect right now."
-          />
-          <Toggle
-            label="Auto-advance weeks (stored only)" name="autoAdvanceWeeks" defaultChecked={settings.autoAdvanceWeeks}
-            tip="Recorded but not wired into any screen yet — toggling it has no visible effect right now."
-          />
-          <Toggle
-            label="Confirm risky moves (stored only)" name="confirmRiskyMoves" defaultChecked={settings.confirmRiskyMoves}
-            tip="Recorded but not wired into any screen yet — toggling it has no visible effect right now."
           />
         </Section>
 
