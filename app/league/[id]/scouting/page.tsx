@@ -212,7 +212,6 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
         <SectionHeading
           eyebrow="Free · public · identical for every team"
           title="The Consensus Board"
-          tip={tip('consensusBoard')}
           action={
             <Link href={`/league/${league.id}/draft`} className="text-xs text-muted hover:text-chalk">
               Full class ({classSize}) →

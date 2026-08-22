@@ -347,6 +347,9 @@ async function advanceWeekStep(leagueId: string) {
       const state = await prisma.draftState.findUnique({ where: { leagueId } });
       if (!state?.complete) return { summary: 'Draft is in progress — make your picks, then advance.' };
 
+      // ---------------------------------------------------------------
+      // THE UNDRAFTED SIGN THE WEEK THE DRAFT ENDS
+      // ---------------------------------------------------------------
       // Whoever this class's draft left undrafted was never converted back
       // into an ordinary free agent — isDraftee only ever got cleared inside
       // draftPlayer() for players actually selected. Left unfixed, a stale
@@ -355,8 +358,30 @@ async function advanceWeekStep(leagueId: string) {
       // aged (progression only runs on status: 'ACTIVE'), and kept
       // resurfacing in every future year's draft pool mixed in with the
       // real new class, since the pool query has no year filter of its own.
+      //
+      // The first fix for that was `draftYear: { lt: seasonYear }`, which is
+      // a YEAR LATE and had two consequences, both bad and both invisible:
+      //
+      //   UNSIGNABLE. This year's undrafted class stays flagged until NEXT
+      //   year's draft completes — which is after next year's free agency has
+      //   already closed. So an undrafted rookie first reached an open market
+      //   two offseasons after his draft. In the real sport he signs within
+      //   days of the seventh round ending.
+      //
+      //   UNCLEARABLE. `progressFreeAgents` (lib/development.ts) selects
+      //   `isDraftee: false`, so the very cohort its attrition curve was
+      //   written for — its comment says so in as many words, "most of the
+      //   ~400 players who enter the pool every year are 22-year-old
+      //   undrafted rookies" — was excluded from it. They neither signed nor
+      //   left, which is the pile-up the churn rule exists to prevent.
+      //
+      // One broken conversion caused both halves. The draft is over and
+      // DraftState says so, so ANYBODY still carrying the flag went
+      // undrafted: no year filter is needed, and dropping it is also what
+      // frees the fantasy-draft leftovers, which are written with a null
+      // draftYear and could never match a `lt` comparison at all.
       const undrafted = await prisma.player.updateMany({
-        where: { leagueId, isDraftee: true, draftYear: { lt: league.seasonYear } },
+        where: { leagueId, isDraftee: true },
         data: { isDraftee: false },
       });
 
@@ -391,8 +416,23 @@ async function advanceWeekStep(leagueId: string) {
     case 'FANTASY_DRAFT': {
       const state = await prisma.draftState.findUnique({ where: { leagueId } });
       if (!state?.complete) return { summary: 'Fantasy draft is in progress — make your picks, then advance.' };
+      // Everyone nobody took is a free agent now, exactly as at the end of a
+      // rookie draft. Without this a fantasy league's leftovers were stranded
+      // as prospects forever — written with a NULL draftYear, so the old
+      // `draftYear: { lt: seasonYear }` conversion in the DRAFT case could
+      // never match them either. Measured: a fantasy league's free-agency
+      // screen read ZERO available in every week of every season of its
+      // existence, while 130 unsigned players sat invisible behind it.
+      const leftovers = await prisma.player.updateMany({
+        where: { leagueId, isDraftee: true },
+        data: { isDraftee: false },
+      });
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'PRESEASON', week: 1 } });
-      return { summary: 'Fantasy draft complete. Setting up your inaugural season.' };
+      return {
+        summary: leftovers.count > 0
+          ? `Fantasy draft complete. ${leftovers.count} undrafted player(s) are on the free agent wire. Setting up your inaugural season.`
+          : 'Fantasy draft complete. Setting up your inaugural season.',
+      };
     }
 
     default:

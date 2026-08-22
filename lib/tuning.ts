@@ -371,10 +371,18 @@ export const GENERATION = {
    * So a generated club is topped up to a legal size before it is written.
    * The band stops short of ROSTER_MAX on purpose: a club needs open slots
    * for its rookie class and for free agency, or cut-down day just deletes
-   * whatever it signed. [TUNE]
+   * whatever it signed.
+   *
+   * The ceiling is not arbitrary. `bidderState` gives a club
+   * `rosterMax - roster.length - rookieReserve` open slots to bid with, and
+   * rookieReserve is ceil(7 x ROOKIE_ROSTER_HIT_RATE) = 4 — so a club born at
+   * 49 has ZERO slots and is shut out of its own first free agency, which is
+   * the opposite of the point. 48 leaves every club at least one, and a
+   * measured 47..50 band also carried enough extra salary to push the
+   * end-of-season over-cap warning (INV-19) up by half again. [TUNE]
    */
   INITIAL_ROSTER_MIN: 47,
-  INITIAL_ROSTER_MAX: 50,
+  INITIAL_ROSTER_MAX: 48,
   /**
    * ---------------------------------------------------------------------
    * THE FRINGE POPULATION — camp bodies, recent cuts, career backups

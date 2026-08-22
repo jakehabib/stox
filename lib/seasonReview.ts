@@ -3,7 +3,7 @@ import { readJson } from './json';
 import { mergeStats } from './stats';
 import { Rng } from './rng';
 import { canonicalPosition } from './tuning';
-import { gradeLine, playedEnough, statLine } from './coachRoom';
+import { gradeLine, playedEnough, statLine, UNIT_OF } from './coachRoom';
 import { leadColumnKey } from './statLabels';
 import { positionRelativeScore } from './performanceScore';
 import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS } from './awards';
@@ -973,17 +973,18 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
   // --- Trajectory ----------------------------------------------------------
   if (bothHalves) {
     const t = sh.t!;
-    const fS = sh.firstStats, sS = sh.secondStats;
     const fG = sh.first.length, sG = sh.second.length;
+    // Same columns on both sides — see spokenSplit().
+    const [fS, sS] = spokenSplit(pos, sh.firstStats, sh.secondStats);
     if (t >= tBar && sh.firstPct <= 30 && sh.secondPct >= 55) {
       out.push({
         kind: 'SLOW_START', shape: sh, margin: (t - tBar) / tBar,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
         write: (v) => v.pick([
-          () => `Through week ${mid} it was ${spoken(pos, fS)}, and the year looked gone. After it: ${spoken(pos, sS)}.`,
-          () => `${capitalise(spoken(pos, fS))} in his first ${fG} games — then ${spoken(pos, sS)} in the ${sG} that followed.`,
-          () => `The opening half of his year was a genuine problem: ${spoken(pos, fS)} through week ${mid}. He closed it out with ${spoken(pos, sS)}.`,
-          () => `He started the season with ${spoken(pos, fS)} and ended it with ${spoken(pos, sS)}. By December nobody was talking about the start.`,
+          () => `Through week ${mid} it was ${fS}, and the year looked gone. After it: ${sS}.`,
+          () => `${capitalise(fS)} in his first ${fG} games — then ${sS} in the ${sG} that followed.`,
+          () => `The opening half of his year was a genuine problem: ${fS} through week ${mid}. He closed it out with ${sS}.`,
+          () => `He started the season with ${fS} and ended it with ${sS}. By December nobody was talking about the start.`,
         ])(),
       });
     } else if (t >= tBar && sh.secondPct >= 75 && sh.firstPct > 30) {
@@ -991,9 +992,9 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         kind: 'SURGED', shape: sh, margin: (t - tBar) / tBar,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
         write: (v) => v.pick([
-          () => `He was fine and no more than fine until about week ${mid} — ${spoken(pos, fS)} — and then went and put up ${spoken(pos, sS)}.`,
-          () => `${capitalise(spoken(pos, fS))} through the first ${fG}. Over the last ${sG}: ${spoken(pos, sS)}.`,
-          () => `Something turned around the halfway mark. ${capitalise(spoken(pos, fS))} before it, ${spoken(pos, sS)} after.`,
+          () => `He was fine and no more than fine until about week ${mid} — ${fS} — and then went and put up ${sS}.`,
+          () => `${capitalise(fS)} through the first ${fG}. Over the last ${sG}: ${sS}.`,
+          () => `Something turned around the halfway mark. ${capitalise(fS)} before it, ${sS} after.`,
         ])(),
       });
     } else if (t <= -tBar && sh.firstPct >= 60 && sh.secondPct <= 40) {
@@ -1001,10 +1002,10 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         kind: 'FADED', shape: sh, margin: (-t - tBar) / tBar,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
         write: (v) => v.pick([
-          () => `${capitalise(spoken(pos, fS))} through week ${mid}, and then ${spoken(pos, sS)} the rest of the way.`,
-          () => `For half a season he was one of the best things about us: ${spoken(pos, fS)} in ${fG} games. The other ${sG} came to ${spoken(pos, sS)}.`,
-          () => `Through week ${mid} — ${spoken(pos, fS)}. From there it fell away to ${spoken(pos, sS)}.`,
-          () => `He gave us ${spoken(pos, fS)} early. Whatever that was, it was not there for the run-in: ${spoken(pos, sS)} after week ${mid}.`,
+          () => `${capitalise(fS)} through week ${mid}, and then ${sS} the rest of the way.`,
+          () => `For half a season he was one of the best things about us: ${fS} in ${fG} games. The other ${sG} came to ${sS}.`,
+          () => `Through week ${mid} — ${fS}. From there it fell away to ${sS}.`,
+          () => `He gave us ${fS} early. Whatever that was, it was not there for the run-in: ${sS} after week ${mid}.`,
         ])(),
       });
     }
@@ -1021,7 +1022,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         write: (v) => v.pick([
           () => `${money} a year buys a ${singular(pos)} near the top of the league. ${capitalise(spoken(pos, p.stats))} across ${p.gp} games is a long way from it.`,
           () => `We are paying him like a top-${Math.max(1, Math.round(100 - p.payPct!))}% ${singular(pos)} and he played the year like a spare part — ${spoken(pos, p.stats)}.`,
-          () => `${capitalise(spoken(pos, p.stats))} in ${p.gp} games, at ${money} a year. That is money doing nothing for us.`,
+          () => `${capitalise(spoken(pos, p.stats))} in ${p.gp} games, at ${money} a year. That is not what that money is for.`,
           () => `Only ${Math.max(1, Math.round(100 - p.payPct!))}% of ${plural(pos)} in this league cost more than his ${money}. Very few of them produced less than ${spoken(pos, p.stats)}.`,
         ])(),
       });
@@ -1275,6 +1276,16 @@ const MAX_PER_KIND = 2;
 const MAX_PER_FAMILY = 3;
 /** [TUNE] The forward-looking section is a footnote to the year, not a scouting report. */
 const MAX_OUTLOOK = 3;
+/**
+ * [TUNE] At most this many from one UNIT — lib/coachRoom.ts's own grouping,
+ * reused rather than reinvented. Without it a recap could be six defenders, and
+ * measurably was: the engine splits a defence's tackles by depth-chart share,
+ * so a club carrying a thin defensive rotation inflates four men at once and
+ * they arrive on the sheet together. Coach's Comments solved the same problem
+ * by taking one man per unit before a second from any; a season has fewer
+ * slots and more candidates, so this is the softer version of the same rule.
+ */
+const MAX_PER_UNIT = 2;
 
 /** How the year ended, as a noun phrase. The templates supply the connector. */
 const RESULT_PHRASE: Record<string, string> = {
@@ -1340,14 +1351,18 @@ export function buildReview(input: ReviewInput): SeasonReview {
 
   const perKind = new Map<StoryKind, number>();
   const perFamily = new Map<StoryFamily, number>();
+  const perUnit = new Map<string, number>();
   const chosen: Candidate[] = [];
   for (const { c } of pool) {
     if (chosen.length >= MAX_STORIES) break;
     const family = FAMILY_OF[c.kind];
+    const unit = UNIT_OF[canonicalPosition(c.shape.p.position)] ?? 'OTHER';
     if ((perKind.get(c.kind) ?? 0) >= MAX_PER_KIND) continue;
     if ((perFamily.get(family) ?? 0) >= MAX_PER_FAMILY) continue;
+    if ((perUnit.get(unit) ?? 0) >= MAX_PER_UNIT) continue;
     perKind.set(c.kind, (perKind.get(c.kind) ?? 0) + 1);
     perFamily.set(family, (perFamily.get(family) ?? 0) + 1);
+    perUnit.set(unit, (perUnit.get(unit) ?? 0) + 1);
     chosen.push(c);
   }
 
@@ -1721,7 +1736,10 @@ function outlookCandidates(sh: Shape): Candidate[] {
   const bar = roomBarFor(p.age);
   if (bar !== null && gap >= bar && p.potential >= ROOM_MIN_CEILING) {
     out.push({
-      kind: 'ROOM_TO_GROW', shape: sh, margin: (gap - bar) / 6,
+      // Ranked on the gap AND on the ceiling behind it: fourteen points left in
+      // a kicker and thirteen left in a receiver who tops out at 98 are not the
+      // same news, and the first version led with the kicker.
+      kind: 'ROOM_TO_GROW', shape: sh, margin: (gap - bar) / 6 + (p.potential - ROOM_MIN_CEILING) / 20,
       line: p.stats, scope: 'REGULAR', games: p.gp, pct: null,
       write: (v) => v.pick([
         () => `${p.age}, and ${p.rating} of a possible ${p.potential}. That is ${count(gap, 'point')} still to come, and the age to come by them.`,
@@ -1764,7 +1782,9 @@ function developmentCandidates(sh: Shape): Candidate[] {
     && p.growthRank !== null && p.growthRank <= BREAKOUT_BAND
     && p.age <= BREAKOUT_MAX_AGE && sh.graded.length >= MIN_SEASON_WEEKS) {
     const band = Math.max(1, Math.round(p.growthRank * 100));
-    const ceiling = p.potential !== null && p.rating !== null && p.potential > p.rating
+    // Only worth appending when there is a real distance to report — "he is at
+    // 80 with 82 in him" reads as headroom and is two points of noise.
+    const ceiling = p.potential !== null && p.rating !== null && p.potential - p.rating >= 5
       ? ` He is at ${p.rating} with ${p.potential} in him.`
       : '';
     out.push({

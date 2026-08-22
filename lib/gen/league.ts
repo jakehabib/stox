@@ -321,10 +321,24 @@ export async function createLeague(opts: {
     for (const p of opts.plan.freeAgents) {
       registerPlayer(p, { status: 'FREE_AGENT', teamId: null }, false);
     }
+    // A file names its own rosters and its own free agents; what it does not
+    // get to do is hand the league a market too thin to be a market. Topped
+    // up to the same floor as a generated league, with the same fringe
+    // population and the same "only if short" rule — a file that already
+    // lists 260+ unsigned players gets nobody added.
+    for (const p of generateFringeFreeAgents(rng, fringeShortfall(opts.plan.freeAgents.length), opts.plan.names)) {
+      registerPlayer(p, { status: 'FREE_AGENT', teamId: null }, false);
+    }
   } else if (fantasy) {
     // Fantasy draft: everyone starts empty and one giant pool is drafted.
-    // Pool = enough players for every team to fill a roster, plus slack.
-    const poolSize = LEAGUE.TEAM_COUNT * LEAGUE.ROSTER_MAX + 120;
+    // Pool = enough players for every team to fill a roster, plus the men
+    // nobody takes — who are the league's opening free-agent market, so the
+    // slack is FREE_AGENCY.POOL_FLOOR rather than the 120 it used to be.
+    // A fantasy league measured with the old number opened its first free
+    // agency with a market of ZERO and kept it at zero for every season of
+    // its life: 130 players went undrafted and every one of them was
+    // stranded behind isDraftee (see the FANTASY_DRAFT case in lib/season.ts).
+    const poolSize = LEAGUE.TEAM_COUNT * LEAGUE.ROSTER_MAX + FREE_AGENCY.POOL_FLOOR;
     for (let i = 0; i < poolSize; i++) {
       const p = generatePlayer(rng, { names });
       registerPlayer(p, { status: 'FREE_AGENT', isDraftee: true, teamId: null }, false);

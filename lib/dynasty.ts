@@ -312,7 +312,7 @@ export const BRANCH_LABEL: Record<DynastyBranch, string> = {
 
 export const BRANCH_BLURB: Record<DynastyBranch, string> = {
   DRAFT: 'The only men in this league you cannot simply watch on tape. Every upgrade tightens what your staff can tell you about a prospect, and the last one buys more of the visits and evaluations that settle it.',
-  DEVELOPMENT: 'Your coaching staff. First the ability to see where a player is headed, then the ability to change it — faster development across the roster, and the hours to put into one man in particular.',
+  DEVELOPMENT: 'Your coaching staff. First the ability to see where a player is headed, then the ability to change it — every man on your roster developing faster, all the way up to 15%.',
   NEGOTIATION: 'Read the other side of the table. Every point you spend here narrows the window between "he might sign this" and "he will", so you stop overpaying for certainty.',
 };
 
@@ -432,7 +432,7 @@ export const DYNASTY_SKILLS: DynastySkillDef[] = [
     id: 'COACHING_STAFF',
     branch: 'DEVELOPMENT',
     name: 'Coaching Staff',
-    blurb: 'Better position coaches and a better strength programme. Every player on your roster develops faster — including the ones already at their ceiling, who simply hold it longer.',
+    blurb: 'Better position coaches and a better strength programme. Every player on your roster develops faster — nobody else\'s does.',
     requires: 'DEV_INSIGHT',
     ranks: [
       { cost: 2, effect: 'Your players develop 5% faster at every checkpoint.' },

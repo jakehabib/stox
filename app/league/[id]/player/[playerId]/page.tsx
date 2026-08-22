@@ -43,6 +43,7 @@ import { CareerStatTable } from '@/components/ds/CareerStatTable';
 import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/ds/StatScopeToggle';
 import { ringYearsFor } from '@/lib/gen/leagueHistory';
 import { allStarYearsFor } from '@/lib/allStars';
+import { startersAt } from '@/lib/lineup';
 
 /** Transaction types lib/season.ts writes one of per award, per season. */
 const AWARD_LABEL: Record<string, string> = {
@@ -852,19 +853,41 @@ export default async function PlayerPage({
                 <p className="text-sm text-muted">Nobody rostered at {player.position} right now — a clear need.</p>
               ) : (
                 <div className="space-y-1">
-                  {depthChart.map((slot) => {
+                  {/* WHO IS STARTING, on this card too.
+                      This panel predates lib/lineup.ts and numbered the list
+                      1, 2, 3, 4 with nobody marked — a third renderer of "your
+                      depth" that had no opinion about who takes the field,
+                      while the Depth Chart screen and the re-sign pop-out both
+                      say ST1/ST2/ST3. The app owner reported the same missing
+                      distinction a third time, on this panel. `startersAt` is
+                      THE definition; nothing here gets its own. */}
+                  {depthChart.map((slot, i) => {
                     const isThisPlayer = slot.playerId === player.id;
+                    const starterCount = startersAt(player.position);
+                    const starts = i < starterCount;
                     return (
+                      <>
+                      {i === starterCount && starterCount > 0 && (
+                        <div key={`bench-${slot.id}`} className="flex items-center gap-2 pt-1.5 pb-1">
+                          <span className="label-sm text-[10px]">Bench</span>
+                          <span className="h-px flex-1 bg-line/70" />
+                        </div>
+                      )}
                       <Link
                         key={slot.id}
                         href={`/league/${league.id}/player/${slot.playerId}`}
-                        className={`flex items-center gap-3 px-2 py-1.5 -mx-2 rounded-lg text-sm ${isThisPlayer ? 'bg-accent/10 border border-accent/30' : 'hover:bg-raised'}`}
+                        className={`flex items-center gap-3 px-2 py-1.5 -mx-2 rounded-lg text-sm border-l-2 ${
+                          starts ? 'bg-chalk/[0.05] border-accent2/70' : 'border-transparent opacity-80'
+                        } ${isThisPlayer ? 'ring-1 ring-accent/40 bg-accent/10' : 'hover:bg-raised'}`}
                       >
-                        <span className="label-sm w-5 shrink-0">{slot.rank === 0 ? '1' : slot.rank + 1}</span>
+                        <span className={`label-sm w-8 shrink-0 ${starts ? 'text-chalk' : ''}`}>
+                          {starts ? `ST${starterCount > 1 ? i + 1 : ''}` : `#${i + 1}`}
+                        </span>
                         <PlayerAvatar seed={slot.playerId} age={slot.player.age} size={22} weightLb={slot.player.weightLb} heightIn={slot.player.heightIn} position={slot.player.position} />
-                        <span className={`flex-1 truncate ${isThisPlayer ? 'font-semibold' : ''}`}>{slot.player.firstName} {slot.player.lastName}{isThisPlayer ? ' (this player)' : ''}</span>
+                        <span className={`flex-1 truncate ${isThisPlayer || starts ? 'font-semibold' : ''}`}>{slot.player.firstName} {slot.player.lastName}{isThisPlayer ? ' (this player)' : ''}</span>
                         <span className={`font-mono text-xs ${ratingColor(slot.player.trueOvr)}`}>{slot.player.trueOvr}</span>
                       </Link>
+                      </>
                     );
                   })}
                 </div>
