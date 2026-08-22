@@ -28,6 +28,15 @@ import type { SeasonReview as SeasonReviewModel, Story } from '@/lib/seasonRevie
  *
  * It renders on the server. There is no state, no interaction and no
  * measurement, so it ships no JavaScript at all.
+ *
+ * TWO SECTIONS, because they are in two tenses. The list is what the year DID
+ * — the halves of a season against each other, a man against his own previous
+ * best, what he was paid against what he produced. The short block under it is
+ * what those men still ARE: how much is left between a rating and its ceiling,
+ * and whether there is any. Development was invisible in this game before this
+ * panel; a young player getting better and an old one finished getting better
+ * are the two facts a dynasty is actually run on, and they do not belong in a
+ * list of things that happened in September. Nobody appears in both.
  * ===========================================================================
  */
 
@@ -79,9 +88,9 @@ export function SeasonReview({ review, leagueId, teamColor }: {
         {review.opener}
       </p>
 
-      {review.quiet ? (
-        <p className="text-[13px] text-muted">{review.quiet}</p>
-      ) : (
+      {review.quiet && <p className="text-[13px] text-muted">{review.quiet}</p>}
+
+      {review.stories.length > 0 && (
         <div className="space-y-3.5">
           {review.stories.map((s) => (
             <StoryRow key={s.playerId} s={s} leagueId={leagueId} teamColor={teamColor} />
@@ -89,10 +98,22 @@ export function SeasonReview({ review, leagueId, teamColor }: {
         </div>
       )}
 
+      {review.outlook.length > 0 && (
+        <div className="pt-1">
+          <h3 className="label-sm mb-2.5">Where they are headed</h3>
+          <div className="space-y-3.5">
+            {review.outlook.map((s) => (
+              <StoryRow key={s.playerId} s={s} leagueId={leagueId} teamColor={teamColor} />
+            ))}
+          </div>
+        </div>
+      )}
+
       <p className="text-[11px] text-muted leading-relaxed">
         Every line here is something the year actually did — the halves of a season held against
-        each other, a man against his own previous best, what he was paid against what he
-        produced. Nobody appears twice, and a quiet season is left quiet.
+        each other, a man against his own previous best, what he was paid against what he produced,
+        and where a rating sits against the ceiling our people put on it. Nobody appears twice, and
+        a quiet season is left quiet.
       </p>
     </div>
   );

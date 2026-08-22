@@ -114,25 +114,29 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
         submitOfferAction(leagueId, playerId, teamId, offer, str, fingerprint)}
       banner={
         <>
-          {/* Free agency frenzy — what the leading rival offer actually is,
-              before the user commits, the way open bidding works. It is in the
-              gate as well as on screen, so the meter refuses to promise a
-              signing the auction would lose.
+          {/* WHO ELSE IS BIDDING — said ONCE.
+              ==================================================================
+              This line used to read "<club> is in the mix at ~$12.7M/yr — you
+              have to beat that", and it was the visible half of the bug the app
+              owner reported: it sat directly above an interest meter reading
+              95 · WILL SIGN, because the banner was quoting a salary while the
+              meter was scoring a package and the two were computed by different
+              code. A rival is a package the player scores now
+              (lib/negotiation.ts, THE CONTEST), so the verdict belongs to the
+              meter — which draws their score on its own track — and the
+              evidence belongs to SuitorRumour below, which was already showing
+              the club, its room, its need and now its whole offer.
 
-              IT NO LONGER SAYS "YOU HAVE TO BEAT THAT" ABOUT A NUMBER. That
-              sentence was the visible half of the bug the app owner reported:
-              it sat directly above an interest meter reading 95 · WILL SIGN,
-              because the banner was quoting a salary while the meter was
-              scoring a package and the two were computed by different code.
-              The player scores the rival's whole offer now
-              (lib/negotiation.ts, THE CONTEST), so this states the package and
-              leaves the verdict to the one thing that decides it — the meter
-              two inches below, which draws their score on its own track. */}
-          <div className={`text-xs px-3 py-2 rounded-lg border ${gate.rival ? 'border-bad/30 bg-bad/10 text-bad' : 'border-line bg-raised text-muted'}`}>
-            {gate.rival
-              ? `${gate.rival.teamName} have ${formatMoney(gate.rival.offer.apy)}/yr over ${gate.rival.offer.years} year${gate.rival.offer.years === 1 ? '' : 's'}, ${Math.round(gate.rival.offer.guaranteePct * 100)}% guaranteed, on the table.`
-              : 'No other teams appear to be bidding on him right now.'}
-          </div>
+              That leaves this line with nothing to say when there IS a rival,
+              so it says nothing. Two boxes quoting the same bid in different
+              words is how a screen starts disagreeing with itself; the honest
+              version of "nobody is bidding" is the only claim left that
+              SuitorRumour is not already making. */}
+          {!gate.rival && (
+            <div className="text-xs px-3 py-2 rounded-lg border border-line bg-raised text-muted">
+              No other teams appear to be bidding on him right now.
+            </div>
+          )}
 
           {/* The same rival, with the two figures his own GM bid on. It was
               always a real threat; it was just quoted as a name and a number,

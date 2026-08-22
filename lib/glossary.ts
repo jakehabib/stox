@@ -41,6 +41,19 @@
  *   lacks. Every threshold quoted below comes either from this game's own
  *   tuning (lib/tuning.ts, lib/ratings.ts, lib/cap.ts) or from a real-sport
  *   fact — never from a number invented to sound authoritative.
+ *
+ *   AND WHERE THE TWO DISAGREE, THIS LEAGUE WINS. Several per-play rates here
+ *   do not land where real football lands — measured over fifteen played
+ *   seasons the median passer sits at 5.4 yards an attempt (the real game is
+ *   nearer 7.0), the median back at 5.4 a carry (the real game is nearer 4.3),
+ *   the median receiver at 8.6 a catch (the real game is nearer 12) and the
+ *   median starting passer at an 87 rating. Quoting the real-world figure
+ *   beside a table that never produces it would be the lying-metric failure in
+ *   its purest form: a tooltip telling a GM his best quarterback is bad at a
+ *   number no quarterback in this league has ever reached. So the passing,
+ *   rushing, receiving and kicking benchmarks describe THIS league's
+ *   landscape. Completion rate, touchdown rate and interception rate land
+ *   close enough to the real game that the two agree anyway.
  * ===========================================================================
  */
 
@@ -339,7 +352,7 @@ export const GLOSSARY = {
   passerRating: {
     term: 'Passer rating',
     definition: 'The real NFL formula — completion rate, yards per attempt, touchdown rate and interception rate, each capped and blended into one number.',
-    why: '100 is a solid, unspectacular season. 90 is ordinary, 110 is a very good year, and 158.3 is the mathematical maximum.',
+    why: 'Middle of this league is the high 80s. Mid-90s is a very good year and 100 is about as high as anyone gets; 158.3 is the formula\'s ceiling and nobody is near it.',
   },
   completionPct: {
     term: 'Completion %',
@@ -349,7 +362,7 @@ export const GLOSSARY = {
   yardsPerAttempt: {
     term: 'Yards per attempt (Y/A)',
     definition: 'Passing yards divided by passes thrown — how much ground a throw is worth on average, whether or not it is caught.',
-    why: 'About 7 is average. Over 8 is a genuinely dangerous passing game; under 6 usually means a lot of short, safe completions that never threaten anybody.',
+    why: 'Around 5.4 is the middle of the league. Close to 6 is a genuinely dangerous passing game; under 5 usually means a lot of short, safe throws that never threaten anybody.',
   },
   tdRate: {
     term: 'TD %',
@@ -359,27 +372,27 @@ export const GLOSSARY = {
   intRate: {
     term: 'INT %',
     definition: 'The share of passes that were intercepted.',
-    why: 'Around 2% is ordinary and under 2% is careful. Past 3% he is handing games away, whatever else the line says.',
+    why: 'Under 2% is careful and a shade under 2% is ordinary. Much past 2.5% and he is handing games away, whatever else the line says.',
   },
   yardsPerCarry: {
     term: 'Yards per carry (YPC)',
     definition: 'Rushing yards divided by carries.',
-    why: '4.0 is the line between adequate and not. 4.5 and up is a real running game; under 3.5 and the run is costing you more than it gains.',
+    why: 'Around 5.4 is the middle of the pack. Approaching 6 is a real running game; under 5 and the run is costing you more than it gains.',
   },
   catchRate: {
     term: 'Catch %',
     definition: 'Catches divided by times targeted — how often a ball thrown his way is actually caught.',
-    why: 'Around two-thirds is normal for a receiver. A back or a tight end working underneath will be much higher, and a deep threat much lower, so it is only fair to compare like with like.',
+    why: 'Low sixties is normal for a receiver. A back or tight end working underneath runs higher and a deep threat lower, so it is only fair to compare like with like.',
   },
   yardsPerReception: {
     term: 'Yards per reception (Y/R)',
     definition: 'Receiving yards divided by catches — how far he goes with each ball he holds on to.',
-    why: 'Double figures is the usual mark. A deep threat pushes past 15; a slot receiver living underneath sits nearer 10 and is not worse for it.',
+    why: 'Around 8.5 is the usual mark for a receiver. Past 10 is a genuine deep threat; a back or a slot man catching everything underneath sits well below it and is not worse for it.',
   },
   yardsPerTarget: {
     term: 'Yards per target',
     definition: 'Receiving yards divided by times thrown at, whether or not he caught it.',
-    why: 'The fairer of the two receiving rates, because drops count against him. It is the number that tells you whether throwing at him is a good idea.',
+    why: 'The fairer of the two receiving rates, because a drop counts against him. Around 5.3 is normal, and it is the number that tells you whether throwing at him is a good idea.',
   },
   yardsPerTouch: {
     term: 'Yards per touch',
@@ -388,7 +401,7 @@ export const GLOSSARY = {
   fieldGoalPct: {
     term: 'FG %',
     definition: 'The share of field goal attempts made.',
-    why: 'A kicker in the mid-80s is doing his job. Below 75% he is costing you the close games a kicker exists to win.',
+    why: 'Around 80% is an ordinary year. Past 90% is a kicker you trust in December; below 70% he is costing you the close games a kicker exists to win.',
   },
   passesDefensed: {
     term: 'Passes defensed',

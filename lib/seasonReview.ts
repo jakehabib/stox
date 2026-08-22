@@ -6,6 +6,7 @@ import { canonicalPosition } from './tuning';
 import { gradeLine, playedEnough, statLine } from './coachRoom';
 import { leadColumnKey } from './statLabels';
 import { positionRelativeScore } from './performanceScore';
+import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS } from './awards';
 import { ageBasisYear, ageInSeason } from './playerSeasons';
 import type { BoxScore, SeasonStats } from './types';
 
@@ -420,6 +421,16 @@ export interface ReviewPlayer {
   /** Percentile of his overall among the same population — null when the save fogs ratings. */
   ratingPct: number | null;
   rating: number | null;
+  /** His ceiling. Same visibility rule as `rating` — null when the save fogs it. */
+  potential: number | null;
+  /**
+   * Where he finished among his position group on the growth model's OWN
+   * metric (0 = top of the league, 1 = bottom), or null when the season totals
+   * that metric reads have already been rolled away. See the header, section 5.
+   */
+  growthRank: number | null;
+  /** Weeks he was found leading the league in a marquee category, from the rows that recorded it. */
+  milestones: { week: number; categories: string }[];
   /** Injuries the box scores recorded for him this season, in week order. */
   injuries: { week: number; weeks: number; type: string }[];
 }
@@ -518,6 +529,13 @@ export interface SeasonReview {
   /** The club's own year, in a sentence. */
   opener: string;
   stories: Story[];
+  /**
+   * Where the roster is HEADED rather than where it has been — the ceiling
+   * reads. Kept as its own short section because it is a different tense: the
+   * list above is what the year did, and this is what the men in it still are.
+   * Nobody appears in both.
+   */
+  outlook: Story[];
   /** Said instead of stories when nothing cleared a bar. A quiet year is allowed. */
   quiet: string | null;
 }
@@ -1153,6 +1171,9 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
     });
   }
 
+  // --- How he grew ---------------------------------------------------------
+  out.push(...developmentCandidates(sh));
+
   // --- January -------------------------------------------------------------
   if (enoughSeason && sh.playoffGraded.length >= 3 && sh.playoffPct !== null) {
     const delta = sh.playoffPct - sh.pct;
@@ -1192,6 +1213,8 @@ const MAX_STORIES = 6;
 /** [TUNE] No single verdict owns a season. */
 const MAX_PER_KIND = 2;
 const MAX_PER_FAMILY = 3;
+/** [TUNE] The forward-looking section is a footnote to the year, not a scouting report. */
+const MAX_OUTLOOK = 3;
 
 /** How the year ended, as a noun phrase. The templates supply the connector. */
 const RESULT_PHRASE: Record<string, string> = {
@@ -1234,10 +1257,14 @@ export function buildReview(input: ReviewInput): SeasonReview {
   const voice = new Voice(new Rng(`review:${input.seed}`));
   const team = input.team;
 
-  const pool: { c: Candidate; score: number }[] = [];
+  const shapes: Shape[] = [];
   for (const p of input.players) {
     const sh = shapeOf(p, team);
-    if (!sh) continue;
+    if (sh) shapes.push(sh);
+  }
+
+  const pool: { c: Candidate; score: number }[] = [];
+  for (const sh of shapes) {
     let best: { c: Candidate; score: number } | null = null;
     for (const c of candidates(sh, team)) {
       // One man, one story, and the strongest one. `margin` is already in
@@ -1264,7 +1291,32 @@ export function buildReview(input: ReviewInput): SeasonReview {
     chosen.push(c);
   }
 
-  const stories: Story[] = chosen.map((c) => {
+  // The outlook section, chosen AFTER the narrative list and from the men it
+  // did not use. One man appears at most once on the whole panel: seeing the
+  // same name under "his year" and again under "where he is headed" is the
+  // duplication the Week Report had to fix, wearing a longer coat.
+  const used = new Set(chosen.map((c) => c.shape.p.playerId));
+  const outlookPool: { c: Candidate; score: number }[] = [];
+  for (const sh of shapes) {
+    if (used.has(sh.p.playerId)) continue;
+    let best: { c: Candidate; score: number } | null = null;
+    for (const c of outlookCandidates(sh)) {
+      const score = KIND_PRIORITY[c.kind] + Math.min(1.5, Math.max(0, c.margin)) * 14;
+      if (!best || score > best.score) best = { c, score };
+    }
+    if (best) outlookPool.push(best);
+  }
+  outlookPool.sort((a, b) => b.score - a.score || a.c.shape.p.playerId.localeCompare(b.c.shape.p.playerId));
+  const outlookChosen: Candidate[] = [];
+  const outlookKinds = new Map<StoryKind, number>();
+  for (const { c } of outlookPool) {
+    if (outlookChosen.length >= MAX_OUTLOOK) break;
+    if ((outlookKinds.get(c.kind) ?? 0) >= MAX_PER_KIND) continue;
+    outlookKinds.set(c.kind, (outlookKinds.get(c.kind) ?? 0) + 1);
+    outlookChosen.push(c);
+  }
+
+  const toStory = (c: Candidate): Story => {
     const p = c.shape.p;
     return {
       kind: c.kind,
@@ -1288,13 +1340,17 @@ export function buildReview(input: ReviewInput): SeasonReview {
       pct: NO_LEVEL_VERDICT.has(canonicalPosition(p.position)) ? null : c.pct,
       strength: c.margin,
     };
-  });
+  };
+
+  const stories = chosen.map(toStory);
+  const outlook = outlookChosen.map(toStory);
 
   return {
     seasonYear: team.seasonYear,
     opener: buildOpener(team, voice),
     stories,
-    quiet: stories.length === 0 ? buildQuiet(team, voice) : null,
+    outlook,
+    quiet: stories.length === 0 && outlook.length === 0 ? buildQuiet(team, voice) : null,
   };
 }
 
@@ -1420,22 +1476,32 @@ export async function buildSeasonReview(
   if (teamGames === 0) return null;
 
   const ids = [...acc.keys()];
-  const [roster, leaguePlayers, priorRows] = await Promise.all([
+  const [roster, leaguePlayers, priorRows, milestoneRows] = await Promise.all([
     prisma.player.findMany({
       where: { id: { in: ids } },
       select: {
         id: true, firstName: true, lastName: true, age: true, experience: true,
-        heightIn: true, weightLb: true, draftRound: true, trueOvr: true, position: true,
+        heightIn: true, weightLb: true, draftRound: true, trueOvr: true, potential: true, position: true,
         contract: { select: { years: true, baseSalaries: true, signingBonus: true, signedYear: true } },
       },
     }),
     prisma.player.findMany({
       where: { leagueId },
-      select: { position: true, trueOvr: true, contract: { select: { years: true, baseSalaries: true, signingBonus: true } } },
+      select: {
+        id: true, position: true, trueOvr: true, status: true, seasonStats: true,
+        contract: { select: { years: true, baseSalaries: true, signingBonus: true } },
+      },
     }),
     prisma.playerSeason.findMany({
       where: { playerId: { in: ids }, seasonYear: { lt: seasonYear } },
       select: { playerId: true, seasonYear: true, teamAbbr: true, gp: true, stats: true },
+    }),
+    // The receipts for the stat-leader milestone. Read, never re-derived — the
+    // row is what lib/development.ts wrote at the moment the bump was applied.
+    prisma.transaction.findMany({
+      where: { leagueId, seasonYear, type: 'DEV_MILESTONE', playerId: { in: ids } },
+      select: { playerId: true, week: true, headline: true },
+      orderBy: { week: 'asc' },
     }),
   ]);
 
@@ -1457,6 +1523,42 @@ export async function buildSeasonReview(
     (ratePool.get(pos) ?? ratePool.set(pos, []).get(pos)!).push(lp.trueOvr);
     const apy = apyOf(lp.contract);
     if (apy !== null) (payPool.get(pos) ?? payPool.set(pos, []).get(pos)!).push(apy);
+  }
+
+  // The growth model's own band, reconstructed from the growth model's own
+  // metric. lib/development.ts ranks ACTIVE players at a position by
+  // offensiveScore/defensiveScore per week and hands the top 15% an
+  // accelerated roll; the last checkpoint of the year runs on the completed
+  // season, so this is that checkpoint's ranking and not a second opinion
+  // about it. `Player.seasonStats` is the input, and it is cleared by the
+  // offseason rollover — once it is gone every rank below is null and the
+  // read simply does not fire, which is the right answer rather than a guess.
+  const growthRank = new Map<string, number>();
+  {
+    const byPos = new Map<string, { id: string; rate: number }[]>();
+    for (const lp of leaguePlayers) {
+      if (lp.status !== 'ACTIVE') continue;
+      const st = readJson<SeasonStats>(lp.seasonStats, {});
+      const rate = DEFENSIVE_POSITIONS.has(lp.position) ? defensiveScore(st) : offensiveScore(st);
+      if (rate === 0) continue;
+      (byPos.get(lp.position) ?? byPos.set(lp.position, []).get(lp.position)!).push({ id: lp.id, rate });
+    }
+    for (const group of byPos.values()) {
+      if (group.length < 4) continue; // lib/development.ts's own minimum
+      group.sort((a, b) => b.rate - a.rate);
+      group.forEach((g, i) => growthRank.set(g.id, i / group.length));
+    }
+  }
+
+  const milestonesByPlayer = new Map<string, { week: number; categories: string }[]>();
+  for (const m of milestoneRows) {
+    if (!m.playerId) continue;
+    // "<name> is pacing the league in receiving yards and rushing yards".
+    // The categories are recoverable off the tail; if that ever stops being
+    // the shape, the fallback is a phrase that still says something true.
+    const cats = /pacing the league in (.+)$/.exec(m.headline)?.[1] ?? 'a marquee category';
+    (milestonesByPlayer.get(m.playerId) ?? milestonesByPlayer.set(m.playerId, []).get(m.playerId)!)
+      .push({ week: m.week, categories: cats });
   }
 
   const priorByPlayer = new Map<string, typeof priorRows>();
@@ -1502,6 +1604,13 @@ export async function buildSeasonReview(
       apy: coversYear ? apy : null,
       ratingPct: ratingsVisible ? percentileIn(ratePool.get(pos) ?? [], r.trueOvr) : null,
       rating: ratingsVisible ? r.trueOvr : null,
+      // The ceiling is exact for the user's own roster and is never read for
+      // anybody else's — this panel only ever looks at one club. It follows the
+      // same visibility rule as the rating: a save that fogs its own roster
+      // does not get either number back through a paragraph.
+      potential: ratingsVisible ? r.potential : null,
+      growthRank: growthRank.get(playerId) ?? null,
+      milestones: milestonesByPlayer.get(playerId) ?? [],
       injuries: a.injuries.sort((x, y) => x.week - y.week),
     });
   }
@@ -1525,4 +1634,107 @@ export async function buildSeasonReview(
     // same recap forever, including after a reload or a redeploy.
     seed: `${leagueId}|${teamId}|${seasonYear}`,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Development — see the header, section 5, for what each of these can prove
+// ---------------------------------------------------------------------------
+
+/** Which age band's room bar he falls in, or null once there is no band left. */
+function roomBarFor(age: number): number | null {
+  for (const b of ROOM_BAR) if (age <= b.maxAge) return b.gap;
+  return null;
+}
+
+/**
+ * The two reads that need no history at all: how much is left in him, and
+ * whether there is any. Both come straight off `Player.potential` and
+ * `Player.trueOvr`, which are exact for the user's own roster and are simply
+ * absent when the save fogs them.
+ */
+function outlookCandidates(sh: Shape): Candidate[] {
+  const p = sh.p;
+  if (p.rating === null || p.potential === null) return [];
+  const gap = p.potential - p.rating;
+  const out: Candidate[] = [];
+
+  const bar = roomBarFor(p.age);
+  if (bar !== null && gap >= bar && p.potential >= ROOM_MIN_CEILING) {
+    out.push({
+      kind: 'ROOM_TO_GROW', shape: sh, margin: (gap - bar) / 6,
+      line: p.stats, scope: 'REGULAR', games: p.gp, pct: null,
+      write: (v) => v.pick([
+        () => `${p.age}, and ${p.rating} of a possible ${p.potential}. That is ${count(gap, 'point')} still to come, and the age to come by them.`,
+        () => `We have him at ${p.rating}. Our own people put his ceiling nearer ${p.potential}, and he is ${p.age} — this is not the player we will end up with.`,
+        () => `${capitalise(aNumber(p.rating!))} at ${p.age} with ${p.potential} in front of him. Whatever he is worth today he will be worth more, and we hold the deal.`,
+        () => `The distance between what he is (${p.rating}) and what he could be (${p.potential}) is the whole reason to be patient with him.`,
+      ])(),
+    });
+  }
+
+  if (p.age >= DONE_MIN_AGE && gap <= 0 && p.rating >= DONE_MIN_RATING) {
+    out.push({
+      kind: 'AT_CEILING', shape: sh, margin: (p.rating - DONE_MIN_RATING) / 8,
+      line: p.stats, scope: 'REGULAR', games: p.gp, pct: null,
+      write: (v) => v.pick([
+        () => `${p.age} years old, rated ${p.rating}, and ${p.rating} is the whole of it. He is not getting better and there is nothing wrong with that — it just means what we have is what we will have.`,
+        () => `He has reached the top of himself. ${p.rating} at ${p.age}, with nothing left between him and his ceiling, so every year from here is a year of holding on to it.`,
+        () => `Still a ${p.rating} at ${p.age}, and finished growing. Price him for the player he is now rather than the one we signed.`,
+      ])(),
+    });
+  }
+  return out;
+}
+
+/**
+ * The two development reads that belong to the YEAR: the band the growth model
+ * accelerated him in, and the weeks he led the league and it moved his ceiling.
+ */
+function developmentCandidates(sh: Shape): Candidate[] {
+  const p = sh.p;
+  const pos = canonicalPosition(p.position);
+  const out: Candidate[] = [];
+
+  // Barred at linebacker for the same reason every other level verdict is —
+  // the growth model ranks him on a metric that is 55% depth-chart share (see
+  // NO_LEVEL_VERDICT). The model really did give him the accelerated roll; what
+  // this file will not do is print "one of the best linebackers in the league"
+  // as the reason.
+  if (!NO_LEVEL_VERDICT.has(pos)
+    && p.growthRank !== null && p.growthRank <= BREAKOUT_BAND
+    && p.age <= BREAKOUT_MAX_AGE && sh.graded.length >= MIN_SEASON_WEEKS) {
+    const band = Math.max(1, Math.round(p.growthRank * 100));
+    const ceiling = p.potential !== null && p.rating !== null && p.potential > p.rating
+      ? ` He is at ${p.rating} with ${p.potential} in him.`
+      : '';
+    out.push({
+      // No standing badge: the sentence already carries a position standing,
+      // on the growth model's scale rather than this file's, and two different
+      // percentages of the same man on one row read as a contradiction.
+      kind: 'BREAKOUT', shape: sh, margin: (BREAKOUT_BAND - p.growthRank) / BREAKOUT_BAND,
+      line: p.stats, scope: 'REGULAR', games: p.gp, pct: null,
+      write: (v) => v.pick([
+        () => `${p.age} years old and he finished the season in the top ${band}% of ${plural(pos)} in this league — ${spoken(pos, p.stats)}. A year in that company at his age does not just sit on the page; it pulls a player forward.${ceiling}`,
+        () => `${capitalise(spoken(pos, p.stats))} at ${p.age}, which put him among the top ${band}% at his position league-wide. Players come on fastest in exactly that company.${ceiling}`,
+        () => `He spent the whole year inside the top ${band}% of ${plural(pos)} — ${spoken(pos, p.stats)} — and he is ${p.age}. That is the sort of season a career turns on.${ceiling}`,
+      ])(),
+    });
+  }
+
+  if (p.milestones.length > 0) {
+    const first = p.milestones[0];
+    const weeks = p.milestones.map((m) => m.week);
+    const span = weeks.length === 1 ? `week ${weeks[0]}` : `weeks ${weeks[0]} and ${weeks[weeks.length - 1]}`;
+    const cat = first.categories;
+    out.push({
+      kind: 'LED_THE_LEAGUE', shape: sh, margin: (p.milestones.length - 1) / 2,
+      line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
+      write: (v) => v.pick([
+        () => `At ${span} he was out in front of the whole league in ${cat}, and that is not just a line in the paper — a run like that raises what a player believes he can be, and what we think he can become.`,
+        () => `He led the league in ${cat} at ${span}. Being the best there is at something, even for a month, leaves a mark on a player; his ceiling moved with it.`,
+        () => `Nobody in the league had more ${cat} than him at ${span}. He finished the year with ${spoken(pos, p.stats)}, and he came out of it a better player than he went in.`,
+      ])(),
+    });
+  }
+  return out;
 }

@@ -69,7 +69,12 @@ export async function applyInSeasonProgression(
   const share = checkpointShare(week, seasonLength);
   if (share <= 0) return;
 
-  const players = await prisma.player.findMany({ where: { leagueId, status: 'ACTIVE' } });
+  // ORDERED, and it has to be. The single `rng` below is consumed player by
+  // player in this loop's order, so the order IS part of the seed: without an
+  // ORDER BY, Postgres may hand back the same rows in a different sequence on
+  // two runs and the "deterministic" checkpoint produces different football.
+  // Found by running the same seed twice and getting two answers.
+  const players = await prisma.player.findMany({ where: { leagueId, status: 'ACTIVE' }, orderBy: { id: 'asc' } });
   if (players.length === 0) return;
 
   // COACHING STAFF (Dynasty, DEVELOPMENT branch). The GM's own coaches, so it

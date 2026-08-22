@@ -732,14 +732,52 @@ export async function loadDynastyProfile(leagueId: string): Promise<DynastyProfi
   }
 }
 
+/**
+ * Drop every rank the CURRENT tree would not have allowed to be bought, and
+ * cascade: if a prerequisite falls, everything downstream of it falls too.
+ *
+ * THIS IS THE REFUND. Reshaping the tree made some previously-legal saves
+ * illegal — a GM who bought Market Knowledge before Trade Intel existed as its
+ * prerequisite now holds a rank he could not buy today. The app owner's
+ * instruction was *"just refund those points"*, and this is what performs it:
+ * the rank stops being counted as held, `pointsSpent` therefore stops counting
+ * its cost, and `pointsAvailable = earned - spent` hands the points back.
+ *
+ * Nothing is written and nothing is incremented, which is what makes the
+ * refund idempotent for free: it is a re-derivation from the stored map, so
+ * rendering the page twice, reopening the save, or replaying it next year all
+ * produce the same answer. A refund that ADDED to a stored counter would have
+ * to defend against double payment; this one cannot double-pay because it
+ * never pays at all.
+ */
+function pruneToTree(ranks: SkillRanks): SkillRanks {
+  const out: SkillRanks = { ...ranks };
+  // Iterate to a fixed point rather than assuming declaration order — a chain
+  // is short, and depending on array order here is the exact fragility
+  // `requires` was introduced to remove.
+  for (let pass = 0; pass < DYNASTY_SKILLS.length; pass++) {
+    let changed = false;
+    for (const def of DYNASTY_SKILLS) {
+      if (!def.requires || !out[def.id]) continue;
+      if ((out[def.requires] ?? 0) > 0) continue;
+      delete out[def.id];
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return out;
+}
+
 export function parseSkills(raw: string | null | undefined): SkillRanks {
   const obj = readJson<Record<string, unknown>>(raw ?? null, {});
   const out: SkillRanks = {};
   for (const def of DYNASTY_SKILLS) {
     const v = obj[def.id];
+    // An id the tree no longer has is simply not read; a rank past the new
+    // maximum is clamped down to it. Both are refunds by the same mechanism.
     if (typeof v === 'number' && v > 0) out[def.id] = clamp(Math.floor(v), 0, def.ranks.length);
   }
-  return out;
+  return pruneToTree(out);
 }
 
 export function serializeSkills(skills: SkillRanks): string {
@@ -1040,8 +1078,10 @@ export function refundSummary(rawSkills: string | null | undefined, level: numbe
   for (const [id, v] of Object.entries(raw)) {
     if (typeof v !== 'number' || v <= 0) continue;
     const def = DYNASTY_SKILLS.find((d) => d.id === id);
-    if (!def) dropped.push(id);
-    else if (Math.floor(v) > def.ranks.length) dropped.push(`${id} (rank ${Math.floor(v)} > ${def.ranks.length})`);
+    if (!def) { dropped.push(`${id} (no longer in the tree)`); continue; }
+    if (Math.floor(v) > def.ranks.length) dropped.push(`${id} (rank ${Math.floor(v)} > ${def.ranks.length})`);
+    // Bought before the tree had prerequisites, and illegal under it now.
+    if (!parsed[def.id]) dropped.push(`${id} (prerequisite ${def.requires ?? '?'} not held)`);
   }
   return { earned, spentUnderNewTree, refunded: Math.max(0, earned - spentUnderNewTree), droppedIds: dropped };
 }

@@ -34,6 +34,11 @@ export function Tooltip({ text, className = '', placement = 'top', align = 'cent
       >
         ?
       </button>
+      {/* `normal-case tracking-normal font-normal text-left` is load-bearing.
+          Almost every trigger hangs off a `.label-sm` — uppercase, letter-
+          spaced, medium weight, and often inside a right-aligned cell — and a
+          bubble nested in one inherits the lot. Nine lines of letter-spaced
+          capitals is not a sentence anybody reads. */}
       {/* Width is not cosmetic either. A glossary entry is a definition plus,
           usually, a sentence on what good and bad look like — at 14rem that
           wrapped to a dozen lines and the bubble grew taller than the card it
@@ -52,6 +57,7 @@ export function Tooltip({ text, className = '', placement = 'top', align = 'cent
         role="tooltip"
         className={`pointer-events-none absolute z-50 w-72 rounded-md border border-line
                    bg-surface px-2.5 py-1.5 text-xs leading-snug text-chalk shadow-card opacity-0 scale-95 transition-all duration-100
+                   normal-case tracking-normal font-normal text-left
                    group-hover:opacity-100 group-hover:scale-100 group-focus-within:opacity-100 group-focus-within:scale-100
                    ${placement === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}
                    ${align === 'start' ? 'left-0' : align === 'end' ? 'right-0' : 'left-1/2 -translate-x-1/2'}`}

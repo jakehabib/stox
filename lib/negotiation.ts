@@ -1199,6 +1199,13 @@ export function winsContest(yourInterest: number, rivalInterest: number): boolea
  * does not reach. That is a real answer and the panel prints nothing for it
  * rather than a chip that would not work.
  *
+ * IT ANSWERS FOR THE PLAYER, NOT FOR YOUR CAP SHEET. Whether you can afford
+ * the suggestion is the ledger's question and the panel already answers it in
+ * two places the moment a chip is pressed — the salary control's "over your
+ * room by X" and the button's "Not enough cap room". Folding the cap gate in
+ * here would mean building a contract per probe, which is a hundred times the
+ * work for an answer the next frame states anyway.
+ *
  * PURE, and deliberately NOT part of `decideOffer`. It costs on the order of a
  * hundred evaluations and `decideOffer` runs a million times in the agreement
  * sweep and once per animation frame in the browser; the panel calls this from
