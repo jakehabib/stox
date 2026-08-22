@@ -1,4 +1,4 @@
-import { Position, POSITIONS, canonicalPosition } from './tuning';
+import { Position, POSITIONS, canonicalPosition, TRADE_VALUE, TRADE_VALUE_TIER } from './tuning';
 
 /**
  * Attribute catalogue. One flat namespace across all positions — a position
@@ -189,55 +189,24 @@ export function computeOverall(pos: Position, attrs: AttrMap): number {
 export const UNCOACHED_ATTR_FRACTION = 0.85;
 
 /**
- * [TUNE] The same question asked about a CONVERSION rather than a generated
- * player, and answered differently on purpose: 1.0, so an allowed move costs
- * nothing.
+ * [TUNE] What a player is at something nobody has ever coached him to do,
+ * when he CONVERTS to a job that asks for it. 0.85 — the same figure
+ * lib/gen/players.ts uses for an unweighted attribute.
  *
- * The owner's call — *"maybe the best option is to not penalize"* — after
- * noting that a linebacker and an edge rusher are different jobs. Measured,
- * they are not different jobs to this model at all, and the split is worth
- * writing down because it is the opposite of what everyone assumed. Mean
- * rating change over 600 synthetic players per pair, decomposed:
+ * THIS WAS BRIEFLY 1.0 AND THAT WAS MY MISTAKE. I measured that the apparent
+ * cost of a conversion was almost entirely this fill rather than the
+ * re-weighting (LB -> EDGE: -0.2 from re-weighting, -5.9 with the fill) and
+ * concluded the penalty was an artifact. It was not. The fill was encoding
+ * something true: EDGE weights `passRush` and `runStop`, a linebacker has
+ * never been graded on either, and that is precisely WHY he is not worth edge
+ * money. Removing it made every conversion free, which made the trade market
+ * a money printer — the same 84-rated man priced 46 as a right tackle and 251
+ * as a left tackle for a move costing nothing.
  *
- *                      re-weighting alone   with the 0.85 fill
- *     LT -> RT                   -0.0               -0.0
- *     EDGE -> DT                  0.0                0.0
- *     CB -> S                     0.0                0.0
- *     S  -> CB                   -0.0               -1.7
- *     LB -> EDGE                 -0.2               -5.9
- *     EDGE -> LB                 +0.1               -5.5
- *
- * Re-weighting — grading him by the new job's priorities instead of the old
- * one's — costs essentially NOTHING on every move this menu offers. The entire
- * apparent penalty was the fill: EDGE weights `passRush` and `runStop`, which
- * a linebacker has never been graded on, and CB weights `press`, which a
- * safety has never been graded on. Nothing else differs. So the six points
- * were never a judgement about a linebacker's ability to rush the passer; they
- * were the arbitrary assumption that a man is at 85% of himself at anything
- * nobody has measured him doing.
- *
- * At 1.0 every allowed move lands within 0.1 of level. That is the honest
- * reading of the model rather than a thumb on the scale: these positions
- * weight the same traits, so a pro asked to do the adjacent job is the player
- * his traits say he is.
- *
- * It stays SEPARATE from UNCOACHED_ATTR_FRACTION above rather than replacing
- * it, because they answer different questions. Generation is describing a man
- * at something his position never asks of him and which does not count toward
- * his grade; this is describing a man taking on a job that now does. Setting
- * generation to 1.0 too would flatten every player in the league toward his
- * own overall.
- *
- * ---------------------------------------------------------------------------
- * THE INVARIANT THIS CREATES, ASSERTED BELOW
- * ---------------------------------------------------------------------------
- * A free conversion between two positions on DIFFERENT trade-value tiers is an
- * arbitrage: buy the cheap label, convert, sell the dear one. That was already
- * live at 5.5x before the tiers were grouped. So any two positions this menu
- * connects must price the same, and `assertConversionTiersAgree` fails the
- * build if they ever drift apart.
+ * The owner's call on seeing it: *"lets fix our Edge/LB issue by forcing the
+ * LB to take an overall hit for switching"*. Restored.
  */
-export const CONVERSION_ATTR_FRACTION = 1.0;
+export const CONVERSION_ATTR_FRACTION = 0.85;
 
 /**
  * Which positions a player may be moved to. A menu, deliberately NOT a cost
@@ -315,28 +284,43 @@ for (const [from, tos] of Object.entries(RELATED_POSITIONS)) {
 }
 
 /**
- * A CONVERSION MAY NOT CHANGE WHAT A MAN IS WORTH.
+ * NO CONVERSION MAY PAY FOR ITSELF.
  *
- * Conversions are free (CONVERSION_ATTR_FRACTION) and reversible, so if two
- * positions this menu connects price differently, the difference is money for
- * nothing: buy the cheap label, convert, sell the dear one. It was live and
- * measured at 5.5x — the same 84-rated man was 46 points as a right tackle and
- * 251 as a left tackle, for a move costing 0.0 rating.
+ * Conversions are reversible, so if moving a man to a position the market
+ * pays more for makes him worth more, the game is a money printer: buy the
+ * cheap label, convert, sell the dear one. It was live and measured at 5.5x.
  *
- * Checked rather than trusted, like the eleven-man lineup sums in
- * lib/lineup.ts and the symmetry check above, because it couples two tables in
- * two files that nobody edits together. Adding one adjacency, or re-tiering one
- * position, is all it would take.
+ * This used to assert that connected positions share a TIER, which was too
+ * strong: LB and EDGE can price differently because the move genuinely costs
+ * a linebacker about six points — he has never been graded on pass rush, and
+ * that is exactly why he is not worth edge money. What actually matters is
+ * the outcome, so that is what is asserted.
+ *
+ * The check is real arithmetic, not a table comparison: it converts a player
+ * at several ratings and confirms he is worth no more afterwards. Positions
+ * whose attribute sets are IDENTICAL (LT and RT weight the same five things)
+ * have no lever to charge with, so for those the requirement collapses back
+ * to equal tiers — which the failure message says, so nobody has to rediscover
+ * why.
  */
-export function assertConversionTiersAgree(tierOf: (p: Position) => string): void {
+export function assertNoProfitableConversion(
+  valueAt: (position: Position, ovr: number) => number,
+  convertedOvr: (from: Position, to: Position, ovr: number) => number,
+): void {
   for (const [from, tos] of Object.entries(RELATED_POSITIONS)) {
     for (const to of tos ?? []) {
-      if (tierOf(from as Position) !== tierOf(to)) {
-        throw new Error(
-          `lib/ratings.ts: ${from} and ${to} can be converted between at no cost but price on different `
-          + `trade tiers (${tierOf(from as Position)} vs ${tierOf(to)}) — that is a free arbitrage. `
-          + `Put them on the same TRADE_VALUE_TIER, or remove the adjacency.`,
-        );
+      for (const ovr of [72, 80, 88, 94]) {
+        const before = valueAt(from as Position, ovr);
+        const after = valueAt(to, convertedOvr(from as Position, to, ovr));
+        if (after > before + 0.5) {
+          throw new Error(
+            `lib/ratings.ts: converting ${from} -> ${to} at ${ovr} OVR RAISES trade value `
+            + `(${before.toFixed(0)} -> ${after.toFixed(0)}) — that is free money. Either the two `
+            + `positions must sit on the same TRADE_VALUE_TIER, or the conversion must cost enough `
+            + `rating to cover the gap. Note ${from} and ${to} may weight identical attributes, in `
+            + `which case there is nothing to charge and equal tiers is the only option.`,
+          );
+        }
       }
     }
   }
@@ -362,20 +346,91 @@ export function canChangePositionTo(from: string, to: string): boolean {
  * dead weight: `computeOverall` simply does not weight them any more, and if
  * he moves back they are still exactly where he left them.
  */
+/** Trade value of a player of this rating at this position, on the tier curves. */
+function tierValue(position: Position, ovr: number): number {
+  const c = (TRADE_VALUE.TIER_CURVE as Record<string, { replacementLevel: number; steepness: number; scale: number; ceiling: number }>)[
+    TRADE_VALUE_TIER[position]
+  ];
+  if (!c) return 0;
+  return Math.min(c.ceiling, (Math.exp(Math.max(0, ovr - c.replacementLevel) * c.steepness) - 1) * c.scale);
+}
+
+/**
+ * THE RATING A CONVERSION MAY NOT EXCEED.
+ *
+ * A move to a position the market pays MORE for must not, by itself, make a
+ * player worth more — or the game is a money printer: buy the cheap label,
+ * convert, sell the dear one. That was live and measured at 5.5x (the same
+ * 84-rated man priced 46 as a right tackle and 251 as a left tackle).
+ *
+ * So a converted player may be worth at most what he was worth before the
+ * move. Derived from the tier curves rather than written down as a matrix of
+ * penalties, because a hand-maintained matrix is a SECOND opinion about the
+ * same thing and would drift the moment anybody retuned a curve — this reads
+ * whatever TRADE_VALUE says today and stays correct by construction.
+ *
+ * Moving DOWN in positional value returns Infinity — no ceiling is needed,
+ * because the move already costs him value and nobody arbitrages a loss.
+ */
+function maxOvrAfterConversion(from: Position, to: Position, fromOvr: number): number {
+  const target = tierValue(from, fromOvr);
+  if (tierValue(to, fromOvr) <= target) return Infinity;
+  for (let ovr = Math.round(fromOvr); ovr > 20; ovr -= 1) {
+    if (tierValue(to, ovr) <= target) return ovr;
+  }
+  return 20;
+}
+
 export function convertedAttributes(
   attrs: AttrMap,
   to: Position,
   trueOvr: number,
+  from?: Position,
 ): { attrs: AttrMap; learned: string[] } {
-  const out: AttrMap = { ...attrs };
   const learned: string[] = [];
-  const seed = Math.max(20, Math.min(99, Math.round(trueOvr * CONVERSION_ATTR_FRACTION)));
-  for (const key of attrsForPosition(to)) {
-    if (out[key] != null) continue;
-    out[key] = seed;
-    learned.push(key);
+  for (const key of attrsForPosition(to)) if (attrs[key] == null) learned.push(key);
+
+  const fill = (fraction: number): AttrMap => {
+    const out: AttrMap = { ...attrs };
+    const seed = Math.max(20, Math.min(99, Math.round(trueOvr * fraction)));
+    for (const key of learned) out[key] = seed;
+    return out;
+  };
+
+  /*
+   * THE UNCOACHED FILL IS THE ONE KNOB, TURNED AS FAR AS THE MOVE REQUIRES.
+   *
+   * Two things have to be true of a conversion, and both are expressed here
+   * rather than by bolting a penalty onto the result:
+   *
+   *   1. He is graded on what the new job asks of him, including the parts
+   *      nobody has ever coached — CONVERSION_ATTR_FRACTION, the default.
+   *   2. The move may not pay for itself in trade value alone.
+   *
+   * Turning the fill down is how (2) gets satisfied, because it is the same
+   * lever (1) already uses: the attributes he has never been graded on are
+   * exactly the ones the new job needs, so "he is worse at this than at his
+   * old job" and "he is not worth more for having switched" are the same
+   * statement about the same man. The alternative — computing a rating from
+   * the attributes and then quietly subtracting from it — would leave the
+   * card's rating disagreeing with the card's attributes, which is this
+   * codebase's defining bug class.
+   *
+   * Measured on the restored default: LB -> EDGE costs 5.9, which already
+   * clears the 4.4 the curves require. S -> CB costs only 1.7 against the
+   * same 4.4, and this is what closes it.
+   */
+  let best = fill(CONVERSION_ATTR_FRACTION);
+  if (from && learned.length > 0) {
+    const ceiling = maxOvrAfterConversion(from, to, trueOvr);
+    if (Number.isFinite(ceiling)) {
+      for (let f = CONVERSION_ATTR_FRACTION; f >= 0; f -= 0.05) {
+        best = fill(Math.max(0, f));
+        if (computeOverall(to, best) <= ceiling) break;
+      }
+    }
   }
-  return { attrs: out, learned };
+  return { attrs: best, learned };
 }
 
 /** One destination, priced. `delta` is signed: negative is what it costs him. */
@@ -400,7 +455,7 @@ export function positionMove(
   player: { position: string; trueOvr: number; trueAttrs: AttrMap },
   to: Position,
 ): PositionMove {
-  const { attrs, learned } = convertedAttributes(player.trueAttrs, to, player.trueOvr);
+  const { attrs, learned } = convertedAttributes(player.trueAttrs, to, player.trueOvr, canonicalPosition(player.position));
   const ovr = computeOverall(to, attrs);
   return { position: to, ovr, delta: ovr - player.trueOvr, learned, attrs };
 }
