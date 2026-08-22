@@ -881,10 +881,48 @@ function standingsOrder<T extends { id: string; wins: number; losses: number; ti
   });
 }
 
-/** Reseed round-1 pick slots (and every round) from final standings, worst first. */
+/**
+ * Reseed every round's pick slots from the finished season's standings, worst
+ * first.
+ *
+ * THE STANDINGS THIS READS ARE NOT ON THE TEAM ROW, and reading them there was
+ * a real bug that made the draft order arbitrary. `Team.wins/losses/pointsFor/
+ * pointsAgnst` are ZEROED by the offseason's RESET_STANDINGS step, which runs
+ * several advances BEFORE this does (this is called at the end of free agency,
+ * on the way to the draft). So by the time the order was seeded every club was
+ * 0-0-0 with a zero differential, every comparison in `standingsOrder`
+ * returned 0, and Array.sort left the clubs in whatever order the database
+ * handed back — effectively creation order.
+ *
+ * Measured on five saves before the fix: pick #1 went to the worst club in
+ * NONE of them. Clubs that finished 1-16 did not pick first; the app owner,
+ * who had just been handed the top selection, put it plainly — *"im not sure
+ * how i got #1 overall"*. He got it because his row came back first.
+ *
+ * TeamSeasonRecord is the season's permanent record and is written before the
+ * wipe, so it still says what actually happened. That is what decides the
+ * order. The draft for year N follows the season played in year N-1 — the
+ * seasonYear bump also lives in RESET_STANDINGS, which is why the draft's own
+ * year is one ahead of the standings that set it.
+ *
+ * The fallback matters: a league's very first draft can precede any completed
+ * season, and a fantasy-start league may have no record at all. With nothing
+ * on file the live team rows are all this can use, and it says so rather than
+ * silently producing a fabricated order.
+ */
 export async function reseedDraftOrder(leagueId: string, seasonYear: number) {
   const teams = await prisma.team.findMany({ where: { leagueId } });
-  const order = standingsOrder(teams);
+  const records = await prisma.teamSeasonRecord.findMany({
+    where: { leagueId, year: seasonYear - 1 },
+    select: { teamId: true, wins: true, losses: true, ties: true, pointsFor: true, pointsAgnst: true },
+  });
+  const byTeam = new Map(records.map((r) => [r.teamId, r]));
+  // Every club must be present or the sort compares a real record against a
+  // wiped row, which is the bug wearing a smaller hat.
+  const haveEveryRecord = teams.length > 0 && teams.every((t) => byTeam.has(t.id));
+  const order = haveEveryRecord
+    ? standingsOrder(teams.map((t) => ({ ...t, ...byTeam.get(t.id)! })))
+    : standingsOrder(teams);
   const picks = await prisma.draftPick.findMany({ where: { leagueId, year: seasonYear } });
   for (const pick of picks) {
     const slot = order.findIndex((t) => t.id === pick.originalTeamId) + 1;
