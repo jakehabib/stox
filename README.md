@@ -1713,3 +1713,60 @@ ever force-pushed over, so every state below still exists in git history).
   across a 3-season health check fell **92%**, and their shape changed from
   five clubs at a time playing whole seasons at 39–43 men to a single club
   per check.
+
+- **2026-08-22 — AI clubs draft off the public board, and cut-down day counts
+  the money.** The consensus board is deliberately fallible — it is what the
+  user is shown — but AI clubs were picking off true ratings, so the board
+  predicted nothing about the order players actually came off it. Clubs now
+  draft off that board plus a private per-club lean (see AI CLUBS DRAFT OFF A
+  READ in `lib/draft.ts`). That made late picks genuinely bad, which exposed a
+  second bug: final cuts sorted purely on rating, so a club would eat a large
+  guaranteed hit to waive a 61 while a 63 on a minimum deal sat next to him.
+  Cuts now weigh dead money at $1.5M per rating point. Measured deterministically
+  across 64 clubs: the cut list changes on 47% of them, dead money incurred
+  falls **$212.7M → $148.8M (30% less)**, at a cost of 0.44 overall per club.
+  Commit `2fc525e`. (The commit message also cites a `sim:health` INV-19 count;
+  treat the $63.9M figure above as the real evidence — `sim:health` totals are
+  not reproducible run to run, because game ids are random and seed the sim.)
+- **2026-08-22 — Save integrity: one week can only be played once.** Two tabs
+  advancing the same week both simulated it — measured, 488 passing yards a
+  game became 955, permanently. Every game save now opens with an atomic
+  compare-and-set inside its own transaction, and the week's league-wide
+  effects (fatigue, progression, the AI trade tick) are claimed the same way.
+  After: 472/474 and 475/497 control vs race, and no player heals two weeks in
+  one. League creation also gets `maxDuration = 60`, so a slow cold start can
+  no longer orphan a league with no owner. Commit `05d234a`.
+- **2026-08-22 — Trade values are Jimmy Johnson points now.** The trade economy
+  ran on a curve that matched no chart a front office has ever used, and it
+  priced half a starting lineup as junk: a 94 interior lineman was worth pick
+  129. `PICK_VALUE_CHART` is now the Jimmy Johnson table itself — 224 rows, and
+  a 32-club seven-round league maps to it 1:1, so "420" means "pick 48" for
+  players and picks alike. A 94 interior lineman is now pick 7; a 99 quarterback
+  is four to five firsts. Piles no longer buy stars (concentration weights plus
+  a cornerstone rule), difficulty is a spread on players with picks exempt, and
+  a club's archetype prices the *return* — a rebuilder takes 19% less in picks,
+  a contender 41% less in men. The measurement that answers the original
+  complaint: for an 88 right tackle, 30 of 31 clubs used to top out at a fourth;
+  now 31 of 31 will pay, 23 a second and 8 a first. Commit `1662a64`.
+- **2026-08-22 — Nobody trades what they don't have.** `executeTrade` had
+  never been audited: it checked the cap and nothing else, so it moved
+  whatever ids it was handed — players on a third club's roster, spent picks,
+  free agents, retired men. One case was reachable in ordinary play: an AI
+  offer sat for a week, the club cut the player it had offered, and accepting
+  the stale offer handed you a free agent with no contract. Assets are now
+  validated up front in a GM's words, ownership is enforced as an atomic
+  compare-and-set (which also stops a double-clicked Confirm charging dead
+  money twice), the 53-man limit is finally read on the trade path, and the
+  AI's acceptance is re-checked on the server instead of only in the browser.
+  Changing trade partner no longer leaves the old club's verdict on screen
+  with Confirm live. Offseason steps are claimed too — two concurrent clicks
+  used to age every player twice and double every career total in the league.
+  Commit `064ef06`.
+- **2026-08-22 — Stop the game explaining itself to the player.** A copy sweep
+  for lines that broke the fiction: the settings page's "design doc" header
+  and three dead "(stored only)" toggles, the Front Office brief pointing at
+  an "Open Extension" button that is never on the screen it links to,
+  "Simulating week 3…" on the advance button, "we do not track their snaps",
+  "about fifteen hundred generated players", "Thirty-two clubs, none of them
+  real", and a GM skill tree promising it never touches "a development roll".
+  Also: San Francisco's nickname was "Prospect", singular. Commit `18e02c6`.
