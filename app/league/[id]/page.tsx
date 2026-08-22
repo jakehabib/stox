@@ -88,13 +88,42 @@ export default async function TeamDashboard({ params }: { params: { id: string }
       : Promise.resolve([]),
   ]);
 
-  // --- Season announcement (unchanged from the prior page — a proactive
-  // "you just won the league" moment, not part of this visual pass) --------
-  let seasonAnnouncement: { championName: string; championTeamId: string; championAbbr: string; awards: AwardLine[] } | null = null;
-  if (league.phase === 'OFFSEASON') {
+  // --- WHICH SEASON THIS PAGE IS STILL TALKING ABOUT ----------------------
+  // League.seasonYear moves INSIDE the offseason, not at the end of it.
+  // RESET_STANDINGS — the step at OFFSEASON week 2 — is the single line in the
+  // phase machine that increments it, so through weeks 1-2 seasonYear still
+  // names the season that just finished and from week 3 on it names the one
+  // about to start. Both windows are handled rather than only the first, so
+  // the season just played keeps its panels for the whole offseason roll —
+  // which is exactly when a GM is deciding who to keep. (A league on this
+  // build only ever renders at week 1 and week 4 of the offseason: one Advance
+  // carries the first three steps, so the week jumps. The test is on the step
+  // index, which is what makes it right on both sides of that jump and on
+  // saves stranded between.)
+  //
+  // Everything below that means "the season just played" reads this rather
+  // than League.seasonYear — the championship announcement, the review, the
+  // All-Star roll. Null outside OFFSEASON, which is also what gates all three:
+  // they go away on their own when the phase moves to RESIGN, which is the
+  // moment last year stops being the thing on his desk.
+  const reviewYear = league.phase === 'OFFSEASON'
+    ? (league.week <= 2 ? league.seasonYear : league.seasonYear - 1)
+    : null;
+
+  // --- Season announcement — the ring and the six trophies his players just
+  // won, the biggest single moment in the game. Up for the whole offseason,
+  // both presses of it, which is what `reviewYear` buys and why this does not
+  // query on League.seasonYear: keyed on that, the announcement arrived at
+  // week 1 and was gone by week 4, because RESET_STANDINGS had moved the year
+  // out from under the query halfway through the first press. The panel
+  // prints the year it is announcing (see SeasonAnnouncement), so the year it
+  // is handed has to be the trophies' year rather than the league's — hence
+  // carrying it on the object instead of re-deriving it at the render.
+  let seasonAnnouncement: { seasonYear: number; championName: string; championTeamId: string; championAbbr: string; awards: AwardLine[] } | null = null;
+  if (reviewYear !== null) {
     const [championTx, awardTxs] = await Promise.all([
-      prisma.transaction.findFirst({ where: { leagueId: league.id, seasonYear: league.seasonYear, type: 'CHAMPION' } }),
-      prisma.transaction.findMany({ where: { leagueId: league.id, seasonYear: league.seasonYear, type: { in: AWARD_TYPES } } }),
+      prisma.transaction.findFirst({ where: { leagueId: league.id, seasonYear: reviewYear, type: 'CHAMPION' } }),
+      prisma.transaction.findMany({ where: { leagueId: league.id, seasonYear: reviewYear, type: { in: AWARD_TYPES } } }),
     ]);
     if (championTx?.teamId) {
       const awardTeamIds = Array.from(new Set(awardTxs.map((t) => t.teamId).filter(Boolean))) as string[];
@@ -105,6 +134,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
       const teamById = new Map(awardTeams.map((t) => [t.id, t]));
       if (champTeam) {
         seasonAnnouncement = {
+          seasonYear: reviewYear,
           championName: `${champTeam.city} ${champTeam.nickname}`,
           championTeamId: champTeam.id,
           championAbbr: champTeam.abbr,
@@ -116,29 +146,17 @@ export default async function TeamDashboard({ params }: { params: { id: string }
       }
     }
   }
-  const userSeasonRecord = seasonAnnouncement ? await prisma.teamSeasonRecord.findUnique({ where: { teamId_year: { teamId: team.id, year: league.seasonYear } } }) : null;
+  // His own line in the announcement. The season row is the only place the
+  // finished record survives — Team.wins is back to 0-0 the moment
+  // RESET_STANDINGS has run — so it is read for the announced year, not the
+  // league's. Every club gets a row when the season wraps (snapshotSeasonHistory).
+  const userSeasonRecord = seasonAnnouncement
+    ? await prisma.teamSeasonRecord.findUnique({ where: { teamId_year: { teamId: team.id, year: seasonAnnouncement.seasonYear } } })
+    : null;
 
   // --- The season in review — narrative reads on YOUR OWN players' years,
   // computed at read time from the games that were played (see
-  // lib/seasonReview.ts). Gated on OFFSEASON for the same reason the
-  // announcement above is: that is the one phase in which League.seasonYear
-  // still names the season that just finished. The moment the league year
-  // rolls forward the panel would be describing the wrong year, so it goes
-  // away on its own rather than being cleaned up by anything.
-  //
-  // WHICH year: League.seasonYear moves inside this phase, not at the end of
-  // it. RESET_STANDINGS — the step at OFFSEASON week 2 — is the single line in
-  // the phase machine that increments it, so through weeks 1-2 seasonYear still
-  // names the season that just finished and from week 3 on it names the one
-  // about to start. Both windows are handled rather than only the first, so the
-  // recap stays on screen for the whole offseason roll — which is exactly when
-  // a GM is deciding who to keep. (A league on this build only ever renders at
-  // week 1 and week 4 of the offseason: one Advance carries the first three
-  // steps, so the week jumps. The test is on the step index, which is what
-  // makes it right on both sides of that jump and on saves stranded between.)
-  const reviewYear = league.phase === 'OFFSEASON'
-    ? (league.week <= 2 ? league.seasonYear : league.seasonYear - 1)
-    : null;
+  // lib/seasonReview.ts). Same window and same year as the announcement above.
   const seasonReview = reviewYear !== null
     ? await buildSeasonReview(league.id, team.id, reviewYear)
     : null;
@@ -146,12 +164,18 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   // --- Your All-Stars ------------------------------------------------------
   // Rosters are named the week the regular season ends (lib/allStars.ts), so
   // this appears the moment the user advances into the playoffs and stays up
-  // through the offseason, then goes away on its own when the league year
-  // rolls over and there are no rows for the new seasonYear. Read back from
-  // the Transaction rows selection already wrote — nothing is re-decided
-  // here, so a refresh cannot change who made it.
+  // through the offseason, then goes away on its own when there are no rows
+  // for the year being read. Read back from the Transaction rows selection
+  // already wrote — nothing is re-decided here, so a refresh cannot change
+  // who made it.
+  //
+  // `reviewYear` for the same reason the two panels above take it: these are
+  // last season's honours, and the league year rolls halfway through the
+  // first press of the offseason. Outside OFFSEASON it is null and the live
+  // league year is the right one — that is the window this panel is named in.
+  const allStarYear = reviewYear ?? league.seasonYear;
   const allStarRows = await prisma.transaction.findMany({
-    where: { leagueId: league.id, seasonYear: league.seasonYear, type: ALL_STAR_TYPE, teamId: team.id },
+    where: { leagueId: league.id, seasonYear: allStarYear, type: ALL_STAR_TYPE, teamId: team.id },
     orderBy: { headline: 'asc' },
     select: { headline: true, detail: true },
   });
@@ -164,7 +188,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
   // and the candidate pool churns, so recomputing it here would let the page
   // change its mind a year later about who was snubbed. See
   // ALL_STAR_SNUB_TYPE.
-  const snub = myAllStars.length === 0 ? await allStarSnubFor(league.id, team.id, league.seasonYear) : null;
+  const snub = myAllStars.length === 0 ? await allStarSnubFor(league.id, team.id, allStarYear) : null;
 
   const expiringCount = league.phase === 'RESIGN'
     ? await prisma.player.count({ where: { teamId: team.id, status: 'ACTIVE', contract: { yearsRemaining: 0 } } })
@@ -396,7 +420,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
       {seasonAnnouncement && (
         <SeasonAnnouncement
           leagueId={league.id}
-          seasonYear={league.seasonYear}
+          seasonYear={seasonAnnouncement.seasonYear}
           championName={seasonAnnouncement.championName}
           championTeamId={seasonAnnouncement.championTeamId}
           championAbbr={seasonAnnouncement.championAbbr}
@@ -412,7 +436,7 @@ export default async function TeamDashboard({ params }: { params: { id: string }
         <SeasonReview review={seasonReview} leagueId={league.id} teamColor={teamColor} />
       )}
       <AllStarHonorRoll
-        seasonYear={league.seasonYear}
+        seasonYear={allStarYear}
         leagueId={league.id}
         teamAbbr={team.abbr}
         honors={myAllStars}
