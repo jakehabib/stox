@@ -1,5 +1,7 @@
+import { Tooltip } from '@/components/Tooltip';
 import { AgeBandRow, AgeCliff, CapHealth, UnitSpendRow } from '@/lib/analytics';
 import { formatMoney } from '@/lib/cap';
+import { tip } from '@/lib/glossary';
 import { Panel, Legend, Note, Tiles, Tile, SubHead, TableTwin } from './Panel';
 import { VIZ, TXT, SIDE_COLOR, pct1 } from './viz';
 
@@ -30,7 +32,9 @@ export function CliffPanel({ bands, cliff, capHealth, groups, seasonYear, nextYe
       span={5}
       eyebrow="Bodies and dollars, by age"
       title="The Cliff, Two Years Out"
+      tip={tip('ageCliff')}
       aside={`${cliff.starterCount} first-teamers`}
+      asideTip={tip('starter')}
       why={<>
         Bodies on the left, dollars on the right, both by age. First team is the eleven, eleven and two who take
         the field, filled at each position in rating order — so the blue block is what you actually put out there.
@@ -46,13 +50,17 @@ export function CliffPanel({ bands, cliff, capHealth, groups, seasonYear, nextYe
               <AgeChart bands={bands} kind="players" activeSalary={activeSalary} />
             </div>
             <div>
-              <div className="label-sm text-[9.5px] mb-0.5">Cap dollars</div>
+              <div className="label-sm text-[9.5px] mb-0.5 inline-flex items-center gap-1.5">
+                Cap dollars
+                <Tooltip text={tip('capHit')} placement="bottom" />
+              </div>
               <AgeChart bands={bands} kind="spend" activeSalary={activeSalary} />
             </div>
           </div>
           <Legend
             keys={[{ color: VIZ.seriesA, label: 'First team', shape: 'block' }, { color: VIZ.depth, label: 'Depth', shape: 'block' }]}
             note="Dollar labels in $M"
+            tip={tip('starter')}
           />
 
           <Tiles cols={3}>
@@ -61,12 +69,15 @@ export function CliffPanel({ bands, cliff, capHealth, groups, seasonYear, nextYe
               label={`Starters 30+ in ${seasonYear + 2}`}
               value={String(cliff.startersOver30InTwo)}
               detail={capEnabled ? `holding ${formatMoney(cliff.starterSpendOver30InTwo)} today` : 'cap mode is off'}
+              tip={tip('ageCliff')}
               tone={cliff.startersOver30InTwo > cliff.starterCount / 3 ? 'warn' : undefined}
             />
             <Tile
               label={`Signed through ${seasonYear + 2}`}
               value={String(cliff.startersSignedPastTwo)}
               detail={`first-teamers, ${cliff.rosterSignedPastTwo} in all`}
+              tip={tip('starter')}
+              tipAlign="end"
             />
           </Tiles>
 
@@ -80,6 +91,7 @@ export function CliffPanel({ bands, cliff, capHealth, groups, seasonYear, nextYe
           <SubHead
             eyebrow={`Decisions waiting in the ${seasonYear} offseason`}
             title="Deals In Their Final Year"
+            tip={tip('expiringContract')}
             aside={`${expiringCount} of ${contractCount} contracts`}
           />
           <div className="grid grid-cols-9 gap-1.5 mt-2.5">
@@ -105,6 +117,7 @@ export function CliffPanel({ bands, cliff, capHealth, groups, seasonYear, nextYe
           <TableTwin
             caption="Age bands, in numbers"
             columns={['Band', 'Players', 'First team', 'Cap $', 'Share of salary', 'Mean rating']}
+            tips={{ 'First team': tip('starter'), 'Cap $': tip('capHit'), 'Mean rating': tip('overall') }}
             rows={bands.map((b) => [
               b.band, b.players, b.starters, formatMoney(b.spend),
               activeSalary > 0 ? pct1(b.spend / activeSalary) : '—',

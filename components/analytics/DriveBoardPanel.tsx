@@ -1,6 +1,33 @@
 import { DriveAgg, LeagueMetric } from '@/lib/analytics';
+import { GlossaryKey, tip } from '@/lib/glossary';
+import { Tooltip } from '@/components/Tooltip';
 import { Panel, Legend, Note, NotOnRecord, SubHead, TableTwin } from './Panel';
 import { VIZ, clamp, ordinal } from './viz';
+
+/**
+ * Each drive measure to the glossary term it is. Keyed off buildDriveMetrics()'
+ * own `key`, so a measure added there without a definition here is a missing
+ * bubble rather than the wrong one — and `GlossaryKey` makes a typo a compile
+ * error instead of an empty tooltip in production.
+ *
+ * Note the collision this map exists to avoid: the drive board's `tdRate` is
+ * the share of DRIVES that reached the end zone, while the glossary's `tdRate`
+ * is the share of a quarterback's PASSES that went for a touchdown. Same
+ * three letters, two different numbers, and they must never borrow each
+ * other's definition.
+ */
+const DRIVE_TERM: Record<string, GlossaryKey> = {
+  ppd: 'pointsPerDrive',
+  ppdAllowed: 'pointsPerDriveAllowed',
+  ppdNet: 'netPointsPerDrive',
+  scoreRate: 'scoringDriveRate',
+  tdRate: 'touchdownDriveRate',
+  threeOut: 'threeAndOut',
+  toRate: 'turnoverDriveRate',
+  ypd: 'yardsPerDrive',
+  ypp: 'yardsPerPlay',
+  stopRate: 'driveStopRate',
+};
 
 /**
  * The four outcomes a stored drive can have, once the two flavours of "gave the
@@ -45,7 +72,9 @@ export function DriveBoardPanel({ metrics, offense, defense, teamAbbr, gamesPlay
       span={12}
       eyebrow={`Every drive run and faced · ${gamesPlayed} regular-season games`}
       title="The Drive Board"
+      tip={tip('driveOutcome')}
       aside={ppd ? `${ppd.value.toFixed(2)} points a drive · ${ordinal(ppd.rank)} of ${ppd.clubs}` : undefined}
+      asideTip={tip('pointsPerDrive')}
       why={<>
         A drive is the possession a front office argues about: it survives a change of pace, which a per-game
         total does not. Every measure is set against all thirty-two, because a rank on its own hides how tight
@@ -68,11 +97,13 @@ export function DriveBoardPanel({ metrics, offense, defense, teamAbbr, gamesPlay
               { color: VIZ.muted, label: 'The other clubs', shape: 'line' },
             ]}
             note="The hairline is the league mean"
+            tip={tip('leagueSpread')}
           />
 
           <SubHead
             eyebrow="How every possession ended"
             title="Drive Outcomes, Yours And Theirs"
+            tip={tip('driveOutcome')}
             aside={`${offense.drives} run · ${defense.drives} faced`}
           />
           <div className="mt-3 space-y-3">
@@ -99,6 +130,7 @@ export function DriveBoardPanel({ metrics, offense, defense, teamAbbr, gamesPlay
           <TableTwin
             caption="Drive efficiency against the league, in numbers"
             columns={['Measure', `${teamAbbr}`, 'Rank', 'League mean', 'League low', 'League high', 'Direction']}
+            tips={{ Rank: tip('leagueSpread'), 'League mean': tip('leagueSpread') }}
             rows={metrics.map((m) => [
               m.label,
               `${m.value.toFixed(m.decimals)}${m.unit}`,
@@ -128,10 +160,18 @@ function Strip({ m }: { m: LeagueMetric }) {
   const good = m.rank <= Math.ceil(m.clubs / 3);
   const poor = m.rank >= m.clubs - Math.ceil(m.clubs / 3) + 1;
 
+  const term = DRIVE_TERM[m.key];
+
   return (
     <div title={`${m.label}: ${m.definition}`}>
       <div className="flex justify-between items-baseline text-xs">
-        <span>{m.label}</span>
+        <span className="inline-flex items-center gap-1.5">
+          {m.label}
+          {/* Downward: the strips sit in a two-column grid with a strip
+              directly above most of them, and there is always a distribution
+              bar underneath to open into. */}
+          {term && <Tooltip text={tip(term)} placement="bottom" align="start" />}
+        </span>
         <b className={`stat-value text-[17px] ${good ? 'text-accent' : poor ? 'text-bad' : ''}`}>
           {m.value.toFixed(m.decimals)}<i className="not-italic text-[10px] text-muted ml-0.5">{m.unit}</i>
         </b>

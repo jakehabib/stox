@@ -1,6 +1,7 @@
 import { formatMoney } from '@/lib/cap';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { positionBadgeClass } from '@/components/ds/positionColor';
+import { tip } from '@/lib/glossary';
 import { Panel, Note, NotOnRecord, TableTwin } from './Panel';
 import { VIZ, TXT } from './viz';
 
@@ -65,7 +66,9 @@ export function ProductionPanel({ men, leagueId, teamAccent, teamAbbr, seasonYea
       span={12}
       eyebrow="Year by year · regular season"
       title="Is The Money Still Climbing?"
+      tip={tip('productionCurve')}
       aside="The largest cap hits, plus the best-paid lineman"
+      asideTip={tip('capHit')}
       why={<>
         One chart per man, each scaled to his own measure — read the shape, not the height. Blue where his last
         full season beat his first, red where it did not. What you are looking for is a line flattening while the
@@ -109,6 +112,7 @@ export function ProductionPanel({ men, leagueId, teamAccent, teamAbbr, seasonYea
           <TableTwin
             caption="Season by season, in numbers"
             columns={['Player', 'Pos', 'Cap hit', 'Measure', ...years.map(String)]}
+            tips={{ 'Cap hit': tip('capHit'), Measure: tip('productionCurve') }}
             rows={men.map((m) => [
               m.name, m.position, formatMoney(m.hit), m.statLabel ?? 'not tracked',
               ...years.map((y) => {

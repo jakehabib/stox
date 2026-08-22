@@ -1,5 +1,6 @@
 import { DraftPickRow, DraftRoundBand } from '@/lib/analytics';
-import { Panel, Legend, Note, NotOnRecord, TableTwin, ChartBox } from './Panel';
+import { tip } from '@/lib/glossary';
+import { Panel, Legend, Note, NotOnRecord, TableTwin, ChartBox, ColLabel, headTipAlign } from './Panel';
 import { VIZ, TXT } from './viz';
 
 /**
@@ -34,7 +35,9 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
       span={12}
       eyebrow={years ? `Every pick you have made, ${years.first}–${years.last}` : 'Every pick you have made'}
       title="Draft Return By Round"
+      tip={tip('draftRoundReturn')}
       aside={picks.length ? `${picks.length} picks · ${picks.filter((p) => p.starter).length} now first-team` : undefined}
+      asideTip={tip('starter')}
       why={<>
         One dot per pick, placed at what that player rates today. The chalk rule is the round&apos;s mean and the
         grey rule is the league-wide mean rating, so a round that beats it is returning starters rather than
@@ -59,6 +62,7 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
                 ...(gone.length > 0 ? [{ color: VIZ.muted, label: 'No longer on this roster', shape: 'dot' as const }] : []),
                 { color: VIZ.chalk, label: 'Round mean', shape: 'line' },
               ]}
+              tip={tip('leagueMeanRating')}
             />
           </div>
 
@@ -66,8 +70,17 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
             <table className="w-full border-separate border-spacing-0 text-xs">
               <thead>
                 <tr>
-                  {['Round', 'Picks', 'Mean rating now', 'First team', 'Still here', 'Best pick'].map((c, i) => (
-                    <th key={c} className={`label-sm text-[9.5px] px-1.5 pb-1.5 border-b border-line ${i ? 'text-right' : 'text-left'}`}>{c}</th>
+                  {([
+                    { label: 'Round' },
+                    { label: 'Picks' },
+                    { label: 'Mean rating now', tip: tip('overall') },
+                    { label: 'First team', tip: tip('starter') },
+                    { label: 'Still here' },
+                    { label: 'Best pick' },
+                  ] as { label: string; tip?: string }[]).map((c, i, all) => (
+                    <th key={c.label} className={`label-sm text-[9.5px] px-1.5 pb-1.5 border-b border-line ${i ? 'text-right' : 'text-left'}`}>
+                      <ColLabel label={c.label} tip={c.tip} align={headTipAlign(i, all.length)} />
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -125,6 +138,7 @@ export function DraftReturnPanel({ bands, picks, leagueMeanOvr, years }: {
       <TableTwin
         caption="Every pick, in numbers"
         columns={['Year', 'Rd', 'Slot', 'Player', 'Pos', 'Rating now', 'Age', 'First team', 'Still here']}
+        tips={{ 'Rating now': tip('overall'), 'First team': tip('starter') }}
         rows={picks.map((p) => [
           p.year, p.round, p.slot, p.name, p.position, p.ovr, p.age, p.starter ? 'yes' : 'no', p.stillHere ? 'yes' : 'no',
         ])}

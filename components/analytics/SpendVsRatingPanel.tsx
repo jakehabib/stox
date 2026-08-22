@@ -1,6 +1,7 @@
 import { UnitSpendRow } from '@/lib/analytics';
 import { formatMoney } from '@/lib/cap';
-import { Panel, Legend, Note, TableTwin, ChartBox } from './Panel';
+import { tip } from '@/lib/glossary';
+import { Panel, Legend, Note, TableTwin, ChartBox, ColLabel, headTipAlign } from './Panel';
 import { VIZ, TXT, SIDE_COLOR, signed, pct1, ordinal } from './viz';
 
 /**
@@ -31,7 +32,9 @@ export function SpendVsRatingPanel({ rows, capEnabled }: { rows: UnitSpendRow[];
       span={12}
       eyebrow="Cap allocation against on-field rating · nine position groups"
       title="Are You Paying For What You're Getting?"
+      tip={tip('unitSpendShare')}
       aside="Bubble size = share of team quality that unit carries"
+      asideTip={tip('unitWeight')}
       why={<>
         Right of the centre line you are spending more of your own cap at that unit than the league does; above it
         you are fielding a better one than the league fields. The bottom right is where money goes in and nothing
@@ -67,8 +70,19 @@ export function SpendVsRatingPanel({ rows, capEnabled }: { rows: UnitSpendRow[];
               <tr>
                 {/* Two columns are both headed "vs Lg" — one for money, one for
                     rating — so the key is the position, not the label. */}
-                {['Unit', 'Cap', 'Share', 'vs Lg', 'Rate', 'Rank', 'vs Lg', 'Age'].map((c, i) => (
-                  <th key={i} className={`label-sm text-[9.5px] px-1.5 pb-1.5 border-b border-line ${i ? 'text-right' : 'text-left'}`}>{c}</th>
+                {([
+                  { label: 'Unit' },
+                  { label: 'Cap' },
+                  { label: 'Share', tip: tip('unitSpendShare') },
+                  { label: 'vs Lg', tip: tip('unitSpendVsLeague') },
+                  { label: 'Rate', tip: tip('unitRating') },
+                  { label: 'Rank' },
+                  { label: 'vs Lg', tip: tip('unitRatingVsLeague') },
+                  { label: 'Age' },
+                ] as { label: string; tip?: string }[]).map((c, i, all) => (
+                  <th key={i} className={`label-sm text-[9.5px] px-1.5 pb-1.5 border-b border-line ${i ? 'text-right' : 'text-left'}`}>
+                    <ColLabel label={c.label} tip={c.tip} align={headTipAlign(i, all.length)} />
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -121,6 +135,13 @@ export function SpendVsRatingPanel({ rows, capEnabled }: { rows: UnitSpendRow[];
       <TableTwin
         caption="The chart, as numbers"
         columns={['Unit', 'Side', 'Cap $', 'Share %', 'League share %', 'Diff pp', 'Rating', 'League mean', 'Diff', 'Rank', 'Bodies', 'On field', 'Weight %']}
+        tips={{
+          'Share %': tip('unitSpendShare'),
+          'Diff pp': tip('unitSpendVsLeague'),
+          'Rating': tip('unitRating'),
+          'Diff': tip('unitRatingVsLeague'),
+          'Weight %': tip('unitWeight'),
+        }}
         rows={rows.map((g) => [
           g.group, g.side, formatMoney(g.spend), (100 * g.share).toFixed(1), (100 * g.leagueMeanShare).toFixed(1),
           signed(g.shareDelta * 100), g.rating, g.leagueMeanRating.toFixed(1), signed(g.ratingDelta), g.rank,

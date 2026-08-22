@@ -1,4 +1,5 @@
 import { LuckSeasonRow } from '@/lib/analytics';
+import { tip } from '@/lib/glossary';
 import { Panel, Legend, Note, Tiles, Tile, TableTwin, ChartBox } from './Panel';
 import { VIZ, TXT, signed, ordinal } from './viz';
 
@@ -38,6 +39,7 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
       span={12}
       eyebrow="Wins earned vs wins banked"
       title="The Luck Ledger"
+      tip={tip('luck')}
       // No flag before the first finished season: "+0.0 across your tenure"
       // is a true number that says nothing.
       flag={tenure.length === 0 ? undefined : {
@@ -83,6 +85,7 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
               { color: VIZ.gold, label: 'Title', shape: 'dot' },
               { color: VIZ.muted, label: 'Playoff berth', shape: 'dot' },
             ]}
+            tip={tip('pythagoreanWins')}
           />
 
           <Tiles cols={4}>
@@ -143,6 +146,7 @@ export function LuckLedgerPanel({ rows, tenureStartYear, seasonYear, seasonLengt
           <TableTwin
             caption="Every finished season, in numbers"
             columns={['Season', 'W', 'L', 'T', 'PF', 'PA', 'Expected W', 'Luck', 'Result', 'Era']}
+            tips={{ 'Expected W': tip('pythagoreanWins'), Luck: tip('luck') }}
             rows={[...rows].reverse().map((r) => [
               r.year, r.wins, r.losses, r.ties, r.pointsFor, r.pointsAgainst,
               r.expectedWins.toFixed(1), signed(r.luck), r.playoffResult.replace('_', ' ').toLowerCase(),

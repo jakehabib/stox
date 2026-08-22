@@ -598,6 +598,158 @@ export const GLOSSARY = {
     term: 'All-Star',
     definition: 'A selection earned by being one of the best at your position over a season. Chosen from what a player actually did, never from his rating.',
   },
+
+  // -------------------------------------------------------------------------
+  // THE ANALYTICS DEPARTMENT
+  // -------------------------------------------------------------------------
+  // Everything the department derives rather than counts. Every benchmark
+  // quoted below was measured off a played season in this game, not carried
+  // over from the real sport — see the note at the head of this file.
+  unitSpendShare: {
+    term: 'Share of salary',
+    definition: 'How much of your active salary goes to one position group — every cap dollar charged to the men in that room, against what the whole roster costs.',
+    why: 'The dollar figure alone says nothing; a quarterback room is meant to be expensive. What matters is whether the share matches what the unit gives back.',
+  },
+  unitSpendVsLeague: {
+    term: 'Spend against the league',
+    definition: 'Your share of salary at a unit minus the average share across all thirty-two clubs, in percentage points.',
+    why: 'Four points more at one unit has to come out of another. This is the column that tells you which room you have decided matters most — whether you meant to or not.',
+  },
+  unitRatingVsLeague: {
+    term: 'Rating against the league',
+    definition: 'What your unit rates minus what the same unit rates on average across the league.',
+    why: 'Units spread far wider than whole teams do: the best and worst quarterback rooms can sit forty points apart while every roster in the league fits inside twenty. Two points at a unit is noise, ten is a different football team.',
+  },
+  unitWeight: {
+    term: 'Share of team quality',
+    definition: 'How much of a club\'s overall rating one unit carries. The quarterback room carries a fifth of it, the defensive line and the secondary about a sixth each, the tight ends three percent.',
+    why: 'It is why an elite kicker barely moves a roster rating and an ordinary quarterback drags it down. Spend where the weight is.',
+  },
+  oneScoreGame: {
+    term: 'One-score game',
+    definition: 'A game decided by eight points or fewer — a touchdown and a two-point conversion, so the losing side finished one possession from level.',
+    why: 'About a third of this league\'s games end this way. A good roster with a losing record in them has a fourth-quarter problem rather than a talent problem, and it is not the sort of thing that repeats.',
+  },
+  blowoutGame: {
+    term: 'Blowout',
+    definition: 'A game decided by twenty-eight or more — four scores, and settled long before the end.',
+    why: 'Winning them says the gap in rosters was real. Losing them is the one result nobody can pin on the last possession.',
+  },
+  blownLead: {
+    term: 'Lead surrendered',
+    definition: 'A defeat in a game you led by ten or more at some point, read off how the drives actually went rather than off the final score.',
+    why: 'The scoreline hides these completely. A club dropping several is losing games it had already won, which points at the fourth quarter and the defence rather than at the roster.',
+  },
+  gameShape: {
+    term: 'Game shape',
+    definition: 'How a game actually went, drive by drive: a comeback, a collapse, a see-saw, a one-score finish, never in doubt, wire to wire, never led, pulled away, slipped away or a stalemate.',
+    why: 'Two 24-17 wins can be entirely different afternoons. The shape is the half of a result the scoreline throws away.',
+  },
+  contractSurplus: {
+    term: 'Surplus',
+    definition: 'What a player is worth on the open market minus what he costs your cap this season. Positive and you have him under the going rate; negative and you are paying over it.',
+    why: 'Most bargains are young men on rookie deals and most overpays are good players two years past their best season. Neither is a mistake on its own — but a roster with no surplus anywhere has no room to add.',
+  },
+  ageCliff: {
+    term: 'The cliff',
+    definition: 'Thirty — the age at which a starter\'s decline is worth planning around rather than hoping about.',
+    why: 'Look two years ahead rather than at today. A first-teamer who is 28 now is over it by the time his current deal runs out, and that is the offseason you needed his replacement already drafted.',
+  },
+  leagueMeanRating: {
+    term: 'League mean rating',
+    definition: 'The average rating of every player on a roster in this league — around 65.',
+    why: 'It sits below starter level because most of a 53-man roster is depth. A pick that clears the line is a footballer; a pick up around 70 is a starter.',
+  },
+  scheduleAhead: {
+    term: 'Opponents left',
+    definition: 'The combined win rate of the clubs still on your schedule, from the records they have so far.',
+    why: 'Set it against the opponents you have already played. A club that banked its wins against the soft half of the schedule is about to find out.',
+  },
+  projectedFinish: {
+    term: 'Projected finish',
+    definition: 'Your record so far plus the win chance of every game left, added together. Not a call on which ones you win — the sum of how likely each one is.',
+    why: 'The honest version of "we need to go 4-2". It says what an ordinary run of results gets you, so you can see whether the season needs rescuing or just finishing.',
+  },
+  gamesBehind: {
+    term: 'Games back',
+    definition: 'How far off the division lead a club is: the gap in wins and the gap in losses, halved.',
+    why: 'It counts both halves of the gap, which is why it moves so slowly — taking a game back needs a win by you and a defeat by them. A three-game lead in December is close to over.',
+  },
+  draftRoundReturn: {
+    term: 'Draft return',
+    definition: 'What each round of your board has produced, measured by what those players rate today rather than by what anyone graded them on draft day.',
+    why: 'If the board is worth anything the rounds separate — first-rounders above second-rounders, and on down. Where they do not, the room is not seeing what it thinks it sees.',
+  },
+  productionCurve: {
+    term: 'Production curve',
+    definition: 'A player\'s headline number season by season — passing yards for a quarterback, sacks for a rusher, tackles for a linebacker — over completed regular seasons only.',
+    why: 'What you are looking for is the line flattening while the cap hit above it climbs. That is the shape of a contract you are about to regret, and it shows up a year before the rating does.',
+  },
+  rateQualifier: {
+    term: 'Qualifier',
+    definition: 'The volume a player needs before a rate is worth quoting — attempts for a passer, carries for a back, targets for a receiver. It scales with how much of the season has been played.',
+    why: 'Without it the leaderboard belongs to a receiver who caught his only target. A rate is a claim about a player; the volume behind it is how much the claim is worth.',
+  },
+  leagueSpread: {
+    term: 'Against the league',
+    definition: 'Every club\'s figure laid out together with the league average marked, so a rank arrives with the field it was earned in.',
+    why: 'A rank on its own lies by omission. Seventeenth of thirty-two is a disaster if the field is spread across two points a drive and nothing at all if the whole league sits inside a tenth of one.',
+  },
+  driveOutcome: {
+    term: 'Drive outcome',
+    definition: 'How a possession ended — a touchdown, a field goal, a punt or turnover on downs, or a turnover. Drives the clock ran out on are kept out of every rate, because they never had a chance to score.',
+    why: 'Read the two bars against each other. The gap between the touchdown share you produce and the one you concede is most of the scoreboard.',
+  },
+  pointsPerDrive: {
+    term: 'Points per drive',
+    definition: 'Points scored divided by drives run.',
+    why: 'The cleanest single read on an offence, because it takes pace out of it — a club running twelve possessions a game and one running nine are finally comparable. The middle of this league is about 2.3; past 2.6 is a top-quarter offence and under 2.0 a bottom-quarter one.',
+  },
+  pointsPerDriveAllowed: {
+    term: 'Points per drive allowed',
+    definition: 'Points the defence gave up divided by the drives it faced.',
+    why: 'The same measure from the other side and on the same scale — the league averages about 2.3 either way, because every drive one club runs is a drive another faces. Under 2.1 is a top-quarter defence.',
+  },
+  netPointsPerDrive: {
+    term: 'Net points per drive',
+    definition: 'Points per drive minus points per drive allowed — the whole club in one number.',
+    why: 'It averages to zero across the league, so the sign is most of the story. A quarter of a point a drive clear is top-quarter football; the same the other way is a top-ten draft pick.',
+  },
+  scoringDriveRate: {
+    term: 'Drives ending in points',
+    definition: 'The share of drives that finished with a touchdown or a field goal.',
+    why: 'A shade over 40% is the middle of this league. This is the number that separates an offence that moves the ball from one that finishes, and plenty of clubs do the first without the second.',
+  },
+  touchdownDriveRate: {
+    term: 'Touchdown rate per drive',
+    definition: 'The share of drives that finished in the end zone.',
+    why: 'About 27%, against roughly 41% of drives that produce any points at all — so a third of your scoring drives stall and settle for three. Closing that gap is worth more than any yardage number on this board.',
+  },
+  threeAndOut: {
+    term: 'Three-and-out',
+    definition: 'A possession that ended in a punt or on downs inside three plays — the ball straight back, with nothing gained.',
+    why: 'Around 9% of drives here. It is the cheapest thing to be bad at: the defence goes back out with no rest and the other side starts closer than it earned.',
+  },
+  turnoverDriveRate: {
+    term: 'Turnovers per drive',
+    definition: 'The share of drives that ended in a turnover.',
+    why: 'Around 9% is normal. Giveaways swing games harder than anything else on this board and hold from one year to the next less than anything else on it — a club at the bad end is usually better than its record.',
+  },
+  yardsPerDrive: {
+    term: 'Yards per drive',
+    definition: 'Yards gained divided by drives run.',
+    why: 'About 37 in this league. It says whether you move the ball; points per drive says whether that mattered. The clubs where the two disagree have a finishing problem.',
+  },
+  yardsPerPlay: {
+    term: 'Yards per play',
+    definition: 'Yards gained on a possession divided by the plays it took.',
+    why: 'The tightest number on the board — the whole league fits between about 5.1 and 6.3, so a tenth of a yard is a real difference and half a yard is a gulf.',
+  },
+  driveStopRate: {
+    term: 'Drives stopped without points',
+    definition: 'The share of the drives your defence faced that ended with no touchdown and no field goal.',
+    why: 'Around 59% is the middle here. It is the defensive twin of the scoring rate, and the fairer way to judge a defence that spends all afternoon on the field.',
+  },
 } as const satisfies Record<string, GlossaryTerm>;
 
 export type GlossaryKey = keyof typeof GLOSSARY;

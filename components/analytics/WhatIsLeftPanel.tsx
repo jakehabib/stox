@@ -1,4 +1,5 @@
 import { TeamLogo } from '@/components/TeamLogo';
+import { tip } from '@/lib/glossary';
 import { Panel, Note, NotOnRecord, Tiles, Tile, SubHead, TableTwin } from './Panel';
 import { rate3, signed } from './viz';
 
@@ -60,6 +61,8 @@ export function WhatIsLeftPanel({ remaining, sosPlayed, remainingOppWinRate, rec
           label="Opponents played"
           value={sosPlayed.opponents ? rate3(sosPlayed.sos) : '—'}
           detail={sosPlayed.opponents ? `combined win rate, ${sosPlayed.opponents} games` : 'no games played yet'}
+          tip={tip('strengthOfSchedule')}
+          tipAlign="start"
         />
         <Tile
           label="Opponents left"
@@ -68,11 +71,14 @@ export function WhatIsLeftPanel({ remaining, sosPlayed, remainingOppWinRate, rec
             ? 'nothing to compare it against yet'
             : `${remainingOppWinRate >= sosPlayed.sos ? 'harder' : 'easier'} by ${Math.abs((remainingOppWinRate - sosPlayed.sos) * 1000).toFixed(0)} points`}
           tone={remainingOppWinRate !== null && sosPlayed.opponents > 0 && remainingOppWinRate > sosPlayed.sos ? 'warn' : undefined}
+          tip={tip('scheduleAhead')}
         />
         <Tile
           label="Projected finish"
           value={remaining.length ? `${projWins.toFixed(1)}-${projLosses.toFixed(1)}` : `${record.wins}-${record.losses}`}
           detail={remaining.length ? `${projectedExtra.toFixed(2)} more wins` : 'the schedule is complete'}
+          tip={tip('projectedFinish')}
+          tipAlign="end"
         />
       </Tiles>
 
@@ -110,11 +116,15 @@ export function WhatIsLeftPanel({ remaining, sosPlayed, remainingOppWinRate, rec
         {allAway && ' Every fixture left is away from home; the estimator charges each of them the road penalty.'}
       </Note>
 
-      <SubHead eyebrow="Who you are chasing" title={divisionLabel} />
+      <SubHead eyebrow="Who you are chasing" title={divisionLabel} tip={tip('gamesBehind')} />
       <div className="overflow-x-auto">
         <table className="w-full border-separate border-spacing-0 text-xs mt-1">
           <thead>
             <tr>
+              {/* Four rows in a scroll box is not enough height for a bubble to
+                  open into, either way up, so this table's one derived column
+                  is explained on the heading above it instead — outside the
+                  scroller, where nothing clips it. */}
               {['Club', 'W-L', 'Win rate', 'Games back'].map((c, i) => (
                 <th key={c} className={`label-sm text-[9.5px] px-1.5 pb-1.5 border-b border-line ${i ? 'text-right' : 'text-left'}`}>{c}</th>
               ))}
@@ -138,6 +148,7 @@ export function WhatIsLeftPanel({ remaining, sosPlayed, remainingOppWinRate, rec
       <TableTwin
         caption="What is left, in numbers"
         columns={['Wk', 'Opponent', 'H/A', 'Record', 'Rating', 'Rank', 'Win chance']}
+        tips={{ Rating: tip('teamOverall'), 'Win chance': tip('winProbability') }}
         rows={remaining.map((r) => [
           r.week, r.oppName, r.home ? 'H' : 'A', `${r.oppWins}-${r.oppLosses}`, r.oppRating, r.oppRank, `${r.winPct}%`,
         ])}

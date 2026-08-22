@@ -1,3 +1,5 @@
+import { Tooltip } from '@/components/Tooltip';
+
 /**
  * The chrome every panel on the Analytics Department shares.
  *
@@ -7,14 +9,26 @@
  * dashboards. It is `.card` from globals.css with the app's `.section-head`
  * anatomy inside it; nothing new is styled here.
  */
-export function Panel({ span, eyebrow, title, flag, aside, why, children }: {
+export function Panel({ span, eyebrow, title, tip, flag, aside, asideTip, why, children }: {
   /** Columns of the 12-wide grid. */
   span: 5 | 6 | 7 | 12;
   eyebrow: string;
   title: string;
+  /**
+   * Glossary text for whatever the panel is actually measuring — always
+   * `tip('someKey')`, never a hand-written string, so a term explained here
+   * reads identically on the cap sheet and the player card.
+   *
+   * Opens DOWNWARD. The title sits four pixels under the top of the card with
+   * a panel above it; a bubble opening upward lands on the neighbouring
+   * board's table, and there is always chart under a panel title.
+   */
+  tip?: string;
   flag?: { text: string; tone: 'good' | 'bad' | 'warn' };
   /** A quiet right-hand caption, for a panel whose finding is not a flag. */
   aside?: string;
+  /** Glossary text for the aside — it is usually a derived figure of its own. */
+  asideTip?: string;
   why: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -28,10 +42,20 @@ export function Panel({ span, eyebrow, title, flag, aside, why, children }: {
       <div className="section-head items-end">
         <div className="min-w-0">
           <div className="label-sm text-[10px] tracking-[0.1em]">{eyebrow}</div>
-          <h2 className="section-title text-[15px] mt-0.5">{title}</h2>
+          <h2 className="section-title text-[15px] mt-0.5 inline-flex items-center gap-2">
+            {title}
+            {tip && <Tooltip text={tip} placement="bottom" align="start" />}
+          </h2>
         </div>
         {flag && <Flag tone={flag.tone}>{flag.text}</Flag>}
-        {!flag && aside && <span className="label-sm text-[10px] shrink-0 text-right">{aside}</span>}
+        {!flag && aside && (
+          <span className="label-sm text-[10px] shrink-0 text-right inline-flex items-center gap-1.5">
+            {aside}
+            {/* Right-hand caption, so the bubble opens inward from its right
+                edge — centred would hang half of an 18rem bubble off the card. */}
+            {asideTip && <Tooltip text={asideTip} placement="bottom" align="end" />}
+          </span>
+        )}
       </div>
       <p className="text-xs text-muted leading-relaxed mt-2.5 mb-3">{why}</p>
       {children}
@@ -52,12 +76,19 @@ export function Flag({ tone, children }: { tone: 'good' | 'bad' | 'warn'; childr
  * A sub-heading inside a panel, for the second thing a panel says (the game
  * shapes under the margins, the division table under the schedule).
  */
-export function SubHead({ eyebrow, title, aside }: { eyebrow: string; title: string; aside?: string }) {
+export function SubHead({ eyebrow, title, tip, aside }: {
+  eyebrow: string; title: string; aside?: string;
+  /** Glossary text for the subject of the block below — `tip('gameShape')`. */
+  tip?: string;
+}) {
   return (
     <div className="section-head items-end mt-5">
       <div className="min-w-0">
         <div className="label-sm text-[10px] tracking-[0.1em]">{eyebrow}</div>
-        <h3 className="section-title text-[13px] mt-0.5">{title}</h3>
+        <h3 className="section-title text-[13px] mt-0.5 inline-flex items-center gap-2">
+          {title}
+          {tip && <Tooltip text={tip} placement="bottom" align="start" />}
+        </h3>
       </div>
       {aside && <span className="label-sm text-[10px] shrink-0">{aside}</span>}
     </div>
@@ -70,7 +101,15 @@ export type LegendKey = { color?: string; label: string; shape?: 'dot' | 'line' 
  * A legend is present for every chart carrying two or more classes — the
  * dataviz rule, and the reason no encoding on this screen is colour-alone.
  */
-export function Legend({ keys, note }: { keys: LegendKey[]; note?: string }) {
+export function Legend({ keys, note, tip }: {
+  keys: LegendKey[];
+  note?: string;
+  /**
+   * Glossary text for what the chart's encoding actually means — the term the
+   * colours and the marks are carrying, not a description of the picture.
+   */
+  tip?: string;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 text-[11.5px] text-muted mt-2.5">
       {keys.map((k) => (
@@ -88,6 +127,7 @@ export function Legend({ keys, note }: { keys: LegendKey[]; note?: string }) {
         </span>
       ))}
       {note && <span>{note}</span>}
+      {tip && <Tooltip text={tip} />}
     </div>
   );
 }
@@ -127,13 +167,24 @@ export function Tiles({ cols, children }: { cols: 3 | 4; children: React.ReactNo
   );
 }
 
-export function Tile({ label, value, detail, tone }: {
+export function Tile({ label, value, detail, tone, tip, tipAlign }: {
   label: string; value: string; detail?: string; tone?: 'good' | 'bad' | 'warn';
+  /** Glossary text for the figure — `tip('oneScoreGame')`. */
+  tip?: string;
+  /**
+   * A tile is narrower than the 18rem bubble, so the end tiles of a row open
+   * inward: `start` on the first, `end` on the last. Centred elsewhere, which
+   * is the same behaviour the cap sheet's metric tiles have.
+   */
+  tipAlign?: 'center' | 'start' | 'end';
 }) {
   const TONE = { good: 'text-accent', bad: 'text-bad', warn: 'text-warn' } as const;
   return (
     <div className="stat-tile">
-      <div className="label-sm text-[9.5px]">{label}</div>
+      <div className="label-sm text-[9.5px] inline-flex items-center gap-1.5">
+        {label}
+        {tip && <Tooltip text={tip} align={tipAlign} />}
+      </div>
       <div className={`stat-value text-[21px] mt-1 ${tone ? TONE[tone] : ''}`}>{value}</div>
       {detail && <div className="text-[10.5px] text-muted mt-1 leading-snug">{detail}</div>}
     </div>
@@ -149,10 +200,22 @@ export function Tile({ label, value, detail, tone }: {
  * `overflow-x-auto` is on the wrapper, so a wide table scrolls inside its own
  * box and the page body never scrolls sideways.
  */
-export function TableTwin({ caption, columns, rows }: {
+export function TableTwin({ caption, columns, rows, tips }: {
   caption: string;
   columns: string[];
   rows: (string | number)[][];
+  /**
+   * Glossary text for the columns that need it, keyed by the column's own
+   * label. Carried as a native `title` rather than a "?" bubble, which is the
+   * documented fallback for a layout that cannot hold one (see lib/glossary.ts)
+   * and is not a preference here — it is forced, twice over. This table lives
+   * inside `overflow-x-auto`, and CSS clips BOTH axes the moment one stops
+   * being visible: an 18rem bubble opening downward off a five-row age-band
+   * table is cut off at the bottom, and opening upward puts it through the
+   * header. There is no third side. The words are identical either way,
+   * because they come from the same glossary entry the chart above uses.
+   */
+  tips?: Record<string, string>;
 }) {
   return (
     <div className="hidden group-data-[numbers=on]/an:block mt-3.5 overflow-x-auto">
@@ -163,6 +226,7 @@ export function TableTwin({ caption, columns, rows }: {
             {columns.map((c, i) => (
               <th
                 key={c}
+                title={tips?.[c]}
                 className={`label-sm text-[9.5px] px-2 pb-1.5 border-b border-line whitespace-nowrap ${i ? 'text-right' : 'text-left'}`}
               >
                 {c}
@@ -186,6 +250,42 @@ export function TableTwin({ caption, columns, rows }: {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * Which edge a header's bubble hangs from, by the column's position in the row.
+ *
+ * Never centred, and that is not a style choice. These tables sit inside an
+ * `overflow-x-auto` scroller roughly 550px wide and the bubble is a fixed 18rem
+ * — so a centred bubble on any column past the middle runs out through the
+ * scroller's right edge and is cut off mid-word, which is how this first
+ * shipped. Only the first third can open rightward and still fit; everything
+ * after it opens leftward. The boundary is a third rather than a half because
+ * a 553px box and a 288px bubble leave a ~40px dead zone in the middle where
+ * neither edge fits, and at a half the fourth of eight columns landed in it.
+ * Measured against the rendered page, not reasoned about.
+ */
+export function headTipAlign(index: number, count: number): 'start' | 'end' {
+  return index < Math.ceil(count / 3) ? 'start' : 'end';
+}
+
+/**
+ * A column header's label with its glossary bubble, for the tables a panel
+ * draws itself rather than through TableTwin. Kept here so every header on the
+ * screen opens the same way: DOWNWARD, because all of them live inside an
+ * `overflow-x-auto` scroller that clips an upward bubble to nothing, and
+ * inward, per `headTipAlign`, so none of them is cut off sideways either.
+ */
+export function ColLabel({ label, tip, align = 'start' }: {
+  label: string; tip?: string; align?: 'center' | 'start' | 'end';
+}) {
+  if (!tip) return <>{label}</>;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {label}
+      <Tooltip text={tip} placement="bottom" align={align} />
+    </span>
   );
 }
 

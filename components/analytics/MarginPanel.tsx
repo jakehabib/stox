@@ -1,4 +1,5 @@
 import { MarginGame, MarginProfile, BLOWN_LEAD_MARGIN } from '@/lib/analytics';
+import { tip } from '@/lib/glossary';
 import { Panel, Legend, Note, NotOnRecord, Tiles, Tile, SubHead, TableTwin, ChartBox } from './Panel';
 import { VIZ, TXT, signed, ordinal } from './viz';
 
@@ -58,23 +59,29 @@ export function MarginPanel({ span = 7, games, profile, thresholds, teamRatingRa
               value={`${profile.oneScoreWins}-${profile.oneScoreLosses}`}
               detail={`${Math.round((100 * oneScoreTotal) / games.length)}% of the schedule so far`}
               tone={profile.oneScoreLosses > profile.oneScoreWins ? 'bad' : profile.oneScoreWins > profile.oneScoreLosses ? 'good' : undefined}
+              tip={tip('oneScoreGame')}
+              tipAlign="start"
             />
             <Tile
               label="Blowouts"
               value={`${profile.blowoutWins}-${profile.blowoutLosses}`}
               detail={profile.blowoutWins + profile.blowoutLosses === 0 ? 'nothing has been decided early' : `at ±${thresholds.blowout} or more`}
+              tip={tip('blowoutGame')}
             />
             <Tile
               label="Average margin"
               value={signed(profile.averageMargin)}
               detail="points a game, net"
               tone={profile.averageMargin > 0 ? 'good' : profile.averageMargin < 0 ? 'bad' : undefined}
+              tip={tip('netPointsPerGame')}
             />
             <Tile
               label={`Leads of ${BLOWN_LEAD_MARGIN}+ lost`}
               value={String(profile.blownLeads.length)}
               detail={profile.blownLeads.length ? profile.blownLeads.map((g) => g.oppAbbr).join(', ') : 'none surrendered'}
               tone={profile.blownLeads.length > 0 ? 'bad' : undefined}
+              tip={tip('blownLead')}
+              tipAlign="end"
             />
           </Tiles>
 
@@ -95,7 +102,7 @@ export function MarginPanel({ span = 7, games, profile, thresholds, teamRatingRa
             )}
           </Note>
 
-          <SubHead eyebrow="How each one actually went, not how it finished" title="The Shape Of Each Game" />
+          <SubHead eyebrow="How each one actually went, not how it finished" title="The Shape Of Each Game" tip={tip('gameShape')} />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5 mt-2">
             {profile.shapes.map((s) => {
               const max = Math.max(...profile.shapes.map((x) => x.games));
@@ -130,6 +137,7 @@ export function MarginPanel({ span = 7, games, profile, thresholds, teamRatingRa
           <TableTwin
             caption="Game by game, in numbers"
             columns={['Wk', 'Opp', 'H/A', 'Score', 'Margin', 'Shape', 'Note', 'Lead changes', 'Biggest lead', 'Biggest deficit']}
+            tips={{ Shape: tip('gameShape'), 'Biggest lead': tip('blownLead') }}
             rows={games.map((g) => [
               g.week, g.oppAbbr, g.home ? 'H' : 'A', `${g.us}-${g.them}`, signed(g.margin, 0),
               g.archetype ?? '—', g.note ?? '—', g.leadChanges, g.largestLead, g.largestDeficit,

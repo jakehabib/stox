@@ -3,7 +3,8 @@ import { SurplusRow, CONTRACT_VALUE_MATERIAL_PCT, CONTRACT_VALUE_MATERIAL_FLOOR 
 import { formatMoney } from '@/lib/cap';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { positionBadgeClass } from '@/components/ds/positionColor';
-import { Panel, Note, TableTwin } from './Panel';
+import { tip } from '@/lib/glossary';
+import { Panel, Note, TableTwin, ColLabel } from './Panel';
 import { VIZ } from './viz';
 
 export interface ValueRow extends SurplusRow {
@@ -44,6 +45,7 @@ export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, tea
       span={span}
       eyebrow="Cap hit against what the rating is worth"
       title="Who Outperforms The Deal, Who Is An Anchor"
+      tip={tip('contractSurplus')}
       aside="Market-rate deals excluded"
       why={<>
         A deal only lands on this board once the gap clears both {Math.round(CONTRACT_VALUE_MATERIAL_PCT * 100)}% of
@@ -66,9 +68,9 @@ export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, tea
           <div className="grid grid-cols-[34px_minmax(190px,320px)_minmax(100px,1fr)_72px_66px] gap-2.5 label-sm text-[9.5px] pb-1.5 border-b border-line">
             <span />
             <span>Player</span>
-            <span>Surplus against market</span>
+            <span><ColLabel label="Surplus against market" tip={tip('marketValue')} align="start" /></span>
             <span className="text-right">Surplus</span>
-            <span className="text-right">Cap hit</span>
+            <span className="text-right"><ColLabel label="Cap hit" tip={tip('capHit')} align="end" /></span>
           </div>
           {rows.map((r) => {
             const positive = r.surplus >= 0;
@@ -125,6 +127,12 @@ export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, tea
           <TableTwin
             caption="Contract value, in numbers"
             columns={['Player', 'Pos', 'Age', 'Rating', 'Cap hit', 'Market', 'Surplus', 'Verdict']}
+            tips={{
+              Rating: tip('overall'),
+              'Cap hit': tip('capHit'),
+              Market: tip('marketValue'),
+              Surplus: tip('contractSurplus'),
+            }}
             rows={rows.map((r) => [
               r.name, r.position, r.age, r.ovr, formatMoney(r.hit), formatMoney(r.marketValue), formatMoney(r.surplus), r.tier,
             ])}

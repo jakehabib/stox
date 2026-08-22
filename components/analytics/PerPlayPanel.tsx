@@ -1,8 +1,30 @@
 import Link from 'next/link';
 import { RateBoard } from '@/lib/analytics';
+import { GlossaryKey, tip } from '@/lib/glossary';
+import { Tooltip } from '@/components/Tooltip';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { Panel, Legend, Note, NotOnRecord, TableTwin } from './Panel';
 import { VIZ, clamp, ordinal } from './viz';
+
+/**
+ * Each rate on this board to the term the rest of the app already uses for it.
+ * Every one of these ten is a stat the player page, the stats screen and the
+ * career table also print, so not one of them gets a second definition written
+ * here — "yards per attempt" means the same thing in this room as it does on
+ * a player's card, and a rewrite of that sentence lands on both.
+ */
+const RATE_TERM: Record<string, GlossaryKey> = {
+  ya: 'yardsPerAttempt',
+  cmpPct: 'completionPct',
+  rating: 'passerRating',
+  tdPct: 'tdRate',
+  intPct: 'intRate',
+  ypc: 'yardsPerCarry',
+  ypt: 'yardsPerTouch',
+  catchRate: 'catchRate',
+  ypr: 'yardsPerReception',
+  ypTgt: 'yardsPerTarget',
+};
 
 /**
  * The war room's second board — what happens on a play, rather than over a game.
@@ -33,6 +55,7 @@ export function PerPlayPanel({ boards, leagueId, teamAbbr, gamesPlayed, missingP
       span={12}
       eyebrow={`Per-play rates against every qualifying player · ${gamesPlayed} games in`}
       title="The Efficiency Room"
+      tip={tip('rateQualifier')}
       aside="Regular season only"
       why={<>
         Rates, not totals: a back with 1,200 yards on 340 carries and one with 1,000 on 200 are not the same
@@ -57,6 +80,7 @@ export function PerPlayPanel({ boards, leagueId, teamAbbr, gamesPlayed, missingP
               { color: VIZ.muted, label: 'Every other qualifying player', shape: 'line' },
             ]}
             note="The hairline is the mean of the qualifiers"
+            tip={tip('leagueSpread')}
           />
 
           <Note>{headline}</Note>
@@ -76,6 +100,7 @@ export function PerPlayPanel({ boards, leagueId, teamAbbr, gamesPlayed, missingP
           <TableTwin
             caption="Per-play rates, in numbers"
             columns={['Measure', 'Qualifies', 'Qualifiers', 'League mean', 'League best', `${teamAbbr} best`, 'Rank']}
+            tips={{ Qualifies: tip('rateQualifier'), Rank: tip('leagueSpread') }}
             rows={withAny.map((b) => [
               b.label,
               b.scope,
@@ -93,6 +118,7 @@ export function PerPlayPanel({ boards, leagueId, teamAbbr, gamesPlayed, missingP
 }
 
 function RateStrip({ b, leagueId, teamAbbr }: { b: RateBoard; leagueId: string; teamAbbr: string }) {
+  const term = RATE_TERM[b.key];
   const lo = Math.min(...b.league);
   const hi = Math.max(...b.league);
   const pos = (v: number) => clamp(((v - lo) / (hi - lo || 1)) * 100, 0, 100);
@@ -105,6 +131,10 @@ function RateStrip({ b, leagueId, teamAbbr }: { b: RateBoard; leagueId: string; 
       <div className="flex justify-between items-baseline text-xs gap-3">
         <span className="min-w-0">
           {b.label}
+          {/* Downward, and pinned to its own left edge: these strips sit two to
+              a row with another strip directly above, and the distribution bar
+              below is always there to open into. */}
+          {term && <Tooltip text={tip(term)} placement="bottom" align="start" className="ml-1.5 align-[1px]" />}
           <i className="not-italic text-muted text-[10px] ml-1.5">{b.scope}</i>
         </span>
         {best ? (

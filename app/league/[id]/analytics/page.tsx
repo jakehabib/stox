@@ -13,6 +13,7 @@ import { leadColumnKey, statLabel } from '@/lib/statLabels';
 import { canonicalPosition, Position } from '@/lib/tuning';
 import { isRankablePosition } from '@/lib/performanceScore';
 import { readJson } from '@/lib/json';
+import { tip } from '@/lib/glossary';
 import { BoxScore } from '@/lib/types';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import {
@@ -490,30 +491,35 @@ export default async function AnalyticsPage({ params, searchParams }: {
         value: `${myLuck.expectedWins.toFixed(1)}-${(played - myLuck.expectedWins).toFixed(1)}`,
         detail: `Pythagorean · ${signed(myLuck.luck)} wins, ${ordinal(pythLeague.length - myLuckIdx)}-unluckiest of ${pythLeague.length}`,
         color: myLuck.luck < -0.5 ? 'text-bad' : myLuck.luck > 0.5 ? 'text-accent' : undefined,
+        tip: tip('pythagoreanWins'),
       }
-      : { label: 'The scoring says', value: '—', detail: 'no games played yet this season' },
+      : { label: 'The scoring says', value: '—', detail: 'no games played yet this season', tip: tip('pythagoreanWins') },
     {
       label: 'Roster rating',
       value: String(myRating?.overall ?? '—'),
       detail: myRating ? `${ordinal(myRating.rank)} of ${teams.length} · off ${myRating.offense} · def ${myRating.defense}` : '',
       color: myRating && myRating.rank <= 8 ? 'text-accent' : undefined,
+      tip: tip('teamOverall'),
     },
     cap.capEnabled
       ? {
         label: 'Committed',
         value: formatMoney(cap.capUsed),
         detail: `${pct1(cap.capUsed / cap.capTotal)} of the ${formatMoney(cap.capTotal)} ceiling`,
+        tip: tip('committedCap'),
       }
-      : { label: 'Committed', value: '—', detail: 'cap mode is off in this league' },
+      : { label: 'Committed', value: '—', detail: 'cap mode is off in this league', tip: tip('committedCap') },
     {
       label: 'Cap-weighted age',
       value: capHealth.capWeightedAge ? capHealth.capWeightedAge.toFixed(1) : '—',
       detail: `roster mean ${capHealth.rosterAvgAge.toFixed(1)} · top 5 hold ${pct1(capHealth.topFiveShare)}`,
+      tip: tip('capWeightedAge'),
     },
     {
       label: 'Projected finish',
       value: remaining.length ? `${projWins.toFixed(1)}-${(seasonLength - projWins).toFixed(1)}` : `${me.wins}-${me.losses}`,
       detail: remaining.length ? `${remaining.length} left, ${remaining.filter((r) => r.home).length} at home` : 'schedule complete',
+      tip: tip('projectedFinish'),
     },
   ];
 
