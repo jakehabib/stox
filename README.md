@@ -10,14 +10,21 @@ fog-of-war, the sim engine, salary cap, free agency, trades, the draft, and
 the full season/offseason cycle.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.png" width="49%" alt="Team Dashboard" />
-  <img src="docs/screenshots/draft-hub.png" width="49%" alt="Draft Hub with Class Outlook and consensus big board" />
-  <img src="docs/screenshots/player-card.png" width="49%" alt="Player card with College Profile" />
-  <img src="docs/screenshots/cap-advanced.png" width="49%" alt="Cap page, Advanced view" />
+  <img src="docs/screenshots/draft-hub.png" width="98%" alt="Draft Day — a club on the clock, the live selection feed with board rank and how far a man slid, run watch, and the war room" />
 </p>
 <p align="center">
-  <img src="docs/screenshots/stats-myteam.png" width="70%" alt="Stats page, My Team / Advanced view" />
+  <img src="docs/screenshots/dashboard.png" width="49%" alt="Team dashboard" />
+  <img src="docs/screenshots/player-card.png" width="49%" alt="Player card — stats by default, the whole contract one tap away" />
+  <img src="docs/screenshots/cap-advanced.png" width="49%" alt="Cap sheet, Advanced view" />
+  <img src="docs/screenshots/stats-myteam.png" width="49%" alt="Stats, My Team / Advanced view" />
 </p>
+<p align="center">
+  <img src="docs/screenshots/gm-card.png" width="34%" alt="The GM card — a tenure on one card, sized for a screenshot" />
+</p>
+
+<sub>Screenshots are regenerated from the app at the commit they ship with, never
+mocked up. If one of these looks unlike the app you are running, the README is
+the thing that is out of date.</sub>
 
 > **Balance disclaimer:** Every number that the design doc marked "tunable" —
 > position weights, RNG spreads, market-value curves, AI valuation formulas,
@@ -68,9 +75,10 @@ Other useful scripts:
 
 ```bash
 npm run db:studio    # Prisma Studio — browse/edit the raw database
-npm run build         # production build (generates the client, syncs the
-                       # schema, and runs `next build` — this is exactly
-                       # what Vercel runs on every deploy)
+npm run build         # production build: generates the Prisma client,
+                       # applies any pending MIGRATIONS (not a schema push —
+                       # `prisma migrate deploy`), then `next build`. This is
+                       # exactly what Vercel runs on every deploy.
 ```
 
 ## First things to click through
@@ -194,16 +202,43 @@ npm run build         # production build (generates the client, syncs the
 - `lib/auth.ts`, `lib/owner.ts`, `lib/password.ts` — accounts, sessions, and
   the ownership boundary enforced in three places: the home list, every
   server action, and every league page render
+- `lib/ratings.ts` — attribute weights per position, `computeOverall`, and
+  the position-conversion maths (`RELATED_POSITIONS`, and THE CEILING MOVES
+  WITH THE FLOOR — a converted player's `potential` travels with his rating)
+- `lib/glossary.ts` — **one definition of every term in the game**, each with
+  a `definition` and a `why`. `tip(key)` renders it; every `?` bubble in the
+  app reads from here, so a word cannot come to mean two things on two
+  screens
+- `lib/capEnforcement.ts` — what happens when a club cannot fit a contract,
+  including `autoClearCapRoom` (an AI club short of a rookie deal releases
+  the LEAST valuable men who cover the bill, never the biggest saving)
+- `lib/analytics.ts` — the derived measures behind the Analytics screen:
+  drive outcomes, per-play rates, unit spend against unit rating
+- `lib/gmCareer.ts`, `lib/tradeRetro.ts`, `lib/dynastyScore.ts` — your tenure
+  (record, hit rate, badges, signature pick), deals re-priced today and
+  graded, and the whole-franchise Ring of Honor score. The first two are
+  bounded to your hire year; the third deliberately is not, and the panel
+  says so
+- `lib/development.ts` — progression, decline and the attrition that clears
+  the free-agent pool
 - `lib/leaderboard.ts` — the public, opt-in GM board
 - `lib/leagueFile.ts` — versioned league export/import, with the validation
   as the actual feature
 - `docs/deployment.md` — how this is deployed, the environment variables, and
   a plainly-stated known-risks section
 - `app/league/[id]/` — every screen (dashboard, roster, player, depth chart,
-  free agency, trade, draft, cap sheet, stats, standings, schedule, game
-  recap, settings)
+  free agency, re-sign, trade, draft, cap sheet, analytics, stats, standings,
+  power rankings, schedule, game recap, league news, history, GM career,
+  dynasty, scouting, a read-only view of any rival club, settings)
 - `app/actions/` — server actions backing every mutation (sign, cut, trade,
   draft, scout, advance week, settings)
+- `components/ds/` — the design system: every shared presentational piece
+  (`PageMasthead`, `SectionHeading`, `RatingBadge`, `ScoutingRange`,
+  `Tooltip`, the position colours, the panels). Reach for one of these before
+  writing new styling
+- `components/draft/` — Draft Day's broadcast: the hero, the live selection
+  feed, run watch, board depletion and both best-available boards
+- `components/analytics/` — one component per analytics panel
 - `components/charts/` — the small shared chart kit (bar/line/scatter) used
   by the Cap and Stats Advanced views
 - `scripts/benchmarkTradeValue.ts` — permanent, framework-free benchmark
@@ -1969,3 +2004,16 @@ ever force-pushed over, so every state below still exists in git history).
   rating spread is 18–40 per unit, not the "about seven points" two files
   argued from; and the blowout margin sits nearer the top tenth than the
   claimed top 15%. Comments only. Commit `7583e65`.
+- **2026-08-22 — The dynasty score rates the club, and now says so.** The Ring
+  of Honor leaderboard aggregated a franchise's entire recorded history with
+  no year bound, so on one save it printed 94 with "1 championship" beside a
+  GM whose own nine seasons are 34-119 with nothing — the title was won in
+  2012, fourteen years before he was hired. The fix was NOT to bound it: that
+  panel ranks all 32 clubs, 31 of which never had a human GM, and a trophy
+  belongs to the club that won it. The defect was one number answering two
+  questions, so it is labelled "Franchise Dynasty Score", carries a **Since**
+  column, and puts the user's own bounded record under his club's name. A
+  second span bug surfaced in the same function: cap discipline divided total
+  dead money by franchise seasons, but that ledger is only ever one or two
+  years deep, so all 32 clubs scored near-perfect and a component advertised
+  as part of the ranking was doing no ranking at all. Commit `b295a84`.
