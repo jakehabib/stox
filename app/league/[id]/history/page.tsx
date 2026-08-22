@@ -4,6 +4,7 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { HistoryTeamSelect } from '@/components/HistoryTeamSelect';
 import { statLabel } from '@/lib/statLabels';
 import { buildDynastyLeaderboard } from '@/lib/dynastyScore';
+import { buildGmCareerSummary } from '@/lib/gmCareer';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { Tooltip } from '@/components/Tooltip';
@@ -39,6 +40,20 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
     }),
     buildDynastyLeaderboard(league.id),
   ]);
+  // The leaderboard above is a FRANCHISE table — every club's entire book,
+  // including the seeded decades before the user was hired (lib/dynastyScore.ts).
+  // His own record is a different question with a different answer, so it is
+  // fetched from the one place that answers it — buildGmCareerSummary, bounded
+  // to the hire year — and printed on his own row rather than left for him to
+  // read the club's trophy count as his.
+  const tenure = userTeam ? await buildGmCareerSummary(league.id, userTeam, league.seasonYear) : null;
+  const tenureLine = tenure
+    ? `Under you since ${tenure.firstYear} — ${tenure.wins}-${tenure.losses}${tenure.ties ? `-${tenure.ties}` : ''}, `
+      + (tenure.championships > 0
+        ? `${tenure.championships} title${tenure.championships === 1 ? '' : 's'}.`
+        : 'no titles yet.')
+    : null;
+
   const seasonRecords = leagueRecords.filter((r) => r.scope === 'SEASON');
   const careerRecords = leagueRecords.filter((r) => r.scope === 'CAREER');
 
@@ -92,13 +107,13 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
       <div className="panel overflow-hidden">
         <div className="px-4 py-3 border-b border-line/70">
           <div className="label-sm inline-flex items-center gap-1.5">
-            Dynasty Score
+            Franchise Dynasty Score
             <Tooltip placement="bottom" align="start" text={tip('dynastyScore')} />
           </div>
-          <div className="text-xs text-muted mt-0.5">Championships, playoff depth, win rate, draft hits, cap discipline, awards, and league records held — rolled into one ranking.</div>
+          <div className="text-xs text-muted mt-0.5">Championships, playoff depth, win rate, draft hits, cap discipline, awards and league records held — every club ranked on its whole book, silverware won long before the current front office included.</div>
         </div>
         <table className="table-clean">
-          <thead><tr><th>Rank</th><th>Team</th><th>Score</th><th>Driven By</th></tr></thead>
+          <thead><tr><th>Rank</th><th>Team</th><th>Since</th><th>Score</th><th>Driven By</th></tr></thead>
           <tbody>
             {dynastyLeaderboard.map((d, i) => (
               <tr key={d.teamId} className={d.isUser ? 'bg-accent/5' : ''}>
@@ -107,9 +122,13 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
                   <span className="flex items-center gap-1.5">
                     <TeamLogo seed={d.teamId} abbr={d.teamAbbr} size={18} />
                     <span className={d.isUser ? 'font-semibold' : ''}>{d.teamName}</span>
-                    {d.isUser && <span className="pill border-accent/40 text-accent text-[10px]">You</span>}
+                    {d.isUser && <span className="pill border-accent/40 text-accent text-[10px]">Your club</span>}
                   </span>
+                  {d.isUser && tenureLine && (
+                    <span className="block text-[11px] text-muted mt-0.5">{tenureLine}</span>
+                  )}
                 </td>
+                <td className="font-mono text-muted">{d.firstSeason ?? '—'}</td>
                 <td className="font-mono font-semibold">{d.score}</td>
                 <td className="text-xs text-muted">{d.breakdown.slice(0, 3).map((b) => b.label).join(' · ') || 'Nothing on the board yet'}</td>
               </tr>
@@ -236,7 +255,7 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="font-display font-extrabold text-2xl uppercase tracking-wide">Franchise History</h2>
-          <p className="text-muted text-sm mt-1">Every completed season survives here, even after standings reset for the new year.</p>
+          <p className="text-muted text-sm mt-1">The club's whole book — every completed season, including the eras before you took the job, and still here after standings reset for the new year.</p>
         </div>
         <HistoryTeamSelect leagueId={league.id} teamId={teamId} options={allTeams.map((t) => ({ id: t.id, label: `${t.city} ${t.nickname}` }))} />
       </div>

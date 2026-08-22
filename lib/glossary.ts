@@ -562,13 +562,13 @@ export const GLOSSARY = {
   // DYNASTY / GM CAREER
   // -------------------------------------------------------------------------
   dynastyScore: {
-    term: 'Dynasty score',
-    definition: 'One number for a franchise\'s whole body of work — titles, playoff runs, win rate, draft record, cap discipline, individual awards and league records held.',
-    why: 'Championships dominate it, at 25 points each against 5 for a playoff trip. The breakdown is on the row, so a club can see exactly why its number is what it is.',
+    term: 'Franchise dynasty score',
+    definition: 'One number for a club\'s whole body of work — titles, playoff runs, win rate, draft record, cap discipline, individual awards and league records held, counted back to its first season on record.',
+    why: 'It rates the franchise, not the man running it: a title won two decades before you were hired still sits in that cabinet and still counts here. Your own record is the line under your club\'s name; your Dynasty level grades that. Championships dominate the club figure, at 25 points each against 5 for a playoff trip, and the breakdown is on every row.',
   },
   gmLevel: {
     term: 'Dynasty level',
-    definition: 'Your standing as a general manager, earned from what the franchise actually achieves.',
+    definition: 'Your standing as a general manager, earned from what the club achieves while you are in the chair — nothing from before you were hired counts toward it.',
     why: 'The first level costs about a good half-season; level 20 is around three titles\' worth of work.',
   },
   gmXp: {

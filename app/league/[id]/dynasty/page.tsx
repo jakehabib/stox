@@ -142,10 +142,11 @@ export default async function DynastyPage({ params }: { params: { id: string } }
         title="Dynasty"
         subtitle={
           <>
-            Your record as a general manager, turned into a career track. XP comes from what the franchise actually
-            achieves — wins, playoff runs, titles, awards, picks that hit — never from repeating an action. Skill points
-            buy what a front office can actually buy: a clearer read on the draft board, coaching that develops your
-            players faster, and a cap staff who can tell what a signing really takes.
+            Your record as a general manager, turned into a career track. XP comes from what the club achieves with
+            you in the chair — wins, playoff runs, titles, awards, picks that hit — never from repeating an action, and
+            never from a season decided before you were hired. Skill points buy what a front office can actually buy: a
+            clearer read on the draft board, coaching that develops your players faster, and a cap staff who can tell
+            what a signing really takes.
           </>
         }
         facts={[
