@@ -186,11 +186,36 @@ const POT_SCALE_MAX = 99;
  * ceilings map to the same band (a 94 and a 99 both read 89-99), which is
  * strictly more ambiguity than the middle of the scale, never less.
  */
-export function flatPotentialBand(potential: number): { low: number; high: number } {
+export function flatPotentialBand(potential: number, currentOvr?: number): { low: number; high: number } {
   const width = POT_FLAT_HALF_BAND * 2;
   const truth = clamp(Math.round(potential), POT_SCALE_MIN, POT_SCALE_MAX);
   const low = clamp(truth - POT_FLAT_HALF_BAND, POT_SCALE_MIN, POT_SCALE_MAX - width);
-  return { low, high: low + width };
+
+  /*
+   * A CEILING CANNOT SIT BELOW WHERE THE MAN ALREADY IS.
+   *
+   * The app owner, looking at a 94-rated free agent quoted "POTENTIAL 89-99":
+   * *"see how the potential is lower than his current overall, is that
+   * intentional?"* It was not. The band was centred on his true ceiling and
+   * clamped only to the rating scale, never against his own current overall —
+   * so a man whose ceiling IS 94 was shown a range that opens five points
+   * below the 94 printed directly above it. Two numbers on one card, one of
+   * them impossible.
+   *
+   * Flooring at his current overall is not a cosmetic tidy-up, it is the
+   * honest read: you are looking at an exact, revealed rating (this branch
+   * only runs for a player whose overall is fully known), so whatever you do
+   * not know about his ceiling is entirely on the upside. The band narrows
+   * rather than shifting up, because that is what the extra knowledge really
+   * buys — and at the top of the scale there is nowhere to shift to anyway.
+   *
+   * `currentOvr` is optional so the one prospect-side caller, where the
+   * overall is itself a fogged range and cannot floor anything, is unaffected.
+   */
+  if (currentOvr == null) return { low, high: low + width };
+  const floor = clamp(Math.round(currentOvr), POT_SCALE_MIN, POT_SCALE_MAX);
+  const flooredLow = Math.max(low, floor);
+  return { low: flooredLow, high: Math.max(flooredLow, low + width) };
 }
 
 /**
@@ -262,7 +287,7 @@ export function buildScoutedView(args: {
     // and it has been broken twice by code paths that returned something else.
     const pot = ownCeiling
       ? { low: args.potential, high: args.potential }
-      : flatPotentialBand(args.potential);
+      : flatPotentialBand(args.potential, trueOvr);
     return {
       scoutedOvr: trueOvr,
       ovrLow: trueOvr,

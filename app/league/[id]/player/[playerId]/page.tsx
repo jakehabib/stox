@@ -490,6 +490,44 @@ export default async function PlayerPage({
               {Math.floor(player.heightIn / 12)}'{player.heightIn % 12}" · {player.weightLb} lb · {player.college}
             </div>
 
+            {/* WHAT HE HAS WON, BESIDE HIS NAME.
+                The app owner, on the empty band across the middle of this card:
+                *"can we use the space in that box which is blank to show
+                awards? Championships won? etc"*. He is right that it was dead
+                space, and right about what belongs in it — a ring is the first
+                thing a football person wants to know about a player, and it
+                was sitting two thirds of the way down the page in Career &
+                Honors while the hero showed his height twice over.
+
+                A summary, not a duplicate: counts and the most recent year
+                only. The full list — every ring year, every award with its
+                season, the All-Star selections — stays in Career & Honors
+                below, which is the section that exists to carry it. Rendered
+                only when there is something to show, so a rookie's card does
+                not grow an empty row of zeroes. */}
+            {(ringYears.length > 0 || honorAwards.length > 0 || allStarYears.length > 0) && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {ringYears.length > 0 && (
+                  <span className="pill border-warn/40 text-warn bg-warn/10 gap-1.5">
+                    {ringYears.length}× Champion
+                    <span className="text-muted font-normal">{ringYears[ringYears.length - 1]}</span>
+                  </span>
+                )}
+                {honorAwards.length > 0 && (
+                  <span className="pill border-accent2/40 text-accent2 bg-accent2/10 gap-1.5">
+                    {honorAwards.length === 1 ? honorAwards[0].label : `${honorAwards.length}× Award winner`}
+                    <span className="text-muted font-normal">{honorAwards[honorAwards.length - 1].year}</span>
+                  </span>
+                )}
+                {allStarYears.length > 0 && (
+                  <span className="pill border-line text-chalk gap-1.5">
+                    {allStarYears.length}× All-Star
+                    <span className="text-muted font-normal">{allStarYears[allStarYears.length - 1]}</span>
+                  </span>
+                )}
+              </div>
+            )}
+
             {collegeHeadline.length > 0 ? (
               <div className="mt-5 border-t border-line/50 pt-4">
                 <div className="label-sm text-accent2 mb-2">College — through week {weeksElapsed} of {COLLEGE_WEEKS}</div>

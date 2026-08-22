@@ -223,7 +223,7 @@ export const GLOSSARY = {
   overall: {
     term: 'Overall (OVR)',
     definition: 'One number for how good a player is right now, weighted for what his position actually has to do.',
-    why: 'The ladder: 70 is a starter, 78 a quality one, 85 a star, 90 elite. 95 and up is roughly one player per club across the whole league, and a 99 turns up about four times in 32 rosters.',
+    why: 'The ladder: 70 is a starter, 78 a quality one, 85 a star, 90 elite. Above that you are into the handful of players who decide games on their own, and a 99 is the kind of talent a club builds a decade around.',
   },
   potential: {
     term: 'Potential',
