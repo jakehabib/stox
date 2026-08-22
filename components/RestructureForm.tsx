@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { restructureContractAction } from '@/app/actions/roster';
-import { formatMoney, proration, capHit, capHitSchedule, deadMoneyOnCut, restructureContract as computeRestructure } from '@/lib/cap';
+import { formatMoney, capHit, capHitSchedule, deadMoneyOnCut, restructureContract as computeRestructure } from '@/lib/cap';
 
 interface ContractShape {
   years: number; yearsRemaining: number; signedYear: number;
@@ -39,7 +39,20 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
   const preview = useMemo(() => {
     const next = computeRestructure(contract, convert, { addVoidYears, nowYear });
     const nextShaped = { ...next, baseSalaries: JSON.stringify(next.baseSalaries) };
-    const oldHit = (bases[yearIdx] ?? 0) + proration(contract);
+    /*
+     * ONE FUNCTION, SO THE PANEL CAN'T DISAGREE WITH ITSELF.
+     *
+     * This used to add the year's base salary to proration(contract) by hand,
+     * which is what capHit does EXCEPT for the `yearIdx < prorationYears`
+     * guard — bonus proration stops after five years, and a deal past that
+     * window carries none. The year table three inches below already used
+     * capHitSchedule, which applies the guard. Measured on an 8-year deal in
+     * its 6th year: this row said "$5.19M -> $6.38M" and the table under it
+     * said "$6.38M, was $2.60M" for the same season, with "cap space freed
+     * up" out by $2.59M. Reachable on any contract past the proration window,
+     * which a user builds with two extensions.
+     */
+    const oldHit = capHit(contract, 'REALISTIC');
     const newHit = capHit(nextShaped, 'REALISTIC');
     // The whole point of the warning below: what the deal looks like in
     // EVERY year left, not just this one. capHitSchedule slices from the
@@ -92,7 +105,11 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
 
       <div className="card-pad !p-3 rounded-lg bg-raised space-y-1.5 text-sm">
         <div className="flex justify-between"><span className="text-muted">This year's cap hit</span><span className="font-mono">{formatMoney(preview.oldHit)} → <span className="text-accent font-semibold">{formatMoney(preview.newHit)}</span></span></div>
-        <div className="flex justify-between"><span className="text-muted">Cap space freed up</span><span className={`font-mono font-semibold ${preview.capFreed >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(preview.capFreed)}</span></div>
+        {/* Past the five-year proration window a conversion CREATES proration
+            where there was none, so the move costs this year rather than
+            freeing it. The row used to read "Cap space freed up  -$3.78M",
+            which is two contradictory statements on one line. */}
+        <div className="flex justify-between"><span className="text-muted">{preview.capFreed >= 0 ? 'Cap space freed up' : 'Cap space this costs you'}</span><span className={`font-mono font-semibold ${preview.capFreed >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(Math.abs(preview.capFreed))}</span></div>
         <div className="flex justify-between pt-1 border-t border-line/60"><span className="text-muted">Your cap space after</span><span className="font-mono font-semibold text-accent">{formatMoney(capSpace + preview.capFreed)}</span></div>
         <div className="flex justify-between"><span className="text-muted">Dead money if cut</span><span className="font-mono">{formatMoney(preview.oldDead)} → <span className="text-bad font-semibold">{formatMoney(preview.newDead)}</span></span></div>
       </div>

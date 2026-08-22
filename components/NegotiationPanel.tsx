@@ -262,6 +262,9 @@ export function NegotiationPanel({
     // band carries the contest now, so there is one answer and this line
     // cannot disagree with the sentence underneath it.
     : decision.signBand === 'LOSING' ? 'OUTBID'
+    // A blocked deal is refused whatever he thinks of it, so the meter says
+    // COLD rather than drawing a green ACCEPT over a dead button.
+    : decision.signBand === 'BLOCKED' ? 'COLD'
     : ev.verdict;
 
   const shownHeadline = gone && result?.lostTo
@@ -270,6 +273,14 @@ export function NegotiationPanel({
     : decision.signBand === 'LOSING' && gate.rival
       ? `He would take the ${gate.rival.teamName} deal over this one.`
     : decision.signBand === 'MAYBE' ? 'He might sign here. His agent is not saying.'
+    // A blocked deal gets a headline that names the blocker, not his mood —
+    // it used to read "he will sign this" over a dead button. Short on
+    // purpose: the sentence underneath carries the numbers and the way out,
+    // and repeating it here would just be the same words twice.
+    : decision.blocked === 'CAP' ? "Your cap won't take this deal."
+    : decision.blocked === 'FLOOR' ? 'That is under the league minimum.'
+    : decision.blocked === 'TERM' ? "That term isn't legal."
+    : decision.blocked === 'WILLING' ? "He won't commit for that long."
     : ev.headline;
 
   // WHAT WOULD BEAT THEM, in each dimension separately — the package route the
@@ -603,16 +614,20 @@ export function NegotiationPanel({
           </p>
         )}
         {result && <p className={`text-sm ${result.ok ? 'text-accent' : result.lostTo ? 'text-bad' : 'text-accent2'}`}>{result.message}</p>}
-        {/* Deliberately keyed off the BAND and never off `decision.accepted`.
-            The reason line is null only when he is a certainty, so its
-            presence says nothing the meter has not already said. */}
-        {!result && decision.reason && decision.signBand !== 'YES' && (
+        {/* Shown whenever there is a block, whatever the band. It used to be
+            hidden on a YES, which is exactly the case where the meter and the
+            button contradicted each other and nothing on screen explained
+            why. */}
+        {!result && decision.reason && (decision.blocked !== null || decision.signBand !== 'YES') && (
           <p className={`text-xs ${decision.blocked || decision.outbid ? 'text-bad' : 'text-muted'}`}>{decision.reason}</p>
         )}
         {disabled && disabledReason && <p className="text-sm text-muted">{disabledReason}</p>}
 
         <ActionButton
-          className={`w-full ${decision.outbid ? 'btn-danger' : 'btn-primary'}`}
+          /* A blocked deal's button is not an invitation. It used to keep the
+             primary green while reading "Not enough cap room", which is the
+             shape of a button you are meant to press. */
+          className={`w-full ${decision.blocked ? 'btn-secondary' : decision.outbid ? 'btn-danger' : 'btn-primary'}`}
           disabled={!canSubmit}
           idleLabel={
             signed ? 'Signed'

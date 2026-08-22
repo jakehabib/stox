@@ -93,6 +93,8 @@ export default async function ResignPage({ params }: { params: { id: string } })
   };
 
   const canTag = settings.franchiseTagEnabled && league.phase === 'RESIGN';
+  /** Is the deadline actually running? Everything that calls this a window depends on it. */
+  const inWindow = league.phase === 'RESIGN';
   const alreadyTagged = canTag
     ? (await prisma.contract.findFirst({ where: { teamId: team.id, isFranchiseTag: true, signedYear: league.seasonYear } })) !== null
     : true;
@@ -112,9 +114,19 @@ export default async function ResignPage({ params }: { params: { id: string } })
       <PageMasthead
         teamId={team.id}
         teamAbbr={team.abbr}
-        eyebrow={`${league.seasonYear} Offseason`}
-        title="Re-sign Window"
-        subtitle="Players whose deals are up or about to be. Nobody else may sign them while they are still yours — but somebody is already watching, and open talks will tell you who, what room they have and what they would pay. The hometown discount is real and it is on a clock: it is at its biggest while a contract still has a season to run and mostly gone once it has expired. Whoever you leave undecided is released to free agency when this phase ends, and the rest of the league can call."
+        /*
+         * THE MASTHEAD HAS TO KNOW WHAT MONTH IT IS. This page is reachable in
+         * every phase, and it said "2027 Offseason · Re-sign Window" over a
+         * league in week 5 of the regular season, with a subtitle promising
+         * that undecided players are "released to free agency when this phase
+         * ends" — false in REGULAR, PLAYOFFS and DRAFT alike. During the
+         * window it is a deadline; outside it, it is simply the list of men
+         * whose deals are running out, which is worth having and is not a
+         * deadline.
+         */
+        eyebrow={inWindow ? `${league.seasonYear} Offseason` : `${league.seasonYear} Season`}
+        title={inWindow ? 'Re-sign Window' : 'Contracts Running Out'}
+        subtitle={"Players whose deals are up or about to be. Nobody else may sign them while they are still yours — but somebody is already watching, and open talks will tell you who, what room they have and what they would pay. The hometown discount is real and it is on a clock: it is at its biggest while a contract still has a season to run and mostly gone once it has expired." + (inWindow ? ' Whoever you leave undecided is released to free agency when this window shuts, and the rest of the league can call.' : ' The window itself opens in the offseason — that is when a decision becomes a deadline. Until then this is a list, and getting ahead of it is up to you.')}
         action={expiring.length > 0 ? <LetAiResignButton leagueId={league.id} /> : undefined}
         facts={[
           { label: 'Decisions', value: String(onTheList.length), detail: parked.length > 0 ? `${parked.length} more set aside` : 'contracts on the clock', tip: tip('walkYear') },

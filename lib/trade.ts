@@ -378,16 +378,23 @@ export async function evaluateTrade(opts: {
      * demands yet more from him — his words, that it "requires more value
      * from the player".
      *
-     * The move that satisfies both at once is a DRAFT PICK, and it is the one
-     * thing the old copy never mentioned: a pick carries real value and lands
-     * nothing on anybody's cap (see tradeCapDeltas — picks contribute no
-     * salary). A cheap contract does the same job to a lesser degree. So when
-     * both constraints bite, that is what gets named; when only the cap bites,
-     * taking salary back is still exactly right and is still what we say.
+     * THEN THE FIX FOR THAT WAS ITSELF HALF WRONG. It said picks "do both at
+     * once", which is only true of the value half. `added` above is a pure
+     * salary number — picks contribute nothing to it (see tradeCapDeltas), so
+     * ADDING picks cannot move the cap figure by a cent. Measured: piling on
+     * one, two, four, eight and sixteen first-round picks left the same
+     * "adds $39.4M against $29.4M of room" sentence on screen every time,
+     * because the cap gate returns before value is ever considered. A user
+     * following that advice could add the entire draft and never get past it.
+     *
+     * The move that genuinely satisfies both is to SWAP the salary for picks —
+     * take an expensive man off your side, which is the only thing that lowers
+     * what lands on our cap, and make the value back up in picks, which cost
+     * us nothing. That is one instruction, and it is the one that works.
      */
     const valueShort = ratio < requiredRatio;
     const ask = valueShort
-      ? ` The value is short too — about ${shortPct}% more our way. Picks are the clean way to do both at once: they carry value and nothing lands on our cap.`
+      ? ` The value is short too, by about ${shortPct}%. Adding picks won't move the cap number — only less salary coming at us will. Swap an expensive man for picks and you fix both at once.`
       : ` Take a contract back the other way, or send someone cheaper, and we'll talk — we like the deal otherwise.`;
     return {
       accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy, capBlock,

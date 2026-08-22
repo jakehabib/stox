@@ -576,7 +576,16 @@ export function willingnessHorizon(opts: {
     if (survival < floor) break;
     finalAge = age;
   }
-  finalAge = clamp(Math.round(finalAge), TERM.MIN_FINAL_AGE, TERM.MAX_FINAL_AGE);
+  /*
+   * The floor is his CURRENT age, not a constant. Clamped to a flat
+   * MIN_FINAL_AGE, a 38-year-old was told he "does not intend to play past
+   * 35" — a sentence about a season he has already played. It lands on the
+   * oldest free agent in the pool, which is the first name anyone sees
+   * sorting by age. Capped again at MAX_FINAL_AGE so a 44-year-old cannot
+   * push the lower bound above the upper one.
+   */
+  const notBeforeNow = Math.min(Math.max(TERM.MIN_FINAL_AGE, Math.round(opts.age)), TERM.MAX_FINAL_AGE);
+  finalAge = clamp(Math.round(finalAge), notBeforeNow, TERM.MAX_FINAL_AGE);
 
   return {
     finalAge,

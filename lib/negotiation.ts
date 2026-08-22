@@ -938,7 +938,7 @@ export function minimumAcceptableApy(ctx: NegotiationContext, years: number, gua
  * question: what happens if you offer this. A screen that drew a band from
  * one answer and a warning from another is exactly the bug this replaces.
  */
-export type SignBand = 'NO' | 'MAYBE' | 'YES' | 'LOSING';
+export type SignBand = 'NO' | 'MAYBE' | 'YES' | 'LOSING' | 'BLOCKED';
 
 /** The interest at which he used to flip from no to yes. Now the centre of the band. */
 /**
@@ -1599,7 +1599,11 @@ export function decideOffer(
         : `He is ${ctx.age} and has no intention of playing past ${ctx.intendedFinalAge}. ${ctx.willingYears} years is as long as he will commit, at any price.`;
   } else if (gate.capMode !== 'OFF' && year1CapHit > gate.capSpace) {
     blocked = 'CAP';
-    reason = `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room — clear space or lower the deal.`;
+    // "or lower the deal" is not advice when the deal is already at the league
+    // minimum — there is nothing left to lower, and the only route is room.
+    reason = offer.apy <= gate.minSalary
+      ? `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room, and this is already the league minimum — the only way to sign him is to clear space.`
+      : `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room — clear space or lower the deal.`;
   }
 
   // THE CONTEST. One comparison, on one scale, against the same evaluation
@@ -1630,7 +1634,15 @@ export function decideOffer(
   // over a screen also saying he is signing somewhere else. The band is what
   // HAPPENS, so when the rival's package reads better to him, the band says
   // so and the meter has nothing left to contradict.
-  const signBand: SignBand = outbid ? 'LOSING' : playerBand;
+  // BLOCKED OUTRANKS BOTH, for the reason directly above. `blocked` is not a
+  // shade of his opinion either — a deal the cap, the rulebook or his own
+  // willingness refuses is not a deal he can accept, however much he likes it.
+  // Left out, the band read YES over a screen whose own button said "Not
+  // enough cap room": big green meter, "he will sign this", a ledger showing
+  // cap space after of -$84.2M, and the one sentence naming the shortfall
+  // suppressed because the panel hides `reason` on a YES. Same defect as the
+  // LOSING one, one axis over.
+  const signBand: SignBand = blocked ? 'BLOCKED' : outbid ? 'LOSING' : playerBand;
   const wouldSign = playerBand === 'YES'
     || (playerBand === 'MAYBE' && acceptanceRoll(ctx, offer) < maybeChance(ctx, evaluation.interest));
 

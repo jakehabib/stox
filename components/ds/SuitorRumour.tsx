@@ -47,7 +47,12 @@ import { TeamLogo } from '../TeamLogo';
  * and worth the reminder that a shared component is a shared claim.
  */
 export function SuitorRumour({ session }: { session: NegotiationSession }) {
-  const { ctx, suitor } = session;
+  const { ctx, suitor, gate } = session;
+  // teamCapSummary returns Infinity when the cap is off, and its own doc
+  // comment says to branch on this before displaying any figure from it —
+  // formatMoney(Infinity) renders the literal string "$InfinityM". It reached
+  // every named suitor in every cap-off league.
+  const capOn = gate.capMode !== 'OFF';
   // Three states, and they are genuinely different claims. On the open market
   // he can be signed out from under you today; in the re-sign window he cannot,
   // and how close the rumour is to becoming a bid depends on whether his
@@ -64,8 +69,8 @@ export function SuitorRumour({ session }: { session: NegotiationSession }) {
     return (
       <div className="text-xs px-3 py-2 rounded-lg border border-line bg-raised text-muted">
         <span className="font-semibold text-chalk">Nobody is circling.</span>{' '}
-        No club in the league would get to him: the ones with a hole at {ctx.position} have either no room for
-        him or better men to spend it on.
+        No club in the league would get to him: the ones with a hole at {ctx.position} have{capOn ? ' either no room for him or' : ''} better
+        men to spend it on.
         {finalCall ? ' He can still walk when the window shuts — he just would not be walking into much.' : ''}
       </div>
     );
@@ -102,7 +107,7 @@ export function SuitorRumour({ session }: { session: NegotiationSession }) {
       {/* The receipts. Both figures are the ones their own GM bids on, so a
           user who does not believe the rumour can go and verify it. */}
       <div className="flex gap-1.5 flex-wrap mt-2">
-        <span className="pill border-line text-muted text-[10px]">{formatMoney(suitor.capSpace)} of room</span>
+        {capOn && <span className="pill border-line text-muted text-[10px]">{formatMoney(suitor.capSpace)} of room</span>}
         <span className={`pill border-line text-[10px] ${severity.className}`}>
           {severity.label} need at {ctx.position}
         </span>
