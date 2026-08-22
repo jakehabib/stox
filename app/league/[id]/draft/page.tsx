@@ -533,37 +533,93 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         select: {
           id: true, firstName: true, lastName: true, position: true, age: true,
           college: true, heightIn: true, weightLb: true,
+          // The ratings the recap is allowed to REASON from, never to print
+          // directly. Everything a number on that panel is built out of goes
+          // through recapViewOf below, which decides per player whether we may
+          // see him at all — see the block above it.
+          trueOvr: true, potential: true, trueAttrs: true, teamId: true, experience: true,
         },
       },
     },
     orderBy: [{ round: 'asc' }, { slot: 'asc' }],
   });
+  // Our files on THAT class. `reportMap` above covers the class currently on
+  // the board, which is a different cohort entirely once a season has turned
+  // over — without this a recap of last spring would quote our scouts as
+  // having said nothing about anybody. Merged into the same map so the shared
+  // viewOf() reads them, and merging this late cannot stale the memo above it:
+  // an id from a PAST class has had no view built for it yet, and an id from
+  // THIS one already had its report folded in by classReports, so what this
+  // adds for it is the identical row.
+  const recapReports = recapPickRows.length === 0 ? [] : await prisma.scoutingReport.findMany({
+    where: { teamId: team.id, playerId: { in: recapPickRows.map((p) => p.playerId!) } },
+  });
+  for (const r of recapReports) reportMap.set(r.playerId, r);
   // That draft's board, over that draft's class: everyone it took, plus
   // everyone it left. The leftovers keep the draftYear their class was
   // generated under, which is one BELOW the year they were drafted in — the
   // same off-by-one the big board above has to work around.
+  const recapClass = recapYear === null ? [] : await prisma.player.findMany({
+    where: {
+      leagueId: league.id,
+      OR: [
+        { id: { in: recapPickRows.map((p) => p.playerId!) } },
+        { draftYear: recapYear - 1, draftRound: null },
+      ],
+    },
+    select: {
+      id: true, position: true, trueOvr: true, potential: true,
+      trueAttrs: true, collegeStats: true, combineTesting: true, injuryWeeks: true,
+      // Identity only, and only so the men NOBODY called can be named. No
+      // rating of theirs is printed — an undrafted prospect is still a
+      // prospect, and the fog over him never lifted.
+      firstName: true, lastName: true,
+    },
+  });
   const recapBoard = recapYear === null ? null : consensusBoardMap(
-    await prisma.player.findMany({
-      where: {
-        leagueId: league.id,
-        OR: [
-          { id: { in: recapPickRows.map((p) => p.playerId!) } },
-          { draftYear: recapYear - 1, draftRound: null },
-        ],
-      },
-      select: {
-        id: true, position: true, trueOvr: true, potential: true,
-        trueAttrs: true, collegeStats: true, combineTesting: true, injuryWeeks: true,
-      },
-    }),
+    recapClass,
     { teams: LEAGUE.TEAM_COUNT, rounds: settings.draftRounds },
   );
+
+  /**
+   * THE FOG LINE, DRAWN ONE MAN AT A TIME.
+   *
+   * A draft recap is the one screen where both sides of it are on display at
+   * once, so the rule has to be per player rather than per panel:
+   *
+   *   HE IS OURS NOW      exact overall, exact ceiling. He signed, he is in
+   *                       the building, and this is the same call the roster
+   *                       page makes about the same man (no `isProspect`, so
+   *                       buildScoutedView's scope gate returns the truth).
+   *                       Anything less would be a front office claiming not
+   *                       to know what its own coaches see every morning.
+   *   ANYBODY ELSE'S      viewOf, which hardcodes `isProspect: true`. Drafting
+   *                       a man CLEARS Player.isDraftee, so passing the flag
+   *                       off the record here would print another club's
+   *                       rookie's true overall the instant he came off the
+   *                       board — the worst number this page could show. What
+   *                       we knew about him at the podium is what we knew.
+   *
+   * Keyed on where he is NOW, not on whose pick it was: a man we drafted and
+   * have since traded away is somebody else's, and stops being exact the day
+   * he stops being ours.
+   */
+  const recapViewOf = (p: {
+    id: string; position: string; trueAttrs: string; trueOvr: number; potential: number; teamId: string | null;
+  }): ScoutedPlayerView =>
+    p.teamId === team.id
+      ? buildScoutedView({
+          position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
+          report: reportMap.get(p.id), settings, isOwnRoster: true, isUserView: true, dynasty: scoutMods,
+        })
+      : viewOf(p);
 
   const recapSelections: RecapSelection[] = recapPickRows
     .filter((p) => p.ownerTeamId === team.id && p.player)
     .map((p) => {
       const read = recapBoard?.get(p.player!.id);
       const origin = p.originalTeamId === team.id ? undefined : teamById.get(p.originalTeamId);
+      const view = recapViewOf(p.player!);
       return {
         playerId: p.player!.id,
         overall: overallOf(p.round, p.slot),
@@ -575,6 +631,31 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         college: p.player!.college,
         heightIn: p.player!.heightIn,
         weightLb: p.player!.weightLb,
+        ovr: view.scoutedOvr,
+        ovrLow: view.ovrLow,
+        ovrHigh: view.ovrHigh,
+        revealed: view.revealed,
+        potLow: view.potLow,
+        potHigh: view.potHigh,
+        potentialRevealed: view.potentialRevealed,
+        // `potentialRevealed`, not `revealed` — the ceiling is the stricter
+        // question, and the midpoint of a band is what a label may read when
+        // the exact number is not ours to have.
+        projection: playerLabel({
+          ovr: view.scoutedOvr,
+          potential: view.potentialRevealed ? p.player!.potential : (view.potLow + view.potHigh) / 2,
+          experience: p.player!.experience,
+          confidence: view.confidence,
+        }),
+        // Only where we can see him exactly. ownGradeFor blends a current
+        // rating with a ceiling; feeding it the midpoint of a fogged band
+        // would print a decimal-point opinion we do not actually hold.
+        ourGrade: view.revealed && view.potentialRevealed ? ownGradeFor(view) : undefined,
+        // Our line where our book and the room's differ enough to argue about,
+        // the room's own line where they do not — the same fallback, from the
+        // same two functions, that his row on the big board used the night he
+        // was taken, so the recap does not invent a second voice.
+        note: read ? (disagreementNote(read, view) ?? read.headline) : undefined,
         boardRank: read?.rank,
         boardGrade: read?.grade,
         bandLabel: read?.bandLabel,
@@ -582,21 +663,37 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       };
     });
 
-  const recapRoundOne: RecapLeaguePick[] = recapPickRows
-    .filter((p) => p.round === 1 && p.player)
-    .map((p) => {
-      const club = teamById.get(p.ownerTeamId);
-      return {
-        overall: overallOf(p.round, p.slot),
-        teamId: club?.id ?? p.ownerTeamId,
-        teamAbbr: club?.abbr ?? '???',
-        isUser: p.ownerTeamId === team.id,
-        firstName: p.player!.firstName,
-        lastName: p.player!.lastName,
-        position: p.player!.position,
-        boardRank: recapBoard?.get(p.player!.id)?.rank,
-      };
-    });
+  // One name off the board, anybody's. The only rating on these rows is the
+  // PUBLIC grade — free, identical for every club, and not an overall. Our own
+  // range rides along only where the department filed a real report, using Our
+  // Board's own threshold so this page cannot quote a read it would refuse to
+  // rank; and `!revealed` keeps our seven out of it, since they are covered in
+  // full directly above.
+  const recapLeaguePick = (p: (typeof recapPickRows)[number]): RecapLeaguePick => {
+    const club = teamById.get(p.ownerTeamId);
+    const read = recapBoard?.get(p.player!.id);
+    const view = recapViewOf(p.player!);
+    return {
+      overall: overallOf(p.round, p.slot),
+      round: p.round,
+      teamId: club?.id ?? p.ownerTeamId,
+      teamAbbr: club?.abbr ?? '???',
+      isUser: p.ownerTeamId === team.id,
+      firstName: p.player!.firstName,
+      lastName: p.player!.lastName,
+      position: p.player!.position,
+      college: p.player!.college,
+      boardRank: read?.rank,
+      boardGrade: read?.grade,
+      ourFile: !view.revealed && view.confidence >= FILE_MIN ? { low: view.ovrLow, high: view.ovrHigh } : undefined,
+      shortlisted: shortlistIds.has(p.player!.id),
+    };
+  };
+  const recapRoundOne: RecapLeaguePick[] = recapPickRows.filter((p) => p.round === 1 && p.player).map(recapLeaguePick);
+  // Everything after round one — 192 rows in a standard draft, which is why
+  // the panel that renders it scrolls inside a cap instead of standing the
+  // page back up as a document.
+  const recapLater: RecapLeaguePick[] = recapPickRows.filter((p) => p.round > 1 && p.player).map(recapLeaguePick);
 
   // What was true in the room, and nothing about how any of it turns out —
   // that story belongs to the careers these men have not had yet.
@@ -662,6 +759,23 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         detail: `board #${reach.rank}, taken #${reach.overall} by ${club?.abbr ?? '???'}`,
       });
     }
+    // The best grade nobody called. He is a name on the phone list tonight and
+    // on somebody's wire tomorrow, which is the one thing a class of leftovers
+    // is actually good for — and it is his board rank, not a rating: the fog
+    // over a man who never got drafted never lifted.
+    const takenIds = new Set(recapPickRows.map((p) => p.playerId!));
+    const bestLeft = recapClass
+      .filter((pl) => !takenIds.has(pl.id))
+      .map((pl) => ({ pl, read: recapBoard?.get(pl.id) }))
+      .filter((x) => x.read !== undefined)
+      .sort((a, b) => a.read!.rank - b.read!.rank)[0];
+    if (bestLeft) {
+      recapNotes.push({
+        label: 'Best Undrafted',
+        value: `${bestLeft.pl.firstName} ${bestLeft.pl.lastName}`,
+        detail: `${bestLeft.pl.position} · board #${bestLeft.read!.rank}, never called`,
+      });
+    }
   }
 
   // The draft has just ended and the league has not moved on yet — the recap
@@ -674,6 +788,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       teamAbbr={team.abbr}
       selections={recapSelections}
       roundOne={recapRoundOne}
+      later={recapLater}
       notes={recapNotes}
     />
   ) : null;
