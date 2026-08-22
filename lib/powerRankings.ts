@@ -351,16 +351,17 @@ function noteFor(row: PowerRow, rng: Rng, used: Set<string>): string | null {
   // Ordered by how much the fact explains the row it is sitting on. A ranking
   // far away from the record is the most interesting thing this table can say,
   // so it speaks first.
-  // Nothing has happened yet. The only true thing to say is what the roster
-  // is, so that is the only thing said.
-  if (row.played === 0) {
-    return row.ratingRank <= 5 || row.ratingRank >= 30
-      ? say('talent', [
-          `${row.rating} overall, ${ordinal(row.ratingRank)} in the league before a ball has been kicked.`,
-          `Nothing has been played yet — this is a roster ranking, and theirs is the ${ordinal(row.ratingRank)}-best of it.`,
-        ])
-      : null;
-  }
+  // NOTHING HAS HAPPENED YET, SO THERE IS NOTHING TO SAY.
+  //
+  // Preseason rows used to carry a note explaining that the table was a
+  // roster ranking and restating the club's rating and rank — both of which
+  // the row already prints, in its own columns, a few pixels to the right.
+  // The app owner asked for it gone. A note earns its line by saying
+  // something the table cannot: that a club is ranked far above its record,
+  // that a streak is carrying it, that the roster and the results disagree.
+  // Before a ball is kicked none of those exist, and a sentence that only
+  // re-reads the row is noise dressed as insight.
+  if (row.played === 0) return null;
 
   const facts: (() => string | null)[] = [
     // Ranked well above its record. The evidence has to be whatever ACTUALLY
