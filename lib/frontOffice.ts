@@ -3,6 +3,15 @@ import { teamNeeds, RosterPlayer } from './ai/gm';
 import { marketValue, formatMoney } from './cap';
 import { CapMode } from './types';
 import { Position } from './tuning';
+import { startersAt, lineupUnit } from './lineup';
+
+/** Position codes as a person would say them in a sentence. */
+const POSITION_NOUN: Record<string, string> = {
+  QB: 'quarterback', RB: 'running back', WR: 'receiver', TE: 'tight end',
+  LT: 'left tackle', LG: 'left guard', C: 'center', RG: 'right guard', RT: 'right tackle',
+  EDGE: 'edge rusher', DT: 'defensive tackle', LB: 'linebacker', CB: 'cornerback', S: 'safety',
+  K: 'kicker', P: 'punter',
+};
 
 /**
  * ===========================================================================
@@ -87,7 +96,30 @@ export async function buildFrontOfficeBrief(
   }
 
   // --- Trade market ---------------------------------------------------------
-  const surplusPositions = Object.entries(needs).filter(([, n]) => n < 0.05).map(([pos]) => pos);
+  /**
+   * WHAT "DEEP" HAS TO MEAN BEFORE THIS SAYS IT.
+   *
+   * This used to be "need score under 0.05", which is not depth — it is the
+   * absence of a hole. A club with exactly one punter scores ~0 at P, because
+   * one punter is all anybody needs, and the brief duly told the app owner
+   * "Chicago is short at P — a position you're deep at" when he had a single
+   * punter on the roster. That is a lying metric of the plainest kind, and
+   * the owner caught it on the live site.
+   *
+   * Depth is now counted in bodies against the starting eleven: you are deep
+   * only with a starter's worth of cover BEYOND the men who take the field.
+   *
+   * SPECIALISTS ARE EXCLUDED OUTRIGHT, on the owner's call — "these positions
+   * aren't exciting and have little value so prob shouldn't be counted". A
+   * trade built around a backup kicker is not a story, and the brief has room
+   * for four items.
+   */
+  const rosterCountAt = (pos: string) => roster.filter((p) => p.position === pos).length;
+  const surplusPositions = Object.entries(needs)
+    .filter(([pos, n]) => n < 0.05
+      && lineupUnit(pos) !== 'SPECIAL'
+      && rosterCountAt(pos) >= startersAt(pos) + 2)
+    .map(([pos]) => pos);
   if (surplusPositions.length > 0) {
     const aiTeams = await prisma.team.findMany({ where: { leagueId, id: { not: teamId }, isUser: false } });
     const aiRosters = await prisma.player.findMany({
@@ -111,8 +143,10 @@ export async function buildFrontOfficeBrief(
     if (best) {
       items.push({
         category: 'Trade Market',
-        headline: `${best.team.city} is short at ${best.pos}`,
-        detail: "A position you're deep at — worth a call.",
+        // The position spelled out. "Chicago is short at P" reads as a typo in
+        // a sentence; a brief on a GM's desk says punter.
+        headline: `${best.team.city} is short at ${POSITION_NOUN[best.pos] ?? best.pos}`,
+        detail: `You carry ${rosterCountAt(best.pos)} — worth a call.`,
         action: 'Explore Trade',
         href: '/trade',
       });

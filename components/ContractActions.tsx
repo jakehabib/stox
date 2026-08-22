@@ -89,14 +89,19 @@ export function ContractActions({ leagueId, playerId, ovr, position, age, contra
     <div className="space-y-3 pt-1">
       {expiring ? (
         <div className="space-y-2">
+          {/* The button says what it does. It used to read "Re-sign him in the
+              Re-sign Window", and the sentence beneath then said "in the
+              Re-sign Window" a second time — the app owner's note. The label
+              is the action; the sentence is the reason to take it now. */}
           <Link href={`/league/${leagueId}/resign`} className="btn-primary w-full sm:w-auto">
-            Re-sign him in the Re-sign Window
+            Re-sign
           </Link>
           <p className="text-sm text-muted">
             {contract.yearsRemaining === 0
-              ? 'His contract has expired, so this is a re-sign rather than an extension'
-              : 'This is his final contract year, so keeping him is a re-sign rather than an extension'}
-            {' '}— he negotiates it, with a hometown discount that shrinks as the window closes, in the Re-sign Window.
+              ? 'His contract has expired, so keeping him is a re-sign rather than an extension.'
+              : 'This is his final contract year, so keeping him is a re-sign rather than an extension.'}
+            {' '}Get to him early and he is more inclined to give you a hometown discount — the closer he
+            gets to the open market, the less of one he will take.
           </p>
         </div>
       ) : (
