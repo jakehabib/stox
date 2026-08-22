@@ -1067,9 +1067,28 @@ export const AI = {
   } as Record<Position, number>,
 };
 
-/** [TUNE] Jimmy Johnson-style draft pick value chart, by overall pick number. */
+/**
+ * [TUNE] Draft pick value chart, by overall pick number. Every trade tier
+ * curve below is calibrated against what this returns, so read the two
+ * together.
+ *
+ * MEASURED AGAINST THE CLASSIC JIMMY JOHNSON CHART, and it is only half an
+ * approximation of it. Round to round at a mid-round slot it is faithful —
+ * scaled up by a near-constant ~2.1x, which pickValue()'s 0.30 factor takes
+ * back out, leaving the ladder R1 559 / R2 247 / R3 109 / R4 48 / R5 21 (a
+ * 2028 pick at slot 16, valued by a neutral GM in 2026). Those are the units
+ * the tier anchors below are quoted in.
+ *
+ * INSIDE THE TOP TWENTY PICKS IT IS FAR TOO FLAT, and this is a known,
+ * unfixed defect rather than a choice: the classic chart prices pick 1 at 3.0x
+ * pick 16 and 5.1x pick 32, this prices it at 1.47x and 2.20x. So the first
+ * overall pick trades here for barely more than a mid-first. Correcting it
+ * needs a stretched exponential (about 2506 * exp(-0.0956 * pick^0.765)) and a
+ * scaling constant near 0.60 to hold the mid-round ladder still, which moves
+ * every round by 10-18% and would have to be re-verified against the draft AI
+ * as well as trades — deliberately out of scope of the trade recalibration.
+ */
 export const PICK_VALUE_CHART = (overallPick: number): number => {
-  // Smooth exponential approximation of the classic chart. PLACEHOLDER curve.
   return Math.round(3000 * Math.exp(-0.0255 * (overallPick - 1)));
 };
 
@@ -1086,21 +1105,64 @@ export const PICK_VALUE_CHART = (overallPick: number): number => {
  * The fix is to give each position its own curve, not just a flat
  * multiplier bolted onto one shared curve — "elite at a low-value position"
  * should mean "the best version of a replaceable role," not "as valuable as
- * an elite premium-position player." Five tiers, from real NFL trade-market
- * economics: QB is its own tier (retains value into its 30s, curves up
- * sharply near the top); EDGE/LT/WR/CB are premium non-QB spots that can
- * still fetch true blue-chip value; DT/RT/IOL/TE/S/LB matter but the market
- * doesn't pay a premium-position price for them; RB is real but shallow —
- * even a great one caps out around Day 2 value on the age curve realities
- * of the position; K/P stay compressed near the bottom no matter the
- * rating, because a replacement at those spots is always close by.
+ * an elite premium-position player."
+ *
+ * ---------------------------------------------------------------------------
+ * A TIER IS A CONVERSION COMPONENT, NOT A POSITION
+ * ---------------------------------------------------------------------------
+ * The owner's ruling: *"Why would RT be mid and LT be premium? they should be
+ * same value. For the most part the position groups should be similar"*.
+ *
+ * It is also forced, not merely preferred. Since lib/ratings.ts made position
+ * changes free (CONVERSION_ATTR_FRACTION), any two positions its menu connects
+ * MUST price identically or the difference is money for nothing: buy the cheap
+ * label, convert at no cost, sell the dear one. That arbitrage was live and
+ * measured at 5.5x — the same 84-rated man was 46 points as a right tackle and
+ * 251 as a left tackle. So the unit of tiering is a connected component of
+ * RELATED_POSITIONS:
+ *
+ *   {LT, LG, C, RG, RT}   {EDGE, DT, LB}   {CB, S}   and six singletons
+ *
+ * assertConversionTiersAgree() (lib/ratings.ts) fails the build if this table
+ * and that menu ever drift apart; lib/ai/gm.ts, the only consumer of this
+ * table, calls it at module load.
+ *
+ * Note LB rides with EDGE/DT because the menu connects them, not because the
+ * off-ball linebacker market deserves premium money — it does not (a good one
+ * fetches a second and a fifth). Pricing that component at MID instead would
+ * badly underprice edge rushers, who are the second most valuable thing in
+ * football; overpricing off-ball linebackers is the cheaper of the two errors.
+ *
+ * Where the components land, against real NFL trade comparables:
+ *
+ *   QB       — its own tier and by a clear margin. Three firsts for a
+ *              franchise passer is a real price teams have paid.
+ *   PREMIUM  — WR, the offensive line, and the EDGE/DT/LB front. The trenches
+ *              and the receivers: unified OL franchise tag, DE/DT and WR tags
+ *              all sit within a few percent of each other at the top of the
+ *              non-QB market, and elite ones fetch a genuine first.
+ *   MID      — CB/S and TE. Real starters whose trade market is visibly
+ *              softer than the trenches: corners have gone for a third
+ *              (Sneed) and a third-plus-change (Lattimore), the best tight
+ *              ends for a third (Waller).
+ *   LOW      — RB. Genuinely devalued in the modern game, and capped: even
+ *              the best back in football tops out around second-round money.
+ *   MINIMAL  — K/P. Near-worthless in trade without being literally zero,
+ *              because a replacement is always close by.
  */
 export type TradeValueTier = 'QB' | 'PREMIUM' | 'MID' | 'LOW' | 'MINIMAL';
 
+/** Career-arc shapes, kept separate from the trade tiers — see AGE_CURVE. */
+export type AgeArc = 'QB' | 'SPEED' | 'STURDY' | 'BACK' | 'SPECIALIST';
+
 export const TRADE_VALUE_TIER: Record<Position, TradeValueTier> = {
   QB: 'QB',
-  EDGE: 'PREMIUM', LT: 'PREMIUM', WR: 'PREMIUM', CB: 'PREMIUM',
-  DT: 'MID', RT: 'MID', LG: 'MID', RG: 'MID', C: 'MID', TE: 'MID', S: 'MID', LB: 'MID',
+  // one tier per conversion component — see the block above before editing
+  WR: 'PREMIUM',
+  LT: 'PREMIUM', LG: 'PREMIUM', C: 'PREMIUM', RG: 'PREMIUM', RT: 'PREMIUM',
+  EDGE: 'PREMIUM', DT: 'PREMIUM', LB: 'PREMIUM',
+  CB: 'MID', S: 'MID',
+  TE: 'MID',
   RB: 'LOW',
   K: 'MINIMAL', P: 'MINIMAL',
 };
@@ -1112,36 +1174,107 @@ export const TRADE_VALUE = {
    * surplus starts being counted at all (a below-replacement player is
    * theoretically a zero/negative asset, floored at a small positive number
    * so the math never inverts); `steepness` is how fast surplus compounds
-   * into value — this is the part a flat multiplier can't express, since it
-   * changes the CURVE's shape, not just its height; `ceiling` is the
-   * absolute sanity cap in the same value-point units pickValue() already
-   * uses (a mid/late Round 1 pick prices around 400-900 in these units, see
-   * pickValue below), so no combination of contract/age/scarcity bonuses can
-   * ever push an ordinary punter into premium-pick territory.
+   * into value; `scale` is the height. `ceiling` caps the BASE curve only —
+   * the age/contract/need/scarcity multipliers are applied to it afterwards
+   * in playerValueDetailed and can carry a total past it, so it is a bound on
+   * raw talent, not on a finished valuation.
+   *
+   * CALIBRATED AGAINST THE PICK CHART, in the units pickValue() returns for a
+   * 2028 pick at slot 16 seen by a neutral GM in 2026: R1 559, R2 247, R3 109,
+   * R4 48, R5 21, R6 10, R7 4. The anchors, and the real trades behind them:
+   *
+   *   MID      78 ~ a 5th, 82 ~ a 4th, 88 ~ a 3rd, 94 ~ a high 2nd.
+   *            Waller (a very good TE) went for a third; Sneed (a good
+   *            corner) for a third; Roquan Smith for a second and a fifth.
+   *   PREMIUM  ~2.6x MID at every rating: 78 ~ a 4th, 82 ~ a 3rd, 88 ~ a high
+   *            2nd, 91 ~ a mid 1st, 94 ~ 845, more than the first overall
+   *            pick. Mack went for a first and a second; Tunsil for two
+   *            firsts and a second.
+   *   QB       ~8.8x MID: 88 ~ two firsts (Stafford), 94 ~ 2895, about three
+   *            firsts plus change (Watson). The ceiling binds from 95 up.
+   *   LOW      ~0.45x MID, and the ceiling BINDS at 97: even the best running
+   *            back in football tops out at second-round money. Swift went
+   *            for a fourth; McCaffrey, the outlier, for four picks.
+   *   MINIMAL  94 ~ a 6th, 99 ~ 14 points. Never zero, never a real asset.
+   *
+   * STEEPNESS IS SHARED ACROSS PREMIUM/MID/LOW (0.1625) ON PURPOSE. The old
+   * curves each had their own (0.105/0.082/0.072), which made the gap between
+   * tiers swing with rating — PREMIUM was 5.5x MID at 78 and 2.4x at 94 — so
+   * the same relabel was worth wildly different amounts depending on who you
+   * did it to, and a compressed MID left an ELITE 94 interior lineman worth
+   * less than a third-round pick. One steepness makes the positional gap a
+   * stable multiple; the economics live in `replacementLevel` (a replacement
+   * kicker is a 68, a replacement quarterback a 58) and `scale`. QB is steeper
+   * still, because quarterback scarcity genuinely compounds at the top.
+   *
+   * Ordering QB > PREMIUM > MID > LOW > MINIMAL is checked to hold at every
+   * rating from 60 to 99; MID reaches only 38.6% of PREMIUM at 99 and the two
+   * curves would not cross until an (unreachable) 109 overall.
    */
   TIER_CURVE: {
-    QB: { replacementLevel: 58, steepness: 0.145, scale: 16, ceiling: 3400 },
-    PREMIUM: { replacementLevel: 60, steepness: 0.105, scale: 22, ceiling: 2200 },
-    MID: { replacementLevel: 62, steepness: 0.082, scale: 9, ceiling: 1100 },
-    LOW: { replacementLevel: 64, steepness: 0.072, scale: 28, ceiling: 480 },
-    MINIMAL: { replacementLevel: 68, steepness: 0.05, scale: 14, ceiling: 90 },
+    QB: { replacementLevel: 58, steepness: 0.166, scale: 7.37, ceiling: 3400 },
+    PREMIUM: { replacementLevel: 60, steepness: 0.1625, scale: 3.37, ceiling: 2200 },
+    MID: { replacementLevel: 62, steepness: 0.1625, scale: 1.80, ceiling: 1100 },
+    LOW: { replacementLevel: 64, steepness: 0.1625, scale: 1.13, ceiling: 250 },
+    MINIMAL: { replacementLevel: 68, steepness: 0.135, scale: 0.22, ceiling: 20 },
   } as Record<TradeValueTier, { replacementLevel: number; steepness: number; scale: number; ceiling: number }>,
 
   /**
-   * Age curve per tier — real career arcs differ enormously by position.
+   * HOW A CAREER ARCS IS A DIFFERENT QUESTION FROM WHAT A POSITION IS WORTH,
+   * and these used to be the same table. Age curves were keyed on
+   * TradeValueTier, which was harmless only because the old tiers happened to
+   * sort roughly by career length. Re-tiering by conversion component broke
+   * that coincidence: the offensive line and the front seven moved to
+   * PREMIUM, and would have silently started ageing like wide receivers —
+   * declining from 29 at 7.5% a year, when a left tackle is the position that
+   * ages BEST in football. So the arcs get their own names and their own
+   * mapping below, and no position's ageing changed when the tiers did.
+   *
    * `declineStart`/`declinePerYear` model the back half; `youthThreshold`/
    * `youthPremiumPerYear` model the age-control premium teams pay for a
-   * player who'll still be great years from now. RBs decline earliest and
-   * fastest; offensive line and QB retain value longest; K/P barely age at
-   * all (leg talent doesn't erode like a 25-year-old's speed does).
+   * player who'll still be great years from now. Backs decline earliest and
+   * fastest; quarterbacks and specialists latest (leg talent doesn't erode
+   * like a 25-year-old's speed does).
    */
   AGE_CURVE: {
     QB: { declineStart: 34, declinePerYear: 0.035, youthThreshold: 26, youthPremiumPerYear: 0.025 },
-    PREMIUM: { declineStart: 29, declinePerYear: 0.075, youthThreshold: 25, youthPremiumPerYear: 0.035 },
-    MID: { declineStart: 30, declinePerYear: 0.06, youthThreshold: 25, youthPremiumPerYear: 0.03 },
-    LOW: { declineStart: 26, declinePerYear: 0.12, youthThreshold: 24, youthPremiumPerYear: 0.05 },
-    MINIMAL: { declineStart: 33, declinePerYear: 0.02, youthThreshold: 26, youthPremiumPerYear: 0.012 },
-  } as Record<TradeValueTier, { declineStart: number; declinePerYear: number; youthThreshold: number; youthPremiumPerYear: number }>,
+    SPEED: { declineStart: 29, declinePerYear: 0.075, youthThreshold: 25, youthPremiumPerYear: 0.035 },
+    STURDY: { declineStart: 30, declinePerYear: 0.06, youthThreshold: 25, youthPremiumPerYear: 0.03 },
+    BACK: { declineStart: 26, declinePerYear: 0.12, youthThreshold: 24, youthPremiumPerYear: 0.05 },
+    SPECIALIST: { declineStart: 33, declinePerYear: 0.02, youthThreshold: 26, youthPremiumPerYear: 0.012 },
+  } as Record<AgeArc, { declineStart: number; declinePerYear: number; youthThreshold: number; youthPremiumPerYear: number }>,
+
+  /**
+   * Which arc each position ages on. CONSTANT ACROSS A CONVERSION COMPONENT,
+   * for exactly the reason the trade tiers are: a free position change must
+   * not move a man's price, and the age multiplier is part of his price.
+   * Keying arcs per-position reopened the arbitrage in the age dimension — an
+   * old left tackle relabelled a guard was measured at 1.10x mean and 2.49x at
+   * worst, purely by escaping the receivers' decline curve. lib/ai/gm.ts runs
+   * assertConversionTiersAgree over this map as well as over TRADE_VALUE_TIER.
+   *
+   * That constraint settles three cases the old tier-keyed lookup split down
+   * the middle, and the football answer agrees with it in all three:
+   *   - the whole offensive line is STURDY. It was LT alone on SPEED, which
+   *     was always wrong — left tackle is the position that ages BEST in
+   *     football, not like a wide receiver.
+   *   - the whole EDGE/DT/LB front is STURDY. Edge rushers were on SPEED;
+   *     interior rushers and off-ball backers hold up into their thirties and
+   *     the great edge rushers largely have too.
+   *   - both defensive backs are SPEED. Safety was on STURDY; corner is the
+   *     most speed-dependent job on the field after running back and the
+   *     component has to take the corner's arc.
+   */
+  AGE_ARC: {
+    QB: 'QB',
+    WR: 'SPEED',
+    CB: 'SPEED', S: 'SPEED',
+    LT: 'STURDY', LG: 'STURDY', C: 'STURDY', RG: 'STURDY', RT: 'STURDY',
+    EDGE: 'STURDY', DT: 'STURDY', LB: 'STURDY',
+    TE: 'STURDY',
+    RB: 'BACK',
+    K: 'SPECIALIST', P: 'SPECIALIST',
+  } as Record<Position, AgeArc>,
 
   /** Bounds on the final age multiplier — keeps even a very old/young edge case bounded rather than blowing up. */
   AGE_MULT_MIN: 0.2,

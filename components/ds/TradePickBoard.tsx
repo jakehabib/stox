@@ -32,8 +32,18 @@ const ROUND_TIER: Record<number, { text: string; edge: string; bar: string; wash
 };
 const LATE_ROUND = { text: 'text-muted', edge: 'border-line/60', bar: 'bg-muted/45', wash: 'bg-raised/25' };
 
-function tierFor(round: number) {
+/**
+ * The round's chip colours. Exported so a pick rendered anywhere else on this
+ * screen — the deal sheet, the recap of a completed trade — is the same object
+ * the board just showed, rather than a second opinion about what a third-round
+ * pick looks like.
+ */
+export function pickTier(round: number) {
   return ROUND_TIER[round] ?? LATE_ROUND;
+}
+
+function tierFor(round: number) {
+  return pickTier(round);
 }
 
 function PickChip({ pick, selected, showSlot, showVia, onToggle }: {
@@ -98,8 +108,19 @@ export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle
   // A pick outside the configured round count would otherwise fall off the
   // right edge of the grid without a trace, so the grid widens to hold it.
   const cols = picks.reduce((m, p) => Math.max(m, p.round), rounds);
-  const years = Array.from(new Set(picks.map((p) => p.year))).sort((a, b) => a - b);
   const cols100 = { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` };
+
+  /**
+   * Every year from the next draft to the last one this club holds anything
+   * in — INCLUDING the ones it holds nothing in, which are the years worth
+   * knowing about. Listing only the years with picks in them renders a club
+   * that has traded away its entire 2028 as though 2028 did not exist.
+   * Bounded, so a stray far-future pick cannot draw a decade of empty rows.
+   */
+  const held = picks.map((p) => p.year);
+  const last = Math.max(...held);
+  const first = Math.min(imminentYear && imminentYear <= last ? imminentYear : last, ...held);
+  const years = Array.from({ length: Math.min(last - first + 1, 8) }, (_, i) => first + i);
 
   return (
     <div className="mb-4">
@@ -120,9 +141,9 @@ export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle
       ) : (
         <div className="space-y-1.5">
           {years.map((year) => {
-            const held = picks.filter((p) => p.year === year);
-            const showSlot = held.some((p) => p.projectedSlot);
-            const showVia = held.some((p) => p.via);
+            const yearPicks = picks.filter((p) => p.year === year);
+            const showSlot = yearPicks.some((p) => p.projectedSlot);
+            const showVia = yearPicks.some((p) => p.via);
             return (
               <div key={year} className="flex items-stretch gap-1.5">
                 <div className="w-[40px] shrink-0 pt-0.5">
@@ -136,7 +157,11 @@ export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle
                 </div>
                 <div className="grid flex-1 gap-1.5" style={cols100}>
                   {Array.from({ length: cols }, (_, i) => {
-                    const inRound = held.filter((p) => p.round === i + 1);
+                    // Earliest selection first where both are known, so a
+                    // stacked cell reads in the order the picks would be made.
+                    const inRound = yearPicks
+                      .filter((p) => p.round === i + 1)
+                      .sort((a, b) => (a.projectedSlot ?? 99) - (b.projectedSlot ?? 99));
                     if (inRound.length === 0) {
                       return <div key={i} className="rounded-md border border-dashed border-line/30 min-h-[30px]" />;
                     }

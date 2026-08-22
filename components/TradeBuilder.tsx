@@ -15,6 +15,7 @@ import { Tooltip } from './Tooltip';
 import { positionBadgeClass } from './ds/positionColor';
 import { TradePickBoard } from './ds/TradePickBoard';
 import { TradeVerdict } from './ds/TradeVerdict';
+import { TradeRecapCard, type TradeRecapData } from './ds/TradeRecapCard';
 import { IconSwap } from './ds/icons';
 import type { PhilosophySummary } from '@/lib/ai/gm';
 import type { TradePartnerSuggestion } from '@/lib/trade';
@@ -52,7 +53,7 @@ interface DealItem {
 
 export function TradeBuilder({
   leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks, initialGive, initialGet, capSpace, capMode,
-  deadlinePassed, tradeDeadlineWeek, initialPartnerPos, draftRounds, imminentYear,
+  deadlinePassed, tradeDeadlineWeek, initialPartnerPos, draftRounds, imminentYear, lastTrade,
 }: {
   leagueId: string; myTeam: Team; partners: Team[]; partnerId: string;
   /** Position being shopped, carried in the URL so it survives changing club. See TeamPanel's initialPosFilter. */
@@ -66,6 +67,13 @@ export function TradeBuilder({
   deadlinePassed?: boolean; tradeDeadlineWeek?: number;
   /** The league's round count and the next draft that will actually run — the pick board's column count, and which year carries a live slot projection. */
   draftRounds: number; imminentYear: number | null;
+  /**
+   * The most recent trade this club has made, rebuilt by the page on every
+   * render. It is only ever SHOWN when its id differs from the one that was
+   * already on screen at mount — i.e. when a deal has just gone through under
+   * this session — so an old trade can never announce itself on a page load.
+   */
+  lastTrade: TradeRecapData | null;
 }) {
   const router = useRouter();
   // Held here rather than in the panel because the club switcher has to read it
@@ -90,6 +98,14 @@ export function TradeBuilder({
   const [insider, setInsider] = useState<string | null>(null);
   const [execError, setExecError] = useState<string | null>(null);
   const [partnerSuggestions, setPartnerSuggestions] = useState<TradePartnerSuggestion[] | null>(null);
+  // The trade already in the books when this screen loaded. Anything newer
+  // than it arrived because of a button on this page.
+  const [tradeIdAtMount] = useState(lastTrade?.id ?? null);
+  const [showRecap, setShowRecap] = useState(false);
+  // Cap space as the server last reported it BEFORE the deal — captured at the
+  // moment of Confirm, so the recap can state before and after without either
+  // figure being worked out here.
+  const [capBefore, setCapBefore] = useState<number | null>(null);
 
   const toggle = (set: Set<string>, setFn: (s: Set<string>) => void, id: string) => {
     const next = new Set(set);
@@ -173,9 +189,10 @@ export function TradeBuilder({
         requiredRatio: evaluation.requiredRatio,
         sendValue: evaluation.sendValue,
         receiveValue: evaluation.receiveValue,
-        message: evaluation.accepted
-          ? 'Deal accepted! Click confirm to execute the trade.'
-          : evaluation.counter?.message ?? 'Rejected.',
+        // Their answer in their own words. Empty on acceptance because there
+        // is nothing to answer — evaluateTrade writes no line for a yes, and
+        // the verdict's own headline already says so.
+        message: evaluation.accepted ? '' : evaluation.counter?.message ?? 'Rejected.',
         explanation: evaluation.explanation,
         // Carried through so the verdict can draw a cap refusal as its own
         // state. The figures behind "we can't fit this" are the evaluator's
@@ -196,6 +213,7 @@ export function TradeBuilder({
   }, []);
 
   const execute = () => {
+    const spaceBefore = capSpace;
     startTransition(async () => {
       const res = await executeTradeAction(leagueId, myTeam.id, partnerId, giveAssets, getAssets);
       if (!res.ok) {
@@ -207,12 +225,20 @@ export function TradeBuilder({
       }
       setExecError(null);
       setGive(new Set()); setGet(new Set()); setResult(null);
+      setCapBefore(spaceBefore);
+      setShowRecap(true);
+      // The recap rides in on this: the page rebuilds `lastTrade` server-side
+      // and the refreshed props carry both the new trade and the post-trade
+      // cap sheet.
       router.refresh();
     });
   };
 
   const currentPartner = partners.find((p) => p.id === partnerId);
   const nothingSelected = giveAssets.length === 0 && getAssets.length === 0;
+  // Only a record the refresh actually brought back counts as "just done" —
+  // which also guarantees the cap figure beside it is the post-trade one.
+  const recap = showRecap && lastTrade && lastTrade.id !== tradeIdAtMount ? lastTrade : null;
 
   return (
     <div className="space-y-4">
@@ -358,6 +384,21 @@ export function TradeBuilder({
           <div className="label-sm text-bad">Trade blocked</div>
           <p className="text-muted">{execError}</p>
         </div>
+      )}
+
+      {/* Lands exactly where the verdict was, under the button that was just
+          pressed — and dismisses out of the way for the next deal. */}
+      {recap && (
+        <TradeRecapCard
+          recap={recap}
+          myTeamId={myTeam.id}
+          myAbbr={myTeam.abbr}
+          myName={myTeam.name}
+          capBefore={capBefore}
+          capAfter={capSpace}
+          capMode={capMode}
+          onDismiss={() => setShowRecap(false)}
+        />
       )}
 
       {result && currentPartner && (
