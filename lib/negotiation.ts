@@ -1,7 +1,7 @@
 import { Rng } from './rng';
 import {
   buildContract, buildExtension, capHitSchedule, deadMoneyOnCut, formatMoney,
-  willingnessHorizon, TERM, type ContractLike,
+  willingnessHorizon, prorationYears as capProrationYears, TERM, type ContractLike,
 } from './cap';
 import { CAP } from './tuning';
 import { CapMode } from './types';
@@ -1534,8 +1534,15 @@ export function decideOffer(
     escalation: structure.escalation,
     bonusPct: shape.bonusPct,
     guaranteedPct: shape.guaranteedPct,
+    voidYears: structure.voidYears,
   });
-  const priced = { ...c, baseSalaries: JSON.stringify(c.baseSalaries), voidYears: structure.voidYears };
+  // `c.voidYears` — never `structure.voidYears`. Both builders clamp the request
+  // down to what a deal of this length can actually amortise (see
+  // usableVoidYears), and pricing the panel off the raw slider position would
+  // put a number on screen that the contract written moments later does not
+  // carry. The slider is capped at the same figure, so in practice the two
+  // agree; reading it back off the contract is what KEEPS them agreeing.
+  const priced = { ...c, baseSalaries: JSON.stringify(c.baseSalaries) };
   const schedule = capHitSchedule(priced, gate.capMode);
   const year1CapHit = schedule[0] ?? 0;
   const totalValue = c.baseSalaries.reduce((a, b) => a + b, 0) + c.signingBonus;
@@ -1544,9 +1551,15 @@ export function decideOffer(
   // and the panel prints both under their own names.
   const newMoneyValue = ext ? ext.newMoneyTotal : totalValue;
   const contractYears = c.years;
-  const prorationYears = Math.min(contractYears + structure.voidYears, 5);
-  const strandedVoidMoney = structure.voidYears > 0
-    ? Math.max(0, c.signingBonus - Math.round(c.signingBonus / prorationYears) * contractYears)
+  // The shared function, not a second copy of the rule. This was
+  // `Math.min(contractYears + structure.voidYears, 5)` — the five-year ceiling
+  // written out a second time, in a second file, against the raw slider rather
+  // than the clamped contract. CAP.MAX_PRORATION_YEARS moving would have left
+  // it behind, and the panel would have quoted stranded money the ledger beside
+  // it disagreed with.
+  const windowYears = capProrationYears(priced);
+  const strandedVoidMoney = priced.voidYears > 0
+    ? Math.max(0, c.signingBonus - Math.round(c.signingBonus / windowYears) * contractYears)
     : 0;
 
   let blocked: Block | null = null;

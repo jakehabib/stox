@@ -159,7 +159,7 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
         </>
       }
       structureSlot={
-        <DealStructureControls capMode={capMode} structure={structure} onChange={setStructure} />
+        (years) => <DealStructureControls capMode={capMode} contractYears={years} structure={structure} onChange={setStructure} />
       }
     />
   );

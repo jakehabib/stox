@@ -31,6 +31,36 @@ export function prorationYears(c: ContractLike): number {
   return Math.min(c.years + (c.voidYears ?? 0), CAP.MAX_PRORATION_YEARS);
 }
 
+/**
+ * How many void years can actually DO anything on a deal of this length, and
+ * therefore how many a contract is allowed to carry.
+ *
+ * Void years work by widening the proration divisor, and that divisor stops at
+ * CAP.MAX_PRORATION_YEARS. A five-year deal already amortises its bonus over
+ * five years, so a void year on it changes nothing — not the cap hit, not the
+ * dead money, nothing. That is not a limitation of this model; it is the real
+ * rule, and it is why real front offices hang void years off SHORT deals.
+ *
+ * Left unclamped this is the bug the tester actually hit when he reported that
+ * *"void years aren't altering cap hits"*. The slider ran 0-3 on every deal,
+ * but measured against a 5-year contract all three positions produced the
+ * identical year-1 number, and on a 4-year contract only the first one moved it:
+ *
+ *     3yr:  +0 $20.00M   +1 $18.00M   +2 $16.80M   +3 $16.80M
+ *     4yr:  +0 $20.00M   +1 $18.40M   +2 $18.40M   +3 $18.40M
+ *     5yr:  +0 $20.00M   +1 $20.00M   +2 $20.00M   +3 $20.00M   <- all inert
+ *
+ * So the control moved, the ledger did not, and the contract card then went on
+ * to print "+3 void years" over a deal where they bought precisely nothing.
+ * Clamping here means a stored contract never claims a void year that is not
+ * really doing work, and `MAX_VOID_YEARS_FOR` gives the slider the same ceiling
+ * so the user is never offered inert travel in the first place.
+ */
+export function usableVoidYears(years: number, requested: number): number {
+  const room = Math.max(0, CAP.MAX_PRORATION_YEARS - Math.max(1, Math.round(years)));
+  return clamp(Math.round(requested), 0, room);
+}
+
 /** Annual proration of a signing bonus (realistic mode only), for the years it is charged in. */
 export function proration(c: ContractLike): number {
   const yrs = prorationYears(c);
@@ -262,7 +292,11 @@ export function buildExtension(opts: {
     // the new years guarantee. The old deal's guarantee figure described money
     // some of which has already been paid out, so it is not carried whole.
     guaranteed: carriedBonus + fresh.guaranteed,
-    voidYears: Math.max(0, opts.voidYears ?? 0),
+    // Clamped against the FULL appended length, not the added years: an
+    // extension that takes a man to six contract years has already exhausted
+    // the proration window, so a void year on it does nothing and must not be
+    // stored claiming otherwise. See usableVoidYears.
+    voidYears: usableVoidYears(years, opts.voidYears ?? 0),
     newMoneyTotal: fresh.baseSalaries.reduce((a, b) => a + b, 0) + fresh.signingBonus,
     oldMoneyRemaining: remainingBases.reduce((a, b) => a + b, 0) + carriedBonus,
     firstNewYearIndex: remainingBases.length,
@@ -296,7 +330,11 @@ export function restructureContract(
     signedYear: opts.nowYear,
     baseSalaries: remainingBases,
     signingBonus: c.signingBonus + converted,
-    voidYears: Math.max(0, opts.addVoidYears ?? 0),
+    // ADD, as the option name says. This used to assign, which silently DELETED
+    // void years a deal already carried: restructuring a 3+2 deal with the void
+    // slider left at zero shortened its proration window from five years to
+    // three and RAISED the very cap hit the restructure was performed to lower.
+    voidYears: usableVoidYears(c.yearsRemaining, (c.voidYears ?? 0) + Math.max(0, opts.addVoidYears ?? 0)),
     guaranteed: c.guaranteed,
   };
 }
@@ -529,6 +567,23 @@ export function buildContract(opts: {
    * years ever having applied, wildly inflating that team's cap hit.
    */
   escalation?: number;
+  /**
+   * Cap-only trailing years. They widen the proration divisor (see
+   * `prorationYears`) and nothing else — he is not paid for them, and they are
+   * not contract years.
+   *
+   * THIS OPTION USED NOT TO EXIST, and its absence was a bug rather than a
+   * missing convenience. Every caller that wanted void years had to remember
+   * to splice the field back on by hand before pricing — `{ ...contract,
+   * voidYears }` — because the object this returns did not carry it.
+   * `signFreeAgent` and `decideOffer` remembered. `extendContract`, which is
+   * the RE-SIGN path, did not: it wrote `voidYears` to the database but gated
+   * the signing on a cap hit computed without them, so the game demanded
+   * $20.00M of room for a deal that would only ever cost $18.40M, and refused
+   * re-signs it should have allowed. Taking the option here is what stops a
+   * caller forgetting it again.
+   */
+  voidYears?: number;
 }): {
   years: number;
   yearsRemaining: number;
@@ -536,6 +591,7 @@ export function buildContract(opts: {
   baseSalaries: number[];
   signingBonus: number;
   guaranteed: number;
+  voidYears: number;
   isRookieDeal: boolean;
 } {
   const years = Math.max(1, Math.round(opts.years));
@@ -577,6 +633,7 @@ export function buildContract(opts: {
     baseSalaries,
     signingBonus,
     guaranteed: Math.round((baseSum + signingBonus) * (opts.guaranteedPct ?? 0.45)),
+    voidYears: usableVoidYears(years, opts.voidYears ?? 0),
     isRookieDeal: opts.isRookieDeal ?? false,
   };
 }

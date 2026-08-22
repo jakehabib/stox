@@ -246,15 +246,22 @@ export async function signFreeAgent(opts: {
   voidYears?: number;
 }) {
   const { playerId, teamId, apy, years, seasonYear, capMode, week } = opts;
-  const voidYears = Math.max(0, opts.voidYears ?? 0);
 
   const contract = buildContract({
     apy, years, signedYear: seasonYear, escalation: opts.escalation,
     bonusPct: opts.bonusPct, guaranteedPct: opts.guaranteedPct,
+    voidYears: opts.voidYears,
   });
+  // ONE figure, read off the contract itself. This used to be a separate local
+  // spliced in at both the pricing and the write, which worked only for as long
+  // as nobody clamped anything: buildContract now drops void years that a deal
+  // of this length cannot actually use, and a local copy would have gone on
+  // writing the un-clamped number to the database — the row claiming void years
+  // the cap arithmetic had already discarded.
+  const voidYears = contract.voidYears;
   // Void years widen the proration divisor, so they change the year-1 hit the
   // cap check has to clear — build the check off the same shape that gets stored.
-  const hit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries), voidYears }, capMode);
+  const hit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries) }, capMode);
   await assertCapRoom({ action: 'Signing', seasonYear, capMode, charges: [{ teamId, delta: hit }] });
 
   await prisma.$transaction(async (tx) => {
@@ -349,6 +356,12 @@ export async function extendContract(opts: {
   const contract = buildContract({
     apy, years, signedYear: seasonYear, escalation: opts.escalation,
     bonusPct: opts.bonusPct, guaranteedPct: opts.guaranteedPct,
+    // The void years have to be IN the contract that gets priced, not spliced
+    // on afterwards at the write. They were not, so this gate charged the
+    // undiluted proration while the row written two lines below carried the
+    // wider divisor — the check demanded more room than the deal would ever
+    // cost, and re-signs that fit were refused at the door.
+    voidYears: opts.voidYears,
   });
   const newHit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries) }, capMode);
   // The old deal is torn up the instant this one is signed, so its hit is
@@ -374,7 +387,9 @@ export async function extendContract(opts: {
         signingBonus: contract.signingBonus,
         guaranteed: contract.guaranteed,
         isRookieDeal: false,
-        voidYears: Math.max(0, opts.voidYears ?? 0),
+        // Off the contract that was just priced, so the stored row and the cap
+        // gate above can never disagree about the proration window.
+        voidYears: contract.voidYears,
       },
     });
     await tx.transaction.create({

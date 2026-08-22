@@ -69,7 +69,13 @@ export function NegotiationPanel({
   /** Cap accounting the user controls; the player does not judge it. */
   structure?: DealStructure;
   /** Front/back-loading and void-year controls, rendered inside the panel. */
-  structureSlot?: ReactNode;
+  /**
+   * Rendered with the FULL length of the deal on the table — appended total on
+   * an extension. A plain node could not be given that, and the void-year
+   * control has to be sized off it or it offers positions the contract will
+   * silently discard.
+   */
+  structureSlot?: (contractYears: number) => ReactNode;
   /** Rival-bid line, Market Knowledge line — whatever the screen wants above the meter. */
   banner?: ReactNode;
   /** Executes the offer. The server re-decides; this component never signs anything. */
@@ -480,7 +486,7 @@ export function NegotiationPanel({
           )}
         </div>
 
-        {structureSlot}
+        {structureSlot?.(totalTerm)}
 
         {ev.demands.length > 0 && !over && (
           <ul className="space-y-1">

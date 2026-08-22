@@ -225,7 +225,7 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
               onOffer={(offer, str, fingerprint) =>
                 submitResignOfferAction(leagueId, playerId, offer, str, fingerprint)}
               structureSlot={
-                <DealStructureControls capMode={capMode} structure={structure} onChange={setStructure} />
+                (years) => <DealStructureControls capMode={capMode} contractYears={years} structure={structure} onChange={setStructure} />
               }
               banner={
                 <>

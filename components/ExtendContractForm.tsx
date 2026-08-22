@@ -112,7 +112,7 @@ export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDo
         </>
       }
       structureSlot={
-        <DealStructureControls capMode={capMode} structure={structure} onChange={setStructure} />
+        (years) => <DealStructureControls capMode={capMode} contractYears={years} structure={structure} onChange={setStructure} />
       }
     />
   );
