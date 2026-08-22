@@ -120,7 +120,7 @@ export default async function PlayerPage({
   const jerseyColor = player.team ? generateTeamLogoParams(player.team.abbr).primary : undefined;
   const label = playerLabel({
     ovr: view.scoutedOvr,
-    potential: view.revealed ? player.potential : (view.potLow + view.potHigh) / 2,
+    potential: view.potentialRevealed ? player.potential : (view.potLow + view.potHigh) / 2,
     isDraftee: player.isDraftee,
     experience: player.experience,
     confidence: view.confidence,
@@ -473,13 +473,29 @@ export default async function PlayerPage({
                 (README principle 6). Now the certain case says the number
                 plainly and only a prospect gets the band. */}
             <div className="panel p-3">
-              {view.revealed ? (
+              {view.potentialRevealed ? (
                 <>
                   <div className="label-sm inline-flex items-center gap-1.5">
                     Potential
                     <Tooltip text={tip('potential')} />
                   </div>
                   <div className={`stat-value text-stat-md leading-none mt-1 ${ratingColor(player.potential)}`}>{player.potential}</div>
+                </>
+              ) : view.revealed ? (
+                /* An established pro on somebody else's books: his rating is
+                   exact and his ceiling is not. A ScoutingRange here would put
+                   "Confidence: HIGH" under it and invite the reader to think
+                   the band narrows with work — it does not, ever. So it is a
+                   plain band with a plain reason, in football voice. */
+                <>
+                  <div className="label-sm inline-flex items-center gap-1.5">
+                    Potential
+                    <Tooltip text={tip('potential')} />
+                  </div>
+                  <div className={`stat-value text-stat-md leading-none mt-1 ${ratingColor((view.potLow + view.potHigh) / 2)}`}>
+                    {view.potLow}–{view.potHigh}
+                  </div>
+                  <div className="text-[11px] text-muted mt-1">You would have to coach him to know exactly.</div>
                 </>
               ) : (
                 <ScoutingRange low={view.potLow} high={view.potHigh} confidence={view.confidence} label="Potential" tip={tip('potential')} className="w-full" />

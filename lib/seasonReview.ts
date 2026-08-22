@@ -102,6 +102,51 @@ import type { BoxScore, SeasonStats } from './types';
  *    hand the player a number the whole scouting system exists to hide.
  *  - Nothing claims a man's last good year, a lost step, a rift or a system
  *    change. The simulation records none of those, so neither does this.
+ *
+ * ---------------------------------------------------------------------------
+ * 5. DEVELOPMENT — WHAT THE DATABASE CAN AND CANNOT PROVE
+ * ---------------------------------------------------------------------------
+ * "maybe we can include some of the development progress in the end of year
+ * storylines." Growth is real (lib/progression.ts, lib/development.ts) and it
+ * is invisible: players quietly get better between seasons and nothing ever
+ * says so. Three of the four things worth saying about it are provable from
+ * rows that already exist. The fourth is not, and is therefore not said.
+ *
+ *   PROVABLE — WHERE HE STANDS AGAINST HIS CEILING. `Player.potential` and
+ *   `Player.trueOvr` are both current and both exact for the user's own
+ *   roster. "Twenty-three, rated 78, with 88 in him" and "thirty, rated 84,
+ *   and 84 is all of it" are statements of fact about today, not inferences
+ *   about the past. This is the distinction the owner named as invisible and
+ *   it needs no history at all.
+ *
+ *   PROVABLE — THE STAT-LEADER MILESTONE. lib/development.ts writes a
+ *   `DEV_MILESTONE` Transaction, with the player and the week on it, every
+ *   time a checkpoint finds a man leading the league in a marquee category —
+ *   and that bump raises his CEILING as well as his rating. The row is the
+ *   receipt. It is read, never re-derived.
+ *
+ *   PROVABLE, WITH A MARGIN — THE BREAKOUT BAND. The growth model multiplies a
+ *   man's roll by PROGRESSION.BREAKOUT_GROWTH_MULT when he is inside the top
+ *   15% at his position by `offensiveScore`/`defensiveScore` per week. The
+ *   final checkpoint of the year runs on the completed season, against exactly
+ *   the roster this panel is looking at, so that one checkpoint's verdict is
+ *   reconstructable — using the model's own metric, not a second one. Two
+ *   guards keep it honest: the claim is only made inside 12% rather than 15%,
+ *   so a retirement or a release moving the population cannot flip it, and it
+ *   is not made at all once the rollover has cleared `Player.seasonStats`,
+ *   because then the input is genuinely gone. Nothing here claims the EARLIER
+ *   checkpoints fired; only the last one is provable.
+ *
+ *   NOT PROVABLE — THE RATING HE STARTED THE YEAR AT. This is the one the
+ *   owner most wants ("a 22-year-old going 74 to 81"), and this schema cannot
+ *   answer it. `trueOvr` is overwritten in place by every checkpoint and by
+ *   the offseason roll; `PlayerSeason` carries stats and no rating;
+ *   `ScoutingReport.scoutedOvr` is a fogged observation taken at an arbitrary
+ *   week, not a true rating at a known one. There is nowhere in the database
+ *   that a rating is stored with a year attached. So no line here says a
+ *   number went up, and none approximates one. See the handoff note in the
+ *   report: one nullable column pair on `PlayerSeason`, written by the sweep
+ *   that already runs once a year, makes it exact from the following season on.
  * ===========================================================================
  */
 
@@ -172,7 +217,7 @@ const PAY_GAP_UNDER = 70;     // paid that far above what he produced
 const PAY_GAP_OVER = -72;     // produced that far above what he is paid
 const RATE_HIGH = 70;
 const RATE_LOW = 45;
-const RATE_GAP_UNDER = 70;
+const RATE_GAP_UNDER = 75;
 const RATE_GAP_OVER = -60;
 
 /**
@@ -181,6 +226,23 @@ const RATE_GAP_OVER = -60;
  * and only 8.0% miss four or more.
  */
 const MISSED_GAMES_BAR = 4;
+
+/**
+ * [TUNE] The worst single week a man may have had and still be called
+ * unfailing. Measured: among men with twelve graded weeks and a top-40% season,
+ * the worst-week grade runs 24.5 at the median and 58.7 at the 90th percentile,
+ * and the first bar tried — "his worst week still beat half the league" — fired
+ * on 18.2% of them and took a fifth of every recap in the database. At 65 it is
+ * 5.2%: his QUIETEST afternoon of the year was still a top-third one.
+ *
+ * It is not reachable everywhere, and that is a fact about the simulation
+ * rather than a hole in the bar. A corner's weekly grade turns on whether a
+ * ball came his way, so the most consistent corner in this database still has
+ * a week at the 40th percentile; a running back carries the ball every Sunday.
+ * The claim is only true where weekly production is continuous, so that is
+ * where it is made.
+ */
+const UNFAILING_WORST_WEEK = 65;
 
 /** [TUNE] Season-production percentile bars, on the SEASON_LADDER scale. */
 const GOOD_SEASON = 85;       // top 15% of seasons at his position
@@ -215,6 +277,39 @@ const POOR_SEASON = 25;
  * standard of his football.
  */
 const NO_LEVEL_VERDICT = new Set(['LB']);
+
+/**
+ * [TUNE] Development bars, measured over the 240,567 active players in this
+ * database rather than picked.
+ *
+ * ROOM: `potential - trueOvr` collapses with age — its 90th percentile is 17
+ * points at 20-23, 12 at 24-25 and 9 at 26-27 — so one flat bar would have
+ * called every young player a prospect and no older one. The bar is that 90th
+ * percentile, by band, plus a ceiling worth having: a 55 with an 80 in him is
+ * a story, a 48 with a 58 in him is a roster spot.
+ *
+ * DONE: the reverse, and the pairing the owner asked for. Half of all players
+ * over 27 are within two points of their ceiling, so "he is finished growing"
+ * alone says nothing; it is only worth saying about a man who is actually good,
+ * which the rating bar is.
+ */
+const ROOM_BAR: { maxAge: number; gap: number }[] = [
+  { maxAge: 23, gap: 17 },
+  { maxAge: 25, gap: 12 },
+  { maxAge: 27, gap: 9 },
+];
+const ROOM_MIN_CEILING = 80;
+const DONE_MIN_AGE = 28;
+const DONE_MIN_RATING = 78;
+/**
+ * [TUNE] Inside the top 12% at his position by the growth model's own metric.
+ * The model's band is 15% (lib/development.ts); the three-point margin is
+ * there so a player retiring or being released between the last checkpoint and
+ * this panel cannot move somebody across the line the sentence rests on.
+ */
+const BREAKOUT_BAND = 0.12;
+/** [TUNE] Young enough for the accelerated roll to be the point of the sentence. */
+const BREAKOUT_MAX_AGE = 25;
 
 /** [TUNE] Enough graded weeks for a season-shaped claim at all. */
 const MIN_SEASON_WEEKS = 8;
@@ -359,9 +454,11 @@ export type StoryKind =
   | 'ROOKIE_ARRIVAL' | 'SECOND_YEAR_LEAP'
   | 'MISSED_TIME' | 'NEVER_A_BAD_WEEK'
   | 'ONE_BIG_DAY'
-  | 'ROSE_IN_JANUARY' | 'VANISHED_IN_JANUARY';
+  | 'ROSE_IN_JANUARY' | 'VANISHED_IN_JANUARY'
+  | 'BREAKOUT' | 'LED_THE_LEAGUE'
+  | 'ROOM_TO_GROW' | 'AT_CEILING';
 
-export type StoryFamily = 'TRAJECTORY' | 'VALUE' | 'CAREER' | 'ARRIVAL' | 'AVAILABILITY' | 'MOMENT' | 'POSTSEASON';
+export type StoryFamily = 'TRAJECTORY' | 'VALUE' | 'CAREER' | 'ARRIVAL' | 'AVAILABILITY' | 'MOMENT' | 'POSTSEASON' | 'DEVELOPMENT' | 'OUTLOOK';
 
 export const FAMILY_OF: Record<StoryKind, StoryFamily> = {
   SLOW_START: 'TRAJECTORY', SURGED: 'TRAJECTORY', FADED: 'TRAJECTORY',
@@ -371,6 +468,8 @@ export const FAMILY_OF: Record<StoryKind, StoryFamily> = {
   MISSED_TIME: 'AVAILABILITY', NEVER_A_BAD_WEEK: 'AVAILABILITY',
   ONE_BIG_DAY: 'MOMENT',
   ROSE_IN_JANUARY: 'POSTSEASON', VANISHED_IN_JANUARY: 'POSTSEASON',
+  BREAKOUT: 'DEVELOPMENT', LED_THE_LEAGUE: 'DEVELOPMENT',
+  ROOM_TO_GROW: 'OUTLOOK', AT_CEILING: 'OUTLOOK',
 };
 
 /** Whether a read is a good thing to have happened, for the ink it gets. */
@@ -382,6 +481,8 @@ export const TONE_OF: Record<StoryKind, 'good' | 'bad' | 'flat'> = {
   MISSED_TIME: 'flat', NEVER_A_BAD_WEEK: 'good',
   ONE_BIG_DAY: 'flat',
   ROSE_IN_JANUARY: 'good', VANISHED_IN_JANUARY: 'bad',
+  BREAKOUT: 'good', LED_THE_LEAGUE: 'good',
+  ROOM_TO_GROW: 'good', AT_CEILING: 'flat',
 };
 
 export interface Story {
@@ -699,6 +800,13 @@ const KIND_PRIORITY: Record<StoryKind, number> = {
   ROOKIE_ARRIVAL: 57, BELOW_RATING: 56, AGE_DECLINE: 54, SURGED: 53,
   BARGAIN: 52, SECOND_YEAR_LEAP: 51, MISSED_TIME: 50, VANISHED_IN_JANUARY: 49,
   ROSE_IN_JANUARY: 48, ABOVE_RATING: 46, NEVER_A_BAD_WEEK: 43, ONE_BIG_DAY: 38,
+  // Development was invisible before this panel existed, so it leads where it
+  // is earned: a man whose year actually moved his ceiling is the single thing
+  // a dynasty player most wants told and never was.
+  BREAKOUT: 61, LED_THE_LEAGUE: 55,
+  // The outlook pair is selected separately (see buildReview) and these only
+  // order them against each other.
+  ROOM_TO_GROW: 40, AT_CEILING: 36,
 };
 
 const MONEY = (n: number): string => {
@@ -1022,8 +1130,8 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
         kind: 'NEVER_A_BAD_WEEK', shape: sh, margin: (worst.grade! - 50) / 20,
         line: p.stats, scope: 'REGULAR', games: p.gp, pct: sh.pct,
         write: (v) => v.pick([
-          () => `${p.gp} games and not one of them a write-off. His quietest afternoon of the year was week ${worst.week} — ${spoken(pos, worst.stats)} — and that still beat half the ${plural(pos)} in the league.`,
-          () => `You could set your watch by him. ${capitalise(spoken(pos, p.stats))} on the year, and his worst single game (week ${worst.week}, ${spoken(pos, worst.stats)}) was still an above-average one.`,
+          () => `${p.gp} games and not one of them a write-off. His quietest afternoon of the year was week ${worst.week} — ${spoken(pos, worst.stats)} — and that still beat two thirds of the ${plural(pos)} in the league.`,
+          () => `You could set your watch by him. ${capitalise(spoken(pos, p.stats))} on the year, and his worst single game — week ${worst.week}, ${spoken(pos, worst.stats)} — was still better than most ${plural(pos)} manage on a good one.`,
           () => `Nothing spectacular and nothing wasted: ${spoken(pos, p.stats)}, and no week all season where he was below what the job asks.`,
         ])(),
       });
@@ -1031,7 +1139,7 @@ function candidates(sh: Shape, team: ReviewTeamYear): Candidate[] {
   }
 
   // --- One afternoon -------------------------------------------------------
-  if (levelOk && enoughSeason && sh.bestGrade >= 98 && sh.pct <= ORDINARY_CEILING) {
+  if (levelOk && enoughSeason && sh.bestGrade >= 99 && sh.pct <= 40) {
     const rest = subtract(p.stats, sh.best.stats);
     const restGames = p.gp - 1;
     out.push({

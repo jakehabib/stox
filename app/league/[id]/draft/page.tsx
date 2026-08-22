@@ -172,8 +172,8 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       case 'ovr': return (a.view.scoutedOvr - b.view.scoutedOvr) * dir;
       case 'age': return (a.p.age - b.p.age) * dir;
       case 'potential': {
-        const av = a.view.revealed ? a.p.potential : (a.view.potLow + a.view.potHigh) / 2;
-        const bv = b.view.revealed ? b.p.potential : (b.view.potLow + b.view.potHigh) / 2;
+        const av = a.view.potentialRevealed ? a.p.potential : (a.view.potLow + a.view.potHigh) / 2;
+        const bv = b.view.potentialRevealed ? b.p.potential : (b.view.potLow + b.view.potHigh) / 2;
         return (av - bv) * dir;
       }
       default: return (positionSortKey(a.p.position) - positionSortKey(b.p.position)) * dir || b.p.trueOvr - a.p.trueOvr;
@@ -380,7 +380,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             </thead>
             <tbody>
               {sorted.map(({ p, view }) => {
-                const potentialForLabel = view.revealed ? p.potential : (view.potLow + view.potHigh) / 2;
+                const potentialForLabel = view.potentialRevealed ? p.potential : (view.potLow + view.potHigh) / 2;
                 const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0, confidence: view.confidence });
                 const read = consensus.get(p.id);
                 // "Our file vs the board" goes through ownGradeFor, never a raw
@@ -406,7 +406,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     </td>
                     <td className="text-muted">{p.age}</td>
                     <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
-                    <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+                    <td className="text-muted font-mono">{view.potentialRevealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
                     <td>
                       {read && (
                         <div className="flex items-baseline gap-1.5 whitespace-nowrap" title={note ?? read.headline}>

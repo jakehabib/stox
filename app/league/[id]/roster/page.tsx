@@ -138,8 +138,12 @@ export default async function RosterPage({ params, searchParams }: { params: { i
       case 'ovr': return (a.view.scoutedOvr - b.view.scoutedOvr) * dir;
       case 'age': return (a.p.age - b.p.age) * dir;
       case 'potential': {
-        const av = a.view.revealed ? a.p.potential : (a.view.potLow + a.view.potHigh) / 2;
-        const bv = b.view.revealed ? b.p.potential : (b.view.potLow + b.view.potHigh) / 2;
+        // `potentialRevealed`, not `revealed`: a player can have an exact OVR
+        // and a banded ceiling at the same time (see lib/scouting.ts's three
+        // tiers). Sorting off the wrong flag would read a true potential the
+        // column is not printing.
+        const av = a.view.potentialRevealed ? a.p.potential : (a.view.potLow + a.view.potHigh) / 2;
+        const bv = b.view.potentialRevealed ? b.p.potential : (b.view.potLow + b.view.potHigh) / 2;
         return (av - bv) * dir;
       }
       case 'cap': return (a.hit - b.hit) * dir;
@@ -248,7 +252,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
               </span>
             ) : `${view.ovrLow}-${view.ovrHigh}`}
           </td>
-          <td className="text-muted font-mono">{view.revealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+          <td className="text-muted font-mono">{view.potentialRevealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
           <td>
             {p.injuryWeeks > 0 ? (
               <span title={p.injuryType ?? 'Injured'} className="pill border-bad/30 text-bad bg-bad/10 cursor-help">Injured · {p.injuryWeeks}w</span>
