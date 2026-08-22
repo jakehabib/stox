@@ -10,6 +10,7 @@ import { formatMoney } from '@/lib/cap';
 import { InterestMeter } from './ds/InterestMeter';
 import { ActionButton } from './ds/ActionButton';
 import { SigningConfirmation } from './ds/SigningConfirmation';
+import { useSigningMoment } from './SigningMoment';
 import { Tooltip } from './Tooltip';
 import { tip } from '@/lib/glossary';
 
@@ -100,6 +101,10 @@ export function NegotiationPanel({
 }) {
   const [session, setSession] = useState(initialSession);
   const { ctx, gate } = session;
+  // Where the signing card is actually drawn — above the whole page, out of
+  // reach of anything this panel is mounted inside. null off the league
+  // layout, and then the card is drawn here instead, as it always was.
+  const moment = useSigningMoment();
 
   // Opens a shade UNDER his public market estimate. Not at zero — a slider
   // that starts at the bottom reads as "make a lowball" and the first thing
@@ -182,19 +187,35 @@ export function NegotiationPanel({
 
   const submit = async () => {
     const res = await onOffer(offer, structure, sessionFingerprint(session));
-    setAnsweredAt(performance.now());
+    const answered = performance.now();
+    setAnsweredAt(answered);
     setResult(res);
     setSession(res.session);
     setPatienceSpent(res.patienceSpent);
-    // NOTE WHAT IS NOT HERE: `onSigned()`. On every screen that is a
-    // `router.refresh()`, and on the re-sign list it also collapses the row —
-    // which unmounts this component, taking the confirmation of the signing
-    // with it in the same frame. The refresh is deferred to the moment the
-    // user dismisses the confirmation, which is the only way the record of an
-    // event can outlive the event. Nothing is stale in the meantime that the
-    // confirmation does not itself state, and it states it from the contract
-    // row rather than from anything staged here.
-    if (res.ok) return 'Signed';
+    // HE SIGNED, SO THE CARD LEAVES THIS COMPONENT.
+    //
+    // Every state call above may already be landing on a component that is on
+    // its way out: a signed player is no longer in the re-sign list and no
+    // longer a free agent, so the row or the page section this panel sits in
+    // can be gone before the user has read a word of what was agreed. That is
+    // measured, not theoretical — `ActionButton` documents 746ms from action
+    // to unmount on one league.
+    //
+    // `show` belongs to SigningMomentProvider in the league layout, which
+    // nothing on the page can unmount, so handing the deal over here is what
+    // makes the confirmation outlive the event it confirms. What the screen
+    // still has to do once the card is gone travels with it as `onDismiss`;
+    // a screen whose Server Action already revalidated passes nothing.
+    //
+    // NOTE WHAT IS STILL NOT HERE: calling `onSigned()` now. On the re-sign
+    // list that collapses the row and on the extension form it closes the
+    // form, either of which would take the card with it in this frame.
+    if (res.ok) {
+      // `signed` is typed optional and is present exactly when `ok`; the guard
+      // is so a missing deal produces no card rather than an empty one.
+      if (res.signed) moment?.show({ deal: res.signed, answeredAt: answered, onDismiss: onSigned });
+      return 'Signed';
+    }
     setHistory((h) => [...h, {
       apy: offer.apy, years: offer.years,
       outcome: res.lostTo ? `lost to ${res.lostTo.teamName}` : res.decision.evaluation.verdict.toLowerCase(),
@@ -346,8 +367,13 @@ export function NegotiationPanel({
       </div>
 
       {/* IT IS SIGNED. Everything that was a decision is now a fact, so the
-          controls go and the record stays — see SigningConfirmation. */}
-      {signedDeal ? (
+          controls go and the record stays — see SigningConfirmation.
+          Drawn here ONLY where there is no provider to raise it to. Under the
+          league layout there always is, and the card is a dialog above the
+          page instead: this panel is frequently unmounted by the signing
+          itself, and a record of an event cannot be stored inside the thing
+          the event destroys. See SigningMomentProvider. */}
+      {signedDeal && !moment ? (
         <div className="px-4 py-4">
           <SigningConfirmation
             deal={signedDeal}

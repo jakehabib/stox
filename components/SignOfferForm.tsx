@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { openNegotiationAction, submitOfferAction } from '@/app/actions/roster';
 import { contractEstimateAction, type ContractEstimate } from '@/app/actions/dynasty';
 import { formatMoney } from '@/lib/cap';
@@ -55,7 +54,6 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
   // talks from the database, which is precisely why the pips are still gone.
   const [away, setAway] = useState(false);
   const [visit, setVisit] = useState(0);
-  const router = useRouter();
 
   useEffect(() => {
     if (away) return;
@@ -107,7 +105,11 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
     <NegotiationPanel
       initialSession={session}
       structure={structure}
-      onSigned={() => router.refresh()}
+      // NO onSigned, and that is the point. The other two contract screens use
+      // it to ask, at dismissal, for the render they refused to take when the
+      // deal closed. `submitOfferAction` takes that render immediately now
+      // (see the note there), so this form is already gone by the time the
+      // card is dismissed and there is nothing left for a callback to do.
       onReset={() => setStructure(OPENING_STRUCTURE)}
       onCancel={() => setAway(true)}
       onOffer={(offer, str, fingerprint) =>

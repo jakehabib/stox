@@ -10,6 +10,7 @@ import { isBreakingNews } from '@/lib/wireRank';
 import { loadWorkoutSlots } from '@/lib/workouts';
 import { CapAlertBanner } from '@/components/ds/CapAlertBanner';
 import { LineupGapBanner } from '@/components/ds/LineupGapBanner';
+import { SigningMomentProvider } from '@/components/SigningMoment';
 import { lineupGaps } from '@/lib/lineup';
 import { capComplianceDueNow } from '@/lib/season';
 import { capComplianceReport } from '@/lib/capEnforcement';
@@ -244,7 +245,15 @@ export default async function LeagueLayout({ children, params }: { children: Rea
           />
         )}
       </header>
-      <main className="max-w-7xl mx-auto px-6 py-8">{children}</main>
+      {/* THE SIGNING CARD IS RAISED TO THE LAYOUT, not left in the panel that
+          signed the player. It is the only level at which it survives what a
+          signing does to the page underneath it — and hoisting it is what lets
+          a signing revalidate this layout at all, which is what keeps the two
+          banners above honest without waiting on the user to dismiss anything.
+          The whole argument is written in SigningMomentProvider. */}
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        <SigningMomentProvider>{children}</SigningMomentProvider>
+      </main>
     </div>
   );
 }

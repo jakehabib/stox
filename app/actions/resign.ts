@@ -100,25 +100,26 @@ export async function submitResignOfferAction(
     leagueId, playerId, teamId: team.id, seasonYear: league.seasonYear, week: league.week,
     settings, incumbent: true, offer, structure, fingerprint,
   });
-  // NO revalidatePath ON SUCCESS, and this is the whole reason the signing
-  // confirmation can exist.
+  // NO revalidatePath ON SUCCESS — and the reason is no longer the card.
   //
-  // A Server Action that revalidates hands the client a fresh RSC payload for
-  // the current route as part of its own response, so the screen re-renders
-  // the instant the deal closes — and a signed player is no longer in the
-  // re-sign list, no longer a free agent, no longer whatever the panel was
-  // mounted inside. The panel unmounts in the same frame as the answer
-  // arrives, taking any record of what was just agreed with it. That is
-  // measured behaviour, not theory: `ActionButton` documents 746ms from action
-  // to unmount on one league, which is why its done beat so often never
-  // painted.
+  // It used to be: the confirmation was drawn inside this screen's own panel,
+  // a revalidation unmounted the panel, and the record of the deal went with
+  // it in the same frame. The card is raised above the page now (see
+  // SigningMomentProvider), so a revalidation here could not touch it.
   //
-  // So the refresh is the USER's, at the moment they dismiss the confirmation
-  // (see NegotiationPanel and SigningConfirmation). `router.refresh()` there
-  // re-renders this route from the server and invalidates the client router
-  // cache, so nothing is stale once they are done reading. Nothing that
-  // matters is stale before then either: every figure on the confirmation was
-  // read back off the contract row after it was written.
+  // What a revalidation here WOULD do is re-render the screen underneath
+  // before the user has finished with it. Closing this screen is their own
+  // gesture — the row collapses, the form closes — and the refresh rides
+  // along with it through `onSigned` on the panel. That refresh is
+  // load-bearing: without it this route keeps the render it had before the
+  // deal, so it must not be dropped from the call site.
+  //
+  // Nothing that matters is stale in the meantime. Every figure on the
+  // confirmation was read back off the contract row after it was written, and
+  // the man was already yours — this changes no roster the league header's
+  // standing warnings are computed from. A free-agent signing does, which is
+  // why that one revalidates the layout the moment it lands (see
+  // submitOfferAction in app/actions/roster.ts).
   return outcome;
 }
 

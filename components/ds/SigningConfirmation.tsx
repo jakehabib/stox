@@ -24,9 +24,11 @@ import { StatNumber } from './StatNumber';
  *      under it — one league measured 746ms from action to unmount in the same
  *      frame. A confirmation that only appears when the server happens to be
  *      slow teaches an inconsistent lesson. So this is not an animation with a
- *      lifetime; it is state, and it stays until dismissed. The refresh is
- *      deferred to that dismissal (see NegotiationPanel), which is the only
- *      way the confirmation of an event can outlive the event.
+ *      lifetime; it is state, and it stays until dismissed. It is also held
+ *      ABOVE the page rather than inside the panel that did the signing (see
+ *      SigningMomentProvider), because that panel is one of the things the
+ *      signing removes — which is the other half of how the confirmation of
+ *      an event outlives the event.
  *   2. A tick answers "did it work". The question a GM actually has at that
  *      instant is "what did I just commit to" — and the answer is the terms,
  *      the cap, and whether he beat somebody to it.

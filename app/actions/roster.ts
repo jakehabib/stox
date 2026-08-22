@@ -177,31 +177,35 @@ export async function submitOfferAction(
     leagueId, playerId, teamId, seasonYear: league.seasonYear, week: league.week,
     settings, incumbent: false, offer, structure, fingerprint,
   });
-  // Only a SIGNING revalidates. Losing him to a rival changes the league too,
-  // but revalidating on that path tears the panel out from under the user at
-  // the exact moment it is telling them what just happened — the page
-  // re-renders him as another team's player and the explanation goes with it.
-  // The wire and the pool are correct on the next navigation, which is a
-  // second later and after they have read the bad news.
-  // NO revalidatePath ON SUCCESS, and this is the whole reason the signing
-  // confirmation can exist.
+  // A SIGNING REVALIDATES, like every other roster move in this file.
   //
-  // A Server Action that revalidates hands the client a fresh RSC payload for
-  // the current route as part of its own response, so the screen re-renders
-  // the instant the deal closes — and a signed player is no longer in the
-  // re-sign list, no longer a free agent, no longer whatever the panel was
-  // mounted inside. The panel unmounts in the same frame as the answer
-  // arrives, taking any record of what was just agreed with it. That is
-  // measured behaviour, not theory: `ActionButton` documents 746ms from action
-  // to unmount on one league, which is why its done beat so often never
-  // painted.
+  // It did not, for a long time, and the reason was real: a Server Action that
+  // revalidates hands the client a fresh RSC payload for the current route as
+  // part of its own response, and this action is called from the free agent's
+  // own player card, which is gated on `player.status === 'FREE_AGENT'`. The
+  // instant the deal closes that gate is false, `SignOfferForm` unmounts, and
+  // the signing confirmation used to be rendered inside it — so the card the
+  // app owner asked for died in the same frame as the answer arrived.
   //
-  // So the refresh is the USER's, at the moment they dismiss the confirmation
-  // (see NegotiationPanel and SigningConfirmation). `router.refresh()` there
-  // re-renders this route from the server and invalidates the client router
-  // cache, so nothing is stale once they are done reading. Nothing that
-  // matters is stale before then either: every figure on the confirmation was
-  // read back off the contract row after it was written.
+  // The card is not in there any more. It is raised into
+  // SigningMomentProvider, which sits in app/league/[id]/layout.tsx above the
+  // whole page and cannot be unmounted by anything a signing does. That is
+  // what frees this line, and this line is what makes the header honest: the
+  // lineup-gap and cap banners are LAYOUT components, and Next reuses a cached
+  // layout payload across client-side navigations. Without a revalidate here,
+  // signing a healthy kicker left "No healthy K" sitting above a depth chart
+  // that already read "every starting slot filled" — for as long as the user
+  // went on navigating by the nav bar instead of pressing Done. A standing
+  // warning that a starting spot has nobody healthy for it must not depend on
+  // which control the user happens to press next.
+  //
+  // ONLY A SIGNING. Losing him to a rival changes the league too, but that
+  // outcome is explained by the panel, in place, on the player card — and that
+  // panel IS behind the FREE_AGENT gate. Revalidating there would re-render
+  // him as another club's player and take the explanation with it, to fix
+  // nothing about the user's own roster. The wire and the pool are correct at
+  // their next navigation, a second later, after they have read the bad news.
+  if (outcome.ok) revalidatePath(`/league/${leagueId}`, 'layout');
   return outcome;
 }
 
