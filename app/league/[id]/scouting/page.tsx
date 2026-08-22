@@ -219,12 +219,24 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
           }
         />
         <div className="panel p-4">
+          {/* Kept honest with lib/consensus.ts. The board grades the room's own
+              READ of a prospect, and that read is wrong two different ways: in
+              named, public, learnable ways (the four biases legended below),
+              and in ways nobody can name — roughly one prospect in five is
+              simply misjudged, and one in twenty nobody got a real look at.
+              Claiming every error is "named on every row below", as this
+              paragraph used to, is now a lying metric (README principle 6):
+              measured over 200 classes the consensus number one busts 12% of
+              the time and a career-95 player turns up outside the top 96 in
+              one class in five. */}
           <p className="text-sm text-chalk/90 leading-relaxed max-w-3xl">
             Nobody pays to learn who the consensus number one is. Every front office in this league opens the year
             with the same grades, the same ranks and the same bands. What separates them is that the room is
-            systematically <strong className="text-chalk">wrong</strong> — it over-trusts a stopwatch, it takes a big
-            program at its word, it marks down anybody unfinished and anybody flagged. Those errors are public, they
-            are named on every row below, and they are the entire game.
+            <strong className="text-chalk"> wrong</strong> — and it is wrong twice over. It is wrong in ways you can
+            read off the page: it over-trusts a stopwatch, it takes a big program at its word, it marks down anybody
+            unfinished and anybody flagged, and every one of those is named on the rows below. And it is wrong in ways
+            nobody can name, because some men are simply misjudged and some nobody got a real look at. The number one
+            pick busts. The fifth-rounder plays a decade. Your own file is the only thing that tells them apart.
           </p>
           {legend.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-3">

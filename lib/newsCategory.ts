@@ -11,6 +11,11 @@ export function transactionCategory(type: string, headline: string): NewsCategor
   switch (type) {
     case 'TRADE': return 'TRADE';
     case 'SIGN': case 'RESIGN': case 'TAG': return 'SIGNING';
+    // Its own kicker, NOT folded in with the signings above: a club that moves
+    // a lineman inside did not sign anybody, and the coarse vocabulary this
+    // file maps into was missing the concept entirely until position changes
+    // existed. See the NewsCategory docstring.
+    case 'POSITION': return 'POSITION CHANGE';
     case 'INJURY': return 'INJURY';
     case 'DRAFT': return 'DRAFT';
     case 'CHAMPION':

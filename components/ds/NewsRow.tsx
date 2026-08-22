@@ -1,11 +1,23 @@
 import Link from 'next/link';
 import { TeamLogo } from '../TeamLogo';
 
-export type NewsCategory = 'TRADE' | 'SIGNING' | 'INJURY' | 'RECORD' | 'AWARD' | 'DRAFT' | 'GAME' | 'LEAGUE';
+/**
+ * 'POSITION CHANGE' is its own kicker rather than being folded into SIGNING,
+ * which is where it first landed. A club moving a lineman inside did not sign
+ * anybody, and a green SIGNING kicker over "Gallagher moves from RT to LT" is
+ * a label asserting something that did not happen — the lying-metric class
+ * README section 6 exists to stop. Folding it into LEAGUE instead would be
+ * accurate but files a real roster decision under league admin.
+ */
+export type NewsCategory = 'TRADE' | 'SIGNING' | 'POSITION CHANGE' | 'INJURY' | 'RECORD' | 'AWARD' | 'DRAFT' | 'GAME' | 'LEAGUE';
 
 export const CATEGORY_COLOR: Record<NewsCategory, string> = {
   TRADE: 'text-accent2', SIGNING: 'text-accent', INJURY: 'text-bad', GAME: 'text-chalk',
   RECORD: 'text-gold', AWARD: 'text-gold', DRAFT: 'text-accent2', LEAGUE: 'text-muted',
+  // Chalk: a man changing jobs is neither an arrival nor a loss, so it takes
+  // the neutral ink rather than borrowing signing green or release red. The
+  // words carry it — no hue in this ramp means "moved".
+  'POSITION CHANGE': 'text-chalk',
 };
 
 /**

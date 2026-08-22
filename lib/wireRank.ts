@@ -41,6 +41,12 @@ const TYPE_WEIGHT: Record<string, number> = {
   RESIGN: 35, TAG: 35,
   SIGN: 30,
   CUT: 25,
+  // A club moving a man to a new position. Real front-office news and it goes
+  // in the record, but quieter than a signing: after a draft class lands, a
+  // couple of dozen of these can be written league-wide in one step, and the
+  // user-team bonus below is what makes HIS line reshuffle the story it
+  // should be while the other thirty clubs' stay out of the way.
+  POSITION: 22,
   NEWS: 20,
   // Deliberately quiet. Seventy-odd of these land in one week, and league-wide
   // they are a list, not news. The user-team bonus below (+60) is what makes

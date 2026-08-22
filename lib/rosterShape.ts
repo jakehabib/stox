@@ -1,6 +1,7 @@
 import { prisma } from './db';
 import { POSITION_GROUPS, PositionGroup, positionGroup } from './positionGroups';
-import { STARTERS_AT_GROUP } from './lineup';
+import { starterAverageAtGroup } from './lineup';
+import { Position } from './tuning';
 
 /**
  * How a roster is actually built, measured against the rest of the league.
@@ -39,29 +40,25 @@ export interface RosterShape {
 }
 
 /**
- * How many at each unit are on the field — IMPORTED, not typed out again.
+ * Averages the men who actually take the field at a group, PER POSITION —
+ * `starterAverageAtGroup` from lib/lineup.ts, the app's one definition.
  *
- * This file kept its own copy, and the copy had drifted: `DL 4, LB 3, DB 5`
- * is TWELVE men on defence. lib/lineup.ts derives the real answer from the
- * per-position starting eleven (`DL 4, LB 2, DB 5`), and its own docstring
- * already claimed this duplicate had been removed in favour of it — a comment
- * describing a cleanup that never landed, which is the same defect class as a
- * wrong number on screen. So every unit rating in the app was averaging the
- * top THREE linebackers when two start, flattering deep linebacker groups and
- * punishing thin ones, on every screen that reads a team rating.
+ * This file used to take the best N of the whole group, which is wrong in the
+ * specific way the app owner reported: a line with two good right tackles and
+ * a poor left tackle came out identical to one with a tackle on each side,
+ * because the best five of ten linemen are the same five either way. The
+ * position panel was therefore incapable of showing him the problem he was
+ * describing, let alone the fix. Group-level averaging also silently averaged
+ * the top THREE linebackers when two start.
+ *
+ * No `replacement` argument, deliberately, and that is the one difference from
+ * lib/teamRating.ts: this panel reports what a group IS, and a group with
+ * nobody in it should read as absent (the `count > 0` guards below) rather
+ * than as a bad rating. A team rating has to punish the hole; a shape report
+ * has to describe it.
  */
-const STARTERS_AT: Record<PositionGroup, number> = STARTERS_AT_GROUP;
-
-/**
- * Averages the top N at a group rather than the whole group, because depth
- * players drag the mean down and a team is not worse at receiver for carrying
- * a seventh one. N is how many actually play.
- */
-function starterAverage(ovrs: number[], group: PositionGroup): number {
-  if (ovrs.length === 0) return 0;
-  const n = Math.min(STARTERS_AT[group] ?? 1, ovrs.length);
-  const top = [...ovrs].sort((a, b) => b - a).slice(0, n);
-  return top.reduce((s, v) => s + v, 0) / top.length;
+function starterAverage(ovrsAt: (pos: Position) => number[], group: PositionGroup): number {
+  return starterAverageAtGroup(ovrsAt, group);
 }
 
 export async function buildRosterShape(
@@ -78,13 +75,22 @@ export async function buildRosterShape(
     select: { teamId: true, position: true, trueOvr: true },
   });
 
-  const byTeamGroup = new Map<string, number[]>();
+  // Keyed by team AND position, so the league mean below is computed the same
+  // per-position way the team's own number is. Comparing a per-position figure
+  // against a group-level baseline would be the two halves of one delta
+  // measuring different things.
+  const byTeamPos = new Map<string, number[]>();
+  const teamIds = new Set<string>();
   for (const p of leaguePlayers) {
-    const key = `${p.teamId}|${positionGroup(p.position)}`;
-    const arr = byTeamGroup.get(key) ?? [];
+    const key = `${p.teamId}|${p.position}`;
+    const arr = byTeamPos.get(key) ?? [];
     arr.push(p.trueOvr);
-    byTeamGroup.set(key, arr);
+    byTeamPos.set(key, arr);
+    teamIds.add(p.teamId!);
   }
+
+  const ownByPos = new Map<string, number[]>();
+  for (const p of ownPlayers) ownByPos.set(p.position, [...(ownByPos.get(p.position) ?? []), p.trueOvr]);
 
   const groups: GroupShape[] = POSITION_GROUPS.map((group) => {
     const mine = ownPlayers.filter((p) => positionGroup(p.position) === group);
@@ -93,12 +99,11 @@ export async function buildRosterShape(
     // every player, which would sit well below any team's starters and make
     // every group look like a strength.
     const perTeam: number[] = [];
-    for (const [key, ovrs] of byTeamGroup) {
-      if (!key.endsWith(`|${group}`)) continue;
-      perTeam.push(starterAverage(ovrs, group));
+    for (const id of teamIds) {
+      perTeam.push(starterAverage((pos) => byTeamPos.get(`${id}|${pos}`) ?? [], group));
     }
     const leagueOvr = perTeam.length > 0 ? perTeam.reduce((s, v) => s + v, 0) / perTeam.length : 0;
-    const starterOvr = starterAverage(mine.map((p) => p.trueOvr), group);
+    const starterOvr = starterAverage((pos) => ownByPos.get(pos) ?? [], group);
 
     return {
       group,

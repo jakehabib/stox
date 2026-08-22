@@ -5,6 +5,7 @@ import { buildContract, rookieScaleApy } from './cap';
 import { parseGmProfile, playerValue, teamNeeds, RosterPlayer, defaultGmProfile } from './ai/gm';
 import { AI, LEAGUE, Position } from './tuning';
 import { reconcileDepthChart } from './gen/league';
+import { runAiPositionConversions } from './ai/positionChange';
 
 /**
  * ===========================================================================
@@ -211,16 +212,44 @@ async function advancePick(tx: typeof prisma, leagueId: string, state: { pickInd
  */
 export async function runAiPicksUntilUser(leagueId: string, userTeamId: string, rng: Rng, seasonYear: number) {
   let picksMade = 0;
+  let draftComplete = false;
   for (let i = 0; i < 500; i++) {
     const pickInfo = await currentPick(leagueId);
-    if (!pickInfo) break;
+    if (!pickInfo) { draftComplete = true; break; }
     if (pickInfo.teamId === userTeamId) break;
 
     const player = await pickBestAvailable(leagueId, pickInfo.teamId, rng);
-    if (!player) break;
+    if (!player) { draftComplete = true; break; }
     await draftPlayer({ leagueId, playerId: player.id, teamId: pickInfo.teamId, seasonYear });
     picksMade += 1;
   }
+
+  /**
+   * THE MOMENT A CLUB RESHAPES ITS LINE. The board is empty, every roster has
+   * just taken on a class, and this is the point in the year a real front
+   * office looks at three tackles and one guard and slides somebody inside —
+   * so it is where the AI's position-conversion sweep runs (lib/ai/gm.ts
+   * `planPositionConversions`, applied by lib/ai/positionChange.ts).
+   *
+   * The user's club is deliberately exempt. His roster is his to shape, and a
+   * CPU moving his left tackle inside overnight would be the most infuriating
+   * thing this game could do; the same sweep is available to him one player at
+   * a time on the player card, which is where the decision belongs.
+   *
+   * Safe to reach more than once — each accepted move strictly increases the
+   * club's starting-lineup sum, so a second sweep over an already-optimised
+   * roster finds nothing and writes nothing.
+   *
+   * THIS IS NOT THE ONLY MOMENT IT SHOULD RUN. Free agency and the cut-down
+   * churn rosters too, and the natural home for a league-wide sweep is the
+   * offseason step in lib/season.ts beside `autoDepthChartAll`. That file is
+   * held elsewhere tonight; the draft is the one churn point this module owns.
+   */
+  if (draftComplete) {
+    const league = await prisma.league.findUnique({ where: { id: leagueId }, select: { week: true } });
+    await runAiPositionConversions(leagueId, { seasonYear, week: league?.week ?? 0, skipTeamId: userTeamId });
+  }
+
   return picksMade;
 }
 

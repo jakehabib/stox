@@ -19,18 +19,24 @@ import type { CollegeProfile, CombineTesting, CompetitionGrade } from './gen/pro
  * class is generated, at no cost, identical for every team. The GM's edge is
  * NOT having information. It is knowing where the room is WRONG.
  *
- * That only works if the room is wrong in ways that can be learned. Pure
- * noise around the truth would make finding a steal luck; a systematic,
- * publicly-signalled error makes it skill. So the consensus is built as
+ * That only works if the room is wrong in ways that can be learned. So the
+ * consensus is built as
  *
- *     grade = a blend of what he is and what he could be
- *           + a small amount of noise
+ *     grade = a blend of WHAT THE ROOM THINKS HE IS
+ *                    and WHAT THE ROOM THINKS HE BECOMES
  *           + a set of NAMED BIASES, each driven by something public
+ *           + a small amount of honest disagreement
  *
- * and the biases dominate the noise. Every bias is exported as machine-
- * readable data (id, direction, delta, and the public signal that caused it),
- * so a UI can say "the board is high on him because he tested well" and a
- * scouting report can disagree with a reason instead of a shrug.
+ * Every bias is exported as machine-readable data (id, direction, delta, and
+ * the public signal that caused it), so a UI can say "the board is high on him
+ * because he tested well" and a scouting report can disagree with a reason
+ * instead of a shrug.
+ *
+ * Those first two terms are READS, not ratings — see THE ROOM GRADES A READ,
+ * NOT A PLAYER below. The room is a few points off on what a prospect is, a
+ * long way off on what he becomes, and occasionally has him flatly wrong. That
+ * is where a steal in the fifth and a bust at 1.01 both come from, and it is
+ * the difference between a fog and a sorted column.
  *
  * WHAT THIS FILE MAY NOT DO. It reads true ratings, because an opinion has
  * to be an opinion ABOUT something — but it never returns them and never
@@ -41,7 +47,10 @@ import type { CollegeProfile, CombineTesting, CompetitionGrade } from './gen/pro
  * on the prospects that matter most it usually is.
  *
  * TUNING. Every constant this file reads lives in lib/tuning.ts's CONSENSUS
- * block, with the rest of the game's tunables. The positional 40 baselines
+ * block, with the rest of the game's tunables — the one exception being
+ * CONSENSUS_EVAL below, which belongs there too and is defined here only
+ * because tuning.ts was held by another agent when it landed. The move is a
+ * cut-and-paste and a `CONSENSUS.` prefix. The positional 40 baselines
  * come from lib/gen/prospectProfile.ts's exported BASE_40 — the generator's
  * own table — because publicAthleticism() below inverts that generator's
  * formulas exactly and a second copy drifting would misread testing silently.
@@ -114,6 +123,201 @@ export function publicAthleticism(position: string, testing: Partial<CombineTest
   if (proxies.length === 0) return null;
   const proxy = proxies.reduce((a, b) => a + b, 0) / proxies.length;
   return clamp((proxy - 20) / 79, 0, 1);
+}
+
+// ---------------------------------------------------------------------------
+// What the room is actually looking at
+// ---------------------------------------------------------------------------
+
+/**
+ * ===========================================================================
+ * THE ROOM GRADES A READ, NOT A PLAYER  [TUNE]
+ * ===========================================================================
+ * Everything above was true except for one thing: the grade was computed from
+ * `trueOvr` and `potential` directly. The room could see, with no error at
+ * all, both what a 22-year-old is TODAY and exactly how good he will ever be.
+ * The named biases then pushed that perfect read around and a small noise term
+ * wobbled it — but the thing being wobbled was the truth.
+ *
+ * Measured over 200 generated classes — 80,000 prospects, career peaks rolled
+ * through the game's own lib/progression.ts (scripts/_bust_measure.ts) — that
+ * made the board very nearly a lookup table for the answer:
+ *
+ *     Spearman(board rank, career peak)               -0.815
+ *     consensus 1.01 who never became a starter        0 of 200
+ *     worst 1.01 in 200 classes                        peaked at 83
+ *     a top-5 prospect peaking below a day-three one   0.7% of pairs
+ *     a Superstar (peak 95+) found in round four       once every 100 drafts
+ *
+ * A fog you can beat by sorting one column is not a fog. Since scouting was
+ * confined to draft prospects, this board is the ONLY place left in the game
+ * where the user does not know what he is looking at, so "the board is
+ * sometimes wrong" has to be load-bearing rather than decorative. README
+ * principle 0: *"we took a flyer in the fifth and he became the best player on
+ * the team"* is one of the best stories this genre has and it could not happen
+ * here, because the fifth-rounder was fifth for a reason the game had already
+ * checked.
+ *
+ * So the room now grades a READ. Two private numbers, both derived from the
+ * truth, neither equal to it:
+ *
+ *   NOW      what the tape says he is. Wrong by a few points, either way.
+ *   CEILING  what the room thinks he becomes. Wrong by much more, and wrong
+ *            in a particular direction: a room with no crystal ball projects
+ *            off the player it can see plus a standard allowance for being
+ *            22. CEILING_TRUST is how much of a prospect's real remaining
+ *            headroom it actually detects. It is not 1 and it is not 0.
+ *
+ * WHY HERE AND NOT A BIGGER NOISE_SD. Noise on the finished grade moves
+ * everyone a little and models nothing. The real failure is that evaluating a
+ * college player and projecting a 22-year-old are two different hard problems
+ * that fail independently — a man can be read right and projected wrong, which
+ * is the most common way a first-round pick goes bad. Feeding the error in at
+ * the inputs also fixes something that was quietly wrong: the biases are now
+ * applied to the number the room BELIEVES. "Called a project" is measured
+ * against the gap the room thinks it sees, and the stopwatch bias against the
+ * ability the room thinks he has. Before this both read the truth — a room
+ * that already knows the answer and marks it down is not biased, it is
+ * discounting.
+ *
+ * THREE REGIMES, NOT ONE BELL CURVE. A single Gaussian spreads the board
+ * evenly and still cannot produce the two events this mechanic exists for: the
+ * fifth-rounder who is genuinely a star, and the first pick who cannot play.
+ * Both live in the tail, so the tail is modelled rather than left to a wide SD
+ * that would also blur every ordinary prospect into mush:
+ *
+ *   READ      the ordinary case. The room is a few points off.
+ *   MISFILED  the room has him wrong — the man playing behind an
+ *             All-American, the scheme that hid him, the two bad games
+ *             everybody happened to watch.
+ *   BLIND     nobody got a real look. One tape, a small school, an injury
+ *             year. The room is guessing and does not know it is guessing.
+ *
+ * The regime scales BOTH errors together, so a misfiled prospect is misfiled
+ * as one story rather than as two independent dice.
+ *
+ * SYMMETRIC ON PURPOSE, and both halves are real. In one measured 200-class
+ * sample the same mechanism produced Rowan Pemberton, an 87-overall edge with
+ * a 99 ceiling who graded 66 and sat at board #171 and peaked at 98; and
+ * Joaquin Zuniga, a 58-overall corner with a 63 ceiling who graded 97, went
+ * #1 on the board and peaked at 59. That is not a side effect to be tuned
+ * away: a first pick that can bust is the only thing that makes a first pick
+ * worth having. One mechanism, both stories, no second system.
+ *
+ * WHAT THIS STILL MAY NOT DO. None of these numbers is returned. The room's
+ * private read is exactly as unpublishable as trueOvr: `grade` is the number
+ * the board actually believes, `boardScore` is the number it actually sorts
+ * by, every bias delta is the number actually added, and buildScoutedView
+ * remains the only thing that decides what the user may see. The board is
+ * allowed to be wrong. It is not allowed to be quoted wrong.
+ *
+ * DETERMINISM. Three more named streams seeded off the player id, like every
+ * other draw in this file, so a prospect reads identically in every process
+ * for the life of the save — and so that adding a fourth later cannot
+ * reshuffle the three that exist.
+ * ===========================================================================
+ */
+export const CONSENSUS_EVAL = {
+  /**
+   * Ordinary evaluation error on CURRENT ability, in overall points. The room
+   * is TIGHT in the ordinary case on purpose, because the variance that makes
+   * this mechanic work belongs in the two named tails below rather than
+   * smeared over everybody: a flat wide SD blurs the whole board equally,
+   * leaves it uninformative in the middle, and STILL will not produce the
+   * fifth-rounder who is genuinely a star, because that event lives four SDs
+   * out. Pooled over all three regimes the room's read lands within 10 points
+   * on 74% of a class and within 20 on 92%, with a median miss of 5.6 — and
+   * the 6% it misses by more than 25 is the whole mechanic.
+   */
+  EVAL_SD: 7,
+  /**
+   * MISFILED: the room has him wrong — about one prospect in six, read at
+   * three times the ordinary error (SD 21). One in six sounds high until you
+   * count how much of any real class turns out to have been badly misjudged.
+   */
+  MISFILE_ODDS: 0.16,
+  MISFILE_MULT: 3.0,
+  /**
+   * BLIND: one in twenty, read at four times (SD 28 — about the full width of
+   * the range a prospect is generated across, GENERATION.DRAFT_OVR_MIN..MAX,
+   * which is the honest meaning of "the room's opinion of him is worth no more
+   * than a name pulled out of the class at random"). Deliberately bounded
+   * there: an earlier pass ran this at 5.5 and produced reads thirty-six
+   * points off, which is not "nobody scouted him", it is a random number
+   * generator wearing a scouting report.
+   */
+  BLINDSPOT_ODDS: 0.05,
+  BLINDSPOT_MULT: 4.0,
+  /**
+   * The standard allowance the room adds for "he is twenty-two", in points.
+   * Deliberately equal to GENERATION.ROOKIE_POTENTIAL_BONUS_MEAN — the
+   * generator's own statement of a rookie's typical headroom — so the grade
+   * SCALE does not move when the board stops reading real ceilings. Measured
+   * over 200 classes: mean grade 67.44 before this change, 67.3 after. Change
+   * this and every grade on the board shifts with it.
+   */
+  CEILING_ANCHOR: 14,
+  /**
+   * How much of a prospect's REAL remaining headroom the room detects, 0..1.
+   * At 0 the board is a pure function of current ability; at 1 it reads the
+   * future exactly, which is what it used to do. 0.35 says the room picks up
+   * some of it — frame, age, raw traits are real tells — and misses most.
+   *
+   * BOTH CEILING KNOBS ARE WEAK LEVERS, AND THAT IS NOT A BUG TO TUNE AROUND.
+   * Measured over 150 classes, sweeping this across its ENTIRE range (0.0 to
+   * 1.0) moves Spearman(board rank, career peak) by 0.025 and moves not one
+   * hit rate by a full point; CEILING_SD 0 to 14 moves it by 0.016. Three
+   * things stack up to that: POTENTIAL_WEIGHT is only 0.38 of the grade, a
+   * class's real spread in remaining headroom is about eight points either
+   * way against a thirty-point spread in current ability, and
+   * DEVELOPMENTAL_PULL then deliberately cancels most of what survives (-6
+   * over a 20-point gap is -0.3 per point against base's +0.38). If someone
+   * wants the board to care more about ceilings, the knob is
+   * CONSENSUS.DEVELOPMENTAL_PULL or CONSENSUS.POTENTIAL_WEIGHT, not these.
+   * They are here because the read has to be a coherent pair of numbers, not
+   * because they are where the variance lives — that is EVAL_SD and the two
+   * tails above.
+   */
+  CEILING_TRUST: 0.35,
+  /** Spread of the projection error, in points. Larger than EVAL_SD because a ceiling is a forecast and a rating is an observation. See the note above on how little it moves. */
+  CEILING_SD: 7,
+} as const;
+
+/**
+ * The room's private read of one prospect. NEVER returned from this module —
+ * it is an input to an opinion, in exactly the way trueOvr is.
+ */
+interface RoomRead {
+  /** What the tape says he is today. */
+  now: number;
+  /** What the room projects he becomes. */
+  ceiling: number;
+}
+
+function roomReadOf(p: ConsensusInput): RoomRead {
+  const E = CONSENSUS_EVAL;
+
+  // Which regime this prospect falls in. Its own stream, so widening the tail
+  // in a later patch cannot reshuffle the ordinary reads already in a save.
+  const roll = new Rng(`consensus-regime-${p.id}`).float(0, 1);
+  const spread =
+    roll < E.BLINDSPOT_ODDS ? E.BLINDSPOT_MULT
+      : roll < E.BLINDSPOT_ODDS + E.MISFILE_ODDS ? E.MISFILE_MULT
+        : 1;
+
+  const now = clamp(p.trueOvr + new Rng(`consensus-read-${p.id}`).normal(0, E.EVAL_SD * spread), 20, 99);
+
+  // The projection. Anchored on the standard allowance and pulled only
+  // partway toward the headroom he actually has, then missed by CEILING_SD.
+  const trueGap = p.potential - p.trueOvr;
+  const seenGap =
+    E.CEILING_ANCHOR +
+    E.CEILING_TRUST * (trueGap - E.CEILING_ANCHOR) +
+    new Rng(`consensus-project-${p.id}`).normal(0, E.CEILING_SD * spread);
+
+  // A ceiling below what he already is would be incoherent — nobody in the
+  // room says "he is a 78 and he tops out at 74".
+  return { now, ceiling: clamp(now + Math.max(0, seenGap), now, 99) };
 }
 
 // ---------------------------------------------------------------------------
@@ -203,9 +407,11 @@ export function consensusGradeFor(p: ConsensusInput): ConsensusGrade {
   const college = readJson<Partial<CollegeProfile>>(p.collegeStats, {});
   const testing = readJson<Partial<CombineTesting>>(p.combineTesting, {});
 
+  // THE ONE PLACE THE TRUTH ENTERS. Everything below grades `room`, not `p`.
+  const room = roomReadOf(p);
   const base =
-    CONSENSUS.CURRENT_WEIGHT * p.trueOvr +
-    CONSENSUS.POTENTIAL_WEIGHT * p.potential;
+    CONSENSUS.CURRENT_WEIGHT * room.now +
+    CONSENSUS.POTENTIAL_WEIGHT * room.ceiling;
 
   const biases: ConsensusBias[] = [];
   let delta = 0;
@@ -218,7 +424,10 @@ export function consensusGradeFor(p: ConsensusInput): ConsensusGrade {
   // tape never saw it coming, and the good player who ran a 4.8 gets marked
   // down by a room that never watched him play.
   const athleticism = publicAthleticism(p.position, testing);
-  const ability = clamp((p.trueOvr - 40) / 55, 0, 1);
+  // The room's own read, not the truth — a bias is a distortion of what an
+  // evaluator believes. Reading trueOvr here meant the stopwatch markdown was
+  // applied by a room that already knew exactly how good he was.
+  const ability = clamp((room.now - 40) / 55, 0, 1);
   if (athleticism != null) {
     const d = CONSENSUS.TESTING_PULL * (athleticism - ability);
     delta += d;
@@ -268,7 +477,9 @@ export function consensusGradeFor(p: ConsensusInput): ConsensusGrade {
   // A board is a ranking of players teams have to justify to an owner in
   // April. A raw prospect with a huge ceiling is the hardest thing to defend
   // in that room, so he slides — even when the ceiling is real.
-  const gap = p.potential - p.trueOvr;
+  // Again the perceived gap: "he is unfinished" is a statement about what the
+  // room sees, and the room does not see a real ceiling.
+  const gap = room.ceiling - room.now;
   if (gap > CONSENSUS.DEVELOPMENTAL_GAP_MIN) {
     const d = -CONSENSUS.DEVELOPMENTAL_PULL * clamp((gap - CONSENSUS.DEVELOPMENTAL_GAP_MIN) / 20, 0, 1);
     delta += d;

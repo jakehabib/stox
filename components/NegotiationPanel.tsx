@@ -222,12 +222,21 @@ export function NegotiationPanel({
     onReset?.();
   };
 
-  // AN EXTENSION APPENDS. The controls therefore mean something different on
-  // that screen and are labelled differently: the salary is the NEW money, the
-  // term is how many years are being ADDED, and the contract that results is
-  // longer than either. Saying "years: 4" over a deal that will run seven is
-  // the easiest lying metric in this flow to ship.
-  const extending = ctx.mode === 'EXTENSION' && ctx.controlYears > 0;
+  // A DEAL WITH A MAN STILL UNDER CONTRACT APPENDS. The controls therefore
+  // mean something different and are labelled differently: the salary is the
+  // NEW money, the term is how many years are being ADDED, and the contract
+  // that results is longer than either. Saying "years: 4" over a deal that
+  // will run seven is the easiest lying metric in this flow to ship.
+  //
+  // THE SAME TEST `decideOffer` USES, and it has to be: that is where every
+  // figure on this screen comes from, and the two disagreeing about whether
+  // this offer appends would put a year-1 cap hit on the panel that the
+  // signing does not produce. It used to read `ctx.mode === 'EXTENSION'`,
+  // which was true of the only screen that appended at the time; a walk-year
+  // re-sign appends now too (see extendContract in lib/freeagency.ts), so a
+  // user re-signing him is told he is adding years on top of the season he is
+  // owed, because that is what is happening.
+  const appending = ctx.currentContract !== null && ctx.controlYears > 0;
   const totalTerm = decision.contractYears;
 
   const capOn = gate.capMode !== 'OFF';
@@ -278,11 +287,19 @@ export function NegotiationPanel({
   // he has left to give is his horizon MINUS the years already on the books —
   // comparing his total horizon against the add-on ceiling would state the
   // limit wrongly on exactly the screen where it binds soonest.
-  const yearsHeCanStillAdd = extending ? Math.max(0, ctx.willingYears - ctx.controlYears) : ctx.willingYears;
+  //
+  // NOT `appending`. This line has to say what `decideOffer` will actually
+  // refuse, and the test there is `committedTerm`, which counts the years he
+  // is already owed only on an EXTENSION — a walk-year re-sign is still
+  // priced as a walk-year re-sign, weighing the years offered and no others.
+  // Written off `appending` this would quietly dock him a year he has not
+  // refused.
+  const termCountsOwedYears = ctx.mode === 'EXTENSION' && ctx.controlYears > 0;
+  const yearsHeCanStillAdd = termCountsOwedYears ? Math.max(0, ctx.willingYears - ctx.controlYears) : ctx.willingYears;
   const termCapped = yearsHeCanStillAdd < gate.maxYears;
   const willingLine = ctx.willingYears <= 1
     ? `At ${ctx.age} he will only go year to year — he does not intend to play past ${ctx.intendedFinalAge}.`
-    : extending
+    : termCountsOwedYears
       ? `He does not intend to play past ${ctx.intendedFinalAge}. With ${ctx.controlYears} years already on his deal, ${yearsHeCanStillAdd} more is all he will add — at any price.`
       : `He does not intend to play past ${ctx.intendedFinalAge}, so ${ctx.willingYears} years is the longest deal he will sign — at any price.`;
 
@@ -347,11 +364,11 @@ export function NegotiationPanel({
 
         <div className="space-y-4">
           <Control
-            label={extending ? 'New money' : 'Salary'}
-            tipText={extending ? tip('newMoney') : tip('apy')}
+            label={appending ? 'New money' : 'Salary'}
+            tipText={appending ? tip('newMoney') : tip('apy')}
             display={`${formatMoney(offer.apy)}/yr`}
             hint={
-              extending
+              appending
                 ? `On the ${offer.years} new year${offer.years === 1 ? '' : 's'} — market estimate ${formatMoney(ctx.marketApy)}/yr`
                 : `Market estimate ${formatMoney(ctx.marketApy)}/yr`
             }
@@ -432,13 +449,13 @@ export function NegotiationPanel({
             </div>
           )}
           <Control
-            label={extending ? 'Years added' : 'Years'}
-            display={extending
+            label={appending ? 'Years added' : 'Years'}
+            display={appending
               ? `+${offer.years} → ${totalTerm} yrs`
               : `${offer.years} year${offer.years === 1 ? '' : 's'}`}
             hint={
-              extending
-                ? `${formatMoney(decision.newMoneyValue)} of new money on top of the ${ctx.controlYears} years he is already owed — ${totalTerm} years in all`
+              appending
+                ? `${formatMoney(decision.newMoneyValue)} of new money on top of the ${ctx.controlYears === 1 ? 'season' : `${ctx.controlYears} years`} he is already owed — ${totalTerm} years in all`
                 : `Total ${formatMoney(decision.totalValue)}`
             }
             min={1}
@@ -503,14 +520,14 @@ export function NegotiationPanel({
             so the cap number the panel refuses on is the cap number on
             screen. */}
         <div className="panel p-3 space-y-1.5 text-sm">
-          {extending && (
+          {appending && (
             <div className="flex justify-between">
               <span className="text-muted">New money — {offer.years} yr{offer.years === 1 ? '' : 's'}, what he is agreeing to</span>
               <span className="stat-value text-stat-sm">{formatMoney(decision.newMoneyValue)}</span>
             </div>
           )}
           <div className="flex justify-between">
-            <span className="text-muted">{extending ? `Full contract — ${totalTerm} yrs, old years included` : 'Total value'}</span>
+            <span className="text-muted">{appending ? `Full contract — ${totalTerm} yrs, old years included` : 'Total value'}</span>
             <span className="font-mono">{formatMoney(decision.totalValue)}</span>
           </div>
           <div className="flex justify-between"><span className="text-muted">Guaranteed</span><span className="font-mono">{formatMoney(decision.guaranteedMoney)}</span></div>
@@ -523,7 +540,7 @@ export function NegotiationPanel({
               </div>
               <div>
                 <div className="text-xs text-muted mb-1">
-                  {extending ? 'Cap hit by year — the whole contract, old years and new' : 'Cap hit by year'}
+                  {appending ? 'Cap hit by year — the whole contract, old years and new' : 'Cap hit by year'}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {decision.capHitSchedule.map((hit, i) => (
@@ -531,19 +548,21 @@ export function NegotiationPanel({
                       key={i}
                       className={`pill ${
                         i === 0 && decision.blocked === 'CAP' ? 'border-bad/40 text-bad'
-                          : extending && i >= ctx.controlYears ? 'border-accent2/50 text-accent2'
+                          : appending && i >= ctx.controlYears ? 'border-accent2/50 text-accent2'
                           : 'border-line text-chalk'
                       }`}
-                      title={extending ? (i >= ctx.controlYears ? 'A year you are adding' : 'A year he was already owed') : undefined}
+                      title={appending ? (i >= ctx.controlYears ? 'A year you are adding' : 'A year he was already owed') : undefined}
                     >
                       Yr{i + 1}: {formatMoney(hit)}
                     </div>
                   ))}
                 </div>
-                {extending && (
+                {appending && (
                   <p className="text-[11px] text-muted mt-1">
-                    The first {ctx.controlYears} are the years he was already owed, at the salaries he was
-                    already promised; the highlighted ones are what you are adding.
+                    {ctx.controlYears === 1
+                      ? 'The first is the season he was already owed, at the salary he was already promised'
+                      : `The first ${ctx.controlYears} are the years he was already owed, at the salaries he was already promised`}
+                    ; the highlighted ones are what you are adding.
                   </p>
                 )}
                 {/* NOT a pill in the row above. It used to sit alongside

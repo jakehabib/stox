@@ -311,11 +311,50 @@ export async function signFreeAgent(opts: {
 }
 
 /**
- * Re-negotiate an existing rostered player's deal — a full replacement
- * contract, same idea as signFreeAgent but for a player who's already on
- * the roster (extension, not a new signing). The cap check compares the
- * NEW hit against space with the OLD contract's hit added back, since the
- * old deal is going away the instant this one is signed.
+ * ===========================================================================
+ * KEEP A PLAYER WHO IS ALREADY ON THE ROSTER — APPEND IF HE IS STILL UNDER
+ * CONTRACT, WRITE A FRESH DEAL IF HE IS NOT
+ * ===========================================================================
+ * WHICH OF THE TWO IS A FACT ABOUT HIS CONTRACT, NOT ABOUT THE SCREEN THE
+ * USER OPENED, which is why the branch lives in here rather than as a second
+ * route in `resolveNegotiationSession`: the user's re-sign panel and the AI's
+ * own re-sign wave (lib/season.ts) both come through this function, and they
+ * have to produce the same contract for the same player.
+ *
+ *   yearsRemaining > 0 — WALK YEAR. He is owed a season at a salary the club
+ *     has already promised him. The new years go on the END: that season keeps
+ *     its base salary, the unamortized bonus is carried and re-prorated, and a
+ *     new bonus is paid now. That is `signExtension` below and it is exactly
+ *     what the player card's Extend button already did.
+ *   yearsRemaining === 0 — FINAL CALL. The deal has expired, there is nothing
+ *     to append to, and this writes a fresh contract exactly as it always has.
+ *
+ * A live tester found the hole: *"I'm re-signing guys that still have one year
+ * left on their deal, and it's lowering my Space for the current year."* He was
+ * right, and replacing a walk-year deal was doing two things it had no right
+ * to do. Both measured, on ATL in the 2030 offseason, re-signing Camden Achebe
+ * (93 OVR QB, final year of his rookie deal at $6.60M, $15.10M bonus with
+ * $3.77M still unamortized) at $30.91M/yr x 4:
+ *
+ *   IT ERASED THE OLD SIGNING BONUS. `deleteMany` took the contract row and
+ *     with it the proration still owed to the cap, and nothing booked a dollar
+ *     of dead money for it. Nothing else in this codebase lets a paid bonus
+ *     vanish — `buildExtension` carries it, `restructureContract` re-prorates
+ *     it, `deadMoneyOnCut` accelerates it — so this was the one path handing
+ *     out free cap relief. Cut him the moment the ink dried: $42.63M of dead
+ *     money before, $46.41M now, the difference being precisely the bonus that
+ *     used to evaporate.
+ *   IT OVERWROTE A SALARY THE CLUB HAD ALREADY PROMISED. His $6.60M for this
+ *     season became the new deal's year-1 base of $16.90M, so this year's cap
+ *     hit was $27.56M and his space fell $17.18M — the tester's complaint,
+ *     exactly. Appended, this year is his own $6.60M with the new bonus
+ *     prorating on top: $15.88M, and $5.51M off his space. The other $11.67M
+ *     was the club being charged this year for years it had not reached yet.
+ *
+ * The cap check is unchanged in both branches: the NEW hit is measured against
+ * space with the OLD hit credited back, because the old hit stops being
+ * charged on its own the instant this one is written.
+ * ===========================================================================
  */
 export async function extendContract(opts: {
   leagueId: string;
@@ -353,6 +392,32 @@ export async function extendContract(opts: {
 
   const oldHit = player.contract ? capHit(player.contract, capMode) : 0;
   const reSign = opts.reSign ?? (player.contract ? player.contract.yearsRemaining <= 1 : false);
+
+  // APPEND OR REPLACE IS A FACT ABOUT HIS CONTRACT, NOT ABOUT THE SCREEN.
+  // See the block above this function for the two things replacing a
+  // walk-year deal did that it had no right to do.
+  if (player.contract && player.contract.yearsRemaining > 0) {
+    await signExtension({
+      leagueId: opts.leagueId, playerId, seasonYear, capMode, week,
+      // `apy` IS THE NEW MONEY HERE, and conflating the two would silently
+      // mis-price every re-sign. The offer prices the years being ADDED — the
+      // ones he is already owed keep the salaries he was already promised —
+      // which is the same reading `decideOffer` draws its preview from
+      // (buildExtension's `newMoneyApy`) and the same one the extension screen
+      // has always used. Fed in as a whole-deal APY it would re-price years
+      // that are not for sale.
+      newMoneyApy: apy, addYears: years,
+      escalation: opts.escalation, voidYears: opts.voidYears,
+      bonusPct: opts.bonusPct, guaranteedPct: opts.guaranteedPct,
+      // One implementation of appending, not two. `signExtension` already
+      // carries the unamortized bonus, credits the old hit back at the cap
+      // gate and writes the row; all this branch decides is which wire type
+      // comes out of it.
+      reSign,
+    });
+    return;
+  }
+
   const contract = buildContract({
     apy, years, signedYear: seasonYear, escalation: opts.escalation,
     bonusPct: opts.bonusPct, guaranteedPct: opts.guaranteedPct,
@@ -367,7 +432,7 @@ export async function extendContract(opts: {
   // The old deal is torn up the instant this one is signed, so its hit is
   // credited back before the new one is measured against the ceiling.
   await assertCapRoom({
-    action: 'Extension', seasonYear, capMode,
+    action: reSign ? 'Re-signing' : 'Extension', seasonYear, capMode,
     charges: [{ teamId, delta: newHit, creditBack: oldHit }],
   });
 
@@ -437,6 +502,15 @@ export async function signExtension(opts: {
   voidYears?: number;
   bonusPct?: number;
   guaranteedPct?: number;
+  /**
+   * True when this append is a club KEEPING ITS OWN EXPIRING PLAYER rather
+   * than adding years to a deal that still had a future. Writes a RESIGN row
+   * on the wire instead of a SIGN one, exactly as `extendContract`'s own flag
+   * does — a walk-year re-sign arrives here now (see extendContract), and it
+   * must not start reading as "Extended" on the news feed just because the
+   * arithmetic it goes through changed.
+   */
+  reSign?: boolean;
 }) {
   const { playerId, seasonYear, capMode, week } = opts;
   const { capHit, buildExtension } = await import('./cap');
@@ -459,7 +533,7 @@ export async function signExtension(opts: {
   });
   const newHit = capHit({ ...next, baseSalaries: writeJson(next.baseSalaries) }, capMode);
   await assertCapRoom({
-    action: 'Extension', seasonYear, capMode,
+    action: opts.reSign ? 'Re-signing' : 'Extension', seasonYear, capMode,
     charges: [{ teamId, delta: newHit, creditBack: oldHit }],
   });
 
@@ -484,8 +558,13 @@ export async function signExtension(opts: {
     await tx.negotiationTalks.deleteMany({ where: { playerId } });
     await tx.transaction.create({
       data: {
-        leagueId: opts.leagueId, seasonYear, week, type: 'SIGN', teamId,
-        headline: `Extended ${player.firstName} ${player.lastName}`,
+        leagueId: opts.leagueId, seasonYear, week,
+        type: opts.reSign ? 'RESIGN' : 'SIGN', teamId,
+        headline: opts.reSign
+          ? `Re-signed ${player.firstName} ${player.lastName}`
+          : `Extended ${player.firstName} ${player.lastName}`,
+        // The same sentence either way, because it is the same deal shape: the
+        // years he was already owed, plus the ones just bought.
         detail: `+${opts.addYears} yr${opts.addYears === 1 ? '' : 's'} of new money at ~$${(opts.newMoneyApy / 1_000_000).toFixed(1)}M/yr — under contract through ${seasonYear + next.years - 1}`,
       },
     });
@@ -1294,9 +1373,18 @@ export async function resolveNegotiationSession(opts: {
     mode,
     seasonYear,
     controlYears,
-    // Only an extension prices against the existing deal — everywhere else
-    // the offer IS the whole contract and this stays null.
-    currentContract: mode === 'EXTENSION' ? player.contract : null,
+    // THE DEAL THE OFFER WILL BE APPENDED TO, on whichever screen he is under
+    // contract. It used to be the extension screen's alone, which is what made
+    // the meter quote a walk-year re-sign as a fresh contract while
+    // `extendContract` has to append it (see the block above that function):
+    // the panel drew a year-1 hit off a schedule the signing would not
+    // produce. `decideOffer` keys its preview on exactly this — a contract
+    // with years still to run — so what is drawn is what gets written.
+    //
+    // Still null on the open market whatever the row says: nobody appends to a
+    // contract another club signed, and `negotiateOffer` never routes a free
+    // agent through the append path.
+    currentContract: incumbent && controlYears > 0 ? player.contract : null,
     // Still passed, and it is now a constant at this table: scouting fog is
     // draft prospects only, so every free agent and every incumbent comes
     // back at 100. What actually varies the band is the line below — see the
@@ -1328,11 +1416,17 @@ export async function resolveNegotiationSession(opts: {
 
   // The LEAGUE's ceiling is flat now (12, see maxYearsForAge) and the age
   // ladder that used to be here belongs to the player — `ctx.willingYears`,
-  // which refuses in his own voice. On an extension the control sets how many
-  // years are ADDED, so what is left of the ceiling is what the ceiling minus
-  // his existing years allows.
+  // which refuses in his own voice.
+  //
+  // On a deal that APPENDS the control sets how many years are being ADDED, so
+  // what is left of the ceiling is the league's minus the ones he is already
+  // owed. Keyed on the same "still under contract" test the signing path uses
+  // rather than on which screen this is: now that a walk-year re-sign appends
+  // too, twelve added years on top of the season he is owed would write a
+  // thirteen-year contract, and TERM.MAX_CONTRACT_YEARS is the rule that no
+  // contract, from anybody, to anybody, may exceed.
   const leagueMaxYears = maxYearsForAge(player.age);
-  const maxYears = mode === 'EXTENSION'
+  const maxYears = incumbent && controlYears > 0
     ? Math.max(1, leagueMaxYears - controlYears)
     : leagueMaxYears;
   const ceilingFloor = Math.max(CAP.MIN_SALARY * 2, Math.round(marketApy * 2.5));
@@ -1510,6 +1604,11 @@ export async function negotiateOffer(opts: {
   // --- He would sign it -----------------------------------------------------
   if (decision.accepted) {
     const shape = contractShapeFor(offer);
+    // Whether this deal will be APPENDED to one he is already on — the same
+    // test `extendContract` branches on and `decideOffer` drew the preview
+    // from, so the sentence at the bottom of this block describes the contract
+    // that is about to exist rather than the offer that produced it.
+    const appended = incumbent && session.ctx.controlYears > 0;
     // Measured BEFORE the write so the confirmation can state the change and
     // not merely the new number. Both halves come from teamCapSummary, which
     // is the same figure the cap page prints.
@@ -1595,8 +1694,16 @@ export async function negotiateOffer(opts: {
       ...base,
       ok: true,
       signed,
-      message: mode === 'EXTENSION'
-        ? `${session.ctx.playerName} is extended — his old deal is torn up and replaced by ${offer.years} year${offer.years === 1 ? '' : 's'} at ${formatMoney(offer.apy)}/yr.`
+      // WHAT THE CONTRACT ROW SAYS, in a sentence. A deal that APPENDS runs
+      // longer than the term that was offered, and the confirmation beside
+      // this line reads its year count straight off the row — so quoting the
+      // offer's term as the length of the contract would have the two
+      // disagreeing on screen. This used to say the extension's "old deal is
+      // torn up and replaced", which had not been true since `signExtension`
+      // started appending, and would now be untrue of a walk-year re-sign as
+      // well.
+      message: appended
+        ? `${session.ctx.playerName} is ${mode === 'EXTENSION' ? 'extended' : 'staying'} — ${offer.years} more year${offer.years === 1 ? '' : 's'} at ${formatMoney(offer.apy)}/yr on top of the ${session.ctx.controlYears === 1 ? 'season' : `${session.ctx.controlYears} seasons`} he was already owed, ${decision.contractYears} in all.`
         : incumbent
           ? `${session.ctx.playerName} is staying — ${offer.years} year${offer.years === 1 ? '' : 's'} at ${formatMoney(offer.apy)}/yr.`
           : `${session.ctx.playerName} signs — ${offer.years} year${offer.years === 1 ? '' : 's'} at ${formatMoney(offer.apy)}/yr.`,

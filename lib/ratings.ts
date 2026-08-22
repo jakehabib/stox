@@ -132,8 +132,10 @@ export function computeOverall(pos: Position, attrs: AttrMap): number {
  *     it is a cheap, sensible move and should feel like one. A pass-first
  *     right tackle may even gain a point, and that is the engine's honest
  *     opinion — left tackle is the pass-protection job.
- *   - CB -> LB starts weighting tackling, pursuit and block shedding, which
- *     is not what a corner was built out of, and his overall falls on its own.
+ *   - EDGE -> LB starts weighting tackling, coverage and football IQ, which is
+ *     not what a pass rusher was built out of, and his overall falls about
+ *     seven points on its own. A corner asked to play linebacker has to go via
+ *     safety (see RELATED_POSITIONS) and pays twice — measured at nine.
  *
  * A hand-written cost matrix would be a SECOND opinion about the same thing,
  * and every worst bug in this codebase is a second opinion disagreeing with
@@ -165,9 +167,15 @@ export function computeOverall(pos: Position, attrs: AttrMap): number {
  * (principle 6); a re-roll on every conversion would let a GM farm a good
  * `blockShed` by flipping a man back and forth; and an existing attribute is
  * never overwritten, only an absent one filled, so a conversion cannot raise
- * an attribute a player already has. Flip a man to a new position and back
- * and his overall returns to exactly what it was — proved in
- * scripts/_posProof.ts.
+ * an attribute a player already has.
+ *
+ * Those two facts together are what make the move REVERSIBLE AT NO COST: the
+ * attributes his old position weights are untouched by any number of moves, so
+ * `computeOverall(oldPosition, attrs)` returns the same number forever. Flip a
+ * man twenty times and bring him home and he is exactly the player he was.
+ * That is not a nicety — it is what stops a GM ratcheting a rating by
+ * flipping, and it is why no cooldown or once-per-season gate is needed on top
+ * of the rating drop.
  * ===========================================================================
  */
 

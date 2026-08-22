@@ -70,7 +70,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
         // ticker-worthy half; the individual selections are the record, and
         // they are read where they belong — the player's card and the GM's
         // career page.
-        type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'DRAFT', 'FIRE', 'CHAMPION', 'ALL_STAR_ROSTER', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] },
+        type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'POSITION', 'DRAFT', 'FIRE', 'CHAMPION', 'ALL_STAR_ROSTER', 'AWARD_MVP', 'AWARD_OPOY', 'AWARD_DPOY', 'AWARD_ROTY', 'AWARD_SBMVP'] },
         seasonYear: { gte: league.seasonYear - 1 },
       },
       orderBy: { createdAt: 'desc' },

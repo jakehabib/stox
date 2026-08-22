@@ -8,12 +8,16 @@ const TYPE_LABELS: Record<string, string> = {
   ALL: 'All', NEWS: 'Performances', TRADE: 'Trades', SIGN: 'Signings', CUT: 'Releases',
   DRAFT: 'Draft', INJURY: 'Injuries', RESIGN: 'Re-signs', TAG: 'Tags', CHAMPION: 'Championships', FIRE: 'Firings',
   AWARD_MVP: 'MVP', AWARD_OPOY: 'OPOY', AWARD_DPOY: 'DPOY', AWARD_ROTY: 'ROTY', AWARD_SBMVP: 'SB MVP',
-  DEV_MILESTONE: 'Development',
+  DEV_MILESTONE: 'Development', POSITION: 'Position Changes',
 };
 // RESIGN belongs here now that something actually writes one — the label,
 // badge style and relevance weight for it already existed, but the type had
 // no producer, so the filter chip was left off.
-const FILTERS = ['ALL', 'NEWS', 'TRADE', 'SIGN', 'RESIGN', 'CUT', 'DRAFT', 'INJURY', 'CHAMPION', 'FIRE', 'DEV_MILESTONE'];
+// POSITION — a club moving a man to a new job. It gets its own chip because
+// after a draft class lands a couple of dozen land league-wide in one step,
+// and "who reshaped their line this year" is a question the unfiltered wire
+// cannot answer once the week's signings are on top of them.
+const FILTERS = ['ALL', 'NEWS', 'TRADE', 'SIGN', 'RESIGN', 'CUT', 'POSITION', 'DRAFT', 'INJURY', 'CHAMPION', 'FIRE', 'DEV_MILESTONE'];
 
 const TYPE_STYLE: Record<string, string> = {
   NEWS: 'border-accent2/30 text-accent2 bg-accent2/10',
@@ -26,6 +30,10 @@ const TYPE_STYLE: Record<string, string> = {
   FIRE: 'border-bad/30 text-bad bg-bad/10',
   RESIGN: 'border-accent/30 text-accent bg-accent/10',
   TAG: 'border-accent/30 text-accent bg-accent/10',
+  // Chalk, not green: a position change is neither an arrival nor a loss, and
+  // borrowing the signing ink would make a reshuffled line read as business
+  // the club did on the market.
+  POSITION: 'border-line text-chalk bg-chalk/[0.06]',
   AWARD_MVP: 'border-gold/40 text-gold bg-gold/10',
   AWARD_OPOY: 'border-gold/40 text-gold bg-gold/10',
   AWARD_DPOY: 'border-gold/40 text-gold bg-gold/10',
@@ -43,7 +51,7 @@ const TYPE_STYLE: Record<string, string> = {
 const TYPE_WEIGHT: Record<string, number> = {
   CHAMPION: 3, AWARD_MVP: 3, AWARD_SBMVP: 3, AWARD_OPOY: 2, AWARD_DPOY: 2, AWARD_ROTY: 2,
   FIRE: 2, TRADE: 2, DRAFT: 2,
-  SIGN: 1, RESIGN: 1, TAG: 1, CUT: 1,
+  SIGN: 1, RESIGN: 1, TAG: 1, CUT: 1, POSITION: 1,
   NEWS: 0, INJURY: 0, DEV_MILESTONE: 0,
 };
 

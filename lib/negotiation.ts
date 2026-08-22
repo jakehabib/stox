@@ -1508,14 +1508,22 @@ export function decideOffer(
   const evaluation = evaluateOffer(ctx, offer);
 
   const shape = contractShapeFor(offer);
-  // THE CONTRACT THIS OFFER ACTUALLY PRODUCES. On an extension that is the
-  // existing deal with years appended — its remaining salaries untouched, its
-  // unamortized bonus carried — and not a hypothetical fresh contract. It has
-  // to be the real one: the ledger below is drawn from this and so is the cap
-  // gate, and the cap gate has to agree with the compliance check that runs
-  // the instant it is signed.
-  const extending = ctx.mode === 'EXTENSION' && ctx.currentContract !== null;
-  const ext = extending
+  // THE CONTRACT THIS OFFER ACTUALLY PRODUCES. When he is STILL UNDER CONTRACT
+  // that is the existing deal with years appended — its remaining salaries
+  // untouched, its unamortized bonus carried — and not a hypothetical fresh
+  // contract. It has to be the real one: the ledger below is drawn from this
+  // and so is the cap gate, and the cap gate has to agree with the compliance
+  // check that runs the instant it is signed.
+  //
+  // The test is his CONTRACT, not the screen. It used to be `mode ===
+  // 'EXTENSION'`, which was right for as long as a re-sign replaced the deal
+  // outright; `extendContract` (lib/freeagency.ts) appends a walk-year deal
+  // now, and a flag keyed on the screen would have this quoting a year-1 cap
+  // hit of a fresh contract the signing does not write. Measured on ATL's
+  // Kwame Swearingen, one season left at $7.70M: the panel said $5.73M, the
+  // row that landed said $9.76M.
+  const appending = ctx.currentContract !== null && ctx.controlYears > 0;
+  const ext = appending
     ? buildExtension({
         current: ctx.currentContract!,
         newMoneyApy: offer.apy,
@@ -1569,14 +1577,22 @@ export function decideOffer(
     reason = `No contract may pay under the league minimum of ${formatMoney(gate.minSalary)}.`;
   } else if (offer.years < 1 || offer.years > gate.maxYears) {
     blocked = 'TERM';
-    reason = extending
-      ? `He is already signed for ${ctx.controlYears} years, and no contract may run past ${TERM.MAX_CONTRACT_YEARS} — ${gate.maxYears} more is the most you may add.`
+    // The rulebook's ceiling, and `gate.maxYears` already has the years he is
+    // owed taken out of it whenever this appends (resolveNegotiationSession).
+    reason = appending
+      ? `He is already signed for ${ctx.controlYears} year${ctx.controlYears === 1 ? '' : 's'}, and no contract may run past ${TERM.MAX_CONTRACT_YEARS} — ${gate.maxYears} more is the most you may add.`
       : `No contract may run longer than ${TERM.MAX_CONTRACT_YEARS} years.`;
   } else if (committedTerm(ctx, offer) > ctx.willingYears) {
     // HIS refusal, not the rulebook's, and it is on screen beside the term
     // control before anybody drags it. Money does not move this.
-    blocked = 'WILLING';
-    reason = extending
+    //
+    // KEYED ON THE MODE, NOT ON `appending`, and deliberately: the test above
+    // it is `committedTerm`, which folds the years he is already owed into
+    // what he is committing to only on an EXTENSION. A re-sign is still priced
+    // as a re-sign — the years offered are the years he weighs — so a sentence
+    // here that counted his walk year would state a limit this block does not
+    // enforce. The two have to be read together or one of them is a lie.
+    reason = ctx.mode === 'EXTENSION' && ctx.currentContract !== null
       ? `He is ${ctx.age} and has no intention of playing past ${ctx.intendedFinalAge}. With ${ctx.controlYears} years already on his deal that is ${Math.max(0, ctx.willingYears - ctx.controlYears)} more at most, at any price.`
       : ctx.willingYears <= 1
         ? `He is ${ctx.age} and will only go year to year now — he does not intend to play past ${ctx.intendedFinalAge}.`

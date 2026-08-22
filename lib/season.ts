@@ -1405,7 +1405,7 @@ export async function resignDecisionsForTeam(
   rng: Rng,
 ) {
   const { parseGmProfile, teamNeeds } = await import('./ai/gm');
-  const { marketValue, suggestedYears, maxYearsForAge, buildContract, capHit } = await import('./cap');
+  const { marketValue, suggestedYears, maxYearsForAge, buildContract, buildExtension, capHit } = await import('./cap');
   const { extendContract } = await import('./freeagency');
   const { teamCapSummary } = await import('./cap-summary');
 
@@ -1523,11 +1523,22 @@ export async function resignDecisionsForTeam(
     const termCeiling = Math.min(CONTRACT.MAX_DEAL_YEARS, maxYearsForAge(p.age));
     const years = clamp(suggestedYears(p.trueOvr, p.age) + termNudge, 1, termCeiling);
 
-    // Budget against the DELTA, not the gross: the old deal is torn up the
-    // instant the new one is signed, which is exactly what extendContract's
-    // assertCapRoom credits back.
+    // Budget against the DELTA, not the gross: the old hit stops being charged
+    // on its own the instant the new deal is signed, which is exactly what
+    // extendContract's assertCapRoom credits back.
     const oldHit = capHit(p.contract, capMode);
-    const preview = buildContract({ apy, years, signedYear: seasonYear });
+    // AND MEASURE IT THE WAY IT WILL BE SIGNED. `extendContract` APPENDS when
+    // he is still under contract — his walk-year salary survives and the new
+    // bonus prorates on top of it — so a budget priced off a fresh
+    // `buildContract` would be budgeting for a contract this wave can no
+    // longer produce, and the two disagree in both directions: the appended
+    // year-1 hit is the salary he was already promised plus new proration,
+    // which is larger than a fresh deal's year-1 base on a walk-year veteran
+    // and smaller on a man whose old salary was tiny. Either way the wave
+    // would be spending against a number it had made up.
+    const preview = p.contract!.yearsRemaining > 0
+      ? buildExtension({ current: p.contract!, newMoneyApy: apy, addYears: years, signedYear: seasonYear })
+      : buildContract({ apy, years, signedYear: seasonYear });
     const newHit = capHit({ ...preview, baseSalaries: writeJson(preview.baseSalaries) }, capMode);
     // Hold back money for free agency and the draft class, plus the league
     // minimum for every roster slot still short of a legal roster.

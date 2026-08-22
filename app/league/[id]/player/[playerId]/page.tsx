@@ -5,7 +5,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
-import { ratingColor, playerLabel, ratingMark, ratingPlateClass } from '@/lib/ratings';
+import { ratingColor, playerLabel, ratingMark, ratingPlateClass, positionMoves, relatedPositions, ATTRIBUTE_BY_KEY, AttrMap } from '@/lib/ratings';
 import { rankProspectCombine, ordinal, CombineMeasurable } from '@/lib/combineRank';
 import { formatMoney, capHit, marketValue, deadMoneyOnCut } from '@/lib/cap';
 import { classifyContractValue } from '@/lib/analytics';
@@ -44,6 +44,8 @@ import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/
 import { ringYearsFor } from '@/lib/gen/leagueHistory';
 import { allStarYearsFor } from '@/lib/allStars';
 import { startersAt } from '@/lib/lineup';
+import { slotVerdict } from '@/components/ds/DepthCompare';
+import { PositionChangeCard, PositionOption } from '@/components/PositionChangeCard';
 
 /** Transaction types lib/season.ts writes one of per award, per season. */
 const AWARD_LABEL: Record<string, string> = {
@@ -226,6 +228,89 @@ export default async function PlayerPage({
         include: { player: true },
       })
     : [];
+
+  /**
+   * ===========================================================================
+   * WHERE ELSE COULD HE PLAY?
+   * ===========================================================================
+   * The app owner's hole — *"if someone has two solid RT and a weak LT, they
+   * can't swap the spare RT over"* — and his own fix: change the man's
+   * position here, on his card.
+   *
+   * Two things are computed per destination and NEITHER of them is invented
+   * here:
+   *
+   *   WHAT HE WOULD RATE comes from `positionMove` (lib/ratings.ts), which
+   *   re-weights his attributes through the destination's own formula. It is
+   *   the SAME call `changePositionAction` makes when the button is pressed,
+   *   so the preview cannot differ from the commit (README principle 6).
+   *
+   *   WHERE HE WOULD LAND comes from `slotVerdict`
+   *   (components/ds/DepthCompare.tsx), which is what the free-agency screen
+   *   already uses to answer "would he start", built on lib/lineup.ts's one
+   *   definition of the eleven. A position change and a signing are the same
+   *   question asked twice — a new man arriving at a position group — so they
+   *   get the same answer from the same function. Writing a second one here
+   *   is how this codebase once ended up with three starting lineups.
+   *
+   * Own roster only, and never a draftee: a prospect's position is what your
+   * scouts filed him under, and moving it would be editing a report rather
+   * than making a coaching decision. The server action re-checks both.
+   */
+  const positionTargets = isOwnRoster && !player.isDraftee ? relatedPositions(player.position) : [];
+  const moveDepthSlots = positionTargets.length > 0 && userTeam
+    ? await prisma.depthChartSlot.findMany({
+        where: { teamId: userTeam.id, position: { in: positionTargets } },
+        orderBy: { rank: 'asc' },
+        include: { player: { select: { id: true, firstName: true, lastName: true, trueOvr: true, age: true } } },
+      })
+    : [];
+  const moveOptions: PositionOption[] = positionTargets.length === 0 ? [] : positionMoves({
+    position: player.position,
+    trueOvr: player.trueOvr,
+    trueAttrs: readJson<AttrMap>(player.trueAttrs, {}),
+  }).map((mv) => {
+    // In depth-chart order, not rating order — the order IS who plays, and a
+    // GM who benched a 90 for a rookie meant it.
+    const depth = moveDepthSlots
+      .filter((sl) => sl.position === mv.position)
+      .map((sl) => ({
+        playerId: sl.player.id,
+        name: `${sl.player.firstName} ${sl.player.lastName}`,
+        ovr: sl.player.trueOvr,
+        age: sl.player.age,
+      }));
+    const v = slotVerdict(mv.position, depth, { ovrLow: mv.ovr, ovrHigh: mv.ovr, revealed: true });
+    return {
+      position: mv.position,
+      ovr: mv.ovr,
+      delta: mv.delta,
+      // Attribute LABELS, not keys: "Block Shedding" is a football word and
+      // `blockShed` is a column name.
+      learned: mv.learned.map((k) => ATTRIBUTE_BY_KEY[k]?.label ?? k),
+      starterCount: v.starterCount,
+      starts: v.outcome === 'OPEN' || v.outcome === 'STARTER',
+      slotOpen: v.outcome === 'OPEN',
+      displaces: v.displaces ? { id: v.displaces.playerId, name: v.displaces.name, ovr: v.displaces.ovr, age: v.displaces.age } : null,
+      threshold: v.threshold,
+      incumbentBest: depth[0] ? { name: depth[0].name, ovr: depth[0].ovr } : null,
+    };
+  })
+    /**
+     * MOVES THAT CHANGE THE LINEUP COME FIRST, then by what he would rate.
+     *
+     * `positionMoves` sorts by rating alone, because it is pure and knows
+     * nothing about this club. Rating alone buried the decision: a spare right
+     * tackle rates a point higher at guard than at left tackle, so "LG 79,
+     * behind your 87" sat above "LT 78, starts over your 67" — the two rows a
+     * GM does not care about, on top of the one he opened the card for.
+     *
+     * Sorting by "would he be on the field" is not a second opinion about who
+     * starts; it is `slotVerdict`'s answer, computed once above and reused as
+     * a sort key. Ties still fall to the higher rating, so the ordering inside
+     * each half is the same one lib/ratings.ts produced.
+     */
+    .sort((a, b) => Number(b.starts || b.slotOpen) - Number(a.starts || a.slotOpen) || b.ovr - a.ovr);
 
   // Contract facts get their own strip under the hero — the money questions
   // ("what does he cost, what's he worth, what would walking away cost")
@@ -893,6 +978,29 @@ export default async function PlayerPage({
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Directly under the depth panel, deliberately: that list is the
+            evidence this decision is made against — "your left tackle is a
+            61" is half of "move the spare right tackle over" — and a GM
+            should never have to hold a number in his head between two
+            screens to make the call. */}
+        {isOwnRoster && !player.isDraftee && (
+          <div className="section">
+            <SectionHeading
+              eyebrow="Coaching decision"
+              title="Position"
+              tip={tip('overall')}
+            />
+            <PositionChangeCard
+              leagueId={league.id}
+              playerId={player.id}
+              playerName={`${player.firstName} ${player.lastName}`}
+              currentPosition={player.position}
+              currentOvr={player.trueOvr}
+              options={moveOptions}
+            />
           </div>
         )}
 

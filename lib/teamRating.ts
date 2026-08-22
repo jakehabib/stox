@@ -1,6 +1,7 @@
 import { prisma } from './db';
-import { POSITION_GROUPS, PositionGroup, positionGroup } from './positionGroups';
-import { STARTERS_AT_GROUP } from './lineup';
+import { POSITION_GROUPS, PositionGroup } from './positionGroups';
+import { starterAverageAtGroup } from './lineup';
+import { Position } from './tuning';
 
 /**
  * A single number for how good a roster is, plus the units that produced it.
@@ -22,20 +23,6 @@ import { STARTERS_AT_GROUP } from './lineup';
  * elite punter — which is exactly the sort of plausible-looking number this
  * project has shipped before and had to go back and fix.
  */
-
-/**
- * How many at each unit are on the field — IMPORTED, not typed out again.
- *
- * This file kept its own copy, and the copy had drifted: `DL 4, LB 3, DB 5`
- * is TWELVE men on defence. lib/lineup.ts derives the real answer from the
- * per-position starting eleven (`DL 4, LB 2, DB 5`), and its own docstring
- * already claimed this duplicate had been removed in favour of it — a comment
- * describing a cleanup that never landed, which is the same defect class as a
- * wrong number on screen. So every unit rating in the app was averaging the
- * top THREE linebackers when two start, flattering deep linebacker groups and
- * punishing thin ones, on every screen that reads a team rating.
- */
-const STARTERS_AT: Record<PositionGroup, number> = STARTERS_AT_GROUP;
 
 /**
  * [TUNE] Share of team quality each unit carries. Normalised at load, so
@@ -93,20 +80,6 @@ export interface TeamRating {
  */
 const REPLACEMENT_LEVEL = 52;
 
-/**
- * Averages the top N at a unit, where N is how many actually play — a team is
- * not worse at receiver for carrying a seventh one, and a group mean says it
- * is. A unit thinner than its starter count is padded with replacement-level
- * bodies rather than averaging only who is there, so being two linemen short
- * is correctly worse than having exactly five.
- */
-function starterAverage(ovrs: number[], group: PositionGroup): number {
-  const n = STARTERS_AT[group] ?? 1;
-  const top = [...ovrs].sort((a, b) => b - a).slice(0, n);
-  while (top.length < n) top.push(REPLACEMENT_LEVEL);
-  return top.reduce((s, v) => s + v, 0) / top.length;
-}
-
 function weightedSubset(byGroup: Map<PositionGroup, number>, groups: PositionGroup[]): number {
   const total = groups.reduce((s, g) => s + UNIT_WEIGHT[g], 0);
   if (total === 0) return 0;
@@ -130,18 +103,38 @@ export async function buildLeagueRatings(leagueId: string): Promise<Map<string, 
     }),
   ]);
 
-  const ovrsByTeamGroup = new Map<string, number[]>();
+  /**
+   * Keyed by POSITION, not by group — and that is the whole correctness of
+   * this function.
+   *
+   * It used to bucket straight into groups and take the best five of ten
+   * offensive linemen, which rates a club with two good right tackles and a
+   * poor left tackle EXACTLY the same as one with a tackle on each side. That
+   * is not a rounding difference: it is the rating being blind to the specific
+   * problem the app owner reported — *"if someone has two solid RT and a weak
+   * LT, they can't swap the spare RT over"* — so the fix he asked for would
+   * have moved no number on any screen, and the man on the field at left
+   * tackle was never in the average at all.
+   *
+   * lib/lineup.ts has carried the per-position version (`starterSlots`) since
+   * the twelve-man-defence cleanup, and its docstring names this file's
+   * group-level shortcut as the thing it replaces. It is now actually
+   * replaced. The eleven the depth chart names and the eleven this averages
+   * are the same eleven.
+   */
+  const ovrsByTeamPos = new Map<string, number[]>();
   for (const p of players) {
-    const key = `${p.teamId}|${positionGroup(p.position)}`;
-    const arr = ovrsByTeamGroup.get(key) ?? [];
+    const key = `${p.teamId}|${p.position}`;
+    const arr = ovrsByTeamPos.get(key) ?? [];
     arr.push(p.trueOvr);
-    ovrsByTeamGroup.set(key, arr);
+    ovrsByTeamPos.set(key, arr);
   }
 
   const draft = teams.map((t) => {
+    const ovrsAt = (pos: Position) => ovrsByTeamPos.get(`${t.id}|${pos}`) ?? [];
     const byGroup = new Map<PositionGroup, number>();
     for (const g of POSITION_GROUPS) {
-      byGroup.set(g, starterAverage(ovrsByTeamGroup.get(`${t.id}|${g}`) ?? [], g));
+      byGroup.set(g, starterAverageAtGroup(ovrsAt, g, REPLACEMENT_LEVEL));
     }
     const overall = POSITION_GROUPS.reduce((s, g) => s + (byGroup.get(g) ?? 0) * UNIT_WEIGHT[g], 0) / WEIGHT_TOTAL;
     return {
