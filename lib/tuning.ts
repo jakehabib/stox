@@ -1637,7 +1637,27 @@ export const TRADE_VALUE = {
    * stops the two ends being 78% apart.
    */
   NEED_MULT_MIN: 0.85, // no need / already deep — a discount, not a refusal
-  NEED_MULT_MAX: 1.20, // maximum, even at severe need
+  /*
+   * A DESPERATE CLUB HAS TO BE ABLE TO ACT DESPERATE. [TUNE]
+   *
+   * 1.20 was too narrow to express the thing this multiplier exists for. The
+   * owner's case: a win-now club with $108M of room and a 68 at quarterback
+   * refused a legitimate starter, and at a +20% ceiling it could not have done
+   * otherwise — even a club with NOTHING at the position could only bid a
+   * fifth more than one that was set there.
+   *
+   * Real football is not that flat. Denver sent Seattle two firsts, two
+   * seconds, two thirds and three players for a quarterback; the Rams sent two
+   * firsts and a third for one. Those are not valuations, they are a club with
+   * a hole at the one position that decides games, paying what it takes.
+   *
+   * Widened to 1.40 rather than further because this multiplier is applied to
+   * BOTH piles: it is what a club pays for what it needs AND what it holds out
+   * for on what it would be giving up, so the distance between the two ends is
+   * a friction on every player-for-player swap. 0.85 to 1.40 is a 1.65x span,
+   * still well inside the 1.78x that was measured as too punishing.
+   */
+  NEED_MULT_MAX: 1.40,
 };
 
 // ---------------------------------------------------------------------------
