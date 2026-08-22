@@ -7,7 +7,7 @@ import { generateRoster, generatePlayer, toPlayerCreate, GeneratedPlayer } from 
 import { generateLeagueHistory } from './leagueHistory';
 import { buildSchedule } from '../schedule';
 import { buildContract, marketValue, suggestedYears } from '../cap';
-import { defaultGmProfile } from '../ai/gm';
+import { defaultGmProfile, parseGmProfile } from '../ai/gm';
 import { observe } from '../scouting';
 import { writeJson } from '../json';
 import { AttrMap } from '../ratings';
@@ -226,6 +226,22 @@ export async function createLeague(opts: {
 
   // --- Teams ----------------------------------------------------------------
   const teamSeeds = opts.plan?.teams ?? TEAM_SEEDS;
+  /*
+   * STRENGTH IS ROLLED HERE, BEFORE ANYTHING ELSE ABOUT THE CLUB.
+   *
+   * It used to be rolled deep in the roster loop below, long after the GM
+   * profile had already been written from an unrelated draw — so a club's
+   * declared window, its payroll and the roster it actually got were three
+   * independent dice. Measured across a league: clubs flagged REBUILDING
+   * averaged $37M of room and clubs flagged WIN-NOW averaged $50M, which is
+   * backwards, and it is the reason the quarterback market felt dead. The
+   * clubs that needed a passer were the ones that could not pay for him, and
+   * the clubs with the room already had one.
+   *
+   * Rolling it first lets the window and the books both be consistent with
+   * the team. [TUNE] spread: about -6..+6 rating points around the mean.
+   */
+  const strengthByAbbr = new Map<string, number>(teamSeeds.map((t) => [t.abbr, rng.normal(0, 4)]));
   const teamRows = teamSeeds.map((t) => ({
     leagueId: league.id,
     city: t.city,
@@ -237,7 +253,7 @@ export async function createLeague(opts: {
     prestige: rng.int(30, 80),
     offScheme: rng.pick(OFF_SCHEMES),
     defScheme: rng.pick(DEF_SCHEMES),
-    gmProfile: writeJson(defaultGmProfile(rng)),
+    gmProfile: writeJson(defaultGmProfile(rng, strengthByAbbr.get(t.abbr))),
   }));
   await prisma.team.createMany({ data: teamRows });
   const teams = await prisma.team.findMany({ where: { leagueId: league.id }, orderBy: { abbr: 'asc' } });
@@ -345,8 +361,8 @@ export async function createLeague(opts: {
     }
   } else {
     for (const team of teams) {
-      // [TUNE] team strength spread: -6 .. +6 rating points around league mean.
-      const strength = rng.normal(0, 4);
+      // Rolled up front with the club's window — see strengthByAbbr above.
+      const strength = strengthByAbbr.get(team.abbr) ?? rng.normal(0, 4);
       // Topped up to a legal roster before it is written — see topUpRoster.
       for (const p of topUpRoster(rng, generateRoster(rng, strength, names), strength, names)) {
         registerPlayer(p, { teamId: team.id, status: 'ACTIVE' }, true);
@@ -412,10 +428,31 @@ export async function createLeague(opts: {
       nominalByPlayer.set(p.id, apy);
       nominalByTeam.set(p.teamId!, (nominalByTeam.get(p.teamId!) ?? 0) + apy);
     }
-    const CAP_TARGET_FRACTION = 0.88; // leave real headroom, not a knife's edge
-    const target = CAP.BASE_CAP * CAP_TARGET_FRACTION;
+    /*
+     * WHAT A CLUB HAS COMMITTED DEPENDS ON WHAT IT IS TRYING TO DO.
+     *
+     * This was one flat 0.88 for all thirty-two, so every club's books were
+     * the same shape and cap room was pure noise — the rebuild/contend axis
+     * predicted nothing. In real football it is the strongest predictor there
+     * is: a club going for it has its money out and sits against the ceiling,
+     * and a club tearing down has shed its veterans and is carrying room it
+     * has not spent yet.
+     *
+     * [TUNE] 0.68 at a full teardown to 0.94 all-in — about $79M of room at
+     * one end and $15M at the other, against a $255M cap.
+     *
+     * It only ever scales DOWN, which is why this reads as "a rebuilder is
+     * cheaper" rather than "a contender is dearer": a club already under its
+     * target keeps the payroll its roster earns. Scaling a contender's
+     * salaries UP to hit a number would pay men above their own market value,
+     * and every screen in the game that compares the two would then be
+     * telling the truth about a contract the generator had invented.
+     */
+    const capTargetFor = (winNow: number) => 0.68 + 0.26 * clamp(winNow, 0, 1);
+    const winNowByTeam = new Map(teams.map((t) => [t.id, parseGmProfile(t.gmProfile).winNow]));
     const scaleByTeam = new Map<string, number>();
     for (const [teamId, total] of nominalByTeam) {
+      const target = CAP.BASE_CAP * capTargetFor(winNowByTeam.get(teamId) ?? 0.5);
       scaleByTeam.set(teamId, total > target ? target / total : 1);
     }
 
@@ -466,9 +503,13 @@ export async function createLeague(opts: {
     }
   }
 
-  // --- Draft picks (3 years out) -------------------------------------------
+  // --- Draft picks -----------------------------------------------------------
+  // FOUR years, because the first of them is the draft that is about to run.
+  // Three were generated before, and the moment that first draft was over the
+  // trade hub had only two years of capital left to deal in — see the note in
+  // addFutureDraftPicks (lib/season.ts), which keeps it at three from there on.
   const pickRows: any[] = [];
-  for (let yearOffset = 0; yearOffset < 3; yearOffset++) {
+  for (let yearOffset = 0; yearOffset < 4; yearOffset++) {
     for (let round = 1; round <= settings.draftRounds; round++) {
       teams.forEach((team, i) => {
         pickRows.push({

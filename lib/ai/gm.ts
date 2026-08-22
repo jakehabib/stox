@@ -99,10 +99,29 @@ export interface RosterPlayer {
   contract?: ContractLike | null;
 }
 
-export function defaultGmProfile(rng: Rng): GmProfile {
+/**
+ * A club's front-office temperament.
+ *
+ * `strength` is the roster it is about to be handed, in rating points around
+ * the league mean (roughly -6..+6). It is optional, and passing it is what
+ * stops a club's DECLARED WINDOW being unrelated to the team it actually has:
+ * before, `winNow` was an independent dice roll made before any player
+ * existed, so the league routinely produced a 4-12 roster whose GM was
+ * flagged WIN-NOW and a stacked contender that read REBUILDING. Every system
+ * that reads `winNow` — trade pricing, free agency, draft lean — was being
+ * told something about the club that its own roster contradicted.
+ *
+ * The tilt is deliberately noisy rather than a straight mapping. A bad team
+ * with an impatient owner is a real thing and a good story; a league where
+ * record dictates attitude exactly is neither.
+ */
+export function defaultGmProfile(rng: Rng, strength?: number): GmProfile {
+  const tilt = strength === undefined
+    ? rng.normal(0.5, 0.22)
+    : 0.5 + strength / 14 + rng.normal(0, 0.1);
   return {
     aggression: clamp(rng.normal(0.5, 0.18), 0.05, 0.95),
-    winNow: clamp(rng.normal(0.5, 0.22), 0.05, 0.95),
+    winNow: clamp(tilt, 0.05, 0.95),
     valuePicks: clamp(rng.normal(0.5, 0.2), 0.05, 0.95),
     bpaBias: clamp(rng.normal(0.55, 0.18), 0.05, 0.95),
   };

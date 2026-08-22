@@ -1862,15 +1862,32 @@ async function addFutureDraftPicks(leagueId: string, seasonYear: number) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const teams = await prisma.team.findMany({ where: { leagueId } });
-  const targetYear = seasonYear + 2; // keep a rolling 3-year pick horizon
-  const existing = await prisma.draftPick.count({ where: { leagueId, year: targetYear } });
-  if (existing > 0) return;
+  /*
+   * THREE TRADEABLE FUTURE YEARS, COUNTED AFTER THE DRAFT TAKES ONE.
+   *
+   * This topped up to seasonYear + 2, which reads as a three-year horizon and
+   * is not one: the imminent draft then consumes its own year and the trade
+   * hub is left showing two. Rebuilding is the fantasy this game is for, and
+   * a rebuild is paid for in future picks — two years is a thin market to
+   * sell into, and the third year is the one that lets a teardown actually
+   * price a veteran.
+   *
+   * Written as "ensure every year through seasonYear + 3 exists" rather than
+   * "add one year", so a save that was created under the old horizon — or
+   * one that skipped an offseason step — repairs itself on the next advance
+   * instead of staying one year short forever.
+   */
   const rows: any[] = [];
-  for (let round = 1; round <= settings.draftRounds; round++) {
-    teams.forEach((team, i) => {
-      rows.push({ leagueId, year: targetYear, round, slot: i + 1, originalTeamId: team.id, ownerTeamId: team.id });
-    });
+  for (let year = seasonYear + 1; year <= seasonYear + 3; year++) {
+    const existing = await prisma.draftPick.count({ where: { leagueId, year } });
+    if (existing > 0) continue;
+    for (let round = 1; round <= settings.draftRounds; round++) {
+      teams.forEach((team, i) => {
+        rows.push({ leagueId, year, round, slot: i + 1, originalTeamId: team.id, ownerTeamId: team.id });
+      });
+    }
   }
+  if (rows.length === 0) return;
   await prisma.draftPick.createMany({ data: rows });
 }
 

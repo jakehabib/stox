@@ -336,11 +336,20 @@ export const GENERATION = {
    * rng.pick over ten positions, which handed a 79-man tight-end pool as
    * many stars as a 193-man receiver pool — tight ends took five of the
    * league's top twenty-five and left tackles were the highest-rated
-   * position in the game. Weighted, the league's top hundred reads
-   * QB 21, EDGE 13, WR 13, CB 12, DT 10, which is what a Madden top-100
-   * looks like. [TUNE]
+   * position in the game.
+   *
+   * QB WAS 2.2, WHICH READ CORRECTLY OFF A TOP-100 AND WRONGLY OFF A LEAGUE.
+   * A top hundred containing 21 quarterbacks is Madden-shaped, but there is
+   * only ONE starting quarterback per club against three receivers, so 21 of
+   * them meant two thirds of the league was set at the position — and a club
+   * that is set has no reason to trade for one. Measured on identical seeds,
+   * 2.2 -> 1.5 takes clubs holding an 88+ passer from 10.3 to 8.0 per league
+   * and 85+ from 14.7 to 12.3, against a real-football feel of about 7-8 and
+   * 10-12. The 90+ tail barely moves either way: several stars landing at one
+   * club's quarterback slot just overwrite each other, so that tail is set by
+   * STAR_OVR_MEAN and STAR_OVR_SD below, not by this share. [TUNE]
    */
-  STAR_POSITION_WEIGHTS: { QB: 2.2, WR: 1.8, EDGE: 1.6, CB: 1.3, DT: 1.1, LB: 0.9, LT: 0.7, S: 0.7, RB: 0.6, TE: 0.45 } as Record<string, number>,
+  STAR_POSITION_WEIGHTS: { QB: 1.5, WR: 1.8, EDGE: 1.6, CB: 1.3, DT: 1.1, LB: 0.9, LT: 0.7, S: 0.7, RB: 0.6, TE: 0.45 } as Record<string, number>,
   /** Draft-class tier ramp: top of round one down to the last pick. */
   DRAFT_TIER_SPREAD: 17,
   DRAFT_TIER_OFFSET: 9,
