@@ -9,7 +9,14 @@ import { Rng } from '@/lib/rng';
 import { resolveNegotiationSession, negotiateOffer, setResignSetAside } from '@/lib/freeagency';
 import type { DealStructure, NegotiationOutcome, NegotiationSession, Offer } from '@/lib/negotiation';
 
-/** Delegate every pending re-sign decision on the user's own team — expired and walk-year alike — to the same AI logic that runs each AI team's offseason. */
+/**
+ * Delegate every pending re-sign decision on the user's own team — expired and
+ * walk-year alike — to the same AI logic that runs each AI team's offseason.
+ *
+ * Comes back with one decision per man the re-sign page lists, including the
+ * ones nothing was done about, so the button can account for the whole list
+ * rather than for whoever happened to sign.
+ */
 export async function letAiResignAction(leagueId: string) {
   await assertLeagueOwner(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });

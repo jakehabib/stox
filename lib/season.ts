@@ -1536,6 +1536,30 @@ async function trimRostersToLimit(
 }
 
 /**
+ * What the front office settled on for ONE man on the re-sign list — one of
+ * these per player the page lists, whether or not a deal got written.
+ */
+export type ResignDecision = {
+  playerId: string;
+  name: string;
+  position: string;
+  /**
+   * RESIGNED — expiring deal replaced with a new one.
+   * EXTENDED — walk-year man handed years early.
+   * WALKING  — his deal is already up and was not renewed; he reaches free
+   *            agency when the re-sign window closes.
+   * HELD     — walk-year man left on the deal he is already on. He is not
+   *            released and nothing happens to him this offseason.
+   */
+  outcome: 'RESIGNED' | 'EXTENDED' | 'WALKING' | 'HELD';
+  /** Terms, when a deal was actually written. */
+  years?: number;
+  apy?: number;
+  /** Why not, in the words the screen shows. */
+  note?: string;
+};
+
+/**
  * Decide re-sign outcomes for one team's pending players — both the
  * truly-expired (0-years-remaining) and the walk-year (1-remaining, this is
  * their contract's last season) ones. Shared between the AI-only offseason
@@ -1546,7 +1570,10 @@ async function trimRostersToLimit(
  * A walk-year player who isn't judged worth an early extension isn't
  * "released" — nothing happens, since he's still under contract for this
  * season. Only an un-kept ALREADY-expired player actually walks; `released`
- * only ever counts those.
+ * only ever counts those. He still gets an entry in `decisions` (as HELD),
+ * because a front office that looked at a man and chose to do nothing has
+ * decided about him, and the screen that delegated the work has to be able to
+ * say so.
  *
  * The shape of the pass, and why (measured against live saves — the old
  * version kept 1.5-3.2 players per AI team per year, which is why AI rosters
@@ -1593,7 +1620,7 @@ export async function resignDecisionsForTeam(
   const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
   const roster = await prisma.player.findMany({ where: { teamId, status: 'ACTIVE' }, include: { contract: true } });
   const pending = roster.filter((p) => p.contract && p.contract.yearsRemaining <= 1);
-  if (pending.length === 0) return { kept: 0, released: 0 };
+  if (pending.length === 0) return { kept: 0, released: 0, decisions: [] as ResignDecision[] };
 
   const pendingIds = new Set(pending.map((p) => p.id));
   // Needs are computed on the roster MINUS the expiring class. Computed over
@@ -1642,6 +1669,34 @@ export async function resignDecisionsForTeam(
 
   let kept = 0;
   let released = 0;
+  /*
+   * ONE ENTRY PER MAN ON THE LIST.
+   *
+   * `kept` and `released` between them only ever counted signings and expired
+   * players let go, so a walk-year player the front office weighed and left
+   * alone landed in neither — and the delegate button on the re-sign page
+   * reports those two numbers. Measured on a live save: the page listed 11
+   * men, the button answered "kept 4, let 0 walk" and said nothing whatsoever
+   * about the other 7, which reads as a button that quit a third of the way
+   * down the list. It had not: it decided on all 11 and could only describe 4.
+   *
+   * So every branch below records its man before it continues, and the count
+   * of decisions is the count of pending players by construction.
+   */
+  const decisions: ResignDecision[] = [];
+  const record = (
+    player: (typeof pending)[number],
+    outcome: ResignDecision['outcome'],
+    extra: { note?: string; years?: number; apy?: number } = {},
+  ) => {
+    decisions.push({
+      playerId: player.id,
+      name: `${player.firstName} ${player.lastName}`,
+      position: player.position,
+      outcome,
+      ...extra,
+    });
+  };
 
   for (const { p, market, expired } of priced) {
     const need = needs[p.position] ?? 0;
@@ -1673,6 +1728,13 @@ export async function resignDecisionsForTeam(
     const roomOnRoster = !expired || projected < rosterMax;
 
     if (!worthKeeping || !worthExtendingEarly || !roomOnRoster) {
+      // The football reason, in the order the tests above actually weigh it.
+      const note = !worthKeeping
+        ? (p.trueOvr < bar ? 'not worth what a new deal would cost' : 'covered at the position')
+        : !worthExtendingEarly
+          ? 'under contract for the coming season, no need to move early'
+          : 'no room on the roster for him';
+      record(p, expired ? 'WALKING' : 'HELD', { note });
       if (expired) released++;
       continue;
     }
@@ -1715,6 +1777,7 @@ export async function resignDecisionsForTeam(
     const openSlots = Math.max(0, rosterMin - projected);
     const reserve = capMode === 'OFF' ? 0 : RESIGN.CAP_RESERVE + openSlots * CAP.MIN_SALARY;
     if (newHit - oldHit > capSpace - reserve) {
+      record(p, expired ? 'WALKING' : 'HELD', { note: 'no cap room for the deal he would want' });
       if (expired) released++;
       continue;
     }
@@ -1723,6 +1786,7 @@ export async function resignDecisionsForTeam(
       .then(() => true)
       .catch(() => false);
     if (ok) {
+      record(p, expired ? 'RESIGNED' : 'EXTENDED', { years, apy });
       kept++;
       capSpace -= newHit - oldHit;
       if (expired) {
@@ -1734,11 +1798,15 @@ export async function resignDecisionsForTeam(
         list.sort((a, b) => b - a);
         depthByPos.set(p.position, list);
       }
-    } else if (expired) {
-      released++;
+    } else {
+      // The cap gate above budgets; extendContract's own assertCapRoom is the
+      // authority, and when it refuses the man is in exactly the position the
+      // budget check would have left him in.
+      record(p, expired ? 'WALKING' : 'HELD', { note: 'no cap room for the deal he would want' });
+      if (expired) released++;
     }
   }
-  return { kept, released };
+  return { kept, released, decisions };
 }
 
 /**
