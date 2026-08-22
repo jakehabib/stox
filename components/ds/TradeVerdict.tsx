@@ -31,7 +31,7 @@ export interface TradeIntelNumbers {
  * points are meaningless to a player with nothing to compare them against,
  * and they stay behind the Trade Intel upgrade in any case.
  */
-function AcceptanceMeter({ ratio, requiredRatio, accepted }: { ratio: number; requiredRatio: number; accepted: boolean }) {
+export function AcceptanceMeter({ ratio, requiredRatio, accepted }: { ratio: number; requiredRatio: number; accepted: boolean }) {
   const pct = Number.isFinite(ratio) ? (ratio / requiredRatio) * 100 : 150;
   const fillPct = Math.max(2, Math.min(150, pct));
   const barColor = accepted ? 'bg-accent' : pct >= 80 ? 'bg-warn' : 'bg-bad';
@@ -45,7 +45,11 @@ function AcceptanceMeter({ ratio, requiredRatio, accepted }: { ratio: number; re
           <Tooltip text={tip('tradeAcceptance')} />
         </span>
         <span className={`stat-value text-stat-sm ${accepted ? 'text-accent' : pct >= 80 ? 'text-warn' : 'text-bad'}`}>
-          {Math.round(pct)}%
+          {/* The bar's scale tops out at 150, so a raw "1056%" beside a bar
+              that is merely full is the meter disagreeing with itself. Past
+              the ceiling the exact figure carries no information anyway —
+              every one of them means the same thing. */}
+          {pct > 150 ? '150%+' : `${Math.round(pct)}%`}
         </span>
       </div>
       <div className="relative h-3 rounded-full bg-ink/70 border border-line/70 overflow-hidden">

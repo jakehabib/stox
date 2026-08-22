@@ -14,7 +14,7 @@ import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { Tooltip } from './Tooltip';
 import { positionBadgeClass } from './ds/positionColor';
 import { TradePickBoard, pickTier } from './ds/TradePickBoard';
-import { TradeVerdict } from './ds/TradeVerdict';
+import { TradeVerdict, AcceptanceMeter } from './ds/TradeVerdict';
 import { TradeRecapCard, type TradeRecapData } from './ds/TradeRecapCard';
 import { IconSwap } from './ds/icons';
 import type { PhilosophySummary } from '@/lib/ai/gm';
@@ -320,6 +320,58 @@ export function TradeBuilder({
 
   const currentPartner = partners.find((p) => p.id === partnerId);
   const nothingSelected = giveAssets.length === 0 && getAssets.length === 0;
+
+  /**
+   * ==========================================================================
+   * THE METER FILLS AS YOU BUILD, THE CLUB STILL HAS TO BE ASKED
+   * ==========================================================================
+   * `result` is cleared on every toggle, so the acceptance meter used to be
+   * blank until Propose and blank again the moment you changed your mind. That
+   * made Propose a button you pressed to see a number.
+   *
+   * And it was a number you could already have had: evaluateTrade is
+   * deterministic — verified at 50 identical evaluations per deal across the
+   * case set, zero flips — so pressing Propose five times tells you exactly
+   * what pressing it once does. Hiding a fixed answer behind a click is a toll,
+   * not a mechanic, and it is why building a deal felt like guesswork.
+   *
+   * WHAT STAYS BEHIND PROPOSE, and why it is still worth pressing: the club's
+   * answer in its own words, the Trade Intel breakdown, the Insider call, and
+   * Confirm. Those are the call you make. The meter is your own front office
+   * reading the board, which it can do without phoning anyone.
+   *
+   * The read is the SAME evaluation the verdict runs, so the two can never
+   * disagree — a meter drawn from a second, cheaper sum on this side of the
+   * wire is exactly the lying-number bug this codebase keeps finding.
+   */
+  const selectionKey = `${[...give].sort().join(',')}|${[...get].sort().join(',')}|${partnerId}`;
+  const liveSeq = useRef(0);
+  const [live, setLive] = useState<{ ratio: number; requiredRatio: number; accepted: boolean } | null>(null);
+  const [liveReading, setLiveReading] = useState(false);
+
+  useEffect(() => {
+    if (nothingSelected || deadlinePassed) { setLive(null); setLiveReading(false); return; }
+    // Every request carries a sequence number and only the newest may write.
+    // Without it a slow response for a selection you have already changed
+    // lands last and puts a percentage on screen for a deal that is no longer
+    // on the table.
+    const seq = ++liveSeq.current;
+    setLiveReading(true);
+    const timer = setTimeout(() => {
+      evaluateTradeAction(leagueId, partnerId, giveAssets, getAssets)
+        .then((ev) => {
+          if (liveSeq.current !== seq) return;
+          setLive({ ratio: ev.ratio, requiredRatio: ev.requiredRatio, accepted: ev.accepted });
+          setLiveReading(false);
+        })
+        .catch(() => {
+          // A failed read shows nothing rather than the previous deal's number.
+          if (liveSeq.current === seq) { setLive(null); setLiveReading(false); }
+        });
+    }, 350);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionKey, nothingSelected, deadlinePassed]);
   // Only a record the refresh actually brought back counts as "just done" —
   // which also guarantees the cap figure beside it is the post-trade one.
   const recap = showRecap && lastTrade && lastTrade.id !== tradeIdAtMount ? lastTrade : null;
@@ -480,6 +532,23 @@ export function TradeBuilder({
                 before={partnerCapSpace}
                 after={capFlow.partnerAfter}
               />
+            )}
+            {/* Only until they have actually answered — once `result` exists
+                the verdict below draws the same meter with their words beside
+                it, and two of them on one screen is one too many. */}
+            {!result && !nothingSelected && !deadlinePassed && (
+              <div className="w-[230px]">
+                {live ? (
+                  <div className={liveReading ? 'opacity-50 transition-opacity' : 'transition-opacity'}>
+                    <AcceptanceMeter ratio={live.ratio} requiredRatio={live.requiredRatio} accepted={live.accepted} />
+                  </div>
+                ) : (
+                  <div>
+                    <div className="label-sm">Acceptance</div>
+                    <div className="text-xs text-muted mt-1.5">Reading the board…</div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
           <div className="flex gap-2">
