@@ -458,8 +458,49 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   // one game at a time, which serialized 16 games' worth of DB round trips
   // for no reason and was the single biggest contributor to slow sim speed.
   const gameRngs = games.map((game) => new Rng(`${rng.next()}-${game.id}`));
-  await Promise.all(games.map((game, i) => simulateAndSaveGame(leagueId, game.id, settings, gameRngs[i])));
-  const played = games.length;
+  const saved = await Promise.all(games.map((game, i) => simulateAndSaveGame(leagueId, game.id, settings, gameRngs[i])));
+
+  /**
+   * ===========================================================================
+   * ONE WEEK, ONE SET OF LEAGUE-WIDE EFFECTS
+   * ===========================================================================
+   * The games above are now safe on their own — each one is claimed inside the
+   * transaction that saves it, so no box score is ever written twice. What is
+   * NOT safe by itself is everything below this comment: fatigue recovery,
+   * progression, shortlist attention and the AI trade tick are league-wide
+   * statements with no per-row guard, and running them twice heals every
+   * injury two weeks in one and develops every player twice.
+   *
+   * So the week itself is claimed, with the same compare-and-set shape: move
+   * `week` forward only if it is still the week this call read. Exactly one of
+   * two concurrent advances matches, and the other returns here having written
+   * nothing.
+   *
+   * WHY THE CLAIM IS HERE AND NOT AT THE TOP OF THE ADVANCE. Claiming the week
+   * before the games would make a timed-out request skip a week outright — the
+   * week would be marked done with sixteen games never played and nothing to
+   * pick them up. Claiming it after means a killed function leaves the week
+   * un-advanced and the next click finishes the unplayed games, which is how
+   * this path already recovers today. The cost is that a duplicate click
+   * simulates games in memory it then discards; that is CPU, not data.
+   */
+  if (games.length > 0 && saved.every((r) => r === null)) {
+    return { summary: `Week ${week} has already been played.`, report: null };
+  }
+  const claimedWeek = await prisma.league.updateMany({
+    where: { id: leagueId, phase: 'REGULAR', week },
+    data: { week: week + 1 },
+  });
+  if (claimedWeek.count === 0) {
+    return { summary: `Week ${week} has already been played.`, report: null };
+  }
+
+  // Counted off the rows rather than off this call's own share of them: in a
+  // race the two callers can split the sixteen games between them, and the
+  // number on screen should be how many games the week actually has.
+  const played = await prisma.game.count({
+    where: { leagueId, week, seasonYear: league.seasonYear, kind: 'REGULAR', played: true },
+  });
 
   // Recover fatigue league-wide between weeks.
   await recoverFatigueAndInjuries(leagueId);
@@ -549,14 +590,40 @@ export async function simulateAndSaveGame(leagueId: string, gameId: string, sett
   const result = simulateGame(home, away, settings, rng, { allowTie: true });
   const recap = generateRecap(result.boxScore, settings, rng);
 
+  // Set false by the claim below when another advance got to this game first.
+  let claimed = true;
+
   await prisma.$transaction(async (tx) => {
-    await tx.game.update({
-      where: { id: gameId },
+    /**
+     * THE CLAIM, and it is the first statement in the transaction on purpose.
+     *
+     * `updateMany` with `played: false` in the WHERE is an atomic
+     * compare-and-set. Two concurrent advances of the same week both read the
+     * same `played: false` list in simulateWeek and both arrive here for the
+     * same game; exactly one of them matches a row and writes it. The loser
+     * matches zero rows and returns before touching standings, the wire, or
+     * any player's season line — which is what stops one week of football
+     * being counted twice (measured: 488 passing yards a game became 955).
+     *
+     * INSIDE the transaction, rather than as a cheaper check before it,
+     * because that is what makes a killed function safe. Every write in here
+     * commits or rolls back together, so a serverless timeout mid-game leaves
+     * the row `played: false` and the next advance simply plays it. Claiming
+     * outside the transaction — or advancing the league's week up front —
+     * would trade this bug for a silently skipped week, which is the same
+     * class of failure with a worse shape.
+     */
+    const won = await tx.game.updateMany({
+      where: { id: gameId, played: false },
       data: {
         played: true, homeScore: result.homeScore, awayScore: result.awayScore,
         boxScore: writeJson(result.boxScore), recap,
       },
     });
+    if (won.count === 0) {
+      claimed = false;
+      return;
+    }
 
     // Regular season only. This used to run for every game including the
     // postseason, so a champion's four playoff wins were added straight into
@@ -610,6 +677,10 @@ export async function simulateAndSaveGame(leagueId: string, gameId: string, sett
     await bulkSetText(tx, statColumn, statUpdates);
   });
 
+  // Null means "another advance saved this one" — both callers ignore the
+  // value, and simulateWeek counts the nulls to tell a duplicate click apart
+  // from a real week.
+  if (!claimed) return null;
   return result;
 }
 

@@ -7,6 +7,17 @@ import { createLeagueAction } from '@/app/actions/league';
 import { prisma } from '@/lib/db';
 import { currentViewer, maxLeaguesPerOwner } from '@/lib/owner';
 
+/*
+ * League creation runs ~236 database round trips, and on Vercel's default
+ * 10-second function budget a slow cold start can time out mid-generation.
+ * The ownership stamp happens AFTER generation, so a timeout leaves a league
+ * with a null ownerKey and a null userId — invisible to the person who made
+ * it and deletable by nobody. Sixty seconds is the same ceiling
+ * app/api/league/import/route.ts already sets for the same reason.
+ */
+export const maxDuration = 60;
+
+
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
