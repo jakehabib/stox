@@ -162,7 +162,13 @@ function PitchView({ signedIn }: { signedIn: boolean }) {
           <p className="text-xs text-muted mt-3">
             {signedIn
               ? 'Your saves are attached to your account and follow you to any device.'
-              : 'No account needed — start playing now. Sign up later and your saves come with you.'}
+              // The banner further down warns about an unclaimed save once one
+              // EXISTS. This is the line read just before creating one, and it
+              // used to present signing up as a thing to get round to. A save
+              // made signed-out lives in one cookie on one browser, and the
+              // safest minute to make an account is the minute before there is
+              // anything to lose.
+              : 'You can start without one, but a save made signed-out lives only in this browser — making an account first is the safest way to keep it.'}
           </p>
         </div>
       </section>
