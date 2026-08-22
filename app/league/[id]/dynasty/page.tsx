@@ -9,10 +9,11 @@ import { DynastySkillCard } from '@/components/DynastySkillCard';
 import { FullScoutPanel } from '@/components/FullScoutPanel';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import {
-  BRANCH_BLURB, BRANCH_LABEL, DYNASTY, DYNASTY_SKILLS, buildDynastyState,
-  flagBreakouts, projectDevelopment, rankOf, readAging, scoutingModsFor,
+  BRANCH_BLURB, BRANCH_LABEL, BRANCH_ORDER, DYNASTY, DYNASTY_SKILLS, buildDynastyState,
+  flagBreakouts, lockedReason, projectDevelopment, rankOf, readAging, scoutingModsFor,
   type DynastyBranch,
 } from '@/lib/dynasty';
+import { loadWorkoutSlots } from '@/lib/workouts';
 import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
 
@@ -33,6 +34,9 @@ export default async function DynastyPage({ params }: { params: { id: string } }
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
   const state = await buildDynastyState(league.id);
+  // Scouting Network buys workouts as well as Full Scouts, so the card needs
+  // both ledgers. Cheap: two indexed reads on the same profile row.
+  const workoutSlots = await loadWorkoutSlots(league.id);
   const mods = scoutingModsFor(state.skills);
 
   const xpLabel = (n: number) => n.toLocaleString();
@@ -125,7 +129,9 @@ export default async function DynastyPage({ params }: { params: { id: string } }
         .filter((s) => s.aging)
     : [];
 
-  const branches: DynastyBranch[] = ['SCOUTING', 'NEGOTIATION', 'DEVELOPMENT'];
+  // Declared in lib/dynasty.ts so the tree's reading order lives with the
+  // tree, not with whichever page happens to render it.
+  const branches: DynastyBranch[] = BRANCH_ORDER;
 
   return (
     <div className="space-y-5">
@@ -138,7 +144,8 @@ export default async function DynastyPage({ params }: { params: { id: string } }
           <>
             Your record as a general manager, turned into a career track. XP comes from what the franchise actually
             achieves — wins, playoff runs, titles, awards, picks that hit — never from repeating an action. Skill points
-            buy information and tools; they never make your players better.
+            buy what a front office can actually buy: a clearer read on the draft board, coaching that develops your
+            players faster, and a cap staff who can tell what a signing really takes.
           </>
         }
         facts={[
@@ -188,9 +195,14 @@ export default async function DynastyPage({ params }: { params: { id: string } }
                   def={def}
                   rank={rankOf(state.skills, def.id)}
                   pointsAvailable={state.pointsAvailable}
+                  lockedBy={lockedReason(state.skills, def.id)}
                   limitedUse={
                     def.id === 'SCOUTING_NETWORK'
-                      ? { max: state.fullScout.max, remaining: state.fullScout.remaining, label: 'Full Scouts', alwaysShow: true }
+                      // Both counters this node buys, because a card that
+                      // promises workouts and then only counts evaluations is
+                      // the kind of half-truth that makes a skill feel fake.
+                      ? { max: state.fullScout.max, remaining: state.fullScout.remaining, label: 'Full Scouts', alwaysShow: true,
+                          second: { max: workoutSlots.max, remaining: workoutSlots.remaining, label: 'Private workouts' } }
                       : def.id === 'INSIDER'
                         ? { max: state.insider.max, remaining: state.insider.remaining, label: 'Insider calls' }
                         : undefined

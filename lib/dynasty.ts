@@ -922,6 +922,130 @@ export function hasTradeIntel(skills: SkillRanks): boolean {
   return rankOf(skills, 'TRADE_INTEL') > 0;
 }
 
+// ---------------------------------------------------------------------------
+// The tree: what is unlocked, and what unlocks it
+// ---------------------------------------------------------------------------
+
+/**
+ * A skill is buyable only once its prerequisite is at rank 1 or better.
+ * `undefined` requires means it is the root of its branch and always open.
+ *
+ * ONE function, used by BOTH the page that greys the node out and the server
+ * action that refuses the purchase. Two copies of this rule is how a client
+ * ends up able to buy something the server thinks is locked.
+ */
+export function isSkillUnlocked(skills: SkillRanks, id: DynastySkillId): boolean {
+  const def = SKILL_BY_ID[id];
+  if (!def?.requires) return true;
+  return rankOf(skills, def.requires) > 0;
+}
+
+/**
+ * What the UI puts on a locked node. Null when it is not locked — so a caller
+ * can render `lockedReason(...) ?? <the buy button>` without a second check.
+ */
+export function lockedReason(skills: SkillRanks, id: DynastySkillId): string | null {
+  const def = SKILL_BY_ID[id];
+  if (!def?.requires || isSkillUnlocked(skills, id)) return null;
+  const parent = SKILL_BY_ID[def.requires];
+  return `Locked — buy ${parent?.name ?? def.requires} first`;
+}
+
+/**
+ * DEVELOPMENT — the multiplier lib/development.ts hands progressPlayer() as
+ * its `speedMult`. 1 with no ranks, so a GM who has never opened the Dynasty
+ * screen gets byte-identical progression to before this shipped.
+ */
+export function devSpeedMultFor(skills: SkillRanks): number {
+  return DYNASTY.DEV_SPEED_MULT[rankOf(skills, 'COACHING_STAFF')] ?? 1;
+}
+
+/** Convenience for the sim, which has a leagueId and no profile in hand. */
+export async function loadDevSpeedMult(leagueId: string): Promise<number> {
+  const profile = await loadDynastyProfile(leagueId);
+  return devSpeedMultFor(parseSkills(profile.skills));
+}
+
+/**
+ * NEGOTIATION — the factor lib/negotiation.ts multiplies bandHalfWidthFor()
+ * by. Keyed on TOTAL ranks bought across the branch, which is what makes the
+ * owner's *"each point ... narrows the uncertainty band"* literally true:
+ * every purchase in the branch moves it, not just one designated node.
+ */
+export function negotiationRanksSpent(skills: SkillRanks): number {
+  let total = 0;
+  for (const def of DYNASTY_SKILLS) {
+    if (def.branch !== 'NEGOTIATION') continue;
+    total += rankOf(skills, def.id);
+  }
+  return total;
+}
+
+export function signBandMultFor(skills: SkillRanks): number {
+  const ranks = negotiationRanksSpent(skills);
+  const table = DYNASTY.SIGN_BAND_MULT;
+  return table[Math.min(ranks, table.length - 1)] ?? 1;
+}
+
+/** Convenience for a caller holding only a leagueId. */
+export async function loadSignBandMult(leagueId: string): Promise<number> {
+  const profile = await loadDynastyProfile(leagueId);
+  return signBandMultFor(parseSkills(profile.skills));
+}
+
+// ---------------------------------------------------------------------------
+// Migration — refunding points spent on a tree that no longer exists
+// ---------------------------------------------------------------------------
+
+/**
+ * REFUND, not remap, not strand. The app owner, asked what should happen to
+ * points already spent when the tree was reshaped: *"just refund those
+ * points."*
+ *
+ * There is nothing to write. `pointsSpent()` totals the cost of the ranks a
+ * save actually holds against the CURRENT DYNASTY_SKILLS, and `parseSkills()`
+ * drops any id that no longer exists and clamps any rank past the new
+ * maximum. So a point spent on a deleted skill stops being counted as spent
+ * the moment the code ships, and `pointsAvailable = earned - spent` hands it
+ * straight back to the unspent pool.
+ *
+ * That is why this is idempotent for free and cannot pay out twice: it is not
+ * a payout at all, it is a re-derivation. Rendering the page twice, reopening
+ * the save, or replaying it a year later all produce the same number, because
+ * nothing is being incremented anywhere. The only persisted field is the
+ * skills map itself, and it is only ever written by a purchase.
+ *
+ * The one thing that DOES need writing is a skills map holding a stale id —
+ * harmless (parseSkills ignores it) but confusing in the database. It is
+ * rewritten opportunistically on the next purchase, which serializes the
+ * parsed map.
+ *
+ * Conservation, which the report quotes on a real save:
+ *   spent_before + unspent_before === spent_after + unspent_after === earned
+ * holds by construction, because both sides are `earned` and `earned` is a
+ * pure function of level.
+ */
+export function refundSummary(rawSkills: string | null | undefined, level: number): {
+  earned: number;
+  spentUnderNewTree: number;
+  refunded: number;
+  droppedIds: string[];
+} {
+  const earned = skillPointsAtLevel(level);
+  const parsed = parseSkills(rawSkills);
+  const spentUnderNewTree = pointsSpent(parsed);
+  // What the old map claimed, including ids and ranks the new tree rejects.
+  const raw = readJson<Record<string, unknown>>(rawSkills ?? null, {});
+  const dropped: string[] = [];
+  for (const [id, v] of Object.entries(raw)) {
+    if (typeof v !== 'number' || v <= 0) continue;
+    const def = DYNASTY_SKILLS.find((d) => d.id === id);
+    if (!def) dropped.push(id);
+    else if (Math.floor(v) > def.ranks.length) dropped.push(`${id} (rank ${Math.floor(v)} > ${def.ranks.length})`);
+  }
+  return { earned, spentUnderNewTree, refunded: Math.max(0, earned - spentUnderNewTree), droppedIds: dropped };
+}
+
 
 // ---------------------------------------------------------------------------
 // Development branch — projections

@@ -22,18 +22,32 @@ import { DeltaChip, useDeltaWatch } from './ds/DeltaChip';
  * it was paid against. All three are additive; nothing on the card was
  * removed, resized or recoloured to make room.
  */
-export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limitedUse }: {
+export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, lockedBy, limitedUse }: {
   leagueId: string;
   def: DynastySkillDef;
   rank: number;
   pointsAvailable: number;
+  /**
+   * The tree. Non-null when this skill's prerequisite has not been bought —
+   * the string names what unlocks it, straight from lib/dynasty.ts's
+   * `lockedReason`, so the card and the server action cannot disagree about
+   * whether a purchase is legal.
+   *
+   * A locked card must not offer a button. Spending a point on something you
+   * cannot use is not a choice, it is a mistake the UI let you make.
+   */
+  lockedBy?: string | null;
   /**
    * Charge counter for an ability with per-season uses. `alwaysShow` is for
    * Full Scout, whose allowance is a baseline entitlement rather than
    * something this upgrade unlocks — the counter has to be visible at rank 0
    * or the card reads as "locked", which it is not.
    */
-  limitedUse?: { max: number; remaining: number; label: string; alwaysShow?: boolean };
+  limitedUse?: {
+    max: number; remaining: number; label: string; alwaysShow?: boolean;
+    /** A second charge this same upgrade buys — Scouting Network grants workouts AND Full Scouts. */
+    second?: { max: number; remaining: number; label: string };
+  };
 }) {
   const [, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
@@ -49,9 +63,10 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
     return () => clearTimeout(t);
   }, [justBought]);
 
+  const locked = !!lockedBy;
   const maxed = rank >= def.ranks.length;
   const nextCost = maxed ? 0 : def.ranks[rank].cost;
-  const affordable = !maxed && pointsAvailable >= nextCost;
+  const affordable = !locked && !maxed && pointsAvailable >= nextCost;
   const currentEffect = rank > 0 ? def.ranks[rank - 1].effect : null;
   const nextEffect = maxed ? null : def.ranks[rank].effect;
 
@@ -69,7 +84,7 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
 
   return (
     <div
-      className={`panel p-3.5 transition-colors ${rank > 0 ? 'border-accent/40' : ''} ${justBought ? 'commit-flash' : ''}`}
+      className={`panel p-3.5 transition-colors ${rank > 0 ? 'border-accent/40' : ''} ${locked ? 'opacity-60' : ''} ${justBought ? 'commit-flash' : ''}`}
       style={{ transitionDuration: 'var(--dur-state)' }}
     >
       <div className="flex items-start justify-between gap-3">
@@ -92,14 +107,18 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
       )}
 
       {limitedUse && (rank > 0 || limitedUse.alwaysShow) && (
-        <div className="mt-2.5 flex items-center justify-between gap-2 bg-raised rounded px-2.5 py-1.5">
-          <span className="label-sm">{limitedUse.label}</span>
-          <span className="whitespace-nowrap">
-            <span className={`stat-value text-stat-sm ${limitedUse.remaining === 0 ? 'text-bad' : 'text-chalk'}`}>
-              {limitedUse.remaining}
-            </span>
-            <span className="text-xs text-muted">/{limitedUse.max} remaining</span>
-          </span>
+        <div className="mt-2.5 space-y-1">
+          {[limitedUse, ...(limitedUse.second ? [limitedUse.second] : [])].map((u) => (
+            <div key={u.label} className="flex items-center justify-between gap-2 bg-raised rounded px-2.5 py-1.5">
+              <span className="label-sm">{u.label}</span>
+              <span className="whitespace-nowrap">
+                <span className={`stat-value text-stat-sm ${u.remaining === 0 ? 'text-bad' : 'text-chalk'}`}>
+                  {u.remaining}
+                </span>
+                <span className="text-xs text-muted">/{u.max} remaining</span>
+              </span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -111,7 +130,11 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
       )}
 
       <div className="mt-3 flex items-center justify-between gap-3">
-        {maxed ? (
+        {locked ? (
+          <span className="pill border-line text-muted flex items-center gap-1.5">
+            <span aria-hidden>🔒</span>{lockedBy}
+          </span>
+        ) : maxed ? (
           <span className="pill border-accent/40 text-accent">Fully upgraded</span>
         ) : (
           <span className="text-xs text-muted flex items-center gap-1.5">
@@ -121,7 +144,7 @@ export function DynastySkillCard({ leagueId, def, rank, pointsAvailable, limited
             <DeltaChip delta={points.delta} tone="info" />
           </span>
         )}
-        {!maxed && (
+        {!maxed && !locked && (
           <ActionButton
             className="btn-primary text-xs"
             disabled={!affordable}
