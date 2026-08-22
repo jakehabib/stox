@@ -1,5 +1,5 @@
 import { Rng, clamp } from '../rng';
-import { AI, ROSTER_TARGETS, ROSTER_NEED_QUALITY_WEIGHT, Position, POSITIONS, PICK_VALUE_CHART, LEAGUE, TRADE_VALUE, TRADE_VALUE_TIER } from '../tuning';
+import { AI, ROSTER_TARGETS, ROSTER_NEED_QUALITY_WEIGHT, MARKET, Position, POSITIONS, PICK_VALUE_CHART, LEAGUE, TRADE_VALUE, TRADE_VALUE_TIER } from '../tuning';
 import { GmProfile } from '../types';
 import { marketValue, remainingValue, capHit, proration, capSavingsOnCut, formatMoney, ContractLike } from '../cap';
 import { startersAt } from '../lineup';
@@ -134,6 +134,37 @@ export function parseGmProfile(raw: string | null | undefined, fallbackRng?: Rng
 }
 
 /**
+ * WHAT COUNTS AS AN ACCEPTABLE STARTER DEPENDS ON THE POSITION.
+ *
+ * The quality term used one flat number — 72 — for every position on the
+ * field, and that is how a club whose starting QUARTERBACK is a 72 came back
+ * with a need score of 0.00, meaning stacked. The owner hit the consequence
+ * from the other side: a win-now club with $108M of room and a 68 at
+ * quarterback turned down a legitimate starter, because as far as this
+ * function was concerned it did not need one.
+ *
+ * A 72 quarterback is among the worst starters in football. A 72 right guard
+ * is fine, and a 72 punter is good. One number cannot mean all three.
+ *
+ * Derived from MARKET.POSITION_MULT rather than hand-written per position, so
+ * the bar moves with the game's own idea of what a position is worth instead
+ * of drifting away from it: QB lands near 80, edge near 76, guard near 70,
+ * kicker near 66.
+ *
+ * [TUNE] The gap divisor is 18 rather than 30 for the same reason. At 30, a
+ * quarterback had to be THIRTY points below the bar — a 50 overall — before
+ * his club read as desperate, which no front office would recognise.
+ */
+const ACCEPTABLE_STARTER_BASE = 72;
+const ACCEPTABLE_STARTER_SPREAD = 9;
+const STARTER_GAP_DIVISOR = 18;
+
+export function acceptableStarter(pos: Position): number {
+  const mult = MARKET.POSITION_MULT[pos] ?? 1;
+  return ACCEPTABLE_STARTER_BASE + ACCEPTABLE_STARTER_SPREAD * (mult - 1);
+}
+
+/**
  * Need score per position, 0 (stacked) .. 1 (desperate).
  * Combines "do we have enough bodies" with "is the starter any good".
  */
@@ -148,11 +179,11 @@ export function teamNeeds(players: RosterPlayer[]): Record<string, number> {
     // Quantity need: below the minimum is an emergency.
     const countNeed = clamp((target.min - group.length) / Math.max(1, target.min), 0, 1);
 
-    // Quality need: how far the starter is below a "fine starter" baseline.
-    // [TUNE] 72 is treated as an acceptable starter.
+    // Quality need: how far the starter is below a fine starter AT THIS
+    // POSITION — see acceptableStarter above for why that is not one number.
     const starter = group[0]?.trueOvr ?? 40;
     const qualityWeight = ROSTER_NEED_QUALITY_WEIGHT[pos] ?? 1;
-    const qualityNeed = clamp((72 - starter) / 30, 0, 1) * qualityWeight;
+    const qualityNeed = clamp((acceptableStarter(pos) - starter) / STARTER_GAP_DIVISOR, 0, 1) * qualityWeight;
 
     // Depth need: second body matters more at high-snap positions. Positions
     // that only ever roster one player (K, P, FB) never carry a "backup" —
