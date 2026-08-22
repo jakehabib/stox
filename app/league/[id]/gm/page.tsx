@@ -5,6 +5,8 @@ import { TeamLogo } from '@/components/TeamLogo';
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
+import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
 
 const RESULT_LABEL: Record<string, string> = {
   MISSED: 'Missed Playoffs', WILDCARD: 'Lost Wild Card', DIVISIONAL: 'Lost Divisional',
@@ -107,7 +109,10 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
           <div className="text-xs text-muted">{s.playoffAppearances} playoff trip{s.playoffAppearances === 1 ? '' : 's'}</div>
         </div>
         <div className="stat-tile">
-          <div className="label-sm">Draft Hit Rate</div>
+          <div className="label-sm inline-flex items-center gap-1.5">
+            Draft Hit Rate
+            <Tooltip text={tip('draftHitRate')} />
+          </div>
           <div className="text-lg font-mono font-semibold">{s.draftHitRate !== null ? `${Math.round(s.draftHitRate * 100)}%` : '—'}</div>
           <div className="text-xs text-muted">{s.draftHits}/{s.draftPicksMade} picks hit</div>
         </div>
@@ -122,7 +127,10 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
             never be read as each other. Both are bounded to this GM's tenure
             (lib/allStars.ts allStarTallyForTeam). */}
         <div className="stat-tile">
-          <div className="label-sm">All-Star Players</div>
+          <div className="label-sm inline-flex items-center gap-1.5">
+            All-Star Players
+            <Tooltip text={tip('allStar')} />
+          </div>
           <div className={`text-lg font-mono font-semibold ${s.allStars.players > 0 ? 'text-gold' : ''}`}>{s.allStars.players}</div>
           <div className="text-xs text-muted">
             {s.allStars.selections === 0
@@ -134,7 +142,10 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
 
       <div className="grid md:grid-cols-2 gap-5">
         <div className="panel p-4">
-          <div className="label-sm mb-3">Cap Management</div>
+          <div className="label-sm mb-3 inline-flex items-center gap-1.5">
+            Cap Management
+            <Tooltip text={tip('deadMoney')} />
+          </div>
           <div className="text-sm text-muted">Average dead money per season</div>
           <div className="stat-value text-stat-md mt-1">{formatMoney(s.avgDeadMoneyPerYear)}</div>
         </div>

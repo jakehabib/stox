@@ -17,6 +17,8 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { positionBadgeClass } from '@/components/ds/positionColor';
+import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
 
 type SortKey = 'consensus' | 'pos' | 'ovr' | 'age' | 'potential';
 
@@ -238,13 +240,15 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             { label: 'Prospects', value: String(classSize), detail: searchParams.pos ? `filtered to ${searchParams.pos}` : 'in the class' },
             {
               label: 'Shortlisted',
+              tip: tip('shortlist'),
               value: String(shortlistIds.size),
               detail: shortlistIds.size > 0 ? 'flagged to watch' : 'star anyone to track them',
               color: shortlistIds.size > 0 ? 'text-gold' : undefined,
             },
-            { label: 'Your Picks', value: String(myPickCount), detail: upcomingDraftYear !== null ? `owned in the ${upcomingDraftYear} draft` : 'unused picks owned' },
+            { label: 'Your Picks', value: String(myPickCount), detail: upcomingDraftYear !== null ? `owned in the ${upcomingDraftYear} draft` : 'unused picks owned', tip: tip('pickValue') },
             {
               label: 'Well Scouted',
+              tip: tip('scoutingConfidence'),
               value: `${scoutedCount}`,
               detail: pool.length > 0 ? `of the top ${pool.length} shown` : 'nobody yet',
               color: scoutedCount === 0 ? 'text-warn' : undefined,
@@ -287,7 +291,10 @@ export default async function DraftPage({ params, searchParams }: { params: { id
 
       {upcomingPicks.length > 1 && (
         <div className="panel p-4">
-          <h2 className="label-sm mb-2">Upcoming Picks</h2>
+          <h2 className="label-sm mb-2 inline-flex items-center gap-1.5">
+            Upcoming Picks
+            <Tooltip text={tip('onTheClock')} />
+          </h2>
           <div className="flex gap-1.5 overflow-x-auto pb-1">
             {upcomingPicks.map((p) => (
               <div
@@ -313,6 +320,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       <div className="section">
         <SectionHeading
           title="Big Board"
+          tip={tip('consensusBoard')}
           action={
             <div className="flex gap-2 flex-wrap items-center">
               <a href={posHref()} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</a>
@@ -335,10 +343,33 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
                 <th>Name</th>
                 <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-                <th><a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-                <th><a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
-                <th>Board Grade</th>
-                <th>Projection</th>
+                <th>
+                  <span className="inline-flex items-center gap-1">
+                    <a href={sortHref('ovr')} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                    <Tooltip placement="bottom" text={settings.scoutingEnabled ? tip('scoutedRange') : tip('overall')} />
+                  </span>
+                </th>
+                <th>
+                  <span className="inline-flex items-center gap-1">
+                    <a href={sortHref('potential')} className="hover:text-chalk">Potential{sortKey === 'potential' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                    {/* Downward: this table is wrapped in `panel
+                        overflow-hidden`, which clips anything opening above
+                        the header row. */}
+                    <Tooltip placement="bottom" text={tip('potential')} />
+                  </span>
+                </th>
+                <th>
+                  <span className="inline-flex items-center gap-1">
+                    Board Grade
+                    <Tooltip placement="bottom" text={tip('boardGrade')} />
+                  </span>
+                </th>
+                <th>
+                  <span className="inline-flex items-center gap-1">
+                    Projection
+                    <Tooltip placement="bottom" text={tip('draftBand')} />
+                  </span>
+                </th>
                 <th></th>
               </tr>
             </thead>

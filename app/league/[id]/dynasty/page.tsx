@@ -9,6 +9,8 @@ import { DynastySkillCard } from '@/components/DynastySkillCard';
 import { FullScoutPanel } from '@/components/FullScoutPanel';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import {
+import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
   BRANCH_BLURB, BRANCH_LABEL, DYNASTY, DYNASTY_SKILLS, buildDynastyState,
   flagBreakouts, projectDevelopment, rankOf, readAging, scoutingModsFor,
   type DynastyBranch,
@@ -140,9 +142,9 @@ export default async function DynastyPage({ params }: { params: { id: string } }
           </>
         }
         facts={[
-          { label: 'Dynasty Level', value: String(state.level.level), detail: state.level.atMax ? 'Maximum level' : `Level ${state.level.level + 1} at ${xpLabel(state.level.xpForThisLevel - state.level.xpIntoLevel)} more XP` },
-          { label: 'Total XP', value: xpLabel(state.level.xp), detail: `Since ${state.tenureStartYear}` },
-          { label: 'Skill Points', value: String(state.pointsAvailable), detail: `${state.pointsSpent} spent · ${state.pointsEarned} earned`, color: state.pointsAvailable > 0 ? 'text-accent' : undefined },
+          { label: 'Dynasty Level', tip: tip('gmLevel'), value: String(state.level.level), detail: state.level.atMax ? 'Maximum level' : `Level ${state.level.level + 1} at ${xpLabel(state.level.xpForThisLevel - state.level.xpIntoLevel)} more XP` },
+          { label: 'Total XP', tip: tip('gmXp'), value: xpLabel(state.level.xp), detail: `Since ${state.tenureStartYear}` },
+          { label: 'Skill Points', tip: tip('skillPoints'), value: String(state.pointsAvailable), detail: `${state.pointsSpent} spent · ${state.pointsEarned} earned`, color: state.pointsAvailable > 0 ? 'text-accent' : undefined },
           { label: 'Record', value: `${state.breakdown.wins}-${state.breakdown.losses}`, detail: `${state.breakdown.seasons} completed season${state.breakdown.seasons === 1 ? '' : 's'}` },
           { label: 'Next Point', value: state.nextPointAtLevel ? `Lv ${state.nextPointAtLevel}` : '—', detail: state.nextPointAtLevel ? `${state.nextPointAtLevel - state.level.level} level${state.nextPointAtLevel - state.level.level === 1 ? '' : 's'} away` : 'Ladder complete' },
         ]}
@@ -176,7 +178,7 @@ export default async function DynastyPage({ params }: { params: { id: string } }
       <div className="grid lg:grid-cols-3 gap-5">
         {branches.map((branch) => (
           <div key={branch} className="section">
-            <SectionHeading eyebrow="Branch" title={BRANCH_LABEL[branch]} />
+            <SectionHeading eyebrow="Branch" title={BRANCH_LABEL[branch]} tip={tip('skillTree')} />
             <p className="text-xs text-muted -mt-1">{BRANCH_BLURB[branch]}</p>
             <div className="space-y-2.5">
               {DYNASTY_SKILLS.filter((s) => s.branch === branch).map((def) => (
@@ -238,7 +240,10 @@ export default async function DynastyPage({ params }: { params: { id: string } }
             </div>
 
             <div className="panel p-3.5">
-              <div className="label-sm mb-2.5">{DYNASTY.DEV_PROJECTION_YEARS}-Year Projections</div>
+              <div className="label-sm mb-2.5 inline-flex items-center gap-1.5">
+                {DYNASTY.DEV_PROJECTION_YEARS}-Year Projections
+                <Tooltip text={tip('devTrait')} />
+              </div>
               {rankOf(state.skills, 'DEV_INSIGHT') === 0 ? (
                 <div className="text-xs text-muted">Locked.</div>
               ) : projections.length === 0 ? (

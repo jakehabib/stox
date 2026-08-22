@@ -222,10 +222,6 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
           </p>
           {legend.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-3">
-              <span className="inline-flex items-center gap-1 text-[11px] text-muted mr-1">
-                Where the board is wrong
-                <Tooltip text={tip('positionalValue')} />
-              </span>
               {legend.map(([id, l]) => (
                 <span key={id} className={`pill text-[11px] gap-1.5 ${BIAS_TONE[id] ?? 'border-line text-muted'}`}>
                   {l.label}<span className="font-mono opacity-70 ml-1">{l.count}</span>
@@ -295,6 +291,23 @@ export default async function ScoutingPage({ params }: { params: { id: string } 
             <div className="px-4 py-6 text-sm text-muted">No draft class on the board yet. One is generated in week 1.</div>
           )}
         </div>
+        {topBoard.length > 0 && (
+          <p className="text-[11px] text-muted flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="inline-flex items-center gap-1">
+              <span className="font-mono">▲ ▼ slot</span>
+              — how far the position itself moves a man up or down the board
+              <Tooltip text={tip('positionalValue')} />
+            </span>
+            <span className="inline-flex items-center gap-1">
+              Board grade
+              <Tooltip text={tip('boardGrade')} />
+            </span>
+            <span className="inline-flex items-center gap-1">
+              Band
+              <Tooltip text={tip('draftBand')} />
+            </span>
+          </p>
+        )}
       </div>
 
       {/* ---------------------------------------------------------------- */}

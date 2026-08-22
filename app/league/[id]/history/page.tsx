@@ -6,6 +6,8 @@ import { statLabel } from '@/lib/statLabels';
 import { buildDynastyLeaderboard } from '@/lib/dynastyScore';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
 
 const RESULT_LABEL: Record<string, string> = {
   MISSED: 'Missed Playoffs', WILDCARD: 'Lost Wild Card', DIVISIONAL: 'Lost Divisional',
@@ -89,7 +91,10 @@ export default async function HistoryPage({ params, searchParams }: { params: { 
 
       <div className="panel overflow-hidden">
         <div className="px-4 py-3 border-b border-line/70">
-          <div className="label-sm">Dynasty Score</div>
+          <div className="label-sm inline-flex items-center gap-1.5">
+            Dynasty Score
+            <Tooltip text={tip('dynastyScore')} />
+          </div>
           <div className="text-xs text-muted mt-0.5">Championships, playoff depth, win rate, draft hits, cap discipline, awards, and league records held — rolled into one ranking.</div>
         </div>
         <table className="table-clean">

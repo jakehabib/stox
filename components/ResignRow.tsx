@@ -15,6 +15,8 @@ import { openResignNegotiationAction, submitResignOfferAction, setAsideResignAct
 import { ActionButton } from './ds/ActionButton';
 import { SuitorRumour, LoyaltyLine } from './ds/SuitorRumour';
 import { DepthAtPosition, type DepthEntry } from './ds/DepthAtPosition';
+import { Tooltip } from './Tooltip';
+import { tip } from '@/lib/glossary';
 
 /** Where a fresh deal opens. Reset terms returns the shape here. */
 const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidYears: 0 };
@@ -272,9 +274,12 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
                 </button>
               )}
               {canTag && (
-                <button disabled={tagPending} onClick={tag} className="pill border-gold/40 text-gold text-xs hover:bg-gold/10">
-                  {tagPending ? 'Tagging…' : 'Franchise Tag'}
-                </button>
+                <span className="inline-flex items-center gap-1.5">
+                  <button disabled={tagPending} onClick={tag} className="pill border-gold/40 text-gold text-xs hover:bg-gold/10">
+                    {tagPending ? 'Tagging…' : 'Franchise Tag'}
+                  </button>
+                  <Tooltip text={tip('franchiseTag')} />
+                </span>
               )}
             </div>
           )}

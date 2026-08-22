@@ -6,6 +6,8 @@ import { ResignRow } from '@/components/ResignRow';
 import type { DepthEntry } from '@/components/ds/DepthAtPosition';
 import { LetAiResignButton } from '@/components/LetAiResignButton';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { Tooltip } from '@/components/Tooltip';
+import { tip } from '@/lib/glossary';
 
 export default async function ResignPage({ params }: { params: { id: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
@@ -115,9 +117,10 @@ export default async function ResignPage({ params }: { params: { id: string } })
         subtitle="Players whose deals are up or about to be. Nobody else may sign them while they are still yours — but somebody is already watching, and open talks will tell you who, what room they have and what they would pay. The hometown discount is real and it is on a clock: it is at its biggest while a contract still has a season to run and mostly gone once it has expired. Whoever you leave undecided is released to free agency when this phase ends, and the rest of the league can call."
         action={expiring.length > 0 ? <LetAiResignButton leagueId={league.id} /> : undefined}
         facts={[
-          { label: 'Decisions', value: String(onTheList.length), detail: parked.length > 0 ? `${parked.length} more set aside` : 'contracts on the clock' },
+          { label: 'Decisions', value: String(onTheList.length), detail: parked.length > 0 ? `${parked.length} more set aside` : 'contracts on the clock', tip: tip('walkYear') },
           {
             label: 'Already Expired',
+            tip: tip('loyaltyDiscount'),
             value: String(trulyExpiringCount),
             detail: trulyExpiringCount > 0 ? 'last call — discount is gone' : 'none yet',
             color: trulyExpiringCount > 0 ? 'text-bad' : 'text-accent',
@@ -125,6 +128,7 @@ export default async function ResignPage({ params }: { params: { id: string } })
           ...(summary ? [
             {
               label: 'Cap Space',
+              tip: tip('capSpace'),
               value: formatMoney(summary.capSpace),
               detail: `${formatMoney(summary.capUsed)} committed`,
               color: summary.capSpace >= 0 ? 'text-accent' : 'text-bad',
@@ -170,7 +174,10 @@ export default async function ResignPage({ params }: { params: { id: string } })
           {parked.length > 0 && (
             <div className="pt-3 space-y-2">
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                <span className="label-sm">Set aside · {parked.length}</span>
+                <span className="label-sm inline-flex items-center gap-1.5">
+                  Set aside · {parked.length}
+                  <Tooltip text={tip('setAside')} />
+                </span>
                 <span className="text-xs text-muted">
                   {parkedExpiring > 0
                     ? `Not released — but ${parkedExpiring} of them ${parkedExpiring === 1 ? 'has an expired deal and walks' : 'have expired deals and walk'} when this phase ends.`
