@@ -30,7 +30,19 @@ export function TradeRetrospectives({ myAbbr, retrospectives }: { myAbbr: string
     <div className="panel overflow-hidden">
       <div className="px-4 py-3 border-b border-line">
         <div className="font-semibold text-sm">Trade Retrospectives</div>
-        <div className="text-xs text-muted mt-0.5">Every trade you've made, graded by how the return has held up since.</div>
+        {/* THE TWO NUMBERS ARE NOT THE SAME NUMBER, AND THE PAGE HAS TO SAY SO.
+            These figures price both sides on the open market, with none of the
+            buyer's need premium in them — see NEUTRAL_PROFILE in
+            lib/tradeRetro.ts. The acceptance meter on the trade screen prices
+            the deal the way THAT club saw it on the day, hole and all. A GM
+            who reads a full meter and then reads a lopsided line here is
+            looking at two honest answers to two different questions, and
+            without this sentence has no way to know that. */}
+        <div className="text-xs text-muted mt-0.5">
+          Every trade you&apos;ve made, graded by how the return has held up since. Both sides are priced on the open
+          market — not by what either club happened to need that week, which is what the acceptance meter measures
+          when you make the deal.
+        </div>
       </div>
       <div className="divide-y divide-line/60">
         {retrospectives.map((r) => {

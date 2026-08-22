@@ -37,6 +37,31 @@ export function AcceptanceMeter({ ratio, requiredRatio, accepted }: { ratio: num
   const barColor = accepted ? 'bg-accent' : pct >= 80 ? 'bg-warn' : 'bg-bad';
   const thresholdLeft = (100 / 150) * 100; // requiredRatio always sits at the 100-of-150 mark on this scale
 
+  /*
+   * PAST THEIR LINE IS NOT MORE GOOD. IT IS YOUR MONEY.
+   *
+   * This meter answers "will they say yes", and the ratio behind it is THEIRS:
+   * what the club receives over what it gives up. They say yes at their line.
+   * Every point past it is value you handed over that you did not have to.
+   *
+   * Drawn as one filling green bar, that read as a score — the fuller the
+   * better — and the app owner played it that way, then found his trade
+   * retrospectives (which price both sides on a NEUTRAL market, with none of
+   * the buyer's need premium) telling him he had been fleeced on deals whose
+   * meter was well past full. Both numbers were right. The bar was the thing
+   * that lied, by using the visual language of a score for a measure of the
+   * other side's profit.
+   *
+   * So the overshoot is drawn as its own segment in a different colour and
+   * named. The deal is still fine — it is accepted, and sometimes you WANT to
+   * overpay for a man you need — but the screen now says which part of the bar
+   * is you being generous.
+   */
+  const OVERPAY_FROM = 108; // a few points of slack: nobody lands exactly on the line
+  const overpaying = accepted && pct > OVERPAY_FROM;
+  const upToLine = Math.min(fillPct, 100);
+  const beyondLine = Math.max(0, fillPct - 100);
+
   return (
     <div className="min-w-[220px] flex-1">
       <div className="flex items-baseline justify-between gap-3 mb-1.5">
@@ -52,14 +77,22 @@ export function AcceptanceMeter({ ratio, requiredRatio, accepted }: { ratio: num
           {pct > 150 ? '150%+' : `${Math.round(pct)}%`}
         </span>
       </div>
-      <div className="relative h-3 rounded-full bg-ink/70 border border-line/70 overflow-hidden">
-        <div className={`h-full ${barColor} transition-[width] duration-[var(--dur-state)]`} style={{ width: `${(fillPct / 150) * 100}%` }} />
+      <div className="relative h-3 rounded-full bg-ink/70 border border-line/70 overflow-hidden flex">
+        <div className={`h-full ${barColor} transition-[width] duration-[var(--dur-state)]`} style={{ width: `${(upToLine / 150) * 100}%` }} />
+        {beyondLine > 0 && (
+          <div className="h-full bg-warn/55 transition-[width] duration-[var(--dur-state)]" style={{ width: `${(beyondLine / 150) * 100}%` }} />
+        )}
         <div className="absolute top-0 bottom-0 w-[2px] bg-chalk/70" style={{ left: `${thresholdLeft}%` }} />
       </div>
       <div className="relative h-3 mt-0.5">
         <span className="absolute -translate-x-1/2 text-[9px] uppercase tracking-wider text-muted whitespace-nowrap" style={{ left: `${thresholdLeft}%` }}>
           their line
         </span>
+        {overpaying && (
+          <span className="absolute right-0 text-[9px] uppercase tracking-wider text-warn whitespace-nowrap">
+            they&apos;d take less
+          </span>
+        )}
       </div>
     </div>
   );
