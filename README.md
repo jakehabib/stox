@@ -1627,3 +1627,46 @@ ever force-pushed over, so every state below still exists in git history).
   built itself out of two years' winners, and `createFinal` silently created
   no final at all. A fresh league now plays a full bracket four seasons
   running, with a champion and a Championship MVP each year.
+- **2026-08-22 — Void years actually alter cap hits (`64d42d4`).** A tester
+  reported that void years weren't changing anything. He was right, and
+  dragging the slider harder was never going to help. A void year works by
+  widening the proration divisor, and that divisor stops at five — but the
+  slider ran 0–3 on every deal regardless. Measured year-1 cap hit on a
+  $20M/yr contract: on a **five-year deal all four positions produced the
+  identical number**, and on a four-year deal only the first one moved it.
+  The contract card then went on to print "+3 void years" over a deal where
+  they bought precisely nothing. One rule now decides how many a deal of a
+  given length can actually amortise; the builders clamp with it, so a stored
+  contract never claims a void year the cap arithmetic has already discarded,
+  and the slider is sized from the same function so it never offers dead
+  travel. At zero room it explains the five-year rule instead of rendering a
+  dead control. Two further holes fell out of the same investigation:
+  `buildContract` didn't accept void years at all, so every caller had to
+  splice the field on by hand — **the re-sign path forgot, and gated signings
+  on a hit computed without them, demanding $20.00M of room for a deal that
+  would only ever cost $18.40M**; and `restructureContract` *assigned* void
+  years where its own option name said *add*, silently deleting ones a deal
+  already carried and raising the very cap hit the restructure was performed
+  to lower.
+- **2026-08-22 — End-of-season storylines (`396ad45`).** After the
+  championship, a player-by-player account of what the year did to your
+  roster — 21 kinds of read across trajectory, value for money, career arc,
+  arrival, availability, one big day, the postseason and development.
+  Calibrated against **53,045 played games replayed into 203,615
+  (player, club, season) rows**, because the obvious bars would all have been
+  wrong: the median RB season averages 48.8 and the median LB season 42.0,
+  but the LB's 90th percentile is 50.2 where the back's is 82.6, so a flat
+  "top 15% year" bar is a receivers-and-backs feature in a league-wide coat.
+  Same for the half-season swing — the 90th-percentile second-half
+  improvement is **+10.0 for a receiver and +23.5 for a corner**, because a
+  corner's grade turns on takeaways. Honesty guards, every one found by
+  reading real output: linebackers get no verdict on the *standard* of their
+  football (tackles are split by depth-chart share, which is 55% of their
+  weight in the ranker — grading them grades their club's roster
+  construction); no defender is *praised* on tackle volume at all, after a
+  thin rotation put three men on one winless club's sheet badged "top 1% at
+  his position", two of them with four sacks; and no sentence may argue with
+  the figures printed beneath it. Nothing claims a rating went up, because a
+  start-of-year rating isn't recoverable from the schema — `trueOvr` is
+  overwritten in place by every checkpoint. Nothing is persisted, so it works
+  on saves that already exist. Median 51ms, p99 87ms.
