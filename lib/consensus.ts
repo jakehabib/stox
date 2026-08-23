@@ -355,6 +355,83 @@ const BIAS_LABEL: Record<ConsensusBiasId, string> = {
   MEDICAL_DISCOUNT: 'Medical flag',
 };
 
+/**
+ * ===========================================================================
+ * A DISCOUNT AND A PREMIUM ARE OPPOSITE KINDS OF NEWS
+ * ===========================================================================
+ * Four of the six biases mark a prospect DOWN and two push him UP, and to a
+ * GM those are not one list. A discount is where a steal comes from — the
+ * room has taken points off a man for something public, and if the tape
+ * disagrees you can have him later than he should go. A premium is where a
+ * bust comes from — the room has ADDED points for something public, so the
+ * grade in front of you is inflated and you are being asked to pay for a
+ * stopwatch.
+ *
+ * The direction is not a UI opinion: it is the sign of the delta each block
+ * in consensusGradeFor() actually adds, and the four constant-driven ones are
+ * checked against tuning at module load (see below) so that flipping a sign in
+ * lib/tuning.ts cannot leave a screen filing a markdown under the men the room
+ * reaches for. The two testing biases need no check — they are pushed from
+ * inside `if (d > 0)` / `else` branches, so their direction is structural.
+ * A screen that wants to split the two —
+ * app/league/[id]/scouting/page.tsx does — reads this rather than keeping a
+ * second copy of which is which, because a second copy is exactly how a
+ * "Medical flag" ends up filed under the men the room reaches for.
+ *
+ * ORDER IS THE READING ORDER: discounts first (the exploitable half), each
+ * group heaviest-handed first, so a filter bar built off this list puts the
+ * biggest markdown at the left.
+ * ===========================================================================
+ */
+export interface ConsensusBiasMeta {
+  id: ConsensusBiasId;
+  label: string;
+  direction: 'UP' | 'DOWN';
+  /** What a GM does with it, in one clause. Not an explanation of the model. */
+  soWhat: string;
+}
+
+export const CONSENSUS_BIASES: readonly ConsensusBiasMeta[] = [
+  { id: 'MEDICAL_DISCOUNT', label: BIAS_LABEL.MEDICAL_DISCOUNT, direction: 'DOWN', soWhat: 'the same flat markdown on everyone flagged, whatever the actual prognosis' },
+  { id: 'SMALL_SCHOOL', label: BIAS_LABEL.SMALL_SCHOOL, direction: 'DOWN', soWhat: 'production against weak competition, discounted past the point of fairness' },
+  { id: 'TESTING_FADED', label: BIAS_LABEL.TESTING_FADED, direction: 'DOWN', soWhat: 'timed slow for the position by a room that never watched him play' },
+  { id: 'DEVELOPMENTAL_DISCOUNT', label: BIAS_LABEL.DEVELOPMENTAL_DISCOUNT, direction: 'DOWN', soWhat: 'unfinished, and a board ranks what it can defend to an owner in April' },
+  { id: 'TESTING_DARLING', label: BIAS_LABEL.TESTING_DARLING, direction: 'UP', soWhat: 'the room moved him up on workout numbers nobody plays a down in' },
+  { id: 'BLUE_BLOOD', label: BIAS_LABEL.BLUE_BLOOD, direction: 'UP', soWhat: 'a big programme taken at its word, supporting cast included' },
+] as const;
+
+const BIAS_META_BY_ID: Record<ConsensusBiasId, ConsensusBiasMeta> =
+  Object.fromEntries(CONSENSUS_BIASES.map((b) => [b.id, b])) as Record<ConsensusBiasId, ConsensusBiasMeta>;
+
+// The four constant-driven directions, checked against the tuning that
+// produces them. Cheap enough to run at import; loud enough that a sign flip
+// in lib/tuning.ts is caught by whoever flipped it rather than by a GM reading
+// "Medical flag" in the column of things the room is high on.
+for (const [id, positive] of [
+  ['BLUE_BLOOD', CONSENSUS.PROGRAM_PULL.A > 0],
+  ['SMALL_SCHOOL', CONSENSUS.PROGRAM_PULL.F > 0],
+  // Both of these are SUBTRACTED at their push site, so a positive constant is a DOWN bias.
+  ['DEVELOPMENTAL_DISCOUNT', CONSENSUS.DEVELOPMENTAL_PULL < 0],
+  ['MEDICAL_DISCOUNT', CONSENSUS.MEDICAL_PULL < 0],
+] as [ConsensusBiasId, boolean][]) {
+  const declared = BIAS_META_BY_ID[id].direction === 'UP';
+  if (declared !== positive) {
+    throw new Error(
+      `lib/consensus.ts: CONSENSUS_BIASES declares ${id} as ${BIAS_META_BY_ID[id].direction}, `
+      + 'but the tuning constant behind it has the opposite sign. Fix one of the two.',
+    );
+  }
+}
+
+export function consensusBiasMeta(id: string): ConsensusBiasMeta | undefined {
+  return BIAS_META_BY_ID[id as ConsensusBiasId];
+}
+
+/** Narrow a URL query parameter to a real bias id. Anything else is not a filter. */
+export function isConsensusBiasId(value: string | undefined | null): value is ConsensusBiasId {
+  return !!value && value in BIAS_META_BY_ID;
+}
+
 // ---------------------------------------------------------------------------
 // The grade
 // ---------------------------------------------------------------------------
