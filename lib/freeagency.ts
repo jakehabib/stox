@@ -669,14 +669,72 @@ export async function signExtension(opts: {
 }
 
 /**
- * Franchise tag: a 1-year, fully guaranteed contract at the average of the
- * top-N salaries at the position league-wide (franchiseTagValue in
- * lib/cap.ts), keeping a player off the open market without a negotiated
- * long-term deal. Real-NFL simplification for now — one tag per team per
- * season, no exclusive/non-exclusive split, no escalating value for a
- * second consecutive tag on the same player (that needs contract-history
- * tracking this schema doesn't keep once a contract is replaced) — see
- * README's Known Simplifications.
+ * ===========================================================================
+ * FRANCHISE TAG: A NEW DEAL ON TOP OF AN OLD ONE'S BILL
+ * ===========================================================================
+ * A 1-year, fully guaranteed contract at the average of the top-N salaries at
+ * the position league-wide (franchiseTagValue in lib/cap.ts), keeping a player
+ * off the open market without a negotiated long-term deal. Real-NFL
+ * simplification for now — one tag per team per season, no
+ * exclusive/non-exclusive split, no escalating value for a second consecutive
+ * tag on the same player (that needs contract-history tracking this schema
+ * doesn't keep once a contract is replaced) — see README's Known
+ * Simplifications.
+ *
+ * WHAT THIS USED TO DO WITH THE OLD DEAL: nothing. `deleteMany` took the
+ * contract row and every dollar of signing bonus still prorating on it went
+ * with it, unbilled. Measured on a throwaway league, in the Re-sign window,
+ * with the cap REALISTIC:
+ *
+ *   3yr + 2 void, fully played, $12.0M bonus ($2.40M/yr over five years).
+ *   $7.20M billed to the seasons he played, $4.80M still to come. Tag at
+ *   $17.1M and the club's committed cap moved $5.70M — it should have moved
+ *   $10.5M — and the $4.80M was never charged to anybody, ever.
+ *
+ *   5yr, two played, $25.0M bonus. Tagging a $25.0M cap hit at $11.5M did not
+ *   cost the club $1.50M, it FREED $13.5M: the whole unamortised bonus
+ *   vanished with the row.
+ *
+ * Nothing else in this game lets paid bonus evaporate — `deadMoneyOnCut`
+ * accelerates it, `tradeCapEffect` accelerates it onto the club giving him up,
+ * `buildExtension` and `restructureContract` carry it into the rewritten deal.
+ * The tag was the cheapest way in the game to make a bad contract disappear,
+ * which is the exact opposite of what a tag is: in real football tagging a man
+ * does not retire his old deal's accounting at all. INV-21, clause two — total
+ * charged equals money paid. Gated now by scripts/checkFranchiseTag.ts.
+ *
+ * WHY DEAD MONEY AND NOT A BONUS CARRIED ONTO THE TAG YEAR. The other rewrites
+ * carry, and they are right to: `buildExtension` keeps the remaining years'
+ * base salaries and appends to them, so the years the old bonus was amortising
+ * over still exist to amortise over. The tag keeps nothing — it writes one
+ * year over a deal that may have had three to run. A one-year contract's
+ * proration window is one year (`prorationYears`), so "carry it forward" and
+ * "charge it now" are the same number in the same league year, and the only
+ * question left is which column it is filed in. Three things settle that:
+ *
+ *   - `franchiseTagValue` averages the top-N `capHit()`s at the position, so a
+ *     tag row carrying a legacy bonus would price the NEXT tag at that
+ *     position off it. The tag would inflate itself. Keeping the row at
+ *     exactly `tagValue` keeps that input clean.
+ *   - The row already says `signingBonus: 0`, `guaranteed: tagValue`, and the
+ *     wire says "fully guaranteed at $X". Carrying would make all three false,
+ *     and `guaranteed` would have to be restated in the same breath or the gap
+ *     between it and the bonus re-reads as guaranteed salary still owed and
+ *     lands on the cap a second time (lib/cap.ts, the guarantee-frame rule).
+ *   - This path already does the first half of what `cutPlayer` does — it
+ *     deletes the contract row. It just never did the second half.
+ *
+ * WHY THE BONUS AND NOT `deadMoneyOnCut`. Same split `tradeCapEffect` makes:
+ * the bonus is cash already handed over whose charge has to land somewhere,
+ * the guaranteed base salary is cash not yet paid. A cut owes both because the
+ * club walks away owing him the rest. A tag owes only the bonus, because the
+ * salary obligation is not escaped — it is REPLACED by the tag, which is
+ * itself fully guaranteed and is being charged in full on the new row. Billing
+ * both would charge the club two salaries for one player-season. On the shape
+ * the Re-sign screen can actually reach — his deal has expired, so
+ * `guaranteedSalaryOwed` is already 0 — the two are the same figure anyway;
+ * this only decides the mid-deal case the Server Action can still be handed.
+ * ===========================================================================
  */
 export async function applyFranchiseTag(opts: {
   leagueId: string;
@@ -685,12 +743,22 @@ export async function applyFranchiseTag(opts: {
   capMode: LeagueSettings['capMode'];
   week: number;
 }) {
-  const { franchiseTagValue } = await import('./cap');
+  const { franchiseTagValue, unamortizedBonus, capChargeYear } = await import('./cap');
   const { playerId, seasonYear, capMode } = opts;
 
   const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
   if (!player.teamId) throw new Error('Player is not on a roster.');
   const teamId = player.teamId;
+  // Read the phase here for the same reason `cutPlayer` does rather than
+  // making the caller pass it: which league year the accelerated bonus files
+  // against depends on where in the offseason roll we are (capChargeYear). A
+  // tag is a RESIGN-window move and RESIGN comes after RESET_STANDINGS, so it
+  // lands on the league year that has just opened — which is also the year
+  // teamCapSummary and the Cap page are reading. Filed a year early it would
+  // be hard-deleted by expireStaleCapCharges without ever being charged.
+  const league = await prisma.league.findUniqueOrThrow({
+    where: { id: opts.leagueId }, select: { phase: true, week: true },
+  });
 
   const alreadyTagged = await prisma.contract.findFirst({ where: { teamId, isFranchiseTag: true, signedYear: seasonYear } });
   if (alreadyTagged) throw new Error('Already used your franchise tag this offseason — one per team, per year.');
@@ -703,12 +771,31 @@ export async function applyFranchiseTag(opts: {
   const tagValue = franchiseTagValue(positionSalaries);
 
   const oldHit = player.contract ? capHit(player.contract, capMode) : 0;
+  const accelerated = unamortizedBonus(player.contract, capMode);
   await assertCapRoom({
     action: 'Franchise tag', seasonYear, capMode,
-    charges: [{ teamId, delta: tagValue, creditBack: oldHit }],
+    // The acceleration is part of what the tag ADDS, not a saving against it.
+    // Left out, a club with room for the tag alone would be waved through and
+    // land over the ceiling the moment the charge was written — INV-19 says
+    // every acquisition path is gated here, and this is what it has to be
+    // gated on.
+    charges: [{ teamId, delta: tagValue + accelerated, creditBack: oldHit }],
   });
 
   await prisma.$transaction(async (tx) => {
+    if (accelerated > 0) {
+      await tx.capCharge.create({
+        data: {
+          teamId,
+          year: capChargeYear({ phase: league.phase, week: league.week, seasonYear }),
+          amount: accelerated,
+          // Its own label rather than the cut path's "Dead money — Name": the
+          // trade recap matches its charges by exact label (app/league/[id]/
+          // trade/page.tsx), so causes stay distinguishable on purpose.
+          label: `Franchise tag — ${player.firstName} ${player.lastName}'s old deal`,
+        },
+      });
+    }
     await tx.contract.deleteMany({ where: { playerId } });
     await tx.contract.create({
       data: {
@@ -725,12 +812,16 @@ export async function applyFranchiseTag(opts: {
       data: {
         leagueId: opts.leagueId, seasonYear, week: opts.week, type: 'TAG', teamId, playerId,
         headline: `${player.firstName} ${player.lastName} franchise-tagged`,
-        detail: `1-yr, fully guaranteed at ${formatMoney(tagValue)}`,
+        // The tag number alone was the whole story while the old deal
+        // evaporated. It isn't any more, and the wire is where a GM goes back
+        // to ask what a move actually cost him.
+        detail: `1-yr, fully guaranteed at ${formatMoney(tagValue)}`
+          + (accelerated > 0 ? ` — plus ${formatMoney(accelerated)} of dead money as his old deal's bonus accelerates` : ''),
       },
     });
   });
 
-  return { tagValue };
+  return { tagValue, deadMoney: accelerated };
 }
 
 /**

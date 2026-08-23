@@ -50,9 +50,21 @@ const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidY
  * behaviour once patience is server state: a negotiation you walked out of has
  * to still be the negotiation you walked out of when you come back to it.
  */
-export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, canTag, weightLb, heightIn, depth, setAside }: {
+export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, canTag, tagDeadMoney, weightLb, heightIn, depth, setAside }: {
   leagueId: string; playerId: string; name: string; position: string; age: number; ovr: number;
   currentApy: number; capMode: CapMode; yearsRemaining: number; canTag?: boolean;
+  /**
+   * Signing bonus on his EXPIRING deal that has not finished amortising, and
+   * which accelerates onto this year's cap as dead money the moment he is
+   * tagged — the tag writes a new contract over the old one but does not
+   * retire what the old one still owes (applyFranchiseTag, and INV-21's second
+   * clause). It used to evaporate, so the button used to be free and honest
+   * about being free. It is not free now, and a control with no confirmation
+   * step has to say what it costs before it is pressed rather than after.
+   * Resolved on the server by the page; 0 on most deals and in every cap mode
+   * but Realistic, and the line is simply absent then.
+   */
+  tagDeadMoney?: number;
   /**
    * He is parked — "not now" rather than "let him walk". The row draws itself
    * closed, with the one control that undoes it, and nothing about his
@@ -296,6 +308,17 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
                 </span>
               )}
             </div>
+          )}
+          {/* THE BILL THE TAG DOES NOT CANCEL. Named before the press, with
+              the figure, because the tag is a one-click move and this is the
+              part of its price that is not the tag number. */}
+          {isTrulyExpiring && canTag && (tagDeadMoney ?? 0) > 0 && (
+            <p className="text-xs text-warn">
+              Tagging {name} does not end his old contract&apos;s accounting. {formatMoney(tagDeadMoney!)} of signing
+              bonus the club has already paid him has not finished amortising, and it lands on this year&apos;s cap as
+              dead money the moment the tag is signed — on top of the tag itself. That bonus is owed either way:
+              letting him walk charges the same figure.
+            </p>
           )}
           {tagMessage && <p className={`text-xs ${tagMessage.startsWith('Tagged') ? 'text-accent' : 'text-bad'}`}>{tagMessage}</p>}
         </div>

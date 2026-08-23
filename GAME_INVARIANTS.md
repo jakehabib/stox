@@ -100,13 +100,27 @@ other — `lib/invariants.ts` reports violations by ID.
   exceed what a roster is able to shed. That is the same case the
   advancement compliance block treats as unfixable and lets through, rather
   than trapping the user forever.
-- **INV-21 — a restructure moves money, it never creates or destroys any.**
-  Not a snapshot rule, so it is not in `lib/invariants.ts`: it is a property
-  of the arithmetic, checked by its own permanent harness,
-  `scripts/checkRestructure.ts` (`npx tsx scripts/checkRestructure.ts`, exits
-  non-zero on failure), swept across contract lengths 1-7, every year of each
-  deal already played, four bonus sizes, void years 0-3 and every conversion
-  amount from zero to past the league-minimum floor. Four clauses:
+- **INV-21 — rewriting a contract moves money, it never creates or destroys
+  any.** Not a snapshot rule, so it is not in `lib/invariants.ts`: it is a
+  property of the ARITHMETIC and of the WRITE PATHS, checked by two permanent
+  harnesses, both of which exit non-zero on failure.
+  - `scripts/checkRestructure.ts` (`npx tsx scripts/checkRestructure.ts`) —
+    pure arithmetic, no database, swept across contract lengths 1-7, every
+    year of each deal already played, four bonus sizes, void years 0-3 and
+    every conversion amount from zero to past the league-minimum floor.
+    Gates `restructureContract` and `buildExtension`.
+  - `scripts/checkFranchiseTag.ts` (`npx tsx scripts/checkFranchiseTag.ts`) —
+    the same conservation rule where it is not an arithmetic property at all.
+    `applyFranchiseTag` deletes the old contract row, so the money it must
+    answer for lives in a `CapCharge` the write path either books or does not;
+    `unamortizedBonus()` returned the right figure the entire time it was
+    being thrown away. So this one builds a throwaway league, sweeps 320
+    contract shapes through the real function against a real database, reads
+    the ledger back off `teamCapSummary`, and destroys the league after. A
+    pure-arithmetic clause could not have caught that defect and could not
+    catch its return — it would assert a formula against itself.
+
+  Four clauses:
   - **A ZERO-DOLLAR RESTRUCTURE IS A NO-OP.** Convert nothing and this year's
     cap hit, every remaining year's cap hit, and the dead money on a cut are
     all unchanged. Cheap to state, needs no expected values, and it is the
@@ -120,7 +134,19 @@ other — `lib/invariants.ts` reports violations by ID.
     restructured remainder — equals the signing bonus actually handed over
     plus whatever base salary was converted into it. Holds however many times
     a deal is restructured: kicking the can every March on a 7-year deal used
-    to charge $291.2M against $130.8M paid.
+    to charge $291.2M against $130.8M paid. It holds through every OTHER
+    rewrite too, and the franchise tag was the one that broke it: it deleted
+    the contract and booked nothing, so a 3yr+2v deal that had paid a $12.0M
+    bonus and billed only $7.20M of it charged the remaining $4.80M to
+    nobody, ever, and tagging a $25.0M cap hit at $11.5M FREED the club
+    $13.5M. Cutting the same man charges that bonus (`deadMoneyOnCut`) and
+    trading him accelerates it onto the club giving him up (`tradeCapEffect`)
+    — the tag was the only way in the game to make a bad deal evaporate. It
+    now books the same `unamortizedBonus` as a `CapCharge`, dated by
+    `capChargeYear()`, and the tag row itself still costs exactly the tag
+    value: `franchiseTagValue()` averages the top-N `capHit()`s at the
+    position, so a legacy bonus folded into that hit would price the next tag
+    at that position off it.
   - **WHAT THIS YEAR FREES, THE LATER YEARS REPAY, EXACTLY** — void years
     included, since bonus prorated across them is charged in one lump when
     the real deal ends. This is the sentence the restructure panel prints, so
@@ -284,18 +310,30 @@ seasons deep each, landing at **0 violations**.
    progression/aging gap rather than a contract one, so it was left alone
    here, but it is what makes the free agent list unreadable late in a
    dynasty.
-6. **The franchise tag deletes a contract without booking its unamortised
-   bonus (INV-21, second clause).** `applyFranchiseTag` in `lib/freeagency.ts`
-   runs `contract.deleteMany` and writes a fresh one-year row; nothing books a
-   `CapCharge` for the bonus the old deal had not finished amortising. The
-   re-sign screen offers the tag at `yearsRemaining <= 1`, and a man with one
-   year left still carries a year of proration — so tagging him makes it
-   vanish, where cutting him would charge it and trading him would accelerate
-   it onto the club. Every other path off a contract answers for that money;
-   this one hands out free cap relief. The replace branch of `extendContract`
-   has a smaller version of the same hole: it only runs at
-   `yearsRemaining === 0`, where all that is left to lose is whatever the void
-   years still hold.
+6. ~~**The franchise tag deletes a contract without booking its unamortised
+   bonus (INV-21, second clause).**~~ **FIXED.** `applyFranchiseTag` ran
+   `contract.deleteMany` and wrote a fresh one-year row while nothing booked a
+   `CapCharge` for the bonus the old deal had not finished amortising, so
+   tagging a man made that money vanish where cutting him would charge it and
+   trading him would accelerate it onto the club. Measured on a throwaway
+   league before the fix: a 3yr+2v deal with a $12.0M bonus lost $4.80M, and
+   tagging a $25.0M cap hit at $11.5M did not cost $1.50M, it FREED $13.5M.
+   The tag now books `unamortizedBonus` as a `CapCharge` — the bonus only, the
+   same split `tradeCapEffect` makes, because the guaranteed base salary is not
+   escaped but REPLACED by the tag, which is itself fully guaranteed and
+   charged in full on the new row — dated with `capChargeYear()`, priced into
+   `assertCapRoom` so the gate sees it, and named on the wire and on the
+   Re-sign screen before the button is pressed. Gated by
+   `scripts/checkFranchiseTag.ts`, which reports 691 failures against the old
+   behaviour.
+
+   **Still open, same family:** the replace branch of `extendContract` has a
+   smaller version of the same hole. It only runs at `yearsRemaining === 0`,
+   where all that is left to lose is whatever the void years still hold — but
+   that is exactly the shape the tag lost money on, so it is real. Not fixed
+   here: it changes what re-signing an expired deal costs, which is a
+   different economic decision from tagging one, and it needs its own
+   measurement and its own clause in the harness.
 7. **The restructure wire entry quotes the amount REQUESTED, not the amount
    converted.** `restructureContract`'s transaction detail is built from
    `opts.convertAmount`; the pure function clamps that against the

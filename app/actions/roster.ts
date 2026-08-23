@@ -7,7 +7,7 @@ import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFr
 import { decideOffer, type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer } from '@/lib/negotiation';
 import { parseSettings } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
-import { capHit, deadMoneyOnCut, capSavingsOnCut, unamortizedBonus, guaranteedSalaryOwed, restructureContract as computeRestructure } from '@/lib/cap';
+import { capHit, deadMoneyOnCut, capSavingsOnCut, formatMoney, unamortizedBonus, guaranteedSalaryOwed, restructureContract as computeRestructure } from '@/lib/cap';
 import { autoDepthChart, reconcileDepthChart } from '@/lib/gen/league';
 import { Rng } from '@/lib/rng';
 import { readJson, writeJson } from '@/lib/json';
@@ -237,7 +237,18 @@ export async function applyFranchiseTagAction(leagueId: string, playerId: string
   try {
     const result = await applyFranchiseTag({ leagueId, playerId, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week });
     revalidatePath(`/league/${leagueId}`, 'layout');
-    return { ok: true, message: `Tagged — 1-yr, fully guaranteed at $${(result.tagValue / 1_000_000).toFixed(1)}M.` };
+    // BOTH HALVES OF WHAT IT COST. The tag number was the whole message while
+    // the old deal's unamortised bonus quietly evaporated; it is charged now
+    // (applyFranchiseTag, INV-21's second clause) and a confirmation that
+    // names only the cheaper half of a bill is a lying metric. The Re-sign row
+    // already warns before the press — this is the receipt.
+    return {
+      ok: true,
+      message: `Tagged — 1-yr, fully guaranteed at ${formatMoney(result.tagValue)}.`
+        + (result.deadMoney > 0
+          ? ` His old deal's remaining ${formatMoney(result.deadMoney)} of signing bonus accelerates onto this year's cap as dead money.`
+          : ''),
+    };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : 'Franchise tag failed.' };
   }

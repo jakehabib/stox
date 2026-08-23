@@ -13,6 +13,17 @@
  * test suite would. Re-run it after touching anything in lib/cap.ts that
  * rebases a contract onto the years that are left.
  *
+ * IT IS HALF OF INV-21, AND DELIBERATELY SO. This file is pure arithmetic —
+ * lib/cap.ts and lib/tuning.ts, no database — which is the right shape for a
+ * defect that lives in a pure function, and the wrong shape for one that lives
+ * in a write path. `applyFranchiseTag` deleted a contract and booked no
+ * CapCharge for the bonus still owed on it, and every function in here
+ * returned the correct figure the whole time it was being discarded; nothing
+ * a sweep of this kind could assert would have noticed. Its sibling
+ * `scripts/checkFranchiseTag.ts` drives the real function against a real
+ * database for that clause. Keep them apart: folding a database round-trip
+ * into this sweep would cost the 55k checks that make it worth running.
+ *
  * The invariants, and why these and not others:
  *
  *   R-1  A ZERO-DOLLAR RESTRUCTURE IS A NO-OP. Convert nothing and this

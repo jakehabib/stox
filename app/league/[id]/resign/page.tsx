@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { teamCapSummary } from '@/lib/cap-summary';
-import { capHit, formatMoney } from '@/lib/cap';
+import { capHit, formatMoney, unamortizedBonus } from '@/lib/cap';
 import { ResignRow } from '@/components/ResignRow';
 import type { DepthEntry } from '@/components/ds/DepthAtPosition';
 import { LetAiResignButton } from '@/components/LetAiResignButton';
@@ -245,6 +245,18 @@ export default async function ResignPage({ params }: { params: { id: string } })
               capMode={settings.capMode}
               yearsRemaining={p.contract?.yearsRemaining ?? 0}
               canTag={canTag && !alreadyTagged}
+              /*
+               * WHAT TAGGING HIM ACTUALLY COSTS ON TOP OF THE TAG. The tag
+               * replaces his contract, it does not retire the old deal's
+               * accounting: whatever signing bonus that deal had not finished
+               * amortising accelerates as dead money the moment it is signed
+               * (applyFranchiseTag). The button is one press with no
+               * confirmation, so the number has to be on screen BEFORE it,
+               * not in the message afterwards. Zero in every mode but
+               * REALISTIC, and zero on most deals, which is why the row only
+               * draws the line when there is something to say.
+               */
+              tagDeadMoney={unamortizedBonus(p.contract, settings.capMode)}
               depth={depthFor(p.id, p.position)}
             />
           ))}

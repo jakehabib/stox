@@ -77,8 +77,15 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
       // capHit(), not the raw salary — the same function every other money
       // column in the app runs through, so the figure here and the figure on
       // the cap page cannot drift apart.
-      capHit: capHit(slot.player.contract, settings.capMode),
-      yearsRemaining: slot.player.contract?.yearsRemaining ?? 0,
+      //
+      // Null, not zero, when there is no contract row: `capHit(null)` returns
+      // 0, so letting it answer here drew "$0" and "expiring" at a man who has
+      // no deal for either sentence to be about. A man with no deal on file is
+      // a different thing from a man whose deal charges nothing, and the row
+      // says so. Same policy the re-sign page and the player card already
+      // carry — this was the third surface.
+      capHit: slot.player.contract ? capHit(slot.player.contract, settings.capMode) : null,
+      yearsRemaining: slot.player.contract?.yearsRemaining ?? null,
     });
     depthByPosition.set(slot.position, list);
   }

@@ -1,4 +1,4 @@
-import { formatMoney } from '@/lib/cap';
+import { capCommitted, formatMoney } from '@/lib/cap';
 import { ratingColor } from '@/lib/ratings';
 import { splitStarters, startersAt } from '@/lib/lineup';
 import { PlayerAvatar } from '../PlayerAvatar';
@@ -21,10 +21,21 @@ export interface DepthCompareEntry extends DepthRanked {
   age: number;
   weightLb?: number;
   heightIn?: number;
-  /** Cap hit this year. 0 when the cap is off — the column is hidden then. */
-  capHit: number;
-  /** Years left on his deal. 0 means it is expiring. */
-  yearsRemaining: number;
+  /**
+   * His cap hit this year, straight from `capHit()` — the page resolves it, so
+   * this is the club's figure and not a second opinion about it. 0 when the cap
+   * is off (the column is hidden then); null when there is no contract row at
+   * all, which is a different fact and is drawn differently. Same policy, and
+   * the same rendering, as `DepthEntry` in DepthAtPosition.tsx: `capHit(null)`
+   * returns 0, so a `number` here let a man with no deal render as "$0" and
+   * "expiring" — two confident assertions about a contract that does not
+   * exist. Free agency was the third surface still doing that after 4ee40eb
+   * fixed the other two; measured on the rendered markup, those were exactly
+   * the two cells it drew.
+   */
+  capHit: number | null;
+  /** Years left on his deal. 0 means it has expired; null means there is no deal to expire. */
+  yearsRemaining: number | null;
 }
 
 /**
@@ -287,7 +298,11 @@ export function DepthCompare({ position, depth, candidate, capOn }: {
               for those players"*. */}
           {capOn && depth.length > 0 && (
             <>
-              <span className="font-mono text-chalk">{formatMoney(depth.reduce((n, d) => n + d.capHit, 0))}</span>
+              {/* capCommitted, not a local reduce: a man with no contract row
+                  carries null here and adding null into a running total is
+                  how "$0.0M" gets asserted about him. lib/cap.ts owns that
+                  rule for every surface that draws this figure. */}
+              <span className="font-mono text-chalk">{formatMoney(capCommitted(depth))}</span>
               <span>committed here</span>
               <span className="text-line">·</span>
             </>
@@ -415,11 +430,23 @@ export function DepthCompare({ position, depth, candidate, capOn }: {
                     ) : null}
                   </span>
                   <span className="text-xs text-muted w-10 text-right">{d.age}yo</span>
-                  {capOn && <span className="text-xs text-muted w-16 text-right font-mono">{formatMoney(d.capHit)}</span>}
+                  {/* No contract row at all — an undrafted man, or a save whose
+                      rosters were filled before contracts existed. A dash rather
+                      than "$0" and "expiring": both of those are statements about a
+                      deal, and there is no deal here to make them about. The same
+                      two cells, drawn the same way and in the same widths, as
+                      DepthList. */}
+                  {capOn && (
+                    <span className={`text-xs w-16 text-right font-mono ${d.capHit === null ? 'text-muted/50' : 'text-muted'}`}>
+                      {d.capHit === null ? '—' : formatMoney(d.capHit)}
+                    </span>
+                  )}
                   <span className="text-xs w-16 text-right">
-                    {d.yearsRemaining <= 0
-                      ? <span className="text-bad">expiring</span>
-                      : <span className="text-muted">{d.yearsRemaining} yr{d.yearsRemaining === 1 ? '' : 's'}</span>}
+                    {d.yearsRemaining === null
+                      ? <span className="text-muted/50">—</span>
+                      : d.yearsRemaining <= 0
+                        ? <span className="text-bad">expiring</span>
+                        : <span className="text-muted">{d.yearsRemaining} yr{d.yearsRemaining === 1 ? '' : 's'}</span>}
                   </span>
                   <span className={`stat-value text-stat-sm w-14 text-right ${ratingColor(d.ovr)}`}>{d.ovr}</span>
                 </div>

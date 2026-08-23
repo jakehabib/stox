@@ -142,7 +142,7 @@ export const GLOSSARY = {
   franchiseTag: {
     term: 'Franchise tag',
     definition: 'A one-year deal you can force on a single expiring player, priced at the average of the five biggest salaries at his position.',
-    why: 'It keeps a star off the market for a season without a long commitment. It is expensive, it is fully guaranteed, and it buys you a year rather than a solution.',
+    why: 'It keeps a star off the market for a season without a long commitment. It is expensive, it is fully guaranteed, and it buys you a year rather than a solution. It does not wipe out his old contract either: whatever signing bonus that deal had not finished amortising accelerates onto this year\'s cap as dead money the moment you tag him.',
   },
   rookieDeal: {
     term: 'Rookie deal',
