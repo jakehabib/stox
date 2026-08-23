@@ -852,10 +852,40 @@ function TeamPanel({
   const [sortKey, setSortKey] = useState<SortKey>('ovr');
   const [dir, setDir] = useState<1 | -1>(-1);
 
-  const positions = useMemo(
-    () => Array.from(new Set(roster.map((p) => p.position))).sort((a, b) => localPositionSortKey(a) - localPositionSortKey(b)),
-    [roster],
-  );
+  /**
+   * EVERY POSITION, ALWAYS, WITH THIS CLUB'S COUNT BESIDE IT.
+   *
+   * This list used to be built from the roster on screen — `new Set(roster.map(
+   * p => p.position))` — so a club with no kicker simply had no K option. That
+   * makes an ABSENT OPTION carry two different meanings: "this club has none of
+   * those" and "this screen cannot filter by that". The app owner read it as the
+   * second: *"there is legit no filter even for kickers or punters in the trade
+   * hub to see the other team's"*. He is right that the question was
+   * unanswerable, and the reason is that the control disappeared at exactly the
+   * moment it had something to tell him.
+   *
+   * Specialists are where it bites, because they are where a roster is most
+   * often empty: measured across the live leagues in this database, clubs carry
+   * exactly one kicker and one punter and never a spare (ROSTER_TARGETS caps
+   * both at max 1), and a handful carry none at all — one club in a five-season
+   * save had no kicker, three had no punter, and one 50-man roster had neither.
+   * Every one of those clubs silently lost the option rather than answering.
+   *
+   * So the options are the full position list, in depth-chart order, each
+   * carrying how many that club actually has. Zero is a real answer and is
+   * still selectable — picking it says "no kickers on this roster" in words,
+   * which is the answer, instead of leaving him to infer it from a gap in a
+   * menu he cannot see the whole of.
+   */
+  const positionCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of roster) counts.set(p.position, (counts.get(p.position) ?? 0) + 1);
+    // POSITION_ORDER is the canonical sixteen. Anything a roster carries that
+    // is not in it (a legacy position on an old save) is appended rather than
+    // dropped — a man on the roster must always be reachable by some filter.
+    const extra = Array.from(counts.keys()).filter((pos) => !POSITION_ORDER.includes(pos)).sort();
+    return [...POSITION_ORDER, ...extra].map((pos) => ({ pos, n: counts.get(pos) ?? 0 }));
+  }, [roster]);
 
   const toggleSort = (key: SortKey) => {
     // Clicking a fresh column always starts high-to-low; clicking the same
@@ -935,10 +965,12 @@ function TeamPanel({
         <select
           value={posFilter}
           onChange={(e) => { setPosFilter(e.target.value); onPosFilter?.(e.target.value); }}
-          className="input text-xs py-1 w-20"
+          // Wide enough for "EDGE 4" — the count is the point, and a control
+          // that clips it is back to making him guess.
+          className="input text-xs py-1 w-[5.5rem]"
         >
-          <option value="ALL">All Pos</option>
-          {positions.map((pos) => <option key={pos} value={pos}>{pos}</option>)}
+          <option value="ALL">All · {roster.length}</option>
+          {positionCounts.map(({ pos, n }) => <option key={pos} value={pos}>{pos} · {n}</option>)}
         </select>
         <span className="text-[11px] text-muted whitespace-nowrap">{rows.length} of {roster.length}</span>
       </div>
@@ -996,7 +1028,20 @@ function TeamPanel({
             <span className="w-10 text-right text-xs text-muted font-mono shrink-0">{p.yearsRemaining > 0 ? `${p.yearsRemaining}yr` : '—'}</span>
           </div>
         ))}
-        {rows.length === 0 && <p className="text-xs text-muted px-2 py-3">No players match this filter.</p>}
+        {/* The empty state ANSWERS rather than shrugs. "No players match this
+            filter" is true of a club with no kicker and of a search for a name
+            nobody has, and those are completely different facts about a trade
+            partner — the first is the answer to "have they got one", the second
+            is a typo. */}
+        {rows.length === 0 && (
+          <p className="text-xs text-muted px-2 py-3">
+            {posFilter !== 'ALL' && (positionCounts.find((c) => c.pos === posFilter)?.n ?? 0) === 0
+              ? `${teamAbbr || 'This club'} has no ${posFilter} on the roster.`
+              : search.trim()
+                ? `Nobody on this roster matches “${search.trim()}”.`
+                : 'No players match this filter.'}
+          </p>
+        )}
       </div>
     </div>
   );
