@@ -3,6 +3,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { updateSettingsAction } from '@/app/actions/league';
 import { Tooltip } from '@/components/Tooltip';
 import { leagueFileName } from '@/lib/leagueFile';
+import { CAP_GROWTH_MODES } from '@/lib/settings';
 
 export default async function SettingsPage({ params }: { params: { id: string } }) {
   const { league, settings } = await getLeagueContext(params.id);
@@ -21,6 +22,15 @@ export default async function SettingsPage({ params }: { params: { id: string } 
             label="Salary Cap Mode" name="capMode" defaultValue={settings.capMode}
             options={[['REALISTIC', 'Realistic'], ['SIMPLIFIED', 'Simplified'], ['OFF', 'Off']]}
             tip="Realistic: cap hit is base salary plus prorated signing bonus, and cutting a player leaves dead money behind. Simplified: a flat cap hit every year with no proration or dead money — cuts are free. Off: cap checks are skipped entirely, sign whoever you want."
+          />
+          <SelectField
+            label="Cap Growth" name="capGrowth" defaultValue={settings.capGrowth}
+            /* Rungs, labels and percentages all come off CAP_GROWTH_MODES, so
+               what this screen says the ceiling does is read from the same
+               table capForLeague() computes it with — a rung cannot be renamed,
+               retuned or added and leave this control describing the old one. */
+            options={CAP_GROWTH_MODES_OPTIONS}
+            tip={CAP_GROWTH_TIP}
           />
           <SelectField
             label="Difficulty" name="difficulty" defaultValue={settings.difficulty}
@@ -138,6 +148,25 @@ export default async function SettingsPage({ params }: { params: { id: string } 
     </div>
   );
 }
+
+/**
+ * How fast the ceiling climbs, said the way a cap analyst would say it. Every
+ * percentage is formatted from the rung's real rate, never typed out — the
+ * number in the sentence is the number the league is played under.
+ *
+ * One tip carrying all three rungs rather than a hint line under the control:
+ * the choice is only meaningful as a comparison, and a player reading "Slow"
+ * on its own has no idea what it is slow COMPARED to.
+ */
+const CAP_GROWTH_MODES_OPTIONS: [string, string][] = Object.entries(CAP_GROWTH_MODES)
+  .map(([key, m]) => [key, `${m.label} — ${(m.rate * 100).toFixed(0)}% a year`] as [string, string]);
+
+const CAP_GROWTH_TIP = [
+  'What the salary cap does between seasons.',
+  ...Object.values(CAP_GROWTH_MODES).map((m) => `${m.label} (${(m.rate * 100).toFixed(0)}%/yr): ${m.blurb}`),
+  'Wages are quoted in today\u2019s money whatever you pick, so the faster the ceiling climbs the less it ever asks of you.',
+  'Changing it mid-dynasty moves the ceiling under deals already on the books \u2014 lowering it can leave clubs over the cap the next morning.',
+].join(' ');
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (

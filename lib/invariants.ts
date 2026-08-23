@@ -2,7 +2,7 @@ import { prisma } from './db';
 import { readJson } from './json';
 import { capHit, capForYear, formatMoney } from './cap';
 import { resolveStartYear } from './leagueYear';
-import { parseSettings } from './settings';
+import { parseSettings, capGrowthRate } from './settings';
 import { rosterMinFor } from './tuning';
 import { PHASE_LABELS } from './season';
 import { SeasonStats } from './types';
@@ -205,7 +205,11 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
     // Same defect as lib/cap-summary.ts had: the second argument is the
     // FOUNDING year. These two must never diverge — if they do, INV-19
     // measures teams against a different ceiling than the game enforces.
-    const ceiling = capForYear(league.seasonYear, await resolveStartYear(league));
+    // Passed explicitly: the two-argument form uses the tuning default, so a
+    // FLAT or FAST league would be audited against a ceiling it is not playing
+    // under — reporting clubs over a cap that is not theirs, or missing ones
+    // that are.
+    const ceiling = capForYear(league.seasonYear, await resolveStartYear(league), capGrowthRate(settings));
     const overCap = teams
       .filter((t) => (spendByTeam.get(t.id) ?? 0) > ceiling)
       .map((t) => `${t.abbr} ${formatMoney(ceiling - (spendByTeam.get(t.id) ?? 0))}`);

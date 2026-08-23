@@ -1,4 +1,5 @@
 import { CapMode, Difficulty, LeagueStart } from './types';
+import { CAP } from './tuning';
 import { readJson, writeJson } from './json';
 
 /**
@@ -16,6 +17,7 @@ export interface LeagueSettings {
   playoffTeamsPerConf: number;
   rosterMax: number;
   draftRounds: number;
+  capGrowth: CapGrowth;             // how fast the ceiling climbs (CAP_GROWTH_MODES)
 
   // --- Fog of war -----------------------------------------------------------
   scoutingEnabled: boolean;         // false => true ratings shown everywhere
@@ -57,6 +59,7 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
   playoffTeamsPerConf: 6,
   rosterMax: 53,
   draftRounds: 7,
+  capGrowth: 'SLOW',
 
   scoutingEnabled: true,
   revealTrueRatings: false,
@@ -86,6 +89,90 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
 };
 
 /**
+ * ===========================================================================
+ * HOW FAST THE CEILING CLIMBS
+ * ===========================================================================
+ * The cap used to rise 7% every year, unconditionally, and the player who
+ * asked for this named the problem exactly: it got out of hand. Compounded
+ * over a dynasty that is not a slow drift, it is a different game — 1.07^10
+ * is 1.97, so a league in its eleventh season plays under nearly double the
+ * ceiling it opened with while every price in `lib/cap.ts` still answers in
+ * year-one dollars (marketValue() and askingPrice() take no season at all).
+ * The squeeze the whole front office is built around quietly stops binding.
+ *
+ * So it is a choice made at the table, not a constant. Three rungs, because
+ * a raw percentage box asks someone who has never played a season to have an
+ * opinion about compounding, and because the interesting difference is not
+ * 2% versus 3% — it is whether the ceiling moves AT ALL:
+ *
+ *   FLAT  a fixed ceiling. Nothing inflates away; a bad deal is bad forever.
+ *   SLOW  the tuned default, and where the drift stays survivable longest.
+ *   FAST  the old behaviour, kept so an existing dynasty plays as it did.
+ *
+ * MEASURED, over 20 league years, against 32 real generated clubs with every
+ * man on them priced through marketValue() (scripts/_cg_capgrowth.ts; the
+ * median club costs 88% of BASE_CAP, against the ~92% MARKET.SCALE is
+ * calibrated to). What that club costs as a share of its own ceiling:
+ *
+ *          year 1   year 10   year 20   the squeeze is over in
+ *   FLAT    87.9%     87.9%     87.9%   never
+ *   SLOW    87.9%     73.6%     60.4%   year 8
+ *   FAST    87.9%     47.8%     24.3%   year 3
+ *
+ * "The squeeze is over" is the first league year a club can carry that whole
+ * roster at market AND still sign the best quarterback in football (a 99 OVR
+ * at 27, $64.0M/yr) — the year keeping everyone good stops being a choice.
+ * At the old 7% that is the THIRD season of a dynasty.
+ * ===========================================================================
+ */
+export type CapGrowth = 'FLAT' | 'SLOW' | 'FAST';
+
+export const CAP_GROWTH_MODES: Record<CapGrowth, {
+  /** Compounded per league year since the founding season. */
+  rate: number;
+  /** Rung name as the player sees it. */
+  label: string;
+  /**
+   * What it means from the GM's chair. Deliberately says no percentage: the
+   * screen renders the real `rate` beside it, so the sentence can never come
+   * to disagree with the number the game actually uses.
+   */
+  blurb: string;
+}> = {
+  FLAT: {
+    rate: 0,
+    label: 'Flat',
+    blurb: 'The ceiling never moves. What a roster costs this year is what it costs in twenty, and no contract you regret ever inflates its way off the books.',
+  },
+  SLOW: {
+    // The default rung IS the tuning constant, not a second copy of it, so the
+    // fallback curve in capForYear() and the rung a new league is created on
+    // cannot drift apart.
+    rate: CAP.CAP_GROWTH_PER_YEAR,
+    label: 'Slow',
+    blurb: 'The ceiling drifts up the way a television deal does — real money across a decade, never enough to bail you out of a deal you should not have signed.',
+  },
+  FAST: {
+    rate: 0.07,
+    label: 'Fast',
+    blurb: 'A boom league. Money floods in, the ceiling nearly doubles inside a decade, and yesterday\u2019s ruinous contract becomes next year\u2019s bargain.',
+  },
+};
+
+/**
+ * The rate a league is played under. Every ceiling in the game should come
+ * from here rather than from CAP.CAP_GROWTH_PER_YEAR directly.
+ *
+ * Defensive on the way out because settings blobs reach this from three
+ * places — parseSettings, a raw JSON.parse in a server action, and an
+ * imported league file — and an unrecognised rung must play at the default,
+ * not compound at NaN and put every ceiling in the league at NaN with it.
+ */
+export function capGrowthRate(s: Pick<LeagueSettings, 'capGrowth'>): number {
+  return CAP_GROWTH_MODES[s.capGrowth]?.rate ?? CAP_GROWTH_MODES[DEFAULT_SETTINGS.capGrowth].rate;
+}
+
+/**
  * Difficulty used to be a four-rung ladder borrowed from the console games
  * (Rookie / Pro / All-Pro / Legend). It is three rungs now, because four
  * asked a new player to place themselves on a scale before they had any idea
@@ -105,12 +192,32 @@ const LEGACY_DIFFICULTY: Record<string, Difficulty> = {
 };
 
 export function parseSettings(raw: string | null | undefined): LeagueSettings {
-  const merged = { ...DEFAULT_SETTINGS, ...readJson<Partial<LeagueSettings>>(raw, {}) };
+  const stored = readJson<Partial<LeagueSettings>>(raw, {});
+  const merged = { ...DEFAULT_SETTINGS, ...stored };
+
+  // Same shape of problem as LEGACY_DIFFICULTY, opposite direction: the old
+  // blob does not carry a WRONG capGrowth, it carries none at all, and the
+  // spread above would hand it the new default. Every save written before
+  // this setting existed was played at 7%, and a dynasty five years deep that
+  // silently drops onto the 2% curve loses 21% of its ceiling overnight —
+  // clubs that were legal on the morning's cap sheet wake up over it, which
+  // is a rule the player never broke and never agreed to. An absent key means
+  // "created under the old constant", so it is pinned there and the Settings
+  // screen offers the move as the player's own decision to make.
+  //
+  // The pin only reaches a ceiling that was computed through capGrowthRate().
+  // The call sites listed in capForYear()'s comment still read the default
+  // curve, so until each passes the league's own rate, an old save's cap sheet
+  // is drawn on the 2% curve whatever this says. That is one patch, not a
+  // second design.
+  if (stored.capGrowth === undefined) merged.capGrowth = 'FAST';
+
   const mapped = LEGACY_DIFFICULTY[merged.difficulty as string];
   if (mapped) merged.difficulty = mapped;
   // A settings blob hand-edited to something unrecognised should play, not
   // crash with NaN modifiers three screens later.
   if (!(merged.difficulty in DIFFICULTY_MODS)) merged.difficulty = DEFAULT_SETTINGS.difficulty;
+  if (!(merged.capGrowth in CAP_GROWTH_MODES)) merged.capGrowth = DEFAULT_SETTINGS.capGrowth;
   return merged;
 }
 

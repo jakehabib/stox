@@ -2,6 +2,10 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { resolveStartYear } from '@/lib/leagueYear';
+// The growth rate is a league setting; capForYear's two-argument form silently
+// falls back to the tuning default, which is a different curve for any league
+// not on the SLOW rung. See lib/settings.ts CAP_GROWTH_MODES.
+import { capGrowthRate } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { capForYear, capHit, formatMoney, marketValue } from '@/lib/cap';
 import { buildLeagueRatings, estimateGameWinChance } from '@/lib/teamRating';
@@ -322,7 +326,7 @@ export default async function AnalyticsPage({ params, searchParams }: {
     rows: rosterRows.map((r) => ({ age: r.age, hit: r.hit, yearsRemaining: r.yearsRemaining, nextYearHit: r.hit })),
     capUsed: cap.capUsed,
     capTotal: cap.capTotal,
-    nextYearCapTotal: capForYear(league.seasonYear + 1, startYear),
+    nextYearCapTotal: capForYear(league.seasonYear + 1, startYear, capGrowthRate(settings)),
     deadMoney: cap.deadMoney,
   });
 
@@ -738,7 +742,7 @@ export default async function AnalyticsPage({ params, searchParams }: {
               capHealth={capHealth}
               groups={groups}
               seasonYear={league.seasonYear}
-              nextYearCap={capForYear(league.seasonYear + 1, startYear)}
+              nextYearCap={capForYear(league.seasonYear + 1, startYear, capGrowthRate(settings))}
               activeSalary={cap.activeSalary}
               contractCount={rosterRows.length}
               expiringCount={expiringCount}

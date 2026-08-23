@@ -1,13 +1,15 @@
 import { prisma } from './db';
+import { capForYear } from './cap';
+import { capGrowthRate, parseSettings } from './settings';
 
 /**
  * ===========================================================================
  * LEAGUE START YEAR
  * ===========================================================================
- * `capForYear(seasonYear, leagueStartYear)` grows the salary cap by
- * CAP.CAP_GROWTH_PER_YEAR for every year elapsed since the league was
- * founded. Both of its call sites used to pass the league's CURRENT season
- * as the start year, so `elapsed` was always 0 and the ceiling was pinned at
+ * `capForYear(seasonYear, leagueStartYear, growthPerYear)` grows the salary
+ * cap by the league's own capGrowth rate for every year elapsed since the
+ * league was founded. Both of its call sites used to pass the league's
+ * CURRENT season as the start year, so `elapsed` was always 0 and the ceiling was pinned at
  * CAP.BASE_CAP forever — CAP_GROWTH_PER_YEAR was dead code and a league in
  * its fifth year was playing under a first-year cap.
  *
@@ -62,10 +64,10 @@ export async function resolveStartYear(league: LeagueYearFields): Promise<number
   // — TeamSeasonRecord rows and championship/award Transactions dated decades
   // before the save begins. Those used to be the derivation inputs, so a save
   // with a null startYear would have been read as founded ~24 years early and
-  // had its salary cap compounded at 7%/yr over phantom seasons: 1.07^24 is
-  // more than a fivefold ceiling. A Game row only exists for a season that was
-  // actually scheduled and playable, so it is the one artefact backstory never
-  // produces.
+  // had its salary cap compounded over phantom seasons: at the 7% every league
+  // grew at when this was found, 1.07^24 is more than a fivefold ceiling. A
+  // Game row only exists for a season that was actually scheduled and
+  // playable, so it is the one artefact backstory never produces.
   const [game, tx, rec] = await Promise.all([
     prisma.game.aggregate({ where: { leagueId: league.id }, _min: { seasonYear: true } }),
     prisma.transaction.aggregate({ where: { leagueId: league.id }, _min: { seasonYear: true } }),
@@ -84,8 +86,9 @@ export async function resolveStartYear(league: LeagueYearFields): Promise<number
   }
 
   // A start year in the future, or absurdly far in the past, is a corrupt
-  // read — a wrong start year is worse than none, because it compounds at
-  // 7%/yr. Fall back to "founded this season" (which reproduces the old
+  // read — a wrong start year is worse than none, because every year of the
+  // error compounds at whatever rate that league's ceiling grows at. Fall
+  // back to "founded this season" (which reproduces the old
   // pinned-at-BASE_CAP behaviour) rather than inventing a ceiling.
   if (!Number.isFinite(derived) || derived > league.seasonYear || derived < league.seasonYear - 100) {
     derived = league.seasonYear;
@@ -101,4 +104,36 @@ export async function resolveStartYear(league: LeagueYearFields): Promise<number
 /** Test/maintenance hook: forget everything resolveStartYear has memoized. */
 export function clearStartYearCache() {
   cache.clear();
+}
+
+/**
+ * ===========================================================================
+ * THE SINGLE DOOR TO A LEAGUE'S CEILING
+ * ===========================================================================
+ * A salary cap is two facts about one league — when it was founded, and how
+ * fast its ceiling climbs — and they live in two different places (the
+ * derived startYear above, and LeagueSettings.capGrowth). Every server-side
+ * reader should ask for the ceiling here rather than fetching one fact,
+ * remembering the other, and calling capForYear() itself: that is exactly how
+ * a ceiling and a rate come to disagree, and a cap sheet that disagrees with
+ * the cap the game enforces is the lying-metric bug class this project keeps
+ * paying for.
+ *
+ * Server-side only, deliberately. It reads the database, and lib/cap.ts —
+ * where the pure arithmetic lives — is imported by client components, so the
+ * two cannot be one module. Same split, and the same reason, as
+ * lib/capEnforcement.ts.
+ */
+export interface LeagueCapFields extends LeagueYearFields {
+  /** The League row's settings JSON blob. */
+  settings: string;
+}
+
+/**
+ * The ceiling one league plays under in one season. Defaults to the season
+ * the league is actually in, which is what nearly every caller wants; pass a
+ * year for an outlook column or a next-year projection.
+ */
+export async function capForLeague(league: LeagueCapFields, seasonYear: number = league.seasonYear): Promise<number> {
+  return capForYear(seasonYear, await resolveStartYear(league), capGrowthRate(parseSettings(league.settings)));
 }

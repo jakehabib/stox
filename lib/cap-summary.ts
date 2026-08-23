@@ -2,7 +2,7 @@ import { prisma } from './db';
 import { CapMode } from './types';
 import { capChargeYear, capForYear, capHit, proration } from './cap';
 import { CAP } from './tuning';
-import { resolveStartYear } from './leagueYear';
+import { capForLeague, resolveStartYear } from './leagueYear';
 
 export interface CapSummary {
   capTotal: number;
@@ -30,7 +30,7 @@ export async function teamCapSummary(teamId: string, seasonYear: number, mode: C
   const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId }, select: { leagueId: true } });
   const league = await prisma.league.findUniqueOrThrow({
     where: { id: team.leagueId },
-    select: { id: true, seasonYear: true, startYear: true },
+    select: { id: true, seasonYear: true, startYear: true, settings: true },
   });
 
   const players = await prisma.player.findMany({
@@ -39,10 +39,19 @@ export async function teamCapSummary(teamId: string, seasonYear: number, mode: C
   });
   const deadRows = await prisma.capCharge.findMany({ where: { teamId, year: seasonYear } });
 
-  // The SECOND argument is the league's FOUNDING year, not the current one.
-  // Passing the current season here made `elapsed` zero every time, which
-  // pinned the ceiling at CAP.BASE_CAP for the life of every league.
-  const capTotal = mode === 'OFF' ? 0 : capForYear(seasonYear, await resolveStartYear(league));
+  // capForLeague resolves the founding year AND the league's own growth rung
+  // together, which is why this reads it rather than capForYear directly.
+  //
+  // Two separate bugs have lived on this one line. The first: the second
+  // argument is the FOUNDING year, not the current one, and passing the season
+  // made `elapsed` zero every time — the ceiling was pinned at BASE_CAP for
+  // the life of every league. The second: once growth became a setting, the
+  // two-argument form kept computing the tuning default's curve, so a FLAT
+  // league read $265.3M here two years in while its own cap page read
+  // $255.0M. THIS function is the one every cap gate and every over-cap
+  // warning runs on, so of the six call sites it was the one that decided
+  // what the game was actually played under.
+  const capTotal = mode === 'OFF' ? 0 : await capForLeague(league, seasonYear);
   const activeSalary = players.reduce((sum, p) => sum + capHit(p.contract, mode), 0);
   const deadMoney = mode === 'OFF' ? 0 : deadRows.reduce((s, r) => s + r.amount, 0);
   const capUsed = activeSalary + deadMoney;

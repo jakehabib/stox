@@ -4,6 +4,18 @@ import { useState } from 'react';
 import { TeamLogo } from './TeamLogo';
 import { TeamPickerBoard } from './TeamPickerBoard';
 import { previewAccent, previewCrestSeed, type FranchiseSeed } from './ds/FranchiseWall';
+// The rungs, their names and their real rates all come from one table, so the
+// screen cannot come to disagree with the curve the league is played on. See
+// CAP_GROWTH_MODES in lib/settings.ts — the SLOW rung reads the tuning
+// constant rather than copying it, which is why a percentage rendered here is
+// the percentage the ceiling actually compounds at.
+import { CAP_GROWTH_MODES, DEFAULT_SETTINGS, type CapGrowth } from '@/lib/settings';
+
+const CAP_GROWTH_ORDER: CapGrowth[] = ['FLAT', 'SLOW', 'FAST'];
+const CAP_GROWTH_OPTIONS: [string, string][] = CAP_GROWTH_ORDER.map((k) => [k, CAP_GROWTH_MODES[k].label]);
+const CAP_GROWTH_HINTS: Record<string, string> = Object.fromEntries(
+  CAP_GROWTH_ORDER.map((k) => [k, CAP_GROWTH_MODES[k].blurb]),
+);
 
 /**
  * League setup: pick a franchise from the board, set the rules, start.
@@ -183,6 +195,28 @@ export function CreateLeagueForm({
                 SIMPLIFIED: 'A cap ceiling, without dead money and proration.',
                 REALISTIC: 'Full cap: bonuses prorate, cuts leave dead money.',
               }}
+            />
+            {/* HOW FAST THE CEILING CLIMBS, chosen at the table.
+                It used to be a constant: 7% a year, every league, forever.
+                Compounded that is not a drift, it is a different game —
+                measured over 20 league years against 32 real generated clubs
+                priced at market, a full roster costs 88% of the cap in year
+                one and 24% by year twenty at 7%, against 60% at 2% and a flat
+                88% forever at 0%.
+
+                It sits directly under Salary cap because it is meaningless
+                without one, and because a reader who has just decided how
+                strict the cap is has exactly the right question in his head.
+                The rung names carry no percentage in their labels — the blurb
+                below says what it MEANS from the GM's chair, and the numbers
+                are on the in-league Settings screen where a rate can be read
+                beside the ceiling it produces. */}
+            <Field
+              label="Cap growth"
+              name="capGrowth"
+              options={CAP_GROWTH_OPTIONS}
+              defaultValue={DEFAULT_SETTINGS.capGrowth}
+              hint={CAP_GROWTH_HINTS}
             />
             {/* NORMAL, not "PRO". Difficulty used to be the four-rung console
                 ladder (Rookie/Pro/All-Pro/Legend) and this default was left

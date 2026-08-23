@@ -925,7 +925,21 @@ export const UNIT_DEPTH_WEIGHTS: Partial<Record<Position, number[]>> = {
 // ---------------------------------------------------------------------------
 export const CAP = {
   BASE_CAP: 255_000_000,
-  CAP_GROWTH_PER_YEAR: 0.07, // [TUNE] 7% annual bump
+  /**
+   * [TUNE] The DEFAULT annual bump — the SLOW rung of CAP_GROWTH_MODES
+   * (lib/settings.ts), which reads this constant rather than copying it.
+   * A league's real rate is a setting now (FLAT / SLOW / FAST); this is only
+   * what a ceiling computed with no league behind it falls back to.
+   *
+   * It was 7%, unconditionally, for every league. Compounded that is not a
+   * drift, it is a different game: 1.07^10 = 1.97, so season eleven plays
+   * under nearly double the opening ceiling while marketValue() still answers
+   * in year-one dollars. Measured over 20 league years against 32 real
+   * generated clubs priced at market, 7% leaves a median club at 24% of its
+   * own ceiling by year 20 and 2% leaves it at 60% — still a squeeze, still a
+   * choice. The rungs and the table are in lib/settings.ts.
+   */
+  CAP_GROWTH_PER_YEAR: 0.02,
   MIN_SALARY: 1_000_000,
   MAX_PRORATION_YEARS: 5,
   /** Simplified mode: flat annual number, no bonus proration, no dead money. */

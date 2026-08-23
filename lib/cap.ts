@@ -16,10 +16,54 @@ export interface ContractLike {
   isRookieDeal?: boolean;
 }
 
-/** Salary cap for a given season. Grows each year. */
-export function capForYear(seasonYear: number, leagueStartYear: number): number {
+/**
+ * ---------------------------------------------------------------------------
+ * THE CEILING, AND WHERE ITS GROWTH RATE COMES FROM
+ * ---------------------------------------------------------------------------
+ * Salary cap for a given season: BASE_CAP compounded once per league year
+ * since the founding season. How fast it compounds is a per-league SETTING
+ * now (LeagueSettings.capGrowth — FLAT / SLOW / FAST), so a ceiling is only
+ * this league's ceiling if this league's rate came in with it.
+ *
+ * THE THIRD ARGUMENT IS NOT OPTIONAL IN SPIRIT. Every ceiling the game plays
+ * under must pass it, and server code should not call this at all — it should
+ * go through `capForLeague()` in lib/leagueYear.ts, the single door that
+ * resolves the founding year and the rate together from the League row. A
+ * two-argument call means, exactly and only, "the DEFAULT rung's curve", and
+ * it is a wrong reading of any league not on that rung.
+ *
+ * It is optional in the TYPE for one honest, stated reason: six call sites in
+ * modules outside this change still call it with two arguments, and a
+ * required parameter would leave the tree not compiling rather than merely
+ * imprecise. They are named here so this is a known list and not a surprise:
+ * app/league/[id]/cap/page.tsx (x2), app/league/[id]/analytics/page.tsx (x2),
+ * lib/cap-summary.ts, lib/invariants.ts — plus the mock-data design-system
+ * card, which has no league at all and is the one case the default is right
+ * for. Until each passes `capGrowthRate(settings)`, a FLAT or FAST league is
+ * rendered and enforced on the default curve.
+ *
+ * REJECTED, and why:
+ *  - Reading the rate from a request-scoped context (AsyncLocalStorage) so no
+ *    call site changes: this module is imported by client components
+ *    (RestructureForm, SignOfferForm, ExtendContractForm, TradeBuilder), and
+ *    node:async_hooks cannot go in a browser bundle.
+ *  - A module-global "rate of the league whose start year was resolved last",
+ *    set by resolveStartYear(): correct only where the resolve and the call
+ *    sit in one uninterrupted continuation. The cap page hoists `startYear`
+ *    above a dozen awaits, so it would already be wrong there — and silently.
+ *  - Folding the rate into leagueStartYear (shifting the founding year to
+ *    fake a flatter curve): arithmetically impossible. No start year makes a
+ *    compounding curve flat, and the multi-year outlook chart reads several
+ *    seasons off the same pair.
+ * ---------------------------------------------------------------------------
+ */
+export function capForYear(
+  seasonYear: number,
+  leagueStartYear: number,
+  growthPerYear: number = CAP.CAP_GROWTH_PER_YEAR,
+): number {
   const elapsed = Math.max(0, seasonYear - leagueStartYear);
-  return Math.round(CAP.BASE_CAP * Math.pow(1 + CAP.CAP_GROWTH_PER_YEAR, elapsed));
+  return Math.round(CAP.BASE_CAP * Math.pow(1 + growthPerYear, elapsed));
 }
 
 /**

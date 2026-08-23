@@ -5,6 +5,7 @@ import { positionSortKey } from '@/lib/league-data';
 import { teamCapSummary, deadMoneyRunway } from '@/lib/cap-summary';
 import { formatMoney, capHit, deadMoneyOnCut, capSavingsOnCut, capHitSchedule, capForYear, marketValue } from '@/lib/cap';
 import { resolveStartYear } from '@/lib/leagueYear';
+import { capGrowthRate } from '@/lib/settings';
 import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
 import { POSITION_GROUPS, positionGroup } from '@/lib/positionGroups';
@@ -153,9 +154,16 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       const schedule = capHitSchedule(p.contract, settings.capMode);
       for (let i = 0; i < OUTLOOK_YEARS; i++) totals[i] += schedule[i] ?? 0;
     }
-    // The ceiling RISES 7%/yr (CAP.CAP_GROWTH_PER_YEAR), so a single flat
-    // baseline at this year's limit understated future headroom by tens of
-    // millions. Draw the real ceiling for each year instead.
+    // The ceiling rises at THIS LEAGUE'S OWN rate, so a single flat baseline
+    // at this year's limit understated future headroom by tens of millions.
+    // Draw the real ceiling for each year instead.
+    //
+    // The rate is a league setting now (FLAT / SLOW / FAST, lib/settings.ts)
+    // and it has to be passed: the two-argument form falls back to the tuning
+    // default, so a FLAT league's outlook would have sloped upward on a curve
+    // it is not being played on — measured at $255.0M against $265.3M two
+    // years in. A chart of headroom you do not have is the exact bug class
+    // this project keeps paying for.
     const startYear = await resolveStartYear(league);
     outlookSeries = [
       {
@@ -166,7 +174,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       {
         label: 'Cap Limit',
         color: '#93939c',
-        points: totals.map((_, i) => ({ x: String(league.seasonYear + i), y: capForYear(league.seasonYear + i, startYear) })),
+        points: totals.map((_, i) => ({ x: String(league.seasonYear + i), y: capForYear(league.seasonYear + i, startYear, capGrowthRate(settings)) })),
       },
     ];
 
@@ -200,7 +208,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       })),
       capUsed: summary.capUsed,
       capTotal: summary.capTotal,
-      nextYearCapTotal: capForYear(league.seasonYear + 1, startYear),
+      nextYearCapTotal: capForYear(league.seasonYear + 1, startYear, capGrowthRate(settings)),
       deadMoney: summary.deadMoney,
     });
 

@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { assertCanCreateLeague, assertLeagueOwner, currentViewer, ensureOwnerKey } from '@/lib/owner';
 import { createLeague } from '@/lib/gen/league';
-import { DEFAULT_SETTINGS, LeagueSettings, serializeSettings } from '@/lib/settings';
+import { CAP_GROWTH_MODES, DEFAULT_SETTINGS, LeagueSettings, parseSettings, serializeSettings } from '@/lib/settings';
 import { advanceWeek } from '@/lib/season';
 
 /**
@@ -19,6 +19,9 @@ import { advanceWeek } from '@/lib/season';
 const LEAGUE_STARTS = ['RANDOM_ROSTERS', 'FANTASY_DRAFT'] as const;
 const CAP_MODES = ['REALISTIC', 'SIMPLIFIED', 'OFF'] as const;
 const DIFFICULTIES = ['EASY', 'NORMAL', 'HARD'] as const;
+/** Read off the rung table itself, so a fourth rung cannot be added there and
+ *  silently rejected here. */
+const CAP_GROWTHS = Object.keys(CAP_GROWTH_MODES) as (keyof typeof CAP_GROWTH_MODES)[];
 
 function pick<T extends string>(raw: FormDataEntryValue | null, allowed: readonly T[], fallback: T): T {
   const v = String(raw ?? '');
@@ -49,11 +52,16 @@ export async function createLeagueAction(formData: FormData) {
   const leagueStart = pick(formData.get('leagueStart'), LEAGUE_STARTS, 'RANDOM_ROSTERS');
   const capMode = pick(formData.get('capMode'), CAP_MODES, 'REALISTIC');
   const difficulty = pick(formData.get('difficulty'), DIFFICULTIES, 'NORMAL');
+  // The founding decision about how fast the ceiling climbs. The create-league
+  // screen does not offer the control yet (it belongs beside cap mode in
+  // components/CreateLeagueForm.tsx); until it does, every new league is
+  // founded on the default rung, which is what this fallback says.
+  const capGrowth = pick(formData.get('capGrowth'), CAP_GROWTHS, DEFAULT_SETTINGS.capGrowth);
 
   const leagueId = await createLeague({
     name,
     userTeamAbbr,
-    settings: { ...DEFAULT_SETTINGS, leagueStart, capMode, difficulty },
+    settings: { ...DEFAULT_SETTINGS, leagueStart, capMode, difficulty, capGrowth },
   });
 
   // Stamp the save the moment it exists, so it is never briefly visible to,
@@ -112,6 +120,14 @@ export async function updateSettingsAction(leagueId: string, formData: FormData)
     ...current,
     capMode: String(formData.get('capMode') || current.capMode) as LeagueSettings['capMode'],
     difficulty: String(formData.get('difficulty') || current.difficulty) as LeagueSettings['difficulty'],
+    // Whitelisted rather than cast, unlike its two neighbours above: this one
+    // indexes a table of RATES, and an unrecognised rung would compound the
+    // whole league's ceiling at undefined. The fallback goes through
+    // parseSettings rather than `current`, because `current` is a raw
+    // JSON.parse: on a save written before this setting existed the key is
+    // simply absent, and only parseSettings knows that absence means the 7%
+    // the league has been played at all along.
+    capGrowth: pick(formData.get('capGrowth'), CAP_GROWTHS, parseSettings(league.settings).capGrowth),
     scoutingEnabled: formData.get('scoutingEnabled') === 'on',
     revealTrueRatings: formData.get('revealTrueRatings') === 'on',
     fogOnOwnRoster: formData.get('fogOnOwnRoster') === 'on',
