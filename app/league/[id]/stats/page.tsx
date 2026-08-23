@@ -8,16 +8,71 @@ import { TeamLogo } from '@/components/TeamLogo';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { Tooltip } from '@/components/Tooltip';
 import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
-import { LineChart } from '@/components/charts/LineChart';
 import { ScatterChart } from '@/components/charts/ScatterChart';
 import { positionBadgeClass } from '@/components/ds/positionColor';
-import { MetricTiles } from '@/components/ds/MetricTiles';
-import { buildPythagoreanTable, strengthOfSchedule, type PythagoreanRow } from '@/lib/analytics';
+import { buildPythagoreanTable, type PythagoreanRow } from '@/lib/analytics';
 import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/ds/StatScopeToggle';
 // One definition of the passer rating formula, shared with the career table's
 // Rate column. The two used to be separate copies that agreed only by luck.
-import { passerRating } from '@/lib/statLabels';
+import { passerRating, careerColumns, formatColumn, isDerived, type StatColumn } from '@/lib/statLabels';
+import { buildRankBook, isRankableColumn, type StatRank } from '@/lib/statRanks';
+import { StatsTabs } from '@/components/ds/StatsTabs';
+import { RankChip } from '@/components/ds/RankChip';
+import { PositionVerdictStrip, type PositionVerdictCard, type VerdictStatLine } from '@/components/ds/PositionVerdictStrip';
+import { RosterStatTable, type RosterStatColumn, type RosterStatRow } from '@/components/ds/RosterStatTable';
+import { POSITIONS, canonicalPosition } from '@/lib/tuning';
+import { splitStarters, OFFENSE_POSITIONS, DEFENSE_POSITIONS, SPECIAL_POSITIONS } from '@/lib/lineup';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { tip, type GlossaryKey } from '@/lib/glossary';
+
+/**
+ * ===========================================================================
+ * STATS — TWO TABS, TWO JOBS
+ * ===========================================================================
+ * LEAGUE is the leaderboard: who is out in front of everybody, and how the
+ * thirty-two clubs compare. MY TEAM is a player-stats page for your roster:
+ * who is producing, who is not, and where each man stands at his position.
+ *
+ * WHAT THE MY TEAM VIEW USED TO BE, AND WHY IT WAS INCOHERENT. It was the
+ * league page with a filter bolted on, and it failed in four separate ways at
+ * once. The app owner: *"the 'my team stats' are essentially a useless and
+ * incoherent mess"*. Specifically:
+ *
+ *   1. IT SHOWED NO PRODUCTION. The "Full Roster Stat Line" table printed
+ *      ONLY derived rates — a quarterback's row was Cmp %, Y/A, TD %, INT %
+ *      and Rating, with no yards, no touchdowns and no attempts anywhere on
+ *      it. The one question a stats page exists to answer, "who is producing",
+ *      could not be answered from it at all, and a backup who went 3-for-4
+ *      outranked the starter on every column he had.
+ *   2. ITS COLUMNS WERE NOT COLUMNS. One header cell reading "Efficiency"
+ *      spanned five columns, and each cell carried its own inline label, so
+ *      column three was "Cmp %" on the passer's row, "YPC" on the back's and
+ *      "Playmaker (INT+PD)" on the corner's. Nothing lined up, so nothing
+ *      could be compared or sorted — and rows were ragged too, five cells for
+ *      a quarterback against one for a punter.
+ *   3. NO ORDER AND NO SORT. The query had no `orderBy` at all, so the roster
+ *      came out in whatever order Postgres returned it — passers, punters and
+ *      corners interleaved, with no way to reorder them.
+ *   4. IT WAS MOSTLY ABOUT THE LEAGUE'S TEAMS. Under a masthead reading "My
+ *      Team Stats", the Advanced view rendered a 32-row Pythagorean luck
+ *      table and a 32-point offense/defense scatter.
+ *
+ * WHAT REPLACED IT: a verdict strip of six fixed positions across the top
+ * (PositionVerdictStrip), then one sortable table per position with the
+ * columns CAREER_COLUMNS already says define it, every name a link to the
+ * man's card, and a league standing beside each line.
+ *
+ * WHERE THE TEAM-LEVEL PANELS WENT. The Pythagorean tiles, the strength of
+ * schedule tile and the weekly scoring-trend line chart are gone from this
+ * page entirely — all three are single-club performance figures, and neither
+ * of this page's two tabs is about a single club's performance. None of it was
+ * unique: the Pythagorean/luck reading and strength of schedule both live on
+ * the Analytics screen, and the schedule page carries strength of schedule
+ * too. The luck TABLE and the offense/defense scatter stayed, on the League
+ * tab, because they are readings of all thirty-two clubs and that is what the
+ * League tab is.
+ * ===========================================================================
+ */
 
 interface LeaderCol { key: keyof SeasonStats; label: string; format?: (n: number) => string }
 interface LeaderCategory { title: string; primary: LeaderCol; extra: LeaderCol[] }
@@ -33,109 +88,109 @@ const CATEGORIES: LeaderCategory[] = [
 ];
 
 /**
- * Position-shaped nerdy per-player line — efficiency rates, not just volume,
- * for the My Team deep-dive.
- *
- * Each rate carries its glossary key. The labels here repeat once per ROW, so
- * a "?" beside each one would put forty of them on a screen; instead the keys
- * are collected into a single legend above the table (see EfficiencyKey), and
- * deriving that legend from this list is what stops the two drifting apart.
+ * Glossary text for the rate columns, hung on the TABLE HEADER rather than on
+ * every cell. The old roster table printed its rate labels inside the cells,
+ * once per player, which is why its explanations had to be collected into a
+ * separate legend panel above it — forty "?" marks on one screen is noise.
+ * One table per position means each rate has exactly one header, so the
+ * explanation goes where the label is and the legend panel is gone.
  */
-function nerdyLine(position: string, s: SeasonStats): { label: string; value: string; term?: GlossaryKey }[] {
-  const pct = (num: number, den: number) => (den > 0 ? `${((num / den) * 100).toFixed(1)}%` : '—');
-  const rate = (num: number, den: number, digits = 1) => (den > 0 ? (num / den).toFixed(digits) : '—');
-  switch (position) {
-    case 'QB': {
-      const rating = passerRating(s);
-      return [
-        { label: 'Cmp %', value: pct(s.passCmp ?? 0, s.passAtt ?? 0), term: 'completionPct' },
-        { label: 'Y/A', value: rate(s.passYds ?? 0, s.passAtt ?? 0, 1), term: 'yardsPerAttempt' },
-        { label: 'TD %', value: pct(s.passTd ?? 0, s.passAtt ?? 0), term: 'tdRate' },
-        { label: 'INT %', value: pct(s.int ?? 0, s.passAtt ?? 0), term: 'intRate' },
-        { label: 'Rating', value: rating !== null ? rating.toFixed(1) : '—', term: 'passerRating' },
-      ];
-    }
-    case 'RB':
-      return [
-        { label: 'YPC', value: rate(s.rushYds ?? 0, s.rushAtt ?? 0, 1), term: 'yardsPerCarry' },
-        { label: 'Catch %', value: pct(s.rec ?? 0, s.targets ?? 0), term: 'catchRate' },
-        { label: 'Total Yds', value: String((s.rushYds ?? 0) + (s.recYds ?? 0)), term: 'scrimmageYards' },
-        { label: 'TDs', value: String((s.rushTd ?? 0) + (s.recTd ?? 0)) },
-      ];
-    case 'WR': case 'TE':
-      return [
-        { label: 'Catch %', value: pct(s.rec ?? 0, s.targets ?? 0), term: 'catchRate' },
-        { label: 'Y/R', value: rate(s.recYds ?? 0, s.rec ?? 0, 1), term: 'yardsPerReception' },
-        { label: 'Y/Target', value: rate(s.recYds ?? 0, s.targets ?? 0, 1), term: 'yardsPerTarget' },
-        { label: 'TDs', value: String(s.recTd ?? 0) },
-      ];
-    case 'EDGE': case 'DT': case 'LB':
-      return [
-        { label: 'Impact (Tkl+Sk)', value: String((s.tackles ?? 0) + (s.sacks ?? 0)) },
-        { label: 'Sacks', value: String(s.sacks ?? 0) },
-        { label: 'Forced Fum.', value: String(s.ff ?? 0), term: 'forcedFumbles' },
-      ];
-    case 'CB': case 'S':
-      return [
-        { label: 'Playmaker (INT+PD)', value: String((s.defInt ?? 0) + (s.pd ?? 0)), term: 'passesDefensed' },
-        { label: 'INT', value: String(s.defInt ?? 0) },
-        { label: 'Passes Def.', value: String(s.pd ?? 0), term: 'passesDefensed' },
-      ];
-    case 'K':
-      return [{ label: 'FG %', value: pct(s.fgm ?? 0, s.fga ?? 0), term: 'fieldGoalPct' }, { label: 'XP %', value: pct(s.xpm ?? 0, s.xpa ?? 0) }];
-    case 'P':
-      return [{ label: 'Avg', value: rate(s.puntYds ?? 0, s.punts ?? 0, 1) }];
-    default:
-      return [];
-  }
-}
+const COLUMN_TIP: Record<string, GlossaryKey> = {
+  cmpPct: 'completionPct',
+  passYpa: 'yardsPerAttempt',
+  passerRating: 'passerRating',
+  rushYpc: 'yardsPerCarry',
+  catchPct: 'catchRate',
+  recYpr: 'yardsPerReception',
+  fgPct: 'fieldGoalPct',
+  pd: 'passesDefensed',
+  ff: 'forcedFumbles',
+};
 
 /**
- * The key for the roster stat line below it.
+ * THE SIX CARDS, AND THE THREE NUMBERS ON EACH.
  *
- * The efficiency labels on that table are printed inside the CELLS, once per
- * player, and they differ by position — a "?" on each would put dozens of them
- * on one screen, which is noise rather than help. So the explanations move to
- * one legend above the table, listing only the rates actually on screen, built
- * from the same list that renders them.
+ * The positions are the app owner's call and are not sorted, filtered or
+ * re-ranked: *"It should be the most important positions, not your best
+ * player. It should be QB, RB, WR, TE, EDGE, CB if there's room"*.
+ *
+ * WHICH NUMBERS, AND THE VOLUME TRAP. A counting-stat rank rewards volume, and
+ * on OFFENSE this engine really does hand volume out by game plan rather than
+ * by merit: `allocateStats()` sets a passer's attempts from `plays * passRate`
+ * where the rate is a property of the club's SCHEME, and splits his yards off
+ * the drive sim's team total. A quarterback 3rd in passing yards on a
+ * pass-first club is busy, not necessarily good. So every offensive card pairs
+ * its two counting stats with the position's own efficiency column, and the
+ * card's VERDICT is taken from that rate.
+ *
+ * On DEFENCE the trap does not exist in this simulation, and the engine is
+ * explicit about why: a defence's tackles, passes defensed and forced fumbles
+ * per game are fixed draws (`DEFENDER_TACKLES_PER_GAME = 46`,
+ * `PASSES_DEFENSED_PER_GAME = 3.6`, `FORCED_FUMBLES_PER_GAME = 0.55`) shared
+ * out by rating and depth slot, and sacks and interceptions are the opposing
+ * offense's real sacks-taken and picks-thrown, again allocated by rating.
+ * There is no snap-count inflation to correct for, which is also why
+ * CAREER_COLUMNS defines no rate at EDGE or CB — and this file will not invent
+ * one to fill a slot. Their third number is the position's third defining
+ * stat instead, and their verdict comes off the counting stat that carries the
+ * most resolution.
+ *
+ * NOTHING HERE IS RANKED THAT THE ENGINE DEALS AS DICE — see lib/statRanks.ts,
+ * which keeps that list (the punter, opportunity columns, interceptions
+ * thrown) in one place.
  */
-function EfficiencyKey({ terms }: { terms: { label: string; term: GlossaryKey }[] }) {
-  if (terms.length === 0) return null;
-  return (
-    <div className="px-4 py-2.5 border-b border-line/70 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-      <span className="label-sm text-[10px]">Key</span>
-      {terms.map((t, i) => (
-        <span key={t.term} className="inline-flex items-center gap-1 text-xs text-muted">
-          {t.label}
-          {/* Downward — the key is at the top of the panel, so the table below
-              is what the bubble opens over. The first chip also opens to the
-              right, being flush against the panel's left padding. */}
-          <Tooltip placement="bottom" align={i === 0 ? 'start' : 'center'} text={tip(t.term)} />
-        </span>
-      ))}
-    </div>
-  );
-}
+const CARD_SPEC: { position: string; stats: string[]; verdictKey: string; basis: string }[] = [
+  { position: 'QB', stats: ['passYds', 'passTd', 'passerRating'], verdictKey: 'passerRating', basis: 'passer rating' },
+  { position: 'RB', stats: ['rushYds', 'rushTd', 'rushYpc'], verdictKey: 'rushYpc', basis: 'yards per carry' },
+  { position: 'WR', stats: ['recYds', 'rec', 'recYpr'], verdictKey: 'recYpr', basis: 'yards per catch' },
+  { position: 'TE', stats: ['recYds', 'rec', 'recYpr'], verdictKey: 'recYpr', basis: 'yards per catch' },
+  { position: 'EDGE', stats: ['sacks', 'tackles', 'ff'], verdictKey: 'sacks', basis: 'sacks' },
+  // The corner's headline is the interception, but the VERDICT is passes
+  // defensed: picks run 0-6 across a whole league of corners, so half the
+  // position ties on the same number and the grade collapses to two steps.
+  // Passes defensed is the same kind of number — rating's share of a fixed
+  // per-game pie — with the resolution to separate a cover corner from a
+  // liability. The card names the basis, so it cannot be mistaken for a
+  // verdict on the interception column above it.
+  { position: 'CB', stats: ['defInt', 'pd', 'tackles'], verdictKey: 'pd', basis: 'passes defensed' },
+];
+
+/** The unit headings the roster tables sit under, in lineup-card order. */
+const UNIT_SECTIONS: { title: string; blurb: string; positions: readonly string[] }[] = [
+  { title: 'Offense', blurb: 'Passing, running and receiving production.', positions: OFFENSE_POSITIONS },
+  { title: 'Defense', blurb: 'Front seven and secondary production.', positions: DEFENSE_POSITIONS },
+  { title: 'Special Teams', blurb: 'Kicking and punting.', positions: SPECIAL_POSITIONS },
+];
 
 export default async function StatsPage({ params, searchParams }: { params: { id: string }; searchParams: { view?: string; scope?: string; split?: string } }) {
   const { league, userTeam } = await getLeagueContext(params.id);
   const statScope = parseStatScope(searchParams[STAT_SCOPE_PARAM]);
   const playoffs = statScope === 'PLAYOFFS';
-  const myTeam = searchParams.scope === 'myteam';
-  // The advanced blocks are built out of Team.wins/pointsFor and the
-  // regular-season schedule — the standings the sim keeps, which by design
-  // only ever count regular-season games (simulateAndSaveGame). There is no
-  // honest postseason Pythagorean or strength-of-schedule to draw from those,
-  // so the postseason view doesn't offer the switch rather than showing
-  // regular-season analytics under a "Playoffs" heading.
-  const advanced = searchParams.view === 'advanced' && !playoffs;
+  const myTeam = searchParams.scope === 'myteam' && !!userTeam;
+  // ADVANCED MEANS TWO DIFFERENT THINGS ON THE TWO TABS, AND ONLY ONE OF THEM
+  // IS A REGULAR-SEASON CONSTRUCT.
+  //
+  // On the League tab it adds the Pythagorean luck table and the offense /
+  // defense scatter, both built out of Team.wins/pointsFor — the standings the
+  // sim keeps, which by design only ever count regular-season games
+  // (simulateAndSaveGame). There is no honest postseason version of either, so
+  // that tab does not offer the switch in the Playoffs split rather than
+  // showing regular-season analytics under a Playoffs heading.
+  //
+  // On the My Team tab it adds the efficiency columns to the roster tables and
+  // moves the rank column onto the rate. Every one of those reads a player's
+  // postseason stat blob, which exists and is honest, so the toggle stays live
+  // in the postseason there.
+  const advancedAvailable = !playoffs || myTeam;
+  const advanced = searchParams.view === 'advanced' && advancedAvailable;
 
-  /** Every link on this page rebuilds the whole query string, so no pill can drop another pill's state. */
+  /** Every link on this page rebuilds the whole query string, so no control can drop another's state. */
   const href = (next: { view?: boolean; myTeam?: boolean; playoffs?: boolean }) => {
     const wantPlayoffs = next.playoffs ?? playoffs;
+    const wantMine = next.myTeam ?? myTeam;
     const q = new URLSearchParams();
-    if ((next.view ?? advanced) && !wantPlayoffs) q.set('view', 'advanced');
-    if (next.myTeam ?? myTeam) q.set('scope', 'myteam');
+    if ((next.view ?? advanced) && (!wantPlayoffs || wantMine)) q.set('view', 'advanced');
+    if (wantMine) q.set('scope', 'myteam');
     // Regular season is the default by absence — see StatScopeToggle.
     if (wantPlayoffs) q.set(STAT_SCOPE_PARAM, 'playoffs');
     const s = q.toString();
@@ -158,6 +213,29 @@ export default async function StatsPage({ params, searchParams }: { params: { id
     const yards = (stats.passYds ?? 0) + (stats.rushYds ?? 0);
     teamOffYards.set(p.teamId, (teamOffYards.get(p.teamId) ?? 0) + yards);
   }
+
+  // ---- The one rank book every standing on this page reads -----------------
+  // Built from `withStats`, which is also what the League tab's leader boards
+  // are sorted from. Same array, same competition-ranking rule (lib/statRanks),
+  // so a man 3rd in passing touchdowns on the board is 3rd on his card.
+  //
+  // The longest stat line in the league stands in for "how many games has a
+  // club played" — it is the same number and it needs no second query.
+  const maxGp = withStats.reduce((n, { stats }) => Math.max(n, stats.gp ?? 0), 0);
+  // A rate needs a season behind it. Half a club's games is the same shape of
+  // bar a real stat page draws before it will print a leader, and it is what
+  // keeps a third-stringer's four-attempt 12.0 yards-per-attempt from pushing
+  // every starter in the league down a place. The postseason is one to four
+  // games by construction, so there the bar is simply having played.
+  const minGamesForRate = playoffs ? 1 : Math.max(1, Math.ceil(maxGp / 2));
+  // FOUR GAMES BEFORE ANYBODY IS RANKED. "1st in touchdowns" after week two is
+  // true and reads as a verdict on a season, which is the same lie by another
+  // route. The numbers still print; the rosettes wait.
+  const ranksOpen = playoffs ? maxGp >= 1 : maxGp >= 4;
+  const rankBook = buildRankBook(
+    withStats.map(({ p, stats }) => ({ position: p.position, stats })),
+    { minGamesForRate, ranksOpen },
+  );
 
   // Team.wins/losses/pointsFor are regular-season standings and nothing else,
   // so the postseason table cannot read them. A club's playoff record IS
@@ -199,31 +277,14 @@ export default async function StatsPage({ params, searchParams }: { params: { id
     .filter((r) => !playoffs || playoffRecord.has(r.t.id))
     .sort((a, b) => b.wins - a.wins || b.diff - a.diff);
 
-  // --- Advanced-view data -----------------------------------------------
+  // --- League-tab advanced data --------------------------------------------
   let ratingBars: { label: string; value: number; displayValue: string; color: string }[] = [];
   let quadrantPoints: { id: string; x: number; y: number; label: string; color: string; detail?: string }[] = [];
   let quadrantAvgs: { x?: number; y?: number } = {};
-  let weeklyTrend: { label: string; color: string; points: { x: string; y: number }[] }[] = [];
   let pythagorean: PythagoreanRow[] = [];
-  let myPythag: PythagoreanRow | undefined;
-  let mySos = { sos: 0, opponents: 0 };
-  let sosRank = 0;
 
-  const myPlayers = userTeam ? withStats.filter(({ p }) => p.teamId === userTeam.id) : [];
-
-  // One entry per rate that actually appears in the table below, in the order
-  // the roster produces them — a corner's roster shows no passing rates and
-  // the key does not claim otherwise.
-  const efficiencyKey: { label: string; term: GlossaryKey }[] = [];
-  for (const { p, stats } of myPlayers) {
-    for (const m of nerdyLine(p.position, stats)) {
-      if (m.term && !efficiencyKey.some((e) => e.term === m.term)) efficiencyKey.push({ label: m.label, term: m.term });
-    }
-  }
-
-  if (advanced) {
-    const ratingPool = myTeam ? myPlayers : withStats;
-    ratingBars = ratingPool
+  if (advanced && !myTeam) {
+    ratingBars = withStats
       .map(({ p, stats }) => ({ p, rating: passerRating(stats) }))
       .filter((x): x is { p: typeof withStats[number]['p']; rating: number } => x.rating !== null)
       .sort((a, b) => b.rating - a.rating)
@@ -244,313 +305,477 @@ export default async function StatsPage({ params, searchParams }: { params: { id
     }));
 
     pythagorean = buildPythagoreanTable(teams, userTeam?.id);
-    myPythag = pythagorean.find((r) => r.isUser);
-
-    // Strength of schedule needs every played game in the league, not just
-    // the user's — each team's SOS is computed the same way so the rank means
-    // something.
-    const allGames = await prisma.game.findMany({
-      where: { leagueId: league.id, kind: 'REGULAR', played: true },
-      select: { homeTeamId: true, awayTeamId: true, played: true, week: true, homeScore: true, awayScore: true },
-      orderBy: { week: 'asc' },
-    });
-    const recordById = new Map(teams.map((t) => [t.id, { wins: t.wins, losses: t.losses, ties: t.ties }]));
-    if (userTeam) {
-      mySos = strengthOfSchedule(userTeam.id, allGames, recordById);
-      const allSos = teams
-        .map((t) => ({ id: t.id, sos: strengthOfSchedule(t.id, allGames, recordById).sos }))
-        .sort((a, b) => b.sos - a.sos);
-      sosRank = allSos.findIndex((s) => s.id === userTeam.id) + 1;
-
-      const myGames = allGames.filter((g) => g.homeTeamId === userTeam.id || g.awayTeamId === userTeam.id);
-      weeklyTrend = [
-        { label: 'Points For', color: '#3987e5', points: myGames.map((g) => ({ x: `Wk ${g.week}`, y: g.homeTeamId === userTeam.id ? g.homeScore : g.awayScore })) },
-        { label: 'Points Against', color: '#e66767', points: myGames.map((g) => ({ x: `Wk ${g.week}`, y: g.homeTeamId === userTeam.id ? g.awayScore : g.homeScore })) },
-      ];
-    }
   }
 
+  // --- My Team data ---------------------------------------------------------
+  const myStatsById = new Map(
+    withStats.filter(({ p }) => p.teamId === userTeam?.id).map(({ p, stats }) => [p.id, stats]),
+  );
+
+  // The whole roster, not only the men with a stat line: a starting slot with
+  // nobody in it and a starter who has not taken a snap are both answers the
+  // verdict strip has to be able to give.
+  const roster = myTeam && userTeam
+    ? await prisma.player.findMany({
+        where: { teamId: userTeam.id },
+        orderBy: { trueOvr: 'desc' },
+        select: { id: true, firstName: true, lastName: true, position: true, age: true, trueOvr: true, weightLb: true, heightIn: true, injuryWeeks: true },
+      })
+    : [];
+  const depthSlots = myTeam && userTeam
+    ? await prisma.depthChartSlot.findMany({ where: { teamId: userTeam.id }, orderBy: { rank: 'asc' } })
+    : [];
+
+  type RosterMan = (typeof roster)[number];
+  const rosterById = new Map(roster.map((p) => [p.id, p]));
+  const rosterByPosition = new Map<string, RosterMan[]>();
+  for (const p of roster) {
+    const arr = rosterByPosition.get(p.position);
+    if (arr) arr.push(p); else rosterByPosition.set(p.position, [p]);
+  }
+
+  /**
+   * THE ORDER THE DEPTH CHART ITSELF USES — the saved slots first, in their
+   * saved rank, then anybody unslotted by rating. Copied in shape from the
+   * depth-chart page precisely so the two agree: a card naming a different
+   * starter from the screen where you set your starters would be this app
+   * disagreeing with itself about who is on the field, which is the failure
+   * lib/lineup.ts exists to prevent.
+   */
+  const depthOrder = (position: string): RosterMan[] => {
+    const here = rosterByPosition.get(position) ?? [];
+    const ranked = depthSlots.filter((s) => s.position === position).map((s) => s.playerId);
+    const rest = here.filter((p) => !ranked.includes(p.id)).map((p) => p.id);
+    return [...ranked, ...rest].map((id) => rosterById.get(id)).filter((p): p is RosterMan => !!p);
+  };
+  const starterIds = new Set<string>();
+  if (myTeam) for (const pos of POSITIONS) for (const m of splitStarters(pos, depthOrder(pos)).starters) starterIds.add(m.id);
+
+  /** The column object for a stat key at a position, so a card and a table read the same definition. */
+  const columnFor = (position: string, key: string): StatColumn | undefined =>
+    careerColumns(canonicalPosition(position)).find((c) => c.key === key);
+
+  const myClubPlayedPostseason = !!userTeam && playoffRecord.has(userTeam.id);
+  const teamAccent = userTeam ? generateTeamLogoParams(userTeam.abbr).primary : '#38bdf8';
+
+  // ---- The six verdict cards ----------------------------------------------
+  const verdictCards: PositionVerdictCard[] = !myTeam ? [] : CARD_SPEC.map((spec) => {
+    const ordered = depthOrder(spec.position);
+    const { starters } = splitStarters(spec.position, ordered);
+    // WR1, EDGE1, CB1 — the first slot on the depth chart, never "whoever has
+    // the most yards". A card that silently changed man in week nine would
+    // stop being comparable to last week's, which is the whole reason the row
+    // is a fixed six in the first place.
+    const man = starters[0] ?? null;
+    const label = splitStarters(spec.position, ordered).starters.length > 1 || (spec.position === 'WR' || spec.position === 'CB' || spec.position === 'EDGE')
+      ? `${spec.position}1`
+      : spec.position;
+    const stats = man ? myStatsById.get(man.id) : undefined;
+
+    const lines: VerdictStatLine[] = spec.stats.map((key) => {
+      const col = columnFor(spec.position, key);
+      if (!col || !stats) return { label: col?.short ?? key, value: '—', rank: null };
+      const text = formatColumn(col, stats);
+      return {
+        label: col.short,
+        value: text ?? '—',
+        rank: isRankableColumn(spec.position, col) ? rankBook.rank(spec.position, col, stats) : null,
+        tip: COLUMN_TIP[col.key] ? tip(COLUMN_TIP[col.key]) : undefined,
+      };
+    });
+
+    const verdictCol = columnFor(spec.position, spec.verdictKey);
+    const verdictRank: StatRank | null = verdictCol && stats ? rankBook.rank(spec.position, verdictCol, stats) : null;
+
+    let note: string | null = null;
+    if (!man) note = 'nobody to start here';
+    else if (!stats) note = playoffs ? 'no postseason snaps' : 'no production recorded yet';
+    else if (!ranksOpen) note = 'ranks open after four games';
+    else if (!verdictRank) note = `not yet qualified — ${minGamesForRate} games needed`;
+
+    return {
+      position: spec.position,
+      slotLabel: label,
+      player: man ? { id: man.id, firstName: man.firstName, lastName: man.lastName, age: man.age, ovr: man.trueOvr, weightLb: man.weightLb, heightIn: man.heightIn } : null,
+      href: man ? `/league/${league.id}/player/${man.id}` : null,
+      games: stats?.gp ?? 0,
+      stats: lines,
+      verdict: verdictRank ? { rank: verdictRank, basis: spec.basis } : null,
+      note,
+    };
+  });
+
+  // ---- One sortable table per position ------------------------------------
+  const rosterTables = !myTeam ? [] : UNIT_SECTIONS.map((section) => {
+    const tables = section.positions.map((position) => {
+      const all = careerColumns(canonicalPosition(position));
+      if (all.length === 0) return null; // the line records no box line — see below
+      const men = (rosterByPosition.get(position) ?? []).filter((p) => myStatsById.has(p.id));
+      if (men.length === 0) return null;
+
+      // BASIC IS THE COUNTING LINE, ADVANCED ADDS THE RATES. Both are honest
+      // readings of the same stat blob; the difference is whether you are
+      // asking how much a man did or how well he did it.
+      const cols = all.filter((c) => advanced || !isDerived(c));
+      const leadCol = all.find((c) => c.lead === 1) ?? all[0];
+      // THE LAST derived column, not the first. CAREER_COLUMNS orders a
+      // position volume-then-rate-then-result and puts the summarising rate
+      // last on purpose — its own note: *"rating last, because it is the
+      // summary of everything left of it"*. Taking the first one ranked a
+      // quarterback's season on completion percentage, which is the least
+      // interesting rate on his row.
+      const rateCol = [...all].reverse().find((c) => isDerived(c) && isRankableColumn(position, c));
+      // The rank column follows the view: volume standing in Basic, efficiency
+      // standing in Advanced. Its header NAMES the column it ranks, because a
+      // rank whose subject is ambiguous is a rank that can be read as a lie.
+      const rankCol = (advanced ? rateCol ?? leadCol : leadCol);
+      const rankable = isRankableColumn(position, rankCol);
+
+      const columns: RosterStatColumn[] = cols.map((c) => ({
+        key: c.key,
+        short: c.short,
+        lead: c.key === leadCol.key,
+        tip: COLUMN_TIP[c.key] ? tip(COLUMN_TIP[c.key]) : undefined,
+      }));
+
+      const rows: RosterStatRow[] = men.map((p) => {
+        const stats = myStatsById.get(p.id)!;
+        return {
+          id: p.id,
+          starter: starterIds.has(p.id),
+          identity: (
+            // THE NAME IS A DOOR (DepthChartGroup.tsx). Every man on this page
+            // opens his own card.
+            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
+              <PlayerAvatar seed={p.id} age={p.age} size={24} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />
+              <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
+              {starterIds.has(p.id) && <span className="label-sm text-[9px] shrink-0">ST</span>}
+            </Link>
+          ),
+          cells: cols.map((c) => {
+            const text = formatColumn(c, stats);
+            const v = c.derive ? c.derive(stats) : (stats as Record<string, number | undefined>)[c.key] ?? 0;
+            return {
+              text: text ?? '—',
+              num: v == null || !Number.isFinite(v) ? null : v,
+              rank: c.key === rankCol.key && isRankableColumn(position, c) ? rankBook.rank(position, c, stats) : null,
+            };
+          }),
+        };
+      });
+
+      return { position, columns, rows, rankable, rankKey: rankCol.key, rankLabel: rankable ? rankCol.short : null, defaultSortKey: leadCol.key };
+    }).filter((t): t is NonNullable<typeof t> => !!t);
+
+    return { ...section, tables };
+  }).filter((s) => s.tables.length > 0);
+
+  const myLineCount = myStatsById.size;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <PageMasthead
         teamId={myTeam ? userTeam?.id : undefined}
         teamAbbr={myTeam ? userTeam?.abbr : undefined}
         eyebrow={`${league.seasonYear} · Week ${league.week}`}
-        title={playoffs ? (myTeam ? 'My Team Playoff Stats' : 'League Playoff Stats') : (myTeam ? 'My Team Stats' : 'League Stats')}
+        title="Stats"
         subtitle={
-          playoffs
-            ? (myTeam ? 'Your roster in the postseason — these games are counted nowhere else.' : 'League leaders and team production in the postseason only.')
-            : (myTeam ? 'Your full roster, every efficiency stat on the books.' : 'League leaders and team production, season-to-date.')
+          myTeam
+            ? (playoffs
+              ? 'Your roster in the postseason — these games are counted nowhere else.'
+              : 'Your roster, by position, with each man measured against the rest of the league.')
+            : (playoffs
+              ? 'League leaders and team production in the postseason only.'
+              : 'League leaders and team production, season-to-date.')
         }
         action={
           <div className="flex flex-col items-end gap-1.5">
-          <StatScopeToggle scope={statScope} regularHref={href({ playoffs: false })} playoffHref={href({ playoffs: true })} />
-          <div className="flex gap-1.5">
-            <Link href={href({ myTeam: false })} className={`pill ${!myTeam ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>League</Link>
-            {userTeam && (
-              <Link href={href({ myTeam: true })} className={`pill ${myTeam ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>My Team</Link>
+            <StatScopeToggle scope={statScope} regularHref={href({ playoffs: false })} playoffHref={href({ playoffs: true })} />
+            {/* No Basic/Advanced on the League tab in the postseason — its
+                advanced blocks are regular-season constructs. See the
+                `advancedAvailable` binding. */}
+            {advancedAvailable && (
+              <div className="flex gap-1.5">
+                <Link href={href({ view: false })} scroll={false} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
+                <Link href={href({ view: true })} scroll={false} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
+              </div>
             )}
           </div>
-          {/* No Basic/Advanced in the postseason view — the advanced blocks
-              are regular-season constructs. See the `advanced` binding. */}
-          {!playoffs && (
-            <div className="flex gap-1.5">
-              <Link href={href({ view: false })} className={`pill ${!advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Basic</Link>
-              <Link href={href({ view: true })} className={`pill ${advanced ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted hover:text-chalk'}`}>Advanced</Link>
-            </div>
-          )}
-          </div>
         }
-        facts={[
-          { label: 'Split', value: playoffs ? 'Playoffs' : 'Regular Season', detail: playoffs ? 'postseason games only' : 'weeks 1 to the finale' },
-          { label: 'Scope', value: myTeam ? (userTeam?.abbr ?? 'Team') : 'League', detail: myTeam ? 'your roster only' : `all ${teams.length} teams` },
-          { label: 'Players Ranked', value: withStats.length.toLocaleString(), detail: playoffs ? 'with postseason stats' : 'with recorded stats' },
+        facts={
+          myTeam
+            ? [
+              { label: 'Stat Lines', value: `${myLineCount} of ${roster.length}`, detail: 'men with production' },
+              { label: 'Games Played', value: String(maxGp), detail: playoffs ? 'deepest postseason run' : 'longest season on the books' },
+              { label: 'Ranked Against', value: withStats.length.toLocaleString(), detail: 'players league-wide' },
+            ]
+            : [
+              { label: 'Players Ranked', value: withStats.length.toLocaleString(), detail: playoffs ? 'with postseason stats' : 'with recorded stats' },
+              { label: 'Clubs', value: String(teams.length), detail: playoffs ? `${teamRows.length} in the bracket` : 'all reporting' },
+              { label: 'Games Played', value: String(maxGp), detail: playoffs ? 'deepest postseason run' : 'longest season on the books' },
+            ]
+        }
+      />
+
+      <StatsTabs
+        tabs={[
+          { id: 'league', label: 'League', href: href({ myTeam: false }), active: !myTeam, hint: `${teams.length} clubs` },
+          ...(userTeam ? [{ id: 'mine', label: 'My Team', href: href({ myTeam: true }), active: myTeam, hint: userTeam.abbr }] : []),
         ]}
       />
 
       {playoffs && (
         <p className="text-xs text-muted px-1">
           Postseason production only, kept in its own column since the day it was first recorded — a club&apos;s
-          run adds games to these numbers and to nothing on the Regular Season side. Team records here are the
-          playoff bracket; the standings, Pythagorean and strength-of-schedule tables count regular-season games
-          only and live on the Regular Season view.
+          run adds games to these numbers and to nothing on the Regular Season side.
         </p>
       )}
 
-      {withStats.length === 0 ? (
-        <div className="panel p-4 text-sm text-muted">
-          {playoffs
-            ? `No postseason games have been played in ${league.seasonYear} yet — this fills in once the bracket starts.`
-            : 'No stats recorded yet this season — check back after Week 1.'}
-        </div>
-      ) : (
-        <>
-          {advanced && myPythag && (
-            <MetricTiles
-              metrics={[
-                {
-                  label: 'Pythagorean W-L',
-                  value: `${myPythag.expectedWins.toFixed(1)}-${(myPythag.wins + myPythag.losses + myPythag.ties - myPythag.expectedWins).toFixed(1)}`,
-                  detail: `actual ${myPythag.wins}-${myPythag.losses}${myPythag.ties ? `-${myPythag.ties}` : ''}`,
-                  tip: tip('pythagoreanWins'),
-                },
-                {
-                  label: 'Luck',
-                  value: `${myPythag.luck >= 0 ? '+' : ''}${myPythag.luck.toFixed(1)}`,
-                  detail: myPythag.luck >= 0 ? 'wins above what the scoring earned' : 'wins below what the scoring earned',
-                  color: myPythag.luck >= 1 ? 'text-warn' : myPythag.luck <= -1 ? 'text-accent2' : undefined,
-                  tip: tip('luck'),
-                },
-                {
-                  label: 'Point Differential',
-                  value: `${myPythag.pointsFor - myPythag.pointsAgainst >= 0 ? '+' : ''}${myPythag.pointsFor - myPythag.pointsAgainst}`,
-                  detail: `${myPythag.pointsFor} scored · ${myPythag.pointsAgainst} allowed`,
-                  color: myPythag.pointsFor - myPythag.pointsAgainst >= 0 ? 'text-accent' : 'text-bad',
-                  tip: tip('pointDifferential'),
-                },
-                {
-                  label: 'Strength of Schedule',
-                  value: mySos.opponents > 0 ? mySos.sos.toFixed(3).slice(1) : '—',
-                  detail: sosRank > 0 ? `#${sosRank} hardest · ${mySos.opponents} games` : 'no games played',
-                  tip: tip('strengthOfSchedule'),
-                },
-              ]}
+      {myTeam ? (
+        /* ================= MY TEAM ================= */
+        playoffs && !myClubPlayedPostseason ? (
+          <div className="panel p-5 text-sm text-muted">
+            {userTeam?.city} {userTeam?.nickname} did not play a postseason game in {league.seasonYear}, so there is
+            nothing to show here rather than a table of zeroes. The Regular Season split has the full year.
+          </div>
+        ) : myLineCount === 0 ? (
+          <div className="panel p-5 text-sm text-muted">
+            No stats recorded for this roster yet{playoffs ? ' in the postseason' : ` in ${league.seasonYear}`} — this
+            fills in as the games are played.
+          </div>
+        ) : (
+          <>
+            <PositionVerdictStrip
+              cards={verdictCards}
+              leagueId={league.id}
+              teamId={userTeam!.id}
+              teamAbbr={userTeam!.abbr}
+              accent={teamAccent}
+              footnote={
+                <>
+                  Every standing is against other men at the same position, out of {withStats.length.toLocaleString()} stat
+                  lines league-wide. Counting stats rank against everyone at the position; rates rank against qualifiers
+                  only — {minGamesForRate} game{minGamesForRate === 1 ? '' : 's'} played
+                  {playoffs ? ' in the bracket' : ''}. {ranksOpen ? '' : 'Ranks open once a club has four games on the books.'}
+                </>
+              }
             />
-          )}
 
-          {advanced && pythagorean.length > 0 && (
-            <div className="panel overflow-hidden">
-              <div className="px-4 py-3 border-b border-line/70">
-                <div className="label-sm inline-flex items-center gap-1.5">
-                  Luck Table — Actual vs. Expected
-                  <Tooltip placement="bottom" text={tip('pythagoreanWins')} />
+            {rosterTables.map((section) => (
+              <section key={section.title} className="space-y-3">
+                <div className="section-head">
+                  <div>
+                    <h2 className="section-title">{section.title}</h2>
+                    <p className="text-xs text-muted mt-0.5">{section.blurb}</p>
+                  </div>
+                  <span className="label-sm text-[10px]">{advanced ? 'Volume + efficiency' : 'Volume'}</span>
                 </div>
-                <div className="text-xs text-muted mt-0.5">
-                  Every team sorted by how far their record sits above or below what their scoring earned. Top of the list has been winning
-                  close games; the bottom has been losing them.
+                {/* ONE TABLE PER ROW. Two-up fitted the short defensive
+                    tables and clipped everything else: a quarterback's
+                    Advanced line is thirteen columns and simply does not go
+                    into half a screen, so the rank column — the whole reason
+                    the table is here — was the part that fell off the right
+                    edge. Full width, and the widest table in the app still
+                    has room for its standing. */}
+                <div className="grid gap-4">
+                  {section.tables.map((t) => (
+                    <div key={t.position} className="panel overflow-hidden">
+                      <div className="px-4 py-2.5 border-b border-line/70 flex items-center justify-between gap-2">
+                        <span className={`font-display font-bold text-sm uppercase tracking-wide ${positionBadgeClass(t.position)}`}>
+                          {t.position}
+                        </span>
+                        <span className="font-mono text-[10px] text-muted">
+                          {t.rows.length} {t.rows.length === 1 ? 'man' : 'men'}
+                          {t.rankable ? '' : ' · not ranked, this game deals the numbers'}
+                        </span>
+                      </div>
+                      <RosterStatTable
+                        columns={t.columns}
+                        rows={t.rows}
+                        defaultSortKey={t.defaultSortKey}
+                        rankKey={t.rankKey}
+                        rankLabel={t.rankLabel}
+                      />
+                    </div>
+                  ))}
                 </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="table-clean">
-                  <thead>
-                    <tr><th>Team</th><th>Actual</th><th>Expected</th><th>Luck</th><th>PF</th><th>PA</th><th>Diff</th></tr>
-                  </thead>
-                  <tbody>
-                    {pythagorean.map((r) => {
-                      const diff = r.pointsFor - r.pointsAgainst;
-                      return (
-                        <tr key={r.teamId} className={r.isUser ? 'bg-raised/60' : ''}>
-                          <td>
-                            <span className="flex items-center gap-2">
-                              <TeamLogo seed={r.teamId} abbr={r.abbr} size={20} className="shrink-0" />
-                              <span className={`whitespace-nowrap ${r.isUser ? 'font-semibold' : ''}`}>{r.name}</span>
-                            </span>
-                          </td>
-                          <td className="stat-value text-stat-sm">{r.wins}-{r.losses}{r.ties ? `-${r.ties}` : ''}</td>
-                          <td className="font-mono text-muted">{r.expectedWins.toFixed(1)}-{(r.wins + r.losses + r.ties - r.expectedWins).toFixed(1)}</td>
-                          <td className={`stat-value text-stat-sm ${r.luck >= 0 ? 'text-warn' : 'text-accent2'}`}>{r.luck >= 0 ? '+' : ''}{r.luck.toFixed(1)}</td>
-                          <td className="font-mono text-muted">{r.pointsFor}</td>
-                          <td className="font-mono text-muted">{r.pointsAgainst}</td>
-                          <td className={`font-mono ${diff >= 0 ? 'text-accent' : 'text-bad'}`}>{diff >= 0 ? '+' : ''}{diff}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+              </section>
+            ))}
 
-          {advanced && (
-            <div className="grid lg:grid-cols-2 gap-5">
-              <div className="panel p-4">
-                <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
-                  Passer Rating
-                  <Tooltip text={tip('passerRating')} />
-                </h2>
-                <p className="text-xs text-muted mb-3">Top qualifying passers, season-to-date.</p>
-                {ratingBars.length > 0 ? <HorizontalBarChart bars={ratingBars} maxValue={158.3} /> : <p className="text-sm text-muted">No qualifying passers yet.</p>}
-              </div>
-
-              <div className="panel p-4">
-                <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
-                  Offense vs. Defense
-                  <Tooltip text="Every team by points scored per game (up) and points allowed per game (right, so lower/left is better defense). Dashed lines mark the league average on each axis — top-left is the most complete quadrant: score a lot, allow little." />
-                </h2>
-                <p className="text-xs text-muted mb-3">Points/game — your team highlighted, dashed lines are league average.</p>
-                <ScatterChart
-                  points={quadrantPoints}
-                  xLabel="Points Allowed / Game" yLabel="Points Scored / Game"
-                  formatX="decimal1" formatY="decimal1"
-                  quadrantLines={quadrantAvgs}
-                />
-              </div>
-
-              {weeklyTrend.length > 0 && weeklyTrend[0].points.length > 0 && (
-                <div className="panel p-4 lg:col-span-2">
-                  <h2 className="font-semibold mb-1">Your Team — Scoring Trend</h2>
-                  <p className="text-xs text-muted mb-3">Points for/against by week, season-to-date.</p>
-                  <LineChart series={weeklyTrend} formatY="integer" />
-                </div>
-              )}
-            </div>
-          )}
-
-          {myTeam ? (
-            <div className="panel overflow-hidden">
-              <div className="px-4 py-3 border-b border-line/70 label-sm">{playoffs ? 'Full Roster Stat Line — Postseason' : 'Full Roster Stat Line'}</div>
-              <EfficiencyKey terms={efficiencyKey} />
-              <div className="overflow-x-auto">
-                <table className="table-clean">
-                  <thead>
-                    <tr><th>Player</th><th>Pos</th><th colSpan={5}>Efficiency</th></tr>
-                  </thead>
-                  <tbody>
-                    {myPlayers.length === 0 && (
-                      <tr><td colSpan={7} className="text-sm text-muted">{playoffs ? 'Nobody on this roster has played a postseason game this year.' : 'No stats recorded yet this season.'}</td></tr>
-                    )}
-                    {myPlayers.map(({ p, stats }) => {
-                      const line = nerdyLine(p.position, stats);
-                      return (
-                        <tr key={p.id}>
-                          <td>
-                            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
-                              <PlayerAvatar seed={p.id} age={p.age} size={22} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />
-                              <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
-                            </Link>
-                          </td>
-                          <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
-                          {line.length === 0 ? (
-                            <td colSpan={5} className="text-xs text-muted">—</td>
-                          ) : (
-                            line.map((m) => (
-                              <td key={m.label} className="font-mono text-sm">
-                                <span className="text-muted text-xs mr-1.5">{m.label}</span>{m.value}
-                              </td>
-                            ))
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+            <p className="text-xs text-muted px-1">
+              No table for the offensive line: the box score records no individual line for a lineman, so there is no
+              honest stat row to draw for one. Click a lineman&apos;s name anywhere on the roster for his contract and
+              ratings instead.
+            </p>
+          </>
+        )
+      ) : (
+        /* ================= LEAGUE ================= */
+        <>
+          {withStats.length === 0 ? (
+            <div className="panel p-4 text-sm text-muted">
+              {playoffs
+                ? `No postseason games have been played in ${league.seasonYear} yet — this fills in once the bracket starts.`
+                : 'No stats recorded yet this season — check back after Week 1.'}
             </div>
           ) : (
-            <div className="grid md:grid-cols-2 gap-5">
-            {CATEGORIES.map((cat) => {
-              const leaders = [...withStats]
-                .filter(({ stats }) => (stats[cat.primary.key] ?? 0) > 0)
-                .sort((a, b) => (b.stats[cat.primary.key] ?? 0) - (a.stats[cat.primary.key] ?? 0))
-                .slice(0, 10);
-              return (
-                <div key={cat.title} className="panel overflow-hidden">
-                  <div className="px-4 py-3 border-b border-line/70 label-sm">
-                    {cat.title}
-                    <span className="ml-1.5 font-normal normal-case tracking-normal text-muted">{playoffs ? '· Playoffs' : '· Regular Season'}</span>
+            <>
+              {advanced && pythagorean.length > 0 && (
+                <div className="panel overflow-hidden">
+                  <div className="px-4 py-3 border-b border-line/70">
+                    <div className="label-sm inline-flex items-center gap-1.5">
+                      Luck Table — Actual vs. Expected
+                      <Tooltip placement="bottom" text={tip('pythagoreanWins')} />
+                    </div>
+                    <div className="text-xs text-muted mt-0.5">
+                      Every team sorted by how far their record sits above or below what their scoring earned. Top of the list has been winning
+                      close games; the bottom has been losing them.
+                    </div>
                   </div>
-                  <table className="table-clean">
-                    <thead>
-                      <tr>
-                        <th>Player</th>
-                        <th>{cat.primary.label}</th>
-                        {cat.extra.map((c) => <th key={c.key}>{c.label}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {leaders.map(({ p, stats }, i) => (
-                        <tr key={p.id}>
-                          <td>
-                            <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
-                              <span className="text-xs text-muted w-4 shrink-0">{i + 1}</span>
-                              <PlayerAvatar seed={p.id} age={p.age} size={22} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />
-                              <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
-                              <span className={`text-xs font-semibold shrink-0 ${positionBadgeClass(p.position)}`}>{p.position}</span>
-                            </Link>
-                          </td>
-                          <td className="stat-value text-stat-sm">{stats[cat.primary.key] ?? 0}</td>
-                          {cat.extra.map((c) => <td key={c.key} className="font-mono text-muted">{stats[c.key] ?? 0}</td>)}
-                        </tr>
-                      ))}
-                      {leaders.length === 0 && (
-                        <tr><td colSpan={2 + cat.extra.length} className="text-sm text-muted">No qualifying players yet.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
+                  <div className="overflow-x-auto">
+                    <table className="table-clean">
+                      <thead>
+                        <tr><th>Team</th><th>Actual</th><th>Expected</th><th>Luck</th><th>PF</th><th>PA</th><th>Diff</th></tr>
+                      </thead>
+                      <tbody>
+                        {pythagorean.map((r) => {
+                          const diff = r.pointsFor - r.pointsAgainst;
+                          return (
+                            <tr key={r.teamId} className={r.isUser ? 'bg-raised/60' : ''}>
+                              <td>
+                                <span className="flex items-center gap-2">
+                                  <TeamLogo seed={r.teamId} abbr={r.abbr} size={20} className="shrink-0" />
+                                  <span className={`whitespace-nowrap ${r.isUser ? 'font-semibold' : ''}`}>{r.name}</span>
+                                </span>
+                              </td>
+                              <td className="stat-value text-stat-sm">{r.wins}-{r.losses}{r.ties ? `-${r.ties}` : ''}</td>
+                              <td className="font-mono text-muted">{r.expectedWins.toFixed(1)}-{(r.wins + r.losses + r.ties - r.expectedWins).toFixed(1)}</td>
+                              <td className={`stat-value text-stat-sm ${r.luck >= 0 ? 'text-warn' : 'text-accent2'}`}>{r.luck >= 0 ? '+' : ''}{r.luck.toFixed(1)}</td>
+                              <td className="font-mono text-muted">{r.pointsFor}</td>
+                              <td className="font-mono text-muted">{r.pointsAgainst}</td>
+                              <td className={`font-mono ${diff >= 0 ? 'text-accent' : 'text-bad'}`}>{diff >= 0 ? '+' : ''}{diff}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              );
-            })}
-            </div>
-          )}
-        </>
-      )}
-
-      {!myTeam && (
-        <div className="panel overflow-hidden">
-          <div className="px-4 py-3 border-b border-line/70 label-sm">{playoffs ? 'Team Stats — Postseason' : 'Team Stats'}</div>
-          <table className="table-clean">
-            <thead><tr><th>Team</th><th>Record</th><th>PF</th><th>PA</th><th>Diff</th><th>Off. Yards</th></tr></thead>
-            <tbody>
-              {teamRows.length === 0 && (
-                <tr><td colSpan={6} className="text-sm text-muted">No postseason games played yet.</td></tr>
               )}
-              {teamRows.map(({ t, wins, losses, ties, pf, pa, offYards, diff }) => (
-                <tr key={t.id}>
-                  <td>
-                    <Link href={t.id === userTeam?.id ? `/league/${league.id}/roster` : `/league/${league.id}/team/${t.id}`} className="hover:text-accent2 flex items-center gap-2 font-medium">
-                      <TeamLogo seed={t.id} abbr={t.abbr} size={22} /> {t.city} {t.nickname}
-                    </Link>
-                  </td>
-                  <td className="font-mono text-muted">{wins}-{losses}{ties ? `-${ties}` : ''}</td>
-                  <td className="font-mono">{pf}</td>
-                  <td className="font-mono text-muted">{pa}</td>
-                  <td className={`stat-value text-stat-sm ${diff >= 0 ? 'text-accent' : 'text-bad'}`}>{diff >= 0 ? '+' : ''}{diff}</td>
-                  <td className="font-mono text-muted">{offYards.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+
+              {advanced && (
+                <div className="grid lg:grid-cols-2 gap-5">
+                  <div className="panel p-4">
+                    <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
+                      Passer Rating
+                      <Tooltip text={tip('passerRating')} />
+                    </h2>
+                    <p className="text-xs text-muted mb-3">Top qualifying passers, season-to-date.</p>
+                    {ratingBars.length > 0 ? <HorizontalBarChart bars={ratingBars} maxValue={158.3} /> : <p className="text-sm text-muted">No qualifying passers yet.</p>}
+                  </div>
+
+                  <div className="panel p-4">
+                    <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
+                      Offense vs. Defense
+                      <Tooltip text="Every team by points scored per game (up) and points allowed per game (right, so lower/left is better defense). Dashed lines mark the league average on each axis — top-left is the most complete quadrant: score a lot, allow little." />
+                    </h2>
+                    <p className="text-xs text-muted mb-3">Points/game — your team highlighted, dashed lines are league average.</p>
+                    <ScatterChart
+                      points={quadrantPoints}
+                      xLabel="Points Allowed / Game" yLabel="Points Scored / Game"
+                      formatX="decimal1" formatY="decimal1"
+                      quadrantLines={quadrantAvgs}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="grid md:grid-cols-2 gap-5">
+                {CATEGORIES.map((cat) => {
+                  const leaders = [...withStats]
+                    .filter(({ stats }) => (stats[cat.primary.key] ?? 0) > 0)
+                    .sort((a, b) => (b.stats[cat.primary.key] ?? 0) - (a.stats[cat.primary.key] ?? 0))
+                    .slice(0, 10);
+                  return (
+                    <div key={cat.title} className="panel overflow-hidden">
+                      <div className="px-4 py-3 border-b border-line/70 label-sm">
+                        {cat.title}
+                        <span className="ml-1.5 font-normal normal-case tracking-normal text-muted">{playoffs ? '· Playoffs' : '· Regular Season'}</span>
+                      </div>
+                      <table className="table-clean">
+                        <thead>
+                          <tr>
+                            <th>Player</th>
+                            <th className="text-right">{cat.primary.label}</th>
+                            {cat.extra.map((c) => <th key={c.key} className="text-right">{c.label}</th>)}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {leaders.map(({ p, stats }, i) => {
+                            // COMPETITION RANKING, not the array index — the same
+                            // rule lib/statRanks.ts applies everywhere else on this
+                            // page, so two men on 27 touchdowns are both 3rd here
+                            // AND on the verdict card. Printing i+1 gave one of
+                            // them 4th purely from where the sort dropped him,
+                            // which is how a card and a board come to disagree
+                            // about the same player.
+                            const v = stats[cat.primary.key] ?? 0;
+                            const place = leaders.findIndex(({ stats: s }) => (s[cat.primary.key] ?? 0) === v) + 1;
+                            const tied = leaders.filter(({ stats: s }) => (s[cat.primary.key] ?? 0) === v).length > 1;
+                            void i;
+                            return (
+                              <tr key={p.id}>
+                                <td>
+                                  <Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 flex items-center gap-2">
+                                    <span className={`text-xs w-6 shrink-0 font-mono ${place === 1 ? 'text-gold' : 'text-muted'}`}>{tied ? 'T' : ''}{place}</span>
+                                    <PlayerAvatar seed={p.id} age={p.age} size={22} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} />
+                                    <span className="font-medium truncate">{p.firstName} {p.lastName}</span>
+                                    <span className={`text-xs font-semibold shrink-0 ${positionBadgeClass(p.position)}`}>{p.position}</span>
+                                  </Link>
+                                </td>
+                                <td className="stat-value text-stat-sm text-right">{v}</td>
+                                {cat.extra.map((c) => <td key={c.key} className="font-mono text-muted text-right">{stats[c.key] ?? 0}</td>)}
+                              </tr>
+                            );
+                          })}
+                          {leaders.length === 0 && (
+                            <tr><td colSpan={2 + cat.extra.length} className="text-sm text-muted">No qualifying players yet.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <div className="panel overflow-hidden">
+            <div className="px-4 py-3 border-b border-line/70 label-sm">{playoffs ? 'Team Stats — Postseason' : 'Team Stats'}</div>
+            <table className="table-clean">
+              <thead><tr><th>Team</th><th>Record</th><th className="text-right">PF</th><th className="text-right">PA</th><th className="text-right">Diff</th><th className="text-right">Off. Yards</th></tr></thead>
+              <tbody>
+                {teamRows.length === 0 && (
+                  <tr><td colSpan={6} className="text-sm text-muted">No postseason games played yet.</td></tr>
+                )}
+                {teamRows.map(({ t, wins, losses, ties, pf, pa, offYards, diff }) => (
+                  <tr key={t.id}>
+                    <td>
+                      <Link href={t.id === userTeam?.id ? `/league/${league.id}/roster` : `/league/${league.id}/team/${t.id}`} className="hover:text-accent2 flex items-center gap-2 font-medium">
+                        <TeamLogo seed={t.id} abbr={t.abbr} size={22} /> {t.city} {t.nickname}
+                      </Link>
+                    </td>
+                    <td className="font-mono text-muted">{wins}-{losses}{ties ? `-${ties}` : ''}</td>
+                    <td className="font-mono text-right">{pf}</td>
+                    <td className="font-mono text-muted text-right">{pa}</td>
+                    <td className={`stat-value text-stat-sm text-right ${diff >= 0 ? 'text-accent' : 'text-bad'}`}>{diff >= 0 ? '+' : ''}{diff}</td>
+                    <td className="font-mono text-muted text-right">{offYards.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
