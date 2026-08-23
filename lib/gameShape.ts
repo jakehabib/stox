@@ -18,7 +18,7 @@ import { BoxScore, DriveResult } from './types';
  * at the render boundary.
  *
  * Honest about what the sim actually did (principle 6): the engine allocates
- * a fixed 11 drives per team, strictly alternating, so the path is more
+ * a fixed 10 drives per team, strictly alternating, so the path is more
  * regular than a real game's. It is not pretending to be a win-probability
  * chart — it is the literal score differential, which is exactly what the
  * engine produced.
@@ -34,8 +34,15 @@ const QUARTERS = 4;
  * to draw correctly. `quarterOfDrive` derives the boundary from the drive
  * count actually present, so this is only the regulation-length hint used to
  * spot overtime.
+ *
+ * IT STILL HAS TO MOVE WHEN SIM.DRIVES_PER_TEAM MOVES. `computeGameShape`
+ * survives a stale value — it takes regulation length from the drive count in
+ * front of it — but `wentToOvertime` below cannot, because an overtime game is
+ * exactly the case where the count is one or two ABOVE regulation and there is
+ * nothing else in the box score to read it off. Left at 11 when the engine
+ * went to 10, every overtime game ever played would have stopped saying so.
  */
-const REGULATION_DRIVES_PER_TEAM = 11;
+const REGULATION_DRIVES_PER_TEAM = 10;
 
 export type Archetype =
   | 'Comeback' | 'Collapse'

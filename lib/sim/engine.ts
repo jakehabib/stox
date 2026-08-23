@@ -21,7 +21,9 @@ function injuryTypesForSeverity(weeks: number): string[] {
  * ===========================================================================
  * GAME RESOLUTION (design doc section 9)
  * ===========================================================================
- * The sim is DRIVE-BASED, not play-based. Each team gets ~11 possessions.
+ * The sim is DRIVE-BASED, not play-based. Each team gets ~10 possessions —
+ * see SIM.DRIVES_PER_TEAM for why that is ten and not the eleven a real team
+ * takes the field for.
  * For every drive we roll an outcome from probabilities derived from the
  * matchup edge (this offense's unit score vs that defense's unit score),
  * then generate plays/yards consistent with the outcome so the box score adds
@@ -126,7 +128,12 @@ export function simulateGame(
     if (roll < toProb) {
       result = 'TURNOVER';
       yards = Math.round(rng.normal(24, 16));
-      plays = rng.int(3, 7);
+      // [TUNE] plays was rng.int(3, 7), a mean of 5. A drive that ends in a
+      // giveaway is cut short by the giveaway — the pick or the strip is what
+      // ends it, not a long grind — so it runs under the 5.6-play average
+      // rather than over it. The 24-yard mean is right against a real ~26 and
+      // is untouched.
+      plays = rng.int(3, 6);
       a.turnovers += 1;
     } else if (roll < toProb + scoreProb) {
       const tdShare = clamp(SIM.TD_SHARE_BASE + edge * SIM.EDGE_TO_TD_SHARE, 0.22, 0.82);
@@ -134,7 +141,24 @@ export function simulateGame(
         result = 'TD';
         points = 6;
         yards = Math.round(rng.normal(66, 18));
-        plays = rng.int(6, 13);
+        // [TUNE] plays was rng.int(6, 13), a mean of 9.5, on a drive that
+        // really runs about seven snaps.
+        //
+        // THE CHECKABLE FIGURE IS THE TOTAL, not this line. An NFL team runs
+        // about 62 offensive plays a game, of which ~2.3 are sacks this engine
+        // counts separately and never puts in `own.plays` — so `own.plays`,
+        // which is exactly passAtt + rushAtt, should come to about 60. It was
+        // 75, and the surplus was spread across all five branches here. Over
+        // this engine's 10 drives that is 6.0 a drive against the 6.8 it was
+        // running; a touchdown drive is the longest kind and the most common
+        // non-punt, so it carried the largest single share of it.
+        //
+        // The 66-yard mean beside it was already right and is untouched: a
+        // drive starting at your own 28 has to cover that ground, and there is
+        // no honest way to shorten a touchdown drive without moving the end
+        // zone. That is why the yardage had to come off the punt branch below
+        // and off the drive COUNT, not off this line.
+        plays = rng.int(5, 10);
         a.td += 1;
         // Extra point (kicker accuracy nudges this). [TUNE] 96% baseline.
         const kicker = kickerRating(side === 'home' ? homeUnits : awayUnits);
@@ -146,7 +170,11 @@ export function simulateGame(
       } else {
         result = 'FG';
         yards = Math.round(rng.normal(45, 16));
-        plays = rng.int(5, 11);
+        // [TUNE] plays was rng.int(5, 11), a mean of 8. Same apportionment
+        // as the touchdown branch above: a field-goal drive stops short of the
+        // end zone by definition, so it is shorter in yards than a touchdown
+        // drive and a little shorter in snaps. 6.5 against that branch's 7.5.
+        plays = rng.int(4, 9);
         const kicker = kickerRating(side === 'home' ? homeUnits : awayUnits);
         a.fga += 1;
         // FG make probability by implied distance. [TUNE]
@@ -163,7 +191,16 @@ export function simulateGame(
       plays = rng.int(5, 10);
     } else {
       result = 'PUNT';
-      yards = Math.round(rng.normal(19, 15));
+      // [TUNE] yards was rng.normal(19, 15). A punt drive is the one this
+      // engine had badly wrong, and it is 41% of all drives so it carried the
+      // surplus on its own. THE CHECKABLE FIGURE: an NFL team gains ~330 net
+      // yards over ~11.2 drives, and once you subtract what its ~2.2 touchdown
+      // drives (68 yards each) and ~1.6 field-goal drives (44) took, the ~4.5
+      // drives it punts on are left with a little over a first down's worth of
+      // ground apiece — about 13 yards. 12 rather than 13 because
+      // `Math.max(-8, yards)` below clips the negative tail and lifts the
+      // realised mean by roughly 0.7.
+      yards = Math.round(rng.normal(12, 14));
       plays = rng.int(3, 7);
       a.punts += 1;
     }

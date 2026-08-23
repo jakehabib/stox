@@ -207,7 +207,27 @@ export const HISTORY = {
  * split a team's yards pass/run on how often it CALLED a pass rather than on
  * what a pass gains, which inflated every rusher in the league.
  *
- * TRIMMED AGAIN AFTERWARDS, by the two measured ratios and nothing else. Two
+ * TRIMMED A THIRD TIME, AND BY MORE, WHEN THE DRIVE SIM'S VOLUME WAS FIXED.
+ * lib/sim/engine.ts was producing 409 total yards a team-game against a real
+ * ~330, and the leading passer it produced — 5,909 — was past the NFL's
+ * all-time record of 5,477, in a league that put 8.3 men over 5,000 yards
+ * every single season. Corrected, it runs 345 yards a team-game, the leading
+ * passer is 5,121 and 1.04 men a season clear 5,000. These bands were calibrated against the old number, so left alone
+ * they would have swung from "beatable by an all-time year" to a record
+ * nobody in the live league could ever approach — the same defect as the
+ * seeded 2,120-yard rusher below, in the opposite direction, and just as
+ * visible on the Ring of Honour screen.
+ *
+ * Scaled by the same rule as the trim below: four measured leader-mean ratios
+ * over 120 league-seasons replayed through both engines on identical rosters
+ * and seeds — passYds x0.867, passTd x0.916, rushYds x0.845, recYds x0.860.
+ * `tackles` and `sacks` are NOT scaled and that is a measurement, not an
+ * oversight: they come out of DEFENDER_TACKLES_PER_GAME and SACKS_PER_GAME,
+ * which are per-game constants the drive count does not touch, and the replay
+ * put them at x1.001 and x1.017. `defInt` measured x0.971, inside the noise of
+ * a 120-season sample, and is left alone too.
+ *
+ * TRIMMED AGAIN BEFORE THAT, by the two measured ratios and nothing else. Two
  * later corrections in lib/sim/engine.ts moved two of these six numbers and
  * left the other four alone: the quarterback's carries stopped being conjured
  * beside the team's rushing total and started coming out of it (leading rusher
@@ -220,13 +240,13 @@ export const HISTORY = {
  * regular-season replay cannot see.
  */
 export const SEASON_RECORD_BAND: Record<RecordCategory, { lo: number; hi: number }> = {
-  passYds: { lo: 6900, hi: 7400 },
-  passTd:  { lo: 58,   hi: 63 },
-  rushYds: { lo: 2250, hi: 2450 },
-  recYds:  { lo: 2350, hi: 2500 },
-  tackles: { lo: 168,  hi: 178 },
-  sacks:   { lo: 24,   hi: 27 },
-  defInt:  { lo: 13,   hi: 15 },
+  passYds: { lo: 5980, hi: 6410 },  // was 6900-7400, x0.867
+  passTd:  { lo: 53,   hi: 58 },    // was 58-63,     x0.916
+  rushYds: { lo: 1900, hi: 2070 },  // was 2250-2450, x0.845
+  recYds:  { lo: 2020, hi: 2150 },  // was 2350-2500, x0.860
+  tackles: { lo: 168,  hi: 178 },   // unscaled — measured x1.001
+  sacks:   { lo: 24,   hi: 27 },    // unscaled — measured x1.017
+  defInt:  { lo: 13,   hi: 15 },    // unscaled — measured x0.971, inside noise
 };
 
 /**
@@ -239,13 +259,13 @@ export const CAREER_RECORD_BAND: Record<RecordCategory, { lo: number; hi: number
   // Moved with the season bands above and by the same ratios, so a career
   // record still reads as "twelve to fourteen years of near-elite production"
   // in the units this sim now actually produces.
-  passYds: { lo: 54000, hi: 66000 },
-  passTd:  { lo: 400,   hi: 520 },
-  rushYds: { lo: 11300, hi: 14600 },
-  recYds:  { lo: 15500, hi: 20500 },
-  tackles: { lo: 1550,  hi: 1950 },
-  sacks:   { lo: 139,   hi: 181 },
-  defInt:  { lo: 47,    hi: 65 },
+  passYds: { lo: 46800, hi: 57200 },  // was 54000-66000, x0.867
+  passTd:  { lo: 366,   hi: 476 },    // was 400-520,     x0.916
+  rushYds: { lo: 9550,  hi: 12340 },  // was 11300-14600, x0.845
+  recYds:  { lo: 13330, hi: 17630 },  // was 15500-20500, x0.860
+  tackles: { lo: 1550,  hi: 1950 },   // unscaled, as above
+  sacks:   { lo: 139,   hi: 181 },    // unscaled, as above
+  defInt:  { lo: 47,    hi: 65 },     // unscaled, as above
 };
 
 /**
@@ -905,18 +925,34 @@ function coreSeason(
   const cap = (cat: RecordCategory, v: number) => Math.min(SEASON_RECORD_BAND[cat].hi, Math.round(v));
 
   // The per-position means below were re-fitted alongside SEASON_RECORD_BAND
-  // when lib/sim/engine.ts's stat allocator changed. A fabricated backstory
-  // whose great seasons do not look like the great seasons the live league
-  // produces is worse than no backstory: the Ring of Honour and the record
-  // book sit on the same screen as this year's leaders.
+  // when lib/sim/engine.ts's stat allocator changed, and scaled again with it
+  // when the drive sim's volume was corrected. A fabricated backstory whose
+  // great seasons do not look like the great seasons the live league produces
+  // is worse than no backstory: the Ring of Honour and the record book sit on
+  // the same screen as this year's leaders.
+  //
+  // THE DERIVED RATIOS MOVED THE OTHER WAY AND HAD TO BE SCALED SEPARATELY.
+  // Every branch below stores one volume and derives the rest off a ratio —
+  // carries from rushing yards, touchdowns from yards. Volume and ratio do NOT
+  // scale together, because the drive-sim correction cut plays harder than it
+  // cut yards: measured league-wide over the same 120 replayed league-seasons,
+  // yards per carry went UP 4.32 -> 4.56 and yards per reception 10.23 ->
+  // 10.63, while yards per touchdown came DOWN (passing 151.6 -> 139.6,
+  // rushing 128.9 -> 120.0) because touchdowns follow the drive count and
+  // yards follow drive length. Scaling the volumes alone would have left every
+  // seeded back carrying the ball 15% more often than a live one to gain the
+  // same ground.
   switch (position) {
     case 'QB': {
-      const passYds = cap('passYds', n(2700 + q * 3300, 400) * vol);
+      const passYds = cap('passYds', n(2340 + q * 2860, 347) * vol);  // x0.867
       const passAtt = Math.round(passYds / rng.float(5.5, 6.5));
       return {
         gp, passAtt, passCmp: Math.round(passAtt * clamp(0.56 + q * 0.10 + rng.normal(0, 0.02), 0.5, 0.72)),
-        passYds, passTd: cap('passTd', passYds / rng.float(105, 145)),
-        int: Math.round(clamp(rng.normal(16 - q * 7, 4), 2, 28) * vol),
+        // Yards per touchdown pass: x0.921. Interceptions: x0.913, and for the
+        // same reason — a giveaway is a drive outcome, so it tracks the drive
+        // count, not the yardage.
+        passYds, passTd: cap('passTd', passYds / rng.float(97, 134)),
+        int: Math.round(clamp(rng.normal(14.6 - q * 6.4, 3.7), 2, 26) * vol),
         rushAtt: Math.round(rng.int(28, 62) * vol), rushYds: Math.round(rng.int(20, 260) * vol),
       };
     }
@@ -929,21 +965,26 @@ function coreSeason(
     // sitting on the same screen as this year's rushing table. Both numbers
     // are now the live league's, measured over 120 replayed league-seasons.
     case 'RB': {
-      const rushYds = cap('rushYds', n(470 + q * 1310, 190) * vol);
+      const rushYds = cap('rushYds', n(397 + q * 1107, 161) * vol);  // x0.845
       const rec = Math.round(rng.int(8, 55) * vol);
       return {
-        gp, rushAtt: Math.round(rushYds / rng.float(4.1, 5.2)), rushYds,
-        rushTd: Math.round(rushYds / rng.float(85, 155)),
-        rec, recYds: Math.round(rec * rng.float(2.4, 5.6)),
+        // Yards per carry x1.056 and yards per rushing TD x0.931 — see the
+        // note above on why these two move in opposite directions.
+        gp, rushAtt: Math.round(rushYds / rng.float(4.3, 5.5)), rushYds,
+        rushTd: Math.round(rushYds / rng.float(79, 144)),
+        rec, recYds: Math.round(rec * rng.float(2.5, 5.8)),
       };
     }
     case 'WR': case 'TE': {
-      const base = position === 'WR' ? 500 + q * 1320 : 280 + q * 600;
-      const recYds = cap('recYds', n(base, 150) * vol);
-      const rec = Math.round(recYds / rng.float(8.2, 10.8));
+      const base = position === 'WR' ? 430 + q * 1135 : 241 + q * 516;  // x0.860
+      const recYds = cap('recYds', n(base, 129) * vol);
+      // Yards per reception x1.040, yards per receiving TD x0.921. The
+      // catch rate that turns receptions back into targets is untouched: it is
+      // a share, and the correction did not move it.
+      const rec = Math.round(recYds / rng.float(8.5, 11.2));
       return {
         gp, targets: Math.round(rec / rng.float(0.58, 0.68)), rec, recYds,
-        recTd: Math.round(recYds / rng.float(115, 210)),
+        recTd: Math.round(recYds / rng.float(106, 193)),
       };
     }
     // A pass rusher's line used to read 88 tackles, 12 sacks and nothing else:

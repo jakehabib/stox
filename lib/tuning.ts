@@ -677,8 +677,35 @@ export const SIM = {
   UNIT_BASELINE: 60,
   /** Points per full drive at league-average offense vs league-average defense. */
   BASE_POINTS_PER_DRIVE: 1.85,
-  /** Drives per team per game. Real NFL ~11. */
-  DRIVES_PER_TEAM: 11,
+  /**
+   * [TUNE] LIVE drives per team per game. Was 11 on the note "Real NFL ~11".
+   *
+   * The NFL figure is right and the mapping onto this engine was not. A real
+   * team gets about 11.2 possessions a game, but roughly 1.4 of them are the
+   * drive that ends a half or the game — a kneel-down, or two snaps and the
+   * clock — and this sim has no such outcome. `DriveResult` declares
+   * 'END_HALF' and nothing has ever produced one, so all 11 possessions here
+   * were full scoring chances and every one of them was handed a punt drive's
+   * worth of yardage. Real football's ~9.8 LIVE drives is what this constant
+   * governs, so it is 10.
+   *
+   * That gap was the last irreducible part of the yardage surplus. With the
+   * per-drive yardage in lib/sim/engine.ts corrected to real drive lengths,
+   * this engine still floored at ~381 total yards a team-game at 11 drives
+   * against a real ~330, because 26% of its drives end in a touchdown (2.86 a
+   * game, against a real 2.2) and a touchdown drive is 66 yards by geometry —
+   * you cannot shorten it without moving the end zone. Removing the drive
+   * real football spends kneeling is the honest way to remove those yards.
+   *
+   * It takes scoring from 24.4 to 22.2 a team-game, which reads like a step
+   * past the real ~22.5 and is not: every point this sim scores is scored by
+   * an offence, where about 1.8 of a real team's 21.8 come from returns,
+   * defensive scores and safeties this engine does not simulate. Against real
+   * OFFENSIVE scoring of ~20 a game, 22.2 is still a little hot.
+   *
+   * lib/gameShape.ts mirrors this as a literal and had to move with it.
+   */
+  DRIVES_PER_TEAM: 10,
   /** How much a 1-point unit-rating edge moves expected points per drive. */
   RATING_TO_PPD: 0.028,
   /** Home field advantage, added to the home offense's unit score. */
