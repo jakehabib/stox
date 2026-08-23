@@ -117,7 +117,26 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   const draftOrder = await draftOrderContext(league.id);
   const upcomingDraftYear = draftOrder.imminentYear;
 
-  const shortlistEntries = await prisma.shortlistEntry.findMany({ where: { teamId: team.id }, select: { playerId: true } });
+  // SCOPED TO MEN WHO ARE STILL PROSPECTS, and that scoping is the fix for a
+  // counter that lied for the life of a save. ShortlistEntry carries no year
+  // and no league — only a playerId and a teamId — so an unfiltered read by
+  // team returns every star the club has ever placed, in every draft it has
+  // ever held. The app owner, in his second draft: *"it's the next year and
+  // it says I have '4 players watched' even tho i don't"*. He was reading
+  // last year's stars, four men who by then were on his roster or somebody
+  // else's.
+  //
+  // The rows themselves are cleared when a draft ends now (lib/season.ts,
+  // DRAFT and FANTASY_DRAFT), which is the real fix. This filter is the one
+  // that also holds for a save created before that landed, and for the
+  // stretch between a draft ending and the next class arriving. isDraftee is
+  // the same test the scouting department already applies to the same rows
+  // (loadAttentionPlan, lib/shortlistAttention.ts) — which is why THAT page
+  // was reading zero while this one read four.
+  const shortlistEntries = await prisma.shortlistEntry.findMany({
+    where: { teamId: team.id, player: { leagueId: league.id, isDraftee: true } },
+    select: { playerId: true },
+  });
   const shortlistIds = new Set(shortlistEntries.map((s) => s.playerId));
   const shortlistOnly = searchParams.shortlist === '1';
 
@@ -2093,9 +2112,13 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       {draftJustFinished && !twoViews && recap}
 
       {twoViews ? (
+        /* A live draft opens on the board — which is also its leading tab. A
+           finished one opens on the recap, for the same reason: it leads there
+           too. See DraftViewToggle's header. */
         <DraftViewToggle
           urgent={boardUrgent}
           urgentNote={urgentNote}
+          defaultView={draftClosed ? 'room' : 'board'}
           panes={draftClosed
             ? [
                 {

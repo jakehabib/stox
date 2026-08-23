@@ -617,6 +617,21 @@ async function runPhaseStep(leagueId: string) {
         data: { isDraftee: false },
       });
 
+      // AND THE SHORTLIST IS A DRAFT'S PAPERWORK, NOT A CLUB'S.
+      // ShortlistEntry has a playerId and a teamId and nothing else — no
+      // year, no league, no draft. Nothing had ever deleted one, so a star
+      // placed on a prospect in 2027 was still on the books in 2029, long
+      // after the man was drafted, cut, or retired. Every screen that counted
+      // by team read those ghosts: the app owner opened his second draft to
+      // "4 players watched" against a board he had not touched.
+      //
+      // The draft is over and DraftState says so, so every star on it has
+      // been answered — the man was taken by somebody or he just became a
+      // free agent one line above. Same reasoning as the isDraftee clear
+      // directly above, and the same no-year-filter-needed conclusion: what
+      // is on the board when the board closes is what closed with it.
+      await prisma.shortlistEntry.deleteMany({ where: { player: { leagueId } } });
+
       // Final cuts. Free agency and the draft both add bodies and neither
       // has ever read LEAGUE.ROSTER_MAX, so a team could roll into the season
       // carrying 57 players (INV-08). Nobody notices while the re-sign wave
@@ -659,6 +674,8 @@ async function runPhaseStep(leagueId: string) {
         where: { leagueId, isDraftee: true },
         data: { isDraftee: false },
       });
+      // Same closing of the books as the rookie draft above.
+      await prisma.shortlistEntry.deleteMany({ where: { player: { leagueId } } });
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'PRESEASON', week: 1 } });
       return {
         summary: leftovers.count > 0

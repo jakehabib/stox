@@ -46,21 +46,24 @@ export interface DraftPane {
  * Which is why a pane carries an `id` for its job and a `label` for its name:
  * the same two lanes, renamed for the moment they are read in.
  *
- * THE DEFAULT IS SITUATIONAL, NOT STICKY. A sticky default is wrong in both
- * directions: pinned to the room, the board is buried when you go on the
- * clock; pinned to the board, you never see the draft happen. `urgent` is the
- * page's answer to "is this about to be your turn" — on the clock, or one name
- * away — and the spectacle plays until it flips, at which point the thing you
- * decide with is already in front of you.
+ * THE DEFAULT IS THE CALLER'S CALL, and it used to be this component's. It
+ * guessed from `urgent` — on the clock or one name away — so a GM who opened
+ * a live draft holding pick 20 landed on the broadcast, and the board he had
+ * spent a season building was one click away rather than in front of him. The
+ * app owner: *"when we start the draft, it should default to showing the draft
+ * board not the war room"*. It is also the tab-order the page already declares
+ * for a live draft: the board is the leading pane there, and a leading tab
+ * that is not the open one is a screen disagreeing with itself.
  *
- * AFTER THE LAST CARD NOTHING IS URGENT EVER AGAIN, and that is the answer to
- * "what does a GM land on the day after, and what does he land on a week
- * later". `urgent` is false for a finished draft and cannot become true, so
- * the room leads — and the room is now the recap, which is the whole reason to
- * open this page once the drafting is done. It reads the same on the first
- * visit and the tenth, because the record of a draft does not go stale. The
- * one thing that does — the undrafted, who are free agents the moment the
- * league moves on — is the other tab, named for exactly that.
+ * So the page passes `defaultView`, because the page is the half that knows
+ * which situation this is. `urgent` is still read, but only for the scoping
+ * below — it is what "the situation" MEANS, not what it selects.
+ *
+ * AFTER THE LAST CARD the recap is the whole reason to open this page, so the
+ * page defaults it to the room — and the room is the recap. It reads the same
+ * on the first visit and the tenth, because the record of a draft does not go
+ * stale. The one thing that does — the undrafted, who are free agents the
+ * moment the league moves on — is the other tab, named for exactly that.
  *
  * A MANUAL CHOICE IS SCOPED TO THE SITUATION IT WAS MADE IN. This page
  * re-renders every few seconds while a draft runs (LiveDraftTicker calls
@@ -82,10 +85,15 @@ export interface DraftPane {
  * inactive pane is hidden rather than unmounted, so flipping is instant and
  * neither side re-lays-out under him.
  */
-export function DraftViewToggle({ panes, urgent, urgentNote }: {
+export function DraftViewToggle({ panes, urgent, urgentNote, defaultView }: {
   /** Both panes, in tab order — the leading one first. */
   panes: [DraftPane, DraftPane];
-  /** On the clock, or one selection away. Decides the default, nothing else. */
+  /** Which pane is open before the reader chooses one. Normally the leading pane. */
+  defaultView: DraftView;
+  /**
+   * On the clock, or one selection away. This is the SITUATION a manual choice
+   * is scoped to (see below) — it no longer picks the default.
+   */
   urgent: boolean;
   /** Why it is urgent, in the room's own words — "You are on the clock." */
   urgentNote?: string;
@@ -98,34 +106,58 @@ export function DraftViewToggle({ panes, urgent, urgentNote }: {
   if (choice && choice.madeWhileUrgent !== urgent) setChoice(null);
 
   const live = choice && choice.madeWhileUrgent === urgent ? choice.view : null;
-  const view: DraftView = live ?? (urgent ? 'board' : 'room');
+  const view: DraftView = live ?? defaultView;
 
   return (
     <div className="space-y-6">
+      {/* BOTH TABS HAVE TO LOOK LIKE TABS. The first cut styled the open one
+          and left the other as grey text on the same ground — which reads as a
+          heading with a word after it, not as a control. The app owner: *"it
+          should also be more obvious that there are two tabs there for the
+          draft and war room"*. Three things carry it now, and none of them is
+          a line of instructions: the closed tab is RAISED and legible (its own
+          surface, chalk text, its own border) rather than dim text on the same
+          ground; the open one is CUT INTO the page (darker, accent bar along
+          its bottom edge, no bottom border) so the panel below reads as its
+          body; and the pair splits the full width at every breakpoint, so two
+          equal halves is the first thing the shape says. */}
       <div
         role="tablist"
         aria-label="Draft day view"
-        className="flex items-stretch flex-wrap rounded-lg border border-line/70 bg-ink/30 divide-x divide-line/40 overflow-hidden"
+        className="flex items-stretch flex-wrap gap-px rounded-lg border border-line/70 bg-line/40 overflow-hidden"
       >
-        {panes.map((pane) => (
-          <button
-            key={pane.id}
-            type="button" role="tab" aria-selected={view === pane.id}
-            onClick={() => setChoice({ view: pane.id, madeWhileUrgent: urgent })}
-            className={`relative flex-1 sm:flex-none flex flex-col items-start px-5 py-3 transition-colors ${
-              view === pane.id ? 'text-chalk bg-chalk/[0.05]' : 'text-muted hover:text-chalk hover:bg-raised/40'
-            }`}
-          >
-            <span className="font-display font-bold uppercase tracking-[0.14em] text-base leading-none">{pane.label}</span>
-            {pane.hint && <span className="text-[11px] text-muted mt-1 leading-none">{pane.hint}</span>}
-            <span
-              aria-hidden="true"
-              className={`absolute inset-x-0 bottom-0 h-[3px] ${view === pane.id ? 'bg-accent' : 'bg-transparent'}`}
-            />
-          </button>
-        ))}
+        {panes.map((pane) => {
+          const open = view === pane.id;
+          return (
+            <button
+              key={pane.id}
+              type="button" role="tab" aria-selected={open}
+              onClick={() => setChoice({ view: pane.id, madeWhileUrgent: urgent })}
+              className={`relative flex-1 min-w-[9rem] flex flex-col items-start px-5 py-3 transition-colors ${
+                open
+                  ? 'bg-ink text-chalk'
+                  : 'bg-raised/70 text-chalk/70 hover:bg-raised hover:text-chalk'
+              }`}
+            >
+              <span className="font-display font-bold uppercase tracking-[0.14em] text-base leading-none">{pane.label}</span>
+              {pane.hint && (
+                <span className={`text-[11px] mt-1 leading-none ${open ? 'text-muted' : 'text-muted/90'}`}>{pane.hint}</span>
+              )}
+              {/* The closed tab says what it is FOR in one word, because "The
+                  Room" and "What's Left" name a place, not an action. It is on
+                  the closed tab only — the open one is already open. */}
+              {!open && (
+                <span className="absolute top-2 right-3 text-[10px] uppercase tracking-[0.16em] text-accent2">View</span>
+              )}
+              <span
+                aria-hidden="true"
+                className={`absolute inset-x-0 bottom-0 h-[3px] ${open ? 'bg-accent' : 'bg-transparent'}`}
+              />
+            </button>
+          );
+        })}
         {urgent && urgentNote && (
-          <div className="hidden md:flex items-center px-4 text-xs text-accent border-l-0">
+          <div className="hidden lg:flex items-center px-4 text-xs text-accent bg-ink/60">
             {view === 'board' ? `${urgentNote} The board is up.` : `${urgentNote} The board is one click away.`}
           </div>
         )}
