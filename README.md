@@ -394,6 +394,37 @@ something here, the principle wins and the change is wrong.
    on anyway. The owner's ruling: *"lets just do what we can reasonably do
    without reinventing the wheel."*
 
+7. **Every page gets decluttered, and length is not the same as clutter.**
+   *"We still want it decluttered — as with EVERY page on our game. we should
+   try to eliminate clutter where we can."* This is a standing rule, not a
+   one-off request, and it has a specific meaning worked out across several
+   passes.
+
+   What gets cut is **a second reading of a fact already on the screen**, **a
+   panel that reports nothing** and **anything with no job on the page it is
+   on**. The draft-complete pass (`14e64b4`) is the worked example: it cut a
+   selection feed that was a *third* rendering of the same 224 picks, a "Best
+   Available" panel that was the first eight rows of the table directly
+   beneath it re-laid-out, a war-room ledger reading all zeros by definition
+   once the board was empty, and a private-workout line offering a budget
+   nobody could spend. 4,971px to 2,771px, and nothing a GM would go looking
+   for was lost.
+
+   What does NOT get cut is depth. The owner, on the GM career page: *"I
+   would rather have a lot of really cool data on GM career across 2 or 3
+   tabs rather than minimal on one tab to save room."* A long panel with one
+   job, a clear hierarchy and room to breathe is good; a short one where four
+   panels compete for attention is clutter. **Height is a signal, not a
+   target** — ask whether a page is long because it is rich or long because
+   it repeats itself, and only the second is a defect.
+
+   Tabs are the tool that resolves the two: more total content, each view
+   with a single job stated in its name, and every panel in it earning its
+   place against that job. `DraftViewToggle` and `PlayerCardTabs` are the
+   pattern — switching is client state, never a URL, because both panes are
+   already server-rendered when the page paints, so a navigation would buy
+   nothing and cost the reader his scroll position.
+
 ## Known simplifications (documented, not bugs)
 
 - ~~Negotiation patience is per-session, not stored.~~ **Fixed — this entry
