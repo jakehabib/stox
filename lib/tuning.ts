@@ -179,6 +179,29 @@ export const FREE_AGENCY = {
    * pricier stays on the board for the wave and for the user. A club with no
    * minimum-tier body left still falls back to the cheapest man available
    * rather than staying illegal; see fillTeamsToRosterMinimum. [TUNE]
+   *
+   * THE USER'S "FILL ROSTER" BUTTON SHOPS THE SAME TIER. `planRosterFill`
+   * (lib/freeagency.ts) admits a free agent only if his `askingPrice` already
+   * sits at or under this, then offers him exactly that price on a one-year,
+   * no-bonus, nothing-guaranteed deal. The two paths differ in what they PAY
+   * inside the tier — the AI's recovery fill offers a flat CAP.MIN_SALARY, the
+   * user's button pays each man his own ask — but one constant fixes what
+   * either of them can REACH, so a human cannot buy a body a CPU club could
+   * not. That is what stops the button being a way to sign a starter for the
+   * minimum, which is exactly what it had become.
+   *
+   * WHY 1.5x AND NOT A FLAT 1.0x. `marketValue` floors every ask at
+   * CAP.MIN_SALARY and rounds to $100K, so an exact-minimum filter admits only
+   * the men the curve has already bottomed out on — a thin, arbitrary slice of
+   * the bottom of the board that empties the moment a couple of clubs fill.
+   * 1.5x is the veteran-minimum tier as football actually uses it: the
+   * minimum plus a small sweetener, still a deal any club can walk away from.
+   * At a $1.0M minimum that is a $1.5M ceiling. WHAT IT REACHES IS NOT ONE
+   * RATING: `askingPrice` discounts for position and for weeks spent on the
+   * wire, so a cheap-position veteran nobody has called about clears it at a
+   * higher overall than a premium-position man does. Measured on a fresh
+   * league in PRESEASON it admitted bodies up to about 70 OVR at RB and 68 at
+   * LB, and nothing any club would field as a starter.
    */
   FILL_MAX_MARKET_MULT: 1.5,
 

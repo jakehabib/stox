@@ -3,13 +3,12 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { assertLeagueOwner, assertTeamOwner, assertPlayerOnUserTeam, userTeamId } from '@/lib/owner';
-import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFranchiseTag, fillRosterForTeam, resolveNegotiationSession, negotiateOffer } from '@/lib/freeagency';
+import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFranchiseTag, fillRosterForTeam, planRosterFill, resolveNegotiationSession, negotiateOffer, type FillRosterPlan } from '@/lib/freeagency';
 import { decideOffer, type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer } from '@/lib/negotiation';
 import { parseSettings } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { capHit, deadMoneyOnCut, capSavingsOnCut, formatMoney, unamortizedBonus, guaranteedSalaryOwed, restructureContract as computeRestructure } from '@/lib/cap';
 import { autoDepthChart, reconcileDepthChart } from '@/lib/gen/league';
-import { Rng } from '@/lib/rng';
 import { readJson, writeJson } from '@/lib/json';
 import { AttrMap, positionMove, canChangePositionTo, relatedPositions } from '@/lib/ratings';
 import { canonicalPosition, Position } from '@/lib/tuning';
@@ -113,12 +112,42 @@ export async function cutImpactAction(leagueId: string, playerId: string): Promi
   };
 }
 
-export async function fillRosterAction(leagueId: string, teamId: string) {
+/**
+ * ===========================================================================
+ * FILL ROSTER, IN TWO STEPS
+ * ===========================================================================
+ * It was one step, and the playtest audit and the pre-launch review both filed
+ * the same complaint about it: *"One curiosity click deletes 80% of a new
+ * player's cap in 3 seconds with no undo"* (docs/playtest-audit.md, Tier 1) and
+ * *"`components/FillRosterButton.tsx` has no dialog, no preview, no undo —
+ * `run()` calls the server action directly … Fill Roster shows who and for how
+ * much before it commits"* (docs/prelaunch-design-review.md §9).
+ *
+ * So: `previewFillRosterAction` decides and prices without writing, and
+ * `fillRosterAction` re-decides and writes. The commit deliberately does NOT
+ * accept the plan it was shown — see fillRosterForTeam — so the sheet is a
+ * courtesy to the user rather than a thing the server trusts.
+ *
+ * BOTH CHECK THE TEAM, not just the league. This took a `teamId` off the wire
+ * and filled whatever roster it named, on the strength of owning some team in
+ * that league; `assertTeamOwner` is the same guard its neighbours in this file
+ * already use.
+ * ===========================================================================
+ */
+export async function previewFillRosterAction(leagueId: string, teamId: string): Promise<FillRosterPlan> {
   await assertLeagueOwner(leagueId);
+  await assertTeamOwner(teamId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
-  const rng = new Rng(`fill-roster-${teamId}-${league.seasonYear}-${league.week}`);
-  const result = await fillRosterForTeam({ leagueId, teamId, seasonYear: league.seasonYear, week: league.week, settings, rng });
+  return planRosterFill({ leagueId, teamId, seasonYear: league.seasonYear, settings });
+}
+
+export async function fillRosterAction(leagueId: string, teamId: string) {
+  await assertLeagueOwner(leagueId);
+  await assertTeamOwner(teamId);
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  const result = await fillRosterForTeam({ leagueId, teamId, seasonYear: league.seasonYear, week: league.week, settings });
   revalidatePath(`/league/${leagueId}`, 'layout');
   return result;
 }

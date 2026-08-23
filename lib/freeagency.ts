@@ -3,7 +3,7 @@ import { Rng, clamp } from './rng';
 import { AI, CAP, LEAGUE, FREE_AGENCY, ROSTER_TARGETS, Position, rosterMinFor } from './tuning';
 import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
-import { askingPrice, marketValue, buildContract, suggestedYears, capHit, capSavingsOnCut, formatMoney, guaranteedMoney, maxYearsForAge } from './cap';
+import { askingPrice, marketValue, buildContract, suggestedYears, capHit, capSavingsOnCut, deadMoneyOnCut, formatMoney, guaranteedMoney, maxYearsForAge } from './cap';
 import { buildScoutedView } from './scouting';
 import { loadDynastyProfile, parseSkills, scoutingModsFor, signBandMultFor } from './dynasty';
 import {
@@ -1780,12 +1780,253 @@ export async function fillTeamsToRosterMinimum(
 }
 
 /**
- * "Fill Roster" — sign free agents for the user's own understaffed
- * positions, using the exact same market-value offer and cap-enforcing
- * signFreeAgent() path as every other signing in the game (AI waves and
- * user negotiation alike). One pass = at most one signing per position
- * that still shows a notable need, most severe first — click again for
- * another pass if bodies or cap room remain.
+ * ===========================================================================
+ * "FILL ROSTER" — CAMP BODIES, NOT SHOPPING
+ * ===========================================================================
+ * WHAT THIS BUTTON DID, in the app owner's words: *"the fill roster button by
+ * default should fill with league minimum or close to league minimum salary
+ * players on 1 year deals. my fill roster signed 3 backups to huge
+ * contracts."* And then: *"it basically bricked my save cause i cant get out
+ * of these contracts."*
+ *
+ * Four decisions compounded into that, and all four are gone:
+ *
+ *   1. `orderBy: { trueOvr: 'desc' }, take: 10` per needed position — it went
+ *      after the BEST free agent on the board, not a body to reach 53.
+ *   2. It priced him with `maxOffer` (lib/ai/gm.ts): askingPrice x overpay x
+ *      noise, scaled by AI.FA_MAX_OVERPAY, GM aggression and need. That
+ *      function exists to WIN a contested free agent — it bids deliberately
+ *      ABOVE market, which is the last thing a roster-filling click should do.
+ *   3. Term came from `suggestedYears`, so a good young man got
+ *      CONTRACT.MAX_DEAL_YEARS and the money was locked in for years.
+ *   4. It passed no `bonusPct`, so `buildContract` applied its 0.28 default:
+ *      28% of the deal handed over as signing bonus, prorated. THAT is why he
+ *      could not cut his way back out — releasing one accelerates the
+ *      unamortised bonus onto the cap as dead money.
+ *
+ * THE TRAP IN FIXING IT, which is the whole difficulty of this function:
+ * `signFreeAgent` runs no acceptance check on this path. Nobody says no. Drop
+ * the price while still ordering the board by trueOvr and you have not fixed a
+ * bad default, you have built the worst exploit in the game — a 90-overall on
+ * a $1M deal, one click, no negotiation.
+ *
+ * So THE PRICE AND THE CANDIDATE LIST ARE THE SAME FILTER. A man is eligible
+ * only if what he will already sign for today — `askingPrice`, the number
+ * every free-agent price in the game goes through — is inside the tier a
+ * one-year minimum deal actually reaches (FREE_AGENCY.FILL_MAX_MARKET_MULT),
+ * and the offer written is that same number. We never underpay him and we
+ * never reach above the tier, so there is nothing left for an acceptance check
+ * to catch. Anyone pricier stays on the board, where signing him is a
+ * negotiation like it is for every other club.
+ *
+ * NO FALLBACK TO THE CHEAPEST MAN LEFT, unlike `fillTeamsToRosterMinimum`
+ * above. An AI club may not be left sitting below the legal roster minimum, so
+ * that path takes the cheapest body rather than stay illegal. This one is a
+ * button the user pressed, and "nobody at CB will play for the minimum" is a
+ * true sentence he can act on — it beats quietly handing him a contract he did
+ * not choose, which is the failure this whole rewrite is about.
+ *
+ * NOTHING HERE IS RANDOM ANY MORE. That fell out of removing `maxOffer`'s
+ * noise, and it is worth keeping: the plan the confirm sheet showed and the
+ * plan the commit re-derives are the same plan unless the world genuinely
+ * moved between the two clicks.
+ * ===========================================================================
+ */
+
+/** One deal the button proposes, priced exactly as it will be written. */
+export interface FillRosterSigning {
+  playerId: string;
+  name: string;
+  position: string;
+  age: number;
+  /** What he will already sign for today. Never a premium on top of it. */
+  apy: number;
+  years: number;
+  /** Year-1 cap hit of the contract this actually produces, in the league's mode. */
+  capHit: number;
+  /**
+   * What releasing him tomorrow would cost. Zero by construction — no signing
+   * bonus, nothing guaranteed — and carried on the row because that promise is
+   * the entire point of a minimum deal and the thing that was broken.
+   */
+  deadMoneyIfCut: number;
+}
+
+/** A position that needs a body and is being left empty anyway, and why. */
+export interface FillRosterPass {
+  position: string;
+  reason: string;
+}
+
+export interface FillRosterPlan {
+  /** Men on your books now, and the two lines this button works between. */
+  rosterCount: number;
+  rosterMin: number;
+  rosterMax: number;
+  /**
+   * False only in OFF mode. `CapSummary.capSpace` is +Infinity there, so the
+   * two figures below are zeroed rather than passed on — see the doc on
+   * CapSummary.capSpace for why rendering it directly prints "$InfinityM".
+   */
+  capEnabled: boolean;
+  capSpaceBefore: number;
+  capSpaceAfter: number;
+  totalCapHit: number;
+  signings: FillRosterSigning[];
+  passed: FillRosterPass[];
+  /** Why the pass stopped before working through every need, if it did. */
+  stoppedBy: string | null;
+}
+
+/**
+ * Everything the button is about to do, decided and priced, with nothing
+ * written. The confirm sheet renders this; the commit below re-derives it.
+ *
+ * Exported because the preview and the signing MUST come out of the same
+ * function — a sheet that quoted a different plan than the one that ran would
+ * be the lying metric this codebase keeps writing down (README principle 6).
+ */
+export async function planRosterFill(opts: {
+  leagueId: string;
+  teamId: string;
+  seasonYear: number;
+  settings: LeagueSettings;
+}): Promise<FillRosterPlan> {
+  const { leagueId, teamId, seasonYear, settings } = opts;
+  const capMode = settings.capMode;
+  const rosterMax = settings.rosterMax ?? LEAGUE.ROSTER_MAX;
+  const rosterMin = rosterMinFor(rosterMax);
+
+  const roster = await prisma.player.findMany({
+    where: { teamId },
+    select: { id: true, position: true, trueOvr: true, age: true, potential: true },
+  });
+  const needs = teamNeeds(roster as RosterPlayer[]);
+  const neededPositions = Object.entries(needs)
+    .filter(([, v]) => v >= 0.15) // same "Notable" floor as the Roster Needs widget
+    .sort((a, b) => b[1] - a[1]);
+
+  const summary = await teamCapSummary(teamId, seasonYear, capMode);
+  // A BUTTON MAY NOT SPEND THE LAST OF YOUR ROOM. Kept from the original: it
+  // leaves enough behind for the in-season moves a GM still has to make (an
+  // injury replacement, a claim) rather than pinning the club at zero to fill
+  // a bench spot. In OFF mode capSpace is +Infinity and this is a no-op.
+  const reserve = 3_000_000;
+
+  // THE WHOLE POOL, PRICED ONCE, AND DELIBERATELY UNBOUNDED. The eligible tier
+  // is the BOTTOM of the board by definition, so a per-position `orderBy
+  // trueOvr desc, take: 10` — what this used to run — hands back ten men who
+  // are all too expensive and calls the position empty. Ordering the other way
+  // and taking N would be a guess too: `askingPrice` carries position and age
+  // multipliers, so it is not monotonic in trueOvr and the cheapest N by
+  // rating is not the cheapest N by price. A few hundred narrow rows, once per
+  // click, is the honest read.
+  const pool = await prisma.player.findMany({
+    where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+    orderBy: [{ trueOvr: 'desc' }, { id: 'asc' }],
+    select: {
+      id: true, firstName: true, lastName: true, position: true,
+      trueOvr: true, age: true, potential: true, weeksUnsigned: true,
+    },
+  });
+  // PRICED OFF `trueOvr`, NOT off this club's scouting report. The eligibility
+  // test and the offer are one number and that number has to be the man's real
+  // one: price him through a fogged view and a bad scouting department turns
+  // into a way to sign a 90-overall for the minimum — the same exploit by a
+  // different door.
+  const ceiling = CAP.MIN_SALARY * FREE_AGENCY.FILL_MAX_MARKET_MULT;
+  const eligible = pool
+    .map((p) => ({
+      ...p,
+      ask: askingPrice({
+        ovr: p.trueOvr, position: p.position as Position, age: p.age,
+        potential: p.potential, weeksUnsigned: p.weeksUnsigned,
+      }),
+    }))
+    .filter((p) => p.ask <= ceiling);
+
+  const signings: FillRosterSigning[] = [];
+  const passed: FillRosterPass[] = [];
+  const taken = new Set<string>();
+  let openSlots = Math.max(0, rosterMax - roster.length);
+  let spent = 0;
+  let stoppedBy: string | null = null;
+
+  for (const [position] of neededPositions) {
+    if (openSlots <= 0) {
+      stoppedBy = `You are at the ${rosterMax}-man limit — there is no spot left to sign anyone into.`;
+      break;
+    }
+    const pick = eligible.find((c) => c.position === position && !taken.has(c.id));
+    if (!pick) {
+      passed.push({ position, reason: `nobody at ${position} will play for the minimum` });
+      continue;
+    }
+
+    // The deal that would actually be written, built by the same call
+    // `signFreeAgent` makes, so the cap hit quoted here is the cap hit charged.
+    const contract = buildContract({
+      apy: pick.ask,
+      years: 1,
+      signedYear: seasonYear,
+      // NO BONUS, NOTHING GUARANTEED, and both are stated rather than
+      // inherited. `buildContract` defaults to bonusPct 0.28 / guaranteedPct
+      // 0.45, and those two defaults are what turned a bench signing into a
+      // contract the owner could not release: the bonus accelerates on a cut
+      // and the guaranteed base is owed for a season he will not play. A camp
+      // body has to be free to cut the day after camp — that is what the deal
+      // is FOR, and it is what would have saved the save.
+      bonusPct: 0,
+      guaranteedPct: 0,
+    });
+    const stored = { ...contract, baseSalaries: writeJson(contract.baseSalaries) };
+    const hit = capHit(stored, capMode);
+
+    if (hit > summary.capSpace - spent - reserve) {
+      stoppedBy = 'Not enough cap room left for another minimum deal.';
+      break;
+    }
+
+    signings.push({
+      playerId: pick.id,
+      name: `${pick.firstName} ${pick.lastName}`,
+      position,
+      age: pick.age,
+      apy: pick.ask,
+      years: contract.years,
+      capHit: hit,
+      // Read back off the contract rather than asserted to be zero. If a future
+      // change to `buildContract` ever put money back into one of these, the
+      // sheet says so instead of printing a promise the deal no longer keeps.
+      deadMoneyIfCut: deadMoneyOnCut(stored, capMode),
+    });
+    taken.add(pick.id);
+    openSlots -= 1;
+    spent += hit;
+  }
+
+  return {
+    rosterCount: roster.length,
+    rosterMin,
+    rosterMax,
+    capEnabled: summary.capEnabled,
+    capSpaceBefore: summary.capEnabled ? summary.capSpace : 0,
+    capSpaceAfter: summary.capEnabled ? summary.capSpace - spent : 0,
+    totalCapHit: spent,
+    signings,
+    passed,
+    stoppedBy,
+  };
+}
+
+/**
+ * Sign the plan. One pass = at most one man per position that still shows a
+ * notable need, most severe first — click again if bodies and room remain.
+ *
+ * IT RE-PLANS RATHER THAN TAKING A PLAN. A Server Action is a POST endpoint
+ * whether or not a confirm sheet stands in front of it, so a list of player ids
+ * and prices arriving from the client is a request, not a decision. Re-deriving
+ * costs one read and makes the sheet unforgeable.
  */
 export async function fillRosterForTeam(opts: {
   leagueId: string;
@@ -1793,51 +2034,37 @@ export async function fillRosterForTeam(opts: {
   seasonYear: number;
   week: number;
   settings: LeagueSettings;
-  rng: Rng;
-}): Promise<{ signed: { name: string; position: string; apy: number }[] }> {
-  const { leagueId, teamId, seasonYear, week, settings, rng } = opts;
-  const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
-  const profile = parseGmProfile(team.gmProfile, rng);
-  const signed: { name: string; position: string; apy: number }[] = [];
+  /**
+   * Unused. Kept so existing call sites still compile: this path had a random
+   * component only because it priced through `maxOffer`, and it does not any
+   * more — see NOTHING HERE IS RANDOM ANY MORE above.
+   */
+  rng?: Rng;
+}): Promise<{ plan: FillRosterPlan; signed: FillRosterSigning[]; missed: string[] }> {
+  const { leagueId, teamId, seasonYear, week, settings } = opts;
+  const plan = await planRosterFill({ leagueId, teamId, seasonYear, settings });
 
-  const roster = await prisma.player.findMany({ where: { teamId }, select: { id: true, position: true, trueOvr: true, age: true, potential: true } });
-  const needs = teamNeeds(roster as RosterPlayer[]);
-  let openSlots = Math.max(0, (settings.rosterMax ?? LEAGUE.ROSTER_MAX) - roster.length);
-  const neededPositions = Object.entries(needs)
-    .filter(([, v]) => v >= 0.15) // same "Notable" floor as the Roster Needs widget
-    .sort((a, b) => b[1] - a[1]);
-
-  const takenIds = new Set<string>();
-  for (const [position, needScore] of neededPositions) {
-    if (openSlots <= 0) break; // a legal roster tops out at rosterMax
-    const summary = await teamCapSummary(teamId, seasonYear, settings.capMode);
-    const budget = Math.max(0, summary.capSpace - 3_000_000);
-    if (budget < CAP.MIN_SALARY) break; // no room left at all — stop trying
-
-    const candidates = await prisma.player.findMany({
-      where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false, position },
-      orderBy: { trueOvr: 'desc' },
-      take: 10,
-    });
-    const pick = candidates.find((c) => !takenIds.has(c.id));
-    if (!pick) continue; // nobody left at this position this pass
-
-    const offer = maxOffer(pick as unknown as RosterPlayer, { profile, needs: { [position]: needScore }, capSpace: budget, rng });
-    if (offer < CAP.MIN_SALARY) continue;
-
-    const apy = Math.round(offer);
-    const years = suggestedYears(pick.trueOvr, pick.age);
+  const signed: FillRosterSigning[] = [];
+  const missed: string[] = [];
+  for (const s of plan.signings) {
     try {
-      await signFreeAgent({ leagueId, playerId: pick.id, teamId, apy, years, seasonYear, capMode: settings.capMode, week });
-      takenIds.add(pick.id);
-      openSlots--;
-      signed.push({ name: `${pick.firstName} ${pick.lastName}`, position, apy });
-    } catch {
-      /* cap edge case — try the next position */
+      await signFreeAgent({
+        leagueId, playerId: s.playerId, teamId, apy: s.apy, years: s.years,
+        seasonYear, capMode: settings.capMode, week,
+        // Same two arguments the plan priced with. Passing them again here
+        // rather than defaulting is the point of the fix, not a formality.
+        bonusPct: 0, guaranteedPct: 0,
+      });
+      signed.push(s);
+    } catch (err) {
+      // NAMED, NOT SWALLOWED. This used to be a bare `catch {}`, so a man who
+      // signed elsewhere between the read and the write simply never appeared
+      // and nothing said why.
+      missed.push(`${s.name} (${s.position}) — ${err instanceof Error ? err.message : 'that signing could not be completed'}`);
     }
   }
 
-  return { signed };
+  return { plan, signed, missed };
 }
 
 /**
