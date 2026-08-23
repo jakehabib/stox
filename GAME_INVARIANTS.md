@@ -6,7 +6,11 @@ mechanically checked. Almost all of them live in `lib/invariants.ts`, and the
 harness in `scripts/simHealth.ts` runs that check after every phase transition
 across many simulated leagues and seasons. A rule that is a property of the
 ARITHMETIC rather than of stored state cannot be read off a snapshot, so it
-carries its own standalone harness instead and names it (INV-21, INV-22).
+carries its own standalone harness instead and names it (INV-21, INV-22). And a
+rule the SCHEMA enforces is not checked at all, because it cannot be violated:
+a foreign key or a unique index makes the bad state unwritable rather than
+detectable, and those rules say which migration is doing the work (INV-23,
+INV-24).
 
 **Any change that touches core simulation logic (season flow, the draft,
 trades, free agency, contracts/cap) should run `npm run sim:health` before
@@ -283,6 +287,77 @@ other — `lib/invariants.ts` reports violations by ID.
   `settleClosingYearCapOverage` has rewritten whatever the closing year could
   not fund, and remains the only thing entitled to decide a charge has been
   paid.
+
+## Championships
+
+- **INV-24 — a title the save actually played names the men who won it, and a
+  ring is read off that list rather than guessed at.**
+  Structural rather than checked, for the same reason as INV-23 and one more:
+  `ChampionRoster` (migration `20260823140000_champion_roster`) holds one row
+  per man on the champion's roster at the instant the final ends, written by
+  `snapshotSeasonHistory` in `lib/season.ts`. `@@unique([playerId,
+  seasonYear])` is the rule and the idempotency key at once — a man is on one
+  roster at a time, so he holds at most one trophy in a season — and the write
+  uses `skipDuplicates`, so a re-entered offseason step cannot double a roster.
+  All three foreign keys cascade: unlike a `CapCharge`, a championship roster
+  leaves no bill behind when the league, the club or the man is deleted.
+
+  **Written at the trophy because that is the last moment the roster exists.**
+  Free agency, the retirement roll and the draft begin rewriting it three
+  advances later, and nothing else in the database records who was standing on
+  the field. 53 rows in 7ms on a measured league, once a league year, for the
+  one club that wins it. `sim:health` produced one club a year and 47-53 rows
+  apiece across its leagues, which is the shape.
+
+  **This is deliberately NOT a rule in `lib/invariants.ts`, and the reason is
+  the population it would fire on.** A title won before this table existed has
+  no rows and never will; a checker demanding a roster for every `CHAMPION`
+  season would report a violation on every existing save, for a season that was
+  played correctly. Coverage is therefore asked per club-year, and `resolveRingYears`
+  (`lib/gen/leagueHistory.ts`) is built on exactly that: a title year with rows
+  is answered by them and by nothing else — no row means he did not win it —
+  and a title year with no rows at all falls through to the `PlayerSeason` +
+  ledger inference that predates the table, unchanged. Measured on one league
+  driven to a real title by the game's own `advanceWeek`, read at the trophy, at
+  the re-sign screen, and a full league year on after free agency, retirements
+  and a draft — each window read twice, once with the rows and once with them
+  deleted out from under the resolver, which is exactly the state of a save that
+  won its titles before this table existed:
+
+  |  | at the trophy | at Re-sign | a league year on |
+  |---|---|---|---|
+  | with the rows | 49/49 | 49/49 | **49/49** |
+  | the inference alone | 49/49 | 49/49 | 46/49 |
+
+  COVERAGE IS PER CLUB-YEAR, not per year, and that is one line of care rather
+  than none: a year counts as covered only if every club the standings call
+  champion that year has a roster written down. Normally one club wins it and
+  the distinction is invisible. The state where it is not — two clubs carrying
+  `CHAMPION` in one season, which a duplicated playoff bracket produced before
+  `withRoundLock` closed it — is exactly the state where half a year of rows
+  would tell a real champion's whole roster it had never won anything. Half
+  covered falls through to the inference, which reads both clubs alike.
+
+  0 false rings anywhere in either row. The men the inference loses are the ones
+  it always said it could not reach: no counting stat in the title year AND
+  since departed, so nothing places them on that roster and nothing contradicts
+  it either (three here — a left tackle, a left guard and a back; d797a3a
+  measured four on its own league). It is the last column that is the point — the ring stops decaying as the roster
+  churns, because it stopped being inferred.
+
+  **`PlayerSeason` could not have served, which is why there is a new table.**
+  It is written from box-score lines, and a box score names the quarterback,
+  three backs, six receivers, fourteen defenders and two specialists
+  (`allocateStats`, `lib/sim/engine.ts`). Measured on the champion above: the
+  box score named 32 of its 49 men and 17 had no row at all, including all ten
+  offensive linemen — 0 of 10 — and every one of those seventeen is shown the
+  ring from the table. d797a3a measured the same thing on its own champion: 31
+  of 49 with a row, 0 of 10 linemen. REJECTED: writing zero-stat `PlayerSeason` rows
+  for whole rosters instead. That is ~1,700 rows a league year against ~50, and
+  it breaks that table's stated contract — *"which club did he PRODUCE for"* —
+  which `buildGmTenureMen` (`lib/gmTenure.ts`) counts a GM's tenure off and the
+  player page renders one row per. Every lineman in the league would collect an
+  empty stat line every season.
 
 ## Games
 

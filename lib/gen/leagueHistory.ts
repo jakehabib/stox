@@ -1714,6 +1714,26 @@ export function ringYearsFor(opts: {
  *
  * WHAT THE RECORD IS, in order of how much it knows:
  *
+ *   0. THE ROSTER OF RECORD. A ChampionRoster row: he was on the winning
+ *      roster the moment the final ended, written down by
+ *      snapshotSeasonHistory (lib/season.ts) while that roster still existed.
+ *      This is not the best evidence available, it is the ANSWER, and for a
+ *      year the table covers nothing below is consulted at all — a man with no
+ *      row for a covered year did not win it, which is as much a fact as a man
+ *      with one. Everything under it exists for the years written before the
+ *      table did.
+ *
+ *      COVERAGE IS ASKED PER CLUB-YEAR, never per league, and that is the whole
+ *      care point. A save that won titles before this table existed has no rows
+ *      for them and must not be told its champions never won anything, so a
+ *      title year the table cannot answer for falls through to the inference
+ *      below exactly as it did before. "Cannot answer for" is per club and not
+ *      merely per year because of one state: two clubs carrying CHAMPION in a
+ *      single season, which a duplicated playoff bracket produced before
+ *      withRoundLock (lib/season.ts) closed it. Rows for one of them is not
+ *      coverage of the year — it is a year in which the other club's entire
+ *      roster would be denied a ring by rows nobody ever wrote.
+ *
  *   1. HE PRODUCED FOR THE CHAMPION THAT YEAR. A PlayerSeason row (or, for
  *      the season still in progress, the box-score replay behind it) keyed to
  *      the winning club. This is not evidence, it is the fact: PlayerSeason
@@ -1744,14 +1764,24 @@ export function ringYearsFor(opts: {
  *      ever answer for a man who is STILL THERE — it cannot invent a spell at
  *      a club he never had.
  *
- * WHAT IT STILL CANNOT ANSWER, stated rather than papered over: a man who
+ * WHAT THE INFERENCE STILL CANNOT ANSWER, and why clause 0 exists: a man who
  * recorded no stat in the title year AND has since left the champion. He is
- * unreachable — the ledger claim needs him on the roster, and there is no
- * stored roster from the day of the game. Measured one full league year on
- * from a real title: 47 champions, 39 named, 5 lost this way (plus 2 to the
- * bound below and 1 retirement). The fix for those 5 is not a cleverer
- * inference, it is writing the roster down when the trophy is handed over —
- * see the ChampionRoster proposal in the report accompanying this change.
+ * unreachable by inference — the ledger claim needs him on the roster, and for
+ * a title won before ChampionRoster existed there is no stored roster from the
+ * day of the game. Measured a full league year on from a real title, on the
+ * same league read twice: 46 of the 49 champions named by the inference alone,
+ * 49 of 49 from the rows, 0 false either way. The three it loses are a left
+ * tackle, a left guard and a back who took no counting stat in the title year
+ * and have since left the club. (d797a3a measured 44 of 48 the same way on its
+ * own league.)
+ *
+ * It was never going to be fixed by a cleverer inference and it is not fixed by
+ * one: the roster is written down when the trophy is handed over, so every
+ * title played from that point on reads all of them in every window. The
+ * inference below is kept UNCHANGED, because a save that won its titles before
+ * the table existed still depends on it and must not come out worse than it
+ * did — measured at the trophy, at Re-sign and a league year on, with the rows
+ * deleted out from under the resolver: 49/49, 49/49, 46/49, 0 false.
  *
  * REJECTED: keying the whole thing off `Contract.signedYear` alone. It reads
  * as an arrival and is not one — `executeTrade` carries the signed year onto
@@ -1823,6 +1853,49 @@ export async function resolveRingYears(opts: RingInputs): Promise<number[]> {
   const clubsByYear = new Map<number, string[]>();
   for (const c of champions) clubsByYear.set(c.year, [...(clubsByYear.get(c.year) ?? []), c.teamId]);
 
+  // Clause 0 — the roster of record. Two reads, both off ChampionRoster's own
+  // indexes: the titles HE was written down for, and which club-years the table
+  // covers at all. The second is what lets a missing row mean "he did not win
+  // it" rather than "we did not write it down", and it has to be asked per YEAR
+  // because one save can hold both kinds of title: ones played before this
+  // table existed, which have no rows and must still be inferred, and ones
+  // played after, which are answered outright.
+  const [heldRows, coveredRows] = await Promise.all([
+    prisma.championRoster.findMany({
+      where: { leagueId: opts.leagueId, playerId: opts.player.id },
+      select: { seasonYear: true },
+    }),
+    // groupBy rather than findMany+distinct: this is a real SQL GROUP BY over
+    // the (leagueId, seasonYear) index, so it stays a handful of rows however
+    // many league years the save has played. Grouped by CLUB as well, because
+    // a year counts as covered only if every club the standings call champion
+    // that year has a roster written down — see below.
+    prisma.championRoster.groupBy({
+      by: ['seasonYear', 'teamId'],
+      where: { leagueId: opts.leagueId },
+    }),
+  ]);
+  const clubsWritten = new Map<number, Set<string>>();
+  for (const r of coveredRows) {
+    const set = clubsWritten.get(r.seasonYear) ?? new Set<string>();
+    set.add(r.teamId);
+    clubsWritten.set(r.seasonYear, set);
+  }
+  // A year is answered by the table only when the table can answer for the
+  // WHOLE year. One club per year wins it, so this is normally just "are there
+  // rows"; it is written this way because the one state where it is not — two
+  // clubs carrying CHAMPION in one year, which is what a duplicated playoff
+  // bracket produced before withRoundLock (lib/season.ts) closed it — is
+  // exactly the state where half a year of rows would tell a real champion's
+  // whole roster it had never won anything. Half-covered falls through to the
+  // inference below, which reads both clubs the same way.
+  const covered = new Set(
+    [...clubsByYear.entries()]
+      .filter(([year, clubs]) => clubs.every((id) => clubsWritten.get(year)?.has(id)))
+      .map(([year]) => year),
+  );
+  const held = new Set(heldRows.map((r) => r.seasonYear));
+
   const linesByYear = new Map<number, Set<string>>();
   for (const l of opts.seasons) {
     if (l.teamId == null) continue;
@@ -1835,6 +1908,13 @@ export async function resolveRingYears(opts: RingInputs): Promise<number[]> {
   /** Years the record is silent on, where his current club is the champion. */
   const needLedger: number[] = [];
   for (const [year, clubs] of clubsByYear) {
+    // Clause 0 first and alone. A covered year is decided here either way; no
+    // stat line, no ledger row and no trade guard can add to or subtract from a
+    // roster that was written down on the day.
+    if (covered.has(year)) {
+      if (held.has(year)) real.push(year);
+      continue;
+    }
     const played = linesByYear.get(year);
     if (played) {
       // Clauses 1 and 2. The rows say where he was; nothing else is consulted.

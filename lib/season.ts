@@ -1264,6 +1264,12 @@ const PLAYOFF_ROUND_LABEL: Record<string, string> = {
  * Freeze this year's final standings + playoff result into TeamSeasonRecord.
  * Team.wins/losses/etc. get wiped by RESET_STANDINGS a few offseason steps
  * from now — this snapshot is the only place that history survives.
+ *
+ * And, for the club that won it, WHO WAS HOLDING THE TROPHY: one ChampionRoster
+ * row per man on the winning roster. Same argument as the standings above, one
+ * step stronger — free agency, the retirement roll and the draft dismantle that
+ * roster within three advances, and unlike a win total nothing anywhere else
+ * records it. See the block at the write.
  */
 async function snapshotSeasonHistory(leagueId: string, seasonYear: number) {
   const teams = await prisma.team.findMany({ where: { leagueId } });
@@ -1298,6 +1304,43 @@ async function snapshotSeasonHistory(leagueId: string, seasonYear: number) {
         headline: `The ${champ.city} ${champ.nickname} are your ${seasonYear} champions!`,
         detail: `Finished ${champ.wins}-${champ.losses}${champ.ties ? `-${champ.ties}` : ''}, ${champ.pointsFor} points for.`,
       },
+    });
+
+    // WRITE THE ROSTER DOWN, HERE, BECAUSE THIS IS THE LAST MOMENT IT EXISTS.
+    // Three advances from now free agency, the retirement roll and the draft
+    // start rewriting it, and no other row in the database says who was
+    // standing on the field. ~50 rows a league year.
+    //
+    // It is not a convenience: without it a ring is a guess for most of the
+    // roster. PlayerSeason is written from box-score lines, and a box score
+    // names the quarterback, three backs, six receivers, fourteen defenders and
+    // two specialists — measured on a real champion's 49 men, 31 had a row and
+    // every offensive lineman on the club had none. resolveRingYears
+    // (lib/gen/leagueHistory.ts) can infer most of the rest off the club's own
+    // ledger, but only for a man who is STILL THERE; one who took no counting
+    // stat in the title year and has since left is unreachable by any
+    // inference at all. Four of one champion's 49 were exactly that, a league
+    // year on.
+    //
+    // REJECTED: writing zero-stat PlayerSeason rows for whole rosters instead.
+    // ~1,700 rows a league year against ~50, and it breaks that table's stated
+    // contract — "which club did he PRODUCE for" — which buildGmTenureMen
+    // (lib/gmTenure.ts) counts a GM's tenure off and the player page renders
+    // one row per. Every lineman in the league would collect an empty stat line
+    // every season.
+    //
+    // `skipDuplicates` because this step is re-enterable: snapshotSeasonHistory
+    // upserts its season records for the same reason, and a second pass must
+    // not double the roster. (playerId, seasonYear) is the unique key doing
+    // that work — a man is on one roster at a time, so he holds at most one
+    // trophy in a season.
+    const won = await prisma.player.findMany({
+      where: { leagueId, teamId: champ.id, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    await prisma.championRoster.createMany({
+      data: won.map((p) => ({ leagueId, seasonYear, teamId: champ.id, playerId: p.id })),
+      skipDuplicates: true,
     });
   }
 }

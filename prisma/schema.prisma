@@ -109,20 +109,22 @@ model League {
   // Full settings blob (see lib/settings.ts -> LeagueSettings). JSON string.
   settings String
 
-  teams          Team[]
-  players        Player[]
-  games          Game[]
-  picks          DraftPick[]
-  transactions   Transaction[]
-  draftState     DraftState?
-  tradeOffers    TradeOffer[]
-  seasonRecords  TeamSeasonRecord[]
-  leagueRecords  LeagueRecord[]
-  playerSeasons  PlayerSeason[]
-  powerSnapshots PowerRankingSnapshot[]
-  tradeRecords   TradeRecord[]
-  dynasty        DynastyProfile?
-  negotiations   NegotiationTalks[]
+  teams           Team[]
+  players         Player[]
+  games           Game[]
+  picks           DraftPick[]
+  transactions    Transaction[]
+  draftState      DraftState?
+  tradeOffers     TradeOffer[]
+  seasonRecords   TeamSeasonRecord[]
+  leagueRecords   LeagueRecord[]
+  playerSeasons   PlayerSeason[]
+  powerSnapshots  PowerRankingSnapshot[]
+  tradeRecords    TradeRecord[]
+  // Who was holding the trophy, one row per man per title — see ChampionRoster.
+  championRosters ChampionRoster[]
+  dynasty         DynastyProfile?
+  negotiations    NegotiationTalks[]
 
   // The home-page list filters on one of these two every time, and the claim
   // is `WHERE ownerKey = $1 AND userId IS NULL`.
@@ -222,6 +224,7 @@ model Team {
   negotiations    NegotiationTalks[]
   powerSnapshots  PowerRankingSnapshot[]
   capCharges      CapCharge[]
+  championRosters ChampionRoster[]
 
   @@index([leagueId])
 }
@@ -361,13 +364,15 @@ model Player {
   playoffStats       String @default("{}")
   careerPlayoffStats String @default("{}")
 
-  contract      Contract?
-  reports       ScoutingReport[]
-  depthSlots    DepthChartSlot[]
-  draftPick     DraftPick?
-  shortlistedBy ShortlistEntry[]
-  negotiations  NegotiationTalks[]
-  seasons       PlayerSeason[]
+  contract        Contract?
+  reports         ScoutingReport[]
+  depthSlots      DepthChartSlot[]
+  draftPick       DraftPick?
+  shortlistedBy   ShortlistEntry[]
+  negotiations    NegotiationTalks[]
+  seasons         PlayerSeason[]
+  /// Every title he was on the roster for — see ChampionRoster.
+  championRosters ChampionRoster[]
 
   /// Every league-wire row about him — signings, releases, draft day, awards.
   transactions Transaction[]
@@ -761,6 +766,63 @@ model PlayerSeason {
   @@unique([playerId, seasonYear, teamAbbr])
   // For the per-league sweep — which years already have rows, and the
   // delete-and-rewrite of a single year.
+  @@index([leagueId, seasonYear])
+}
+
+// ---------------------------------------------------------------------------
+// WHO WAS HOLDING THE TROPHY. One row per man on the champion's roster the
+// moment the final ends — written by snapshotSeasonHistory (lib/season.ts),
+// which is the last instant that roster still exists, three advances before
+// free agency, retirements and the draft begin rewriting it. It is the only
+// record of a championship roster there is.
+//
+// PlayerSeason CANNOT SERVE, which is the whole reason this table exists. That
+// table is written from box-score lines, and a box score names the
+// quarterback, three backs, six receivers, fourteen defenders and two
+// specialists (`allocateStats`, lib/sim/engine.ts). Measured on a real
+// champion's 49-man roster: 31 men had a row, 18 had none, and every offensive
+// lineman on the club — all ten — had none. A man who recorded no counting
+// stat in the title year AND has since left the club is unreachable by any
+// inference: nothing places him on that roster and nothing contradicts it
+// either. Four of one champion's 49 were exactly that case a league year on.
+//
+// REJECTED: writing zero-stat PlayerSeason rows for whole rosters instead.
+// That is ~1,700 rows a league year against ~50 here, and it breaks the stated
+// contract of that table — "which club did he PRODUCE for" — which
+// buildGmTenureMen (lib/gmTenure.ts) counts a GM's tenure off and which the
+// year-by-year table on the player page renders one row per. Every offensive
+// lineman in the league would gain an empty stat line every season.
+//
+// Read by resolveRingYears (lib/gen/leagueHistory.ts), which prefers these
+// rows over its PlayerSeason + ledger inference and keeps that inference only
+// for titles won before this table existed — an existing save has no rows for
+// its past titles and must not regress.
+model ChampionRoster {
+  id       String @id @default(cuid())
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  seasonYear Int
+
+  // The club that won it, and one of its players. Both cascade: a champion
+  // roster is meaningless without the club or the man, and unlike a CapCharge
+  // (INV-23) there is no bill left behind to answer for.
+  teamId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  playerId String
+  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  // A man is on exactly one roster at a time, so he can hold at most one
+  // trophy in a season — which makes this both the natural key and the
+  // idempotency key. The write uses `skipDuplicates`, so a re-entered offseason
+  // step cannot double a roster. Deliberately NOT keyed with teamId as well:
+  // that would be strictly weaker (it would admit the same man on two
+  // champions in one year) and buys nothing, exactly the way INV-11's old key
+  // carried originalTeamId and let two picks share a slot.
+  @@unique([playerId, seasonYear])
+  // "Who won the 2029 title" — the whole-roster read, and the per-league sweep
+  // that tells resolveRingYears which club-years this table covers at all.
   @@index([leagueId, seasonYear])
 }
 
