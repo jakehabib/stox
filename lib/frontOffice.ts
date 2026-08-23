@@ -37,6 +37,40 @@ export interface BriefItem {
   href: string;
 }
 
+/**
+ * THE BRIEF WAS ORDERED BY LINE NUMBER.
+ *
+ * Items were pushed in the order the checks happen to be written in this file
+ * and returned unsorted, so "3 trade offers waiting on a response" and "you
+ * are $12M over the cap" both ranked BELOW "TE is your thinnest position" —
+ * a standing condition with no deadline, no counterparty and no clock. A desk
+ * brief that leads with the least urgent thing on it is a list, not a brief.
+ *
+ * The ordering principle is WHO IS WAITING AND ON WHAT CLOCK:
+ *
+ *   1. Cap — it can block the week from advancing outright. Nothing else here
+ *      can stop the game.
+ *   2. Trade Offers — somebody else is waiting on YOUR answer, and offers
+ *      expire. It is the only item with a person on the other end of it.
+ *   3. Contracts — a man walks at a date, and the discount for getting ahead
+ *      of it disappears before he does.
+ *   4. Trade Market — a real opportunity, but nothing is lost by reading it
+ *      next week.
+ *   5. Roster — true all season and fixable all season.
+ *   6. Scouting — the longest clock in the game; the draft is months out.
+ *
+ * Ties keep their original order, because within one category the checks
+ * already emit their own best-first.
+ */
+const CATEGORY_URGENCY: Record<BriefItem['category'], number> = {
+  Cap: 0,
+  'Trade Offers': 1,
+  Contracts: 2,
+  'Trade Market': 3,
+  Roster: 4,
+  Scouting: 5,
+};
+
 export async function buildFrontOfficeBrief(
   leagueId: string,
   teamId: string,
@@ -58,8 +92,16 @@ export async function buildFrontOfficeBrief(
       category: 'Roster',
       headline: `${worstNeed[0]} is your thinnest position`,
       detail: 'Worth addressing before it costs you a game.',
+      // Label unchanged. A position code does not pluralise in English — "Browse
+      // Ss" for a safety, "Browse Cs" for a centre — and the headline directly
+      // above already names the position, so the button only has to say where
+      // it goes.
       action: 'Browse Free Agents',
-      href: '/free-agency',
+      // The position is right there in `worstNeed[0]` and the headline already
+      // names it — sending the GM to an unfiltered market and asking him to
+      // re-select the position the brief just told him about was the brief
+      // knowing the answer and making him type it back.
+      href: `/free-agency?pos=${worstNeed[0]}`,
     });
   }
 
@@ -95,7 +137,10 @@ export async function buildFrontOfficeBrief(
       // shows a Re-sign button and no extension form at all. The brief was
       // naming a button that is never on the screen it links to.
       action: 'Re-sign him',
-      href: `/player/${expiring.id}`,
+      // ...and land on the money. The button says "Re-sign him"; without
+      // ?view=contract the card opens on his receiving yards and the GM has
+      // to find the contract tab himself to do the thing he just clicked.
+      href: `/player/${expiring.id}?view=contract`,
     });
   }
 
@@ -202,5 +247,7 @@ export async function buildFrontOfficeBrief(
     });
   }
 
-  return items;
+  // Stable sort — Array.prototype.sort is spec-stable, so equal urgencies keep
+  // the order the checks above emitted them in.
+  return items.sort((a, b) => CATEGORY_URGENCY[a.category] - CATEGORY_URGENCY[b.category]);
 }

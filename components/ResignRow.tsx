@@ -6,6 +6,7 @@ import { NegotiationPanel } from './NegotiationPanel';
 import { PlayerAvatar } from './PlayerAvatar';
 import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
+import { startersAt } from '@/lib/lineup';
 import { positionBadgeClass } from './ds/positionColor';
 import { CapMode } from '@/lib/types';
 import type { DealStructure, NegotiationSession } from '@/lib/negotiation';
@@ -50,7 +51,7 @@ const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidY
  * behaviour once patience is server state: a negotiation you walked out of has
  * to still be the negotiation you walked out of when you come back to it.
  */
-export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, canTag, tagDeadMoney, weightLb, heightIn, depth, setAside }: {
+export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, canTag, tagDeadMoney, weightLb, heightIn, depth, marketApy, setAside }: {
   leagueId: string; playerId: string; name: string; position: string; age: number; ovr: number;
   currentApy: number; capMode: CapMode; yearsRemaining: number; canTag?: boolean;
   /**
@@ -78,6 +79,17 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
    * Chart screen renders — so the two screens cannot disagree about who plays.
    */
   depth?: DepthEntry[];
+  /**
+   * What the OPEN MARKET says a player of his rating, position and age is worth
+   * — `marketValue()`, resolved by the page. Deliberately not what he will sign
+   * for: his reservation price is this number run through a personality, a
+   * loyalty discount that decays as his deal runs out, a premium for whoever
+   * else is calling, and a seeded wobble (see buildContext in
+   * lib/negotiation.ts). None of that is visible until talks open, and none of
+   * it can be reconstructed from this. It is a benchmark for triage, and the
+   * row prints it as a band for exactly that reason.
+   */
+  marketApy?: number;
   /** Still accepted from the page; the negotiation resolves its own cap room server-side. */
   availableSpace?: number;
   weightLb?: number; heightIn?: number;
@@ -105,6 +117,62 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   // Still mid-deal (this is his walk year, but the season isn't over) —
   // there's nothing to "decide" yet, just re-sign early if you want to.
   const isTrulyExpiring = yearsRemaining === 0;
+
+  /**
+   * ===========================================================================
+   * TRIAGE BEFORE TALKS — WHAT THE COLLAPSED ROW OWES YOU
+   * ===========================================================================
+   * Measured on a real save: eleven expiring men, and the collapsed row showed
+   * name, position, age, his current salary, a pill and his rating. Everything
+   * a keep-or-let-go call actually turns on — who plays if he leaves, and
+   * roughly what the market says he is worth — was behind Negotiate, which is
+   * one click and one server round-trip each. Eleven clicks and eleven
+   * negotiations resolved to make eleven decisions, most of which are obvious
+   * the moment you know those two things.
+   *
+   * So both are computed here, from what the page already had in hand, and
+   * neither costs a request:
+   *
+   *   SUCCESSION comes off `depth` — the DepthChartSlot rows in the depth
+   *     chart's own rank order, the same table the Depth Chart screen renders.
+   *     If he starts, the man who inherits the job is whoever is first off the
+   *     bench, because everyone below him shifts up one when he goes. If
+   *     nobody is, the slot goes unmanned and that is worth saying loudest.
+   *   THE BAND is `marketValue` — see the prop. A RANGE, never a number, and
+   *     never his reservation price: printing what he will actually sign for
+   *     would end the negotiation minigame, which measures as working. The band
+   *     tells you which conversation this is (a minimum-salary body, or eight
+   *     figures) and nothing finer, which is all triage needs.
+   */
+  const starterSlots = startersAt(position);
+  const succession = (() => {
+    if (!depth || depth.length === 0 || starterSlots === 0) return null;
+    const at = depth.findIndex((d) => d.isSubject);
+    if (at < 0) return null;
+    if (at >= starterSlots) {
+      // The man one rank above him, which is literally what "behind" means
+      // here — not the last starter, who may be several places further up.
+      const ahead = depth[at - 1];
+      return ahead ? { starts: false as const, other: ahead } : null;
+    }
+    // He is in the lineup. The man who takes the snaps is the first man not in
+    // it — index `starterSlots` — because his departure moves everybody up one.
+    const heir = depth[starterSlots];
+    return { starts: true as const, other: heir ?? null };
+  })();
+
+  /**
+   * ±20% around the open-market figure, rounded to the nearest $100k so the two
+   * ends read as an estimate rather than a quote. Wide enough that the true
+   * reservation — which the loyalty discount pushes below it and a rival's
+   * interest pushes above it — is not readable off either end.
+   */
+  const band = marketApy && marketApy > 0
+    ? {
+      low: Math.round(marketApy * 0.8 / 100_000) * 100_000,
+      high: Math.round(marketApy * 1.2 / 100_000) * 100_000,
+    }
+    : null;
 
   useEffect(() => {
     if (!open || session !== undefined) return;
@@ -197,23 +265,60 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
 
   return (
     <div className="panel overflow-hidden">
-      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-raised transition-colors">
-        <PlayerAvatar seed={playerId} age={age} size={30} weightLb={weightLb} heightIn={heightIn} position={position} />
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold truncate">{name}</div>
-          <div className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap">
-            <span className={`font-semibold ${positionBadgeClass(position)}`}>{position}</span>
-            <span className="text-muted">Age {age}</span>
-            <span className="text-muted">·</span>
-            <span className="text-muted">~{formatMoney(currentApy)}/yr</span>
-            {isTrulyExpiring
-              ? <span className="pill border-bad/40 text-bad text-[10px]">Expired</span>
-              : <span className="pill border-warn/40 text-warn text-[10px]">Walk Year</span>}
+      {/* THE HEADER IS TWO CONTROLS, NOT ONE. "Not now" used to live inside the
+          `{open && …}` block below — so parking a man cost a click to open
+          talks, a session resolved on the server, and a second click, for the
+          one action whose entire meaning is "I am not dealing with him yet".
+          The control that lets you skip the interaction cannot be behind the
+          interaction. It sits beside the toggle rather than inside it because
+          a button inside a button is not a thing a browser will render. */}
+      <div className="flex items-stretch">
+        <button onClick={() => setOpen((v) => !v)} className="flex-1 min-w-0 flex items-center gap-3 px-4 py-3 text-left hover:bg-raised transition-colors">
+          <PlayerAvatar seed={playerId} age={age} size={30} weightLb={weightLb} heightIn={heightIn} position={position} />
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold truncate">{name}</div>
+            <div className="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap">
+              <span className={`font-semibold ${positionBadgeClass(position)}`}>{position}</span>
+              <span className="text-muted">Age {age}</span>
+              <span className="text-muted">·</span>
+              <span className="text-muted">~{formatMoney(currentApy)}/yr</span>
+              {isTrulyExpiring
+                ? <span className="pill border-bad/40 text-bad text-[10px]">Expired</span>
+                : <span className="pill border-warn/40 text-warn text-[10px]">Walk Year</span>}
+            </div>
+            {(succession || band) && (
+              <div className="text-xs mt-1 flex items-center gap-1.5 flex-wrap">
+                {succession && (succession.starts
+                  ? (succession.other
+                    ? <span className="text-muted">Starting {position} — {succession.other.name} ({succession.other.ovr}) takes the job if he goes</span>
+                    : <span className="text-bad">Starting {position} — nobody behind him</span>)
+                  : <span className="text-muted">Behind {succession.other.name} ({succession.other.ovr})</span>)}
+                {succession && band && <span className="text-muted">·</span>}
+                {band && (
+                  <span className="text-muted">
+                    Market {formatMoney(band.low)}–{formatMoney(band.high)}/yr
+                  </span>
+                )}
+              </div>
+            )}
           </div>
+          <span className={`stat-value text-stat-sm ${ratingColor(ovr)}`}>{ovr}</span>
+          <span className="pill border-line text-muted">{open ? 'Close' : 'Negotiate'}</span>
+        </button>
+        <div className="flex items-center gap-1 pr-4 pl-1 shrink-0">
+          <ActionButton
+            className="btn-ghost text-xs px-2 py-1.5 whitespace-nowrap"
+            idleLabel="Not now"
+            workingLabel="Setting aside…"
+            onAction={() => toggleAside(true)}
+          />
+          {/* The sentence that used to sit beside the button in the open block.
+              It has to travel with the control, because the control is what a
+              GM meets first now and "not now" and "let him walk" are one word
+              apart in a window where one of them is irreversible. */}
+          <Tooltip text={tip('setAside')} />
         </div>
-        <span className={`stat-value text-stat-sm ${ratingColor(ovr)}`}>{ovr}</span>
-        <span className="pill border-line text-muted">{open ? 'Close' : 'Negotiate'}</span>
-      </button>
+      </div>
       {open && (
         <div className="px-4 pb-4 pt-1 border-t border-line/60 space-y-3">
           {/* Out to his whole file, opened on the money rather than on his
@@ -267,23 +372,12 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
               }
             />
           )}
-          {/* TRIAGE, NOT A DECISION. It sits apart from "Not Re-sign" on purpose:
-              one of these two buttons releases a player to free agency and the
-              other only moves him down the page. The copy has to make that
-              impossible to confuse, so it says what it does and what it does
-              not do. */}
-          <div className="flex items-center gap-3 flex-wrap border-t border-line/50 pt-3">
-            <ActionButton
-              className="btn-secondary text-xs px-3 py-1.5"
-              idleLabel="Not now — set aside"
-              workingLabel="Setting aside…"
-              onAction={() => toggleAside(true)}
-            />
-            <span className="text-xs text-muted flex-1 min-w-[14rem]">
-              Moves him to the bottom of this page so you can work the list. He is not released, nothing is
-              offered, and it costs him no patience — bring him back any time before this phase ends.
-            </span>
-          </div>
+          {/* "Not now" USED TO BE HERE, and being here was the whole problem:
+              its entire point is to let a GM skip opening talks, and it could
+              only be reached by opening talks. It is on the collapsed header
+              now, one press, no session resolved. It is deliberately NOT also
+              duplicated here — one control, one place, and it sits nowhere near
+              "Not Re-sign", which releases a player and cannot be undone. */}
           {isTrulyExpiring && (
             <div className="flex items-center justify-between gap-3 flex-wrap">
               {confirmingWalk ? (

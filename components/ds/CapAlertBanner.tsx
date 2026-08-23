@@ -20,6 +20,14 @@ export interface CapAlertMove {
  * leaves the user hunting; the two or three concrete moves here come from
  * the same capReliefOptions() the transaction errors and the advancement
  * block quote, so every surface tells one story.
+ *
+ * ...AND IT NOW OPENS ON THE MOVE IT NAMED. The relief pills read "Release to
+ * free $8.4M" and landed on the man's receiving yards — one click short of the
+ * thing the pill promised. Because this bar renders from the league layout it
+ * followed the GM onto every screen while he was over the cap, so that was the
+ * most-travelled dead end in the product. `?view=contract` is the same
+ * convention the free-agency Negotiate button and the re-sign row already use
+ * (see PlayerCardTabs' ARRIVING note): arriving from money opens on money.
  */
 export function CapAlertBanner({
   leagueId, shortfall, capUsed, capTotal, deadMoney, moves, blocksAdvance, complianceDue,
@@ -65,7 +73,7 @@ export function CapAlertBanner({
             {moves.map((m) => (
               <Link
                 key={`${m.kind}-${m.playerId}`}
-                href={`/league/${leagueId}/player/${m.playerId}`}
+                href={`/league/${leagueId}/player/${m.playerId}?view=contract`}
                 className="pill border-line bg-raised hover:border-bad/50 gap-1.5"
                 title={`${m.kind === 'CUT' ? 'Release' : 'Restructure'} to free ${formatMoney(m.frees)}`}
               >

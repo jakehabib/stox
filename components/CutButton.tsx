@@ -32,8 +32,25 @@ import { ActionButton } from './ds/ActionButton';
  * from all of those — so a portrait drawn from defaults would be a DIFFERENT
  * man's face beside the same man's name, six inches below his real one. A
  * wrong picture is worse than no picture.
+ *
+ * NOTE WHAT IS NOT BEING SHORTENED HERE. The two-step confirm stays exactly as
+ * it is: a release is irreversible and it is the one action in this game that
+ * can cost more to take than to skip, so the full cap consequence before the
+ * button is the point of the component. The only thing `returnTo` changes is
+ * where you land AFTER the decision.
  */
-export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: string }) {
+export function CutButton({ leagueId, playerId, returnTo }: {
+  leagueId: string;
+  playerId: string;
+  /**
+   * Where to go once he is gone. This is the only action in the app that
+   * navigates on success, and it always went to /roster — which breaks the cap
+   * page's "Fastest route — 3 releases" panel, because that panel is a
+   * SEQUENCE and the second release is back on /cap. Absent, /roster, exactly
+   * as before.
+   */
+  returnTo?: string;
+}) {
   const [confirming, setConfirming] = useState(false);
   const [impact, setImpact] = useState<CutImpact | null>(null);
   const [loading, setLoading] = useState(false);
@@ -158,7 +175,7 @@ export function CutButton({ leagueId, playerId }: { leagueId: string; playerId: 
             // instead of vanishing into ActionButton's catch.
             const result = await cutPlayerAction(leagueId, playerId);
             if (!result.ok) { setFailure(result.message); return false; }
-            router.push(`/league/${leagueId}/roster`);
+            router.push(returnTo ?? `/league/${leagueId}/roster`);
           }}
         />
         <button onClick={() => { setConfirming(false); setImpact(null); setFailure(null); }} className="btn-ghost">Cancel</button>

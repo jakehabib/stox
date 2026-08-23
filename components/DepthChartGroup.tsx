@@ -83,18 +83,73 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order, ca
   // kept showing whatever it last displayed.
   useEffect(() => { setLocalOrder(order); }, [order]);
 
+  /** One write, one order. Everything that reorders this group goes through here. */
+  const commit = (next: string[]) => {
+    setLocalOrder(next);
+    startTransition(() => setDepthChartAction(teamId, position, next));
+  };
+
   const move = (idx: number, dir: -1 | 1) => {
     const next = [...localOrder];
     const target = idx + dir;
     if (target < 0 || target >= next.length) return;
     [next[idx], next[target]] = [next[target], next[idx]];
-    setLocalOrder(next);
-    startTransition(() => setDepthChartAction(teamId, position, next));
+    commit(next);
   };
 
   const starterCount = startersAt(position);
+
+  const ovrOf = (id: string) => byId.get(id)?.ovr ?? 0;
+
+  /**
+   * ===========================================================================
+   * SORT THIS GROUP — AND ONLY THIS GROUP
+   * ===========================================================================
+   * Auto-Sort at the top of the page is `autoDepthChart`, which does
+   * `deleteMany({ where: { teamId } })` and rebuilds all sixteen groups by
+   * `trueOvr`. One click, one write, correct result — and unusable for the only
+   * people who need it. A GM who has deliberately started a developing rookie
+   * ANYWHERE can never press it again without losing that decision EVERYWHERE,
+   * and the population that wants a bulk sort is exactly the population that has
+   * customised something. So the bulk button stays (it is still the right tool
+   * on a fresh roster) and the same sort is offered at the scope where the
+   * damage is bounded: this card, this position, undoable by two arrows.
+   *
+   * `setDepthChartAction` already takes one position's order, so this needs no
+   * new server route and cannot touch a group it is not drawn inside of.
+   *
+   * Hidden when the group is already in rating order, because a control that
+   * does nothing is worse than no control — and this is a card that repeats
+   * sixteen times down the page.
+   */
+  const alreadySorted = localOrder.every((id, i) => i === 0 || ovrOf(localOrder[i - 1]) >= ovrOf(id));
+  const sortByRating = () => commit([...localOrder].sort((a, b) => ovrOf(b) - ovrOf(a)));
+
+  /**
+   * FOURTH TO FIRST IS THREE PRESSES AND THREE SERVER WRITES with the arrows —
+   * `move` posts on every press — and there is no drag-to-reorder on this page
+   * to do it in one gesture. The move a GM actually wants from a bench row is
+   * almost never "up one"; it is "he starts". So that is one press, and the man
+   * he displaces drops to first off the bench rather than to the bottom.
+   *
+   * He lands in the LAST starting slot, not the first: at WR that makes him WR3
+   * and leaves WR1 and WR2 where the GM put them, which is the smallest change
+   * that answers the request. At the nine positions where one man starts the two
+   * readings coincide.
+   */
+  const promote = (idx: number) => {
+    const to = Math.min(starterCount - 1, idx);
+    if (to < 0 || to >= idx) return;
+    const next = [...localOrder];
+    const [man] = next.splice(idx, 1);
+    next.splice(to, 0, man);
+    commit(next);
+  };
+
   const filledStarters = Math.min(starterCount, localOrder.length);
   const emptyStarterSlots = Math.max(0, starterCount - localOrder.length);
+  /** Is there anybody here a one-press promotion could actually move? */
+  const hasBench = starterCount > 0 && localOrder.length > starterCount;
 
   return (
     <div className="panel p-4">
@@ -122,6 +177,16 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order, ca
               ? 'no base starter'
               : `${starterCount} starter${starterCount === 1 ? '' : 's'}`}
           </span>
+          {localOrder.length > 1 && !alreadySorted && (
+            <button
+              type="button"
+              onClick={sortByRating}
+              className="btn-ghost text-[10px] px-1.5 py-0.5"
+              aria-label={`Sort ${position} by rating`}
+            >
+              Sort by rating
+            </button>
+          )}
         </div>
       </div>
       <div className="space-y-1">
@@ -179,6 +244,24 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order, ca
                     {p.capHit === null ? '—' : formatMoney(p.capHit)}
                   </span>
                 )}
+                {/* PROMOTE IN ONE PRESS. Drawn only where it does something —
+                    on a bench row, at a position that actually fields a
+                    starter — and the slot is reserved for the whole group when
+                    any row can use it, so the names above and below it do not
+                    jump width as the list is worked. See `promote`. */}
+                {hasBench && (
+                  <span className="w-9 shrink-0 text-right">
+                    {!starts && (
+                      <button
+                        onClick={() => promote(idx)}
+                        className="text-[10px] text-muted hover:text-chalk leading-none"
+                        aria-label={`Make ${p.name} a starting ${position}`}
+                      >
+                        Start
+                      </button>
+                    )}
+                  </span>
+                )}
                 <div className="flex flex-col">
                   <button onClick={() => move(idx, -1)} disabled={idx === 0} className="text-muted hover:text-chalk disabled:opacity-20 leading-none text-xs px-1" aria-label={`Move ${p.name} up`}>▲</button>
                   <button onClick={() => move(idx, 1)} disabled={idx === localOrder.length - 1} className="text-muted hover:text-chalk disabled:opacity-20 leading-none text-xs px-1" aria-label={`Move ${p.name} down`}>▼</button>
@@ -189,17 +272,25 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order, ca
         })}
 
         {/* A starting slot with nobody in it. The sim fields whoever it can and
-            this position plays a man short of what the formation asks for. */}
+            this position plays a man short of what the formation asks for.
+            AND IT IS A DOOR TOO. This row is the most explicit statement of a
+            problem anywhere in the product — it knows the position and it knows
+            nobody plays there — and it was the only thing on this screen you
+            could not click. Reordering cannot fix an empty slot, so it does not
+            link back to this page; it opens the market already filtered to the
+            position that is empty, which is the single move that ends it. */}
         {Array.from({ length: emptyStarterSlots }, (_, i) => (
-          <div
+          <Link
             key={`empty-${i}`}
-            className="flex items-center gap-2 rounded-lg px-2 py-1.5 border-l-2 border-dashed border-bad/60 bg-bad/[0.06]"
+            href={`/league/${leagueId}/free-agency?pos=${position}`}
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 border-l-2 border-dashed border-bad/60 bg-bad/[0.06] hover:bg-bad/[0.12] transition-colors"
           >
             <span className="w-7 shrink-0 text-[10px] font-semibold tracking-wide text-bad">
               {starterCount > 1 ? `ST${localOrder.length + i + 1}` : 'ST'}
             </span>
             <span className="text-xs text-bad flex-1">Unmanned — nobody to start here</span>
-          </div>
+            <span className="text-[10px] text-bad/80 shrink-0">Sign a {position} →</span>
+          </Link>
         ))}
       </div>
     </div>

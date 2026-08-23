@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
@@ -109,8 +110,8 @@ export default async function GamePage({ params }: { params: { id: string; gameI
 
       {box && (
         <div className="grid md:grid-cols-2 gap-4">
-          <BoxLines title={`${game.awayTeam.abbr} Leaders`} lines={box.lines.away} />
-          <BoxLines title={`${game.homeTeam.abbr} Leaders`} lines={box.lines.home} />
+          <BoxLines leagueId={league.id} title={`${game.awayTeam.abbr} Leaders`} lines={box.lines.away} />
+          <BoxLines leagueId={league.id} title={`${game.homeTeam.abbr} Leaders`} lines={box.lines.home} />
         </div>
       )}
     </div>
@@ -139,7 +140,15 @@ function TeamScore({ id, name, abbr, score, won, align = 'left' }: { id: string;
   );
 }
 
-function BoxLines({ title, lines }: { title: string; lines: BoxScore['lines']['home'] }) {
+/**
+ * THE NAME IS A DOOR — see DepthChartGroup, which had this same hole and had
+ * it fixed. The box score was the last screen in the game where you could read
+ * what a man did on Sunday and not be able to look at him: `playerId` was
+ * already here, spent on the React key and nothing else, while the whole page
+ * carried no link of any kind. It is also the screen where the reason to open
+ * a player card is strongest — you have just watched him have the game.
+ */
+function BoxLines({ leagueId, title, lines }: { leagueId: string; title: string; lines: BoxScore['lines']['home'] }) {
   const notable = lines.filter((l) => Object.values(l.stats).some((v) => (v ?? 0) > 0)).slice(0, 8);
   return (
     <div className="card card-pad">
@@ -147,7 +156,11 @@ function BoxLines({ title, lines }: { title: string; lines: BoxScore['lines']['h
       <div className="space-y-1.5 text-sm">
         {notable.map((l) => (
           <div key={l.playerId} className="flex justify-between gap-2">
-            <span className="truncate">{l.name} <span className="text-muted text-xs">{l.position}</span></span>
+            {/* Stats, not contract: you arrived here from a result, and what
+                you want is the rest of his season. */}
+            <Link href={`/league/${leagueId}/player/${l.playerId}`} className="truncate hover:text-accent2">
+              {l.name} <span className="text-muted text-xs">{l.position}</span>
+            </Link>
             <span className="text-muted text-xs text-right shrink-0">{summarizeLine(l.stats)}</span>
           </div>
         ))}

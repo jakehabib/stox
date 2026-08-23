@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { TeamLogo } from '../TeamLogo';
 import { Tooltip } from '../Tooltip';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -14,6 +15,20 @@ export interface MastheadFact {
   tip?: string;
   /** Tailwind text color for the value. Omit for default ink. */
   color?: string;
+  /**
+   * WHERE THIS NUMBER IS ACTED ON.
+   *
+   * A fact strip is where a screen names its own problems — "Open Starting
+   * Slots: 2 — LT, K", "Expiring: 7". Every one of those was a bare div, so
+   * the tile that knew the position and the severity was the one thing on the
+   * page you could not click. Set this and the tile becomes the door.
+   *
+   * Only set it when the destination is somewhere ELSE. A tile that links to
+   * the page it is sitting on is worse than an inert one: it promises a move
+   * and delivers a reload. Leave it undefined and the tile renders exactly as
+   * it always has.
+   */
+  href?: string;
 }
 
 /**
@@ -91,20 +106,33 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
         <div className={`relative border-t border-line/60 grid grid-cols-2 sm:grid-cols-3 divide-x divide-line/40 bg-ink/30 ${
           ({ 1: 'lg:grid-cols-1', 2: 'lg:grid-cols-2', 3: 'lg:grid-cols-3', 4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5', 6: 'lg:grid-cols-6' } as Record<number, string>)[facts.length] ?? 'lg:grid-cols-5'
         }`}>
-          {facts.map((f) => (
-            <div key={f.label} className="px-4 py-3">
-              {/* Opens UPWARD, and must: this whole band sits inside the
-                  masthead's `overflow-hidden`, so a bubble opening downward
-                  off the bottom edge is clipped away to nothing. Above the
-                  label there is always masthead to open into. */}
-              <div className="label-sm inline-flex items-center gap-1.5">
-                {f.label}
-                {f.tip && <Tooltip text={f.tip} />}
-              </div>
-              <div className={`stat-value text-stat-sm leading-none mt-1 ${f.color ?? ''}`}>{f.value}</div>
-              {f.detail && <div className="text-[11px] text-muted mt-1">{f.detail}</div>}
-            </div>
-          ))}
+          {facts.map((f) => {
+            const body = (
+              <>
+                {/* Opens UPWARD, and must: this whole band sits inside the
+                    masthead's `overflow-hidden`, so a bubble opening downward
+                    off the bottom edge is clipped away to nothing. Above the
+                    label there is always masthead to open into. */}
+                <div className="label-sm inline-flex items-center gap-1.5">
+                  {f.label}
+                  {f.tip && <Tooltip text={f.tip} />}
+                </div>
+                <div className={`stat-value text-stat-sm leading-none mt-1 ${f.color ?? ''}`}>{f.value}</div>
+                {f.detail && <div className="text-[11px] text-muted mt-1">{f.detail}</div>}
+              </>
+            );
+            // No href, no Link — same markup, same padding, same everything an
+            // unwired tile rendered before this existed. The hover tint is the
+            // only signal that a tile is clickable, and it only appears where
+            // there is genuinely somewhere to go.
+            return f.href ? (
+              <Link key={f.label} href={f.href} className="px-4 py-3 block hover:bg-raised/50 transition-colors">
+                {body}
+              </Link>
+            ) : (
+              <div key={f.label} className="px-4 py-3">{body}</div>
+            );
+          })}
         </div>
       )}
     </div>

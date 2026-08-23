@@ -139,6 +139,7 @@ export default async function TradePage({ params, searchParams }: { params: { id
             value: formatMoney(capSummary.capSpace),
             detail: 'before any deal',
             color: capSummary.capSpace >= 0 ? 'text-accent' : 'text-bad',
+            href: `/league/${league.id}/cap`,
           }] : []),
           {
             label: 'Deadline',

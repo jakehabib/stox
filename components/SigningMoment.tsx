@@ -17,6 +17,8 @@ export interface SigningMoment {
    * because there is nothing left to ask for.
    */
   onDismiss?: () => void;
+  /** Where the GM was working before he opened talks — see SigningConfirmation.returnTo. */
+  returnTo?: { href: string; label: string };
 }
 
 interface SigningMomentApi {
@@ -112,7 +114,7 @@ export function SigningMomentProvider({ children }: { children: React.ReactNode 
             className="w-full max-w-lg my-auto rounded-md bg-card shadow-card"
             onClick={(e) => e.stopPropagation()}
           >
-            <SigningConfirmation deal={moment.deal} answeredAt={moment.answeredAt} onDismiss={dismiss} />
+            <SigningConfirmation deal={moment.deal} answeredAt={moment.answeredAt} onDismiss={dismiss} returnTo={moment.returnTo} />
           </div>
         </div>
       )}

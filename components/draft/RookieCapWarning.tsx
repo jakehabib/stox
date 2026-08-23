@@ -101,7 +101,7 @@ export function RookieCapWarning({ leagueId, outlook }: {
           {clearable && relief.slice(0, RELIEF_SHOWN).map((m) => (
             <Link
               key={`${m.kind}-${m.playerId}`}
-              href={`/league/${leagueId}/player/${m.playerId}`}
+              href={`/league/${leagueId}/player/${m.playerId}?view=contract`}
               className="pill border-line bg-raised hover:border-warn/50 gap-1.5"
               title={`${m.kind === 'CUT' ? 'Release' : 'Restructure'} to free ${formatMoney(m.frees)}`}
             >

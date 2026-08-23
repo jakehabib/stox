@@ -36,10 +36,16 @@ const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidY
  * have them; they are `DealStructureControls` now and all three contract
  * screens render the same component.
  */
-export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
+export function SignOfferForm({ leagueId, teamId, playerId, capMode, returnTo }: {
   leagueId: string; teamId: string; playerId: string;
   /** Kept for call-site compatibility — the live figures come from the session. */
   ovr?: number; position?: string; age?: number; capSpace?: number; capMode: CapMode;
+  /**
+   * The free-agency list this negotiation was opened from, filter and sort
+   * intact, so the signing card can offer the way back to it. Undefined when
+   * the GM arrived at the card some other way, and then the card is unchanged.
+   */
+  returnTo?: { href: string; label: string };
 }) {
   // undefined = still opening talks. The session carries the hidden half of
   // the negotiation and every resolved random draw; see openNegotiationAction.
@@ -105,6 +111,7 @@ export function SignOfferForm({ leagueId, teamId, playerId, capMode }: {
     <NegotiationPanel
       initialSession={session}
       structure={structure}
+      returnTo={returnTo}
       // NO onSigned, and that is the point. The other two contract screens use
       // it to ask, at dismissal, for the render they refused to take when the
       // deal closed. `submitOfferAction` takes that render immediately now

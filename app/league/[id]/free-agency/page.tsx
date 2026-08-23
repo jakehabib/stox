@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { readJson } from '@/lib/json';
@@ -199,15 +200,46 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
     ? rows.reduce<typeof rows[number] | null>((best, r) => (!best || r.view.scoutedOvr > best.view.scoutedOvr ? r : best), null)
     : null;
 
-  const posQuery = searchParams.pos ? `pos=${searchParams.pos}&` : '';
-  const sortHref = (key: SortKey) => {
-    const nextDir = sortKey === key && dir === -1 ? 'asc' : 'desc';
-    return `/league/${league.id}/free-agency?${posQuery}sort=${key}&dir=${nextDir}`;
+  /**
+   * ONE QUERY, AND EVERY LINK ON THE PAGE IS IT MINUS ONE THING.
+   *
+   * Same builder the draft board next door uses (`boardHref`), for the same
+   * reason and with the same rule: pass what changes, everything else rides
+   * along. Eighteen position pills, four sort headers and a Negotiate button
+   * per row all have to compose — a pill has to keep the sort, a header has to
+   * keep the pill — and three hand-rolled string suffixes were already the
+   * shape that drops things across each other.
+   */
+  const marketQuery = (patch: { pos?: string | null; sort?: SortKey; dir?: 'asc' | 'desc' } = {}) => {
+    const p = new URLSearchParams();
+    const pos = patch.pos !== undefined ? patch.pos : searchParams.pos;
+    if (pos) p.set('pos', pos);
+    p.set('sort', patch.sort ?? sortKey);
+    p.set('dir', patch.dir ?? (dir === -1 ? 'desc' : 'asc'));
+    return p.toString();
   };
-  const posHref = (pos?: string) => {
-    const suffix = `sort=${sortKey}&dir=${dir === -1 ? 'desc' : 'asc'}`;
-    return pos ? `/league/${league.id}/free-agency?pos=${pos}&${suffix}` : `/league/${league.id}/free-agency?${suffix}`;
-  };
+  const marketHref = (patch: Parameters<typeof marketQuery>[0] = {}) =>
+    `/league/${league.id}/free-agency?${marketQuery(patch)}`;
+  const sortHref = (key: SortKey) => marketHref({ sort: key, dir: sortKey === key && dir === -1 ? 'asc' : 'desc' });
+  const posHref = (pos?: string) => marketHref({ pos: pos ?? null });
+  /**
+   * THE LIST TRAVELS WITH THE NEGOTIATION.
+   *
+   * A new save is five or six signings under the 53 ceiling, so this table is
+   * worked in a loop — and the loop used to end on the card of the man you had
+   * just signed, with the only way back a nav click to an unfiltered, default
+   * -sorted free agency page nearly six thousand pixels tall. `fq` carries the
+   * filter and the sort so the signing card can put you back on exactly the
+   * list you left. The player card rebuilds the route itself and only ever
+   * rebuilds THIS one, so nothing here can redirect anybody anywhere.
+   *
+   * `fq` IS THE SAME STRING THE PILLS AND HEADERS ARE BUILT FROM, deliberately:
+   * whoever reconstitutes the market on the way back gets the query this page
+   * would have produced for itself, so the two cannot drift apart the next time
+   * a filter is added here.
+   */
+  const negotiateHref = (playerId: string) =>
+    `/league/${league.id}/player/${playerId}?view=contract&from=fa&fq=${encodeURIComponent(marketQuery())}`;
 
   return (
     <div className="space-y-6">
@@ -224,6 +256,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
             value: formatMoney(capSummary.capSpace),
             detail: 'room to spend',
             color: capSummary.capSpace >= 0 ? 'text-accent' : 'text-bad',
+            href: `/league/${league.id}/cap`,
           }] : []),
           {
             label: 'On The Market',
@@ -235,6 +268,10 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
             tip: topView.revealed ? tip('overall') : tip('scoutedRange'),
             value: String(topView.revealed || topView.confidence >= 90 ? topView.scoutedOvr : `${topView.ovrLow}-${topView.ovrHigh}`),
             detail: `${topAvailable.position} · ${topAvailable.firstName} ${topAvailable.lastName}`,
+            // The tile names a man. On free agency the reason to look at a man
+            // is his price, so it opens on the contract face like every other
+            // negotiation entrance.
+            href: negotiateHref(topAvailable.id),
           }] : []),
           ...(affordable !== null ? [{
             label: 'Within Budget',
@@ -253,7 +290,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`font-semibold text-xs ${positionBadgeClass(topAvailable.position)}`}>{topAvailable.position}</span>
-              <a href={`/league/${league.id}/player/${topAvailable.id}`} className="font-semibold hover:text-accent2 truncate">{topAvailable.firstName} {topAvailable.lastName}</a>
+              <Link href={`/league/${league.id}/player/${topAvailable.id}`} className="font-semibold hover:text-accent2 truncate">{topAvailable.firstName} {topAvailable.lastName}</Link>
               <span className="text-xs text-muted">Age {topAvailable.age}</span>
             </div>
             <div className="text-xs text-muted mt-0.5">
@@ -267,14 +304,27 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
           ) : (
             <ScoutingRange low={topView.ovrLow} high={topView.ovrHigh} confidence={topView.confidence} label="OVR" className="w-32" />
           )}
-          <a href={`/league/${league.id}/player/${topAvailable.id}?view=contract`} className="btn-secondary text-xs px-2.5 py-1.5 shrink-0">Negotiate</a>
+          <Link href={negotiateHref(topAvailable.id)} scroll={false} prefetch={false} className="btn-secondary text-xs px-2.5 py-1.5 shrink-0">Negotiate</Link>
         </div>
       )}
 
+      {/*
+        FILTERING IS NOT NAVIGATING AWAY, and every one of these used to be a
+        plain `<a>`. The draft board left the reason in writing next door: a
+        plain `<a>` reloads the document, and a reload throws away the view the
+        GM is standing in. It is worse here than there, because this is the
+        tallest page in the game (~6,000px) and it is worked in a loop — six to
+        ten signings to reach a legal roster on a new save, and every one of
+        them cost a filter, a sort and a scroll position to re-establish by
+        hand. `scroll={false}` keeps him at the table instead of throwing him
+        back to the masthead; `prefetch={false}` because eighteen pills
+        prefetching a six-thousand-pixel page is a lot of server work for the
+        seventeen he is not going to press.
+      */}
       <div className="flex gap-2 flex-wrap">
-        <a href={posHref()} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</a>
+        <Link href={posHref()} scroll={false} prefetch={false} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</Link>
         {positions.map((pos) => (
-          <a key={pos} href={posHref(pos)} className={`pill ${searchParams.pos === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</a>
+          <Link key={pos} href={posHref(pos)} scroll={false} prefetch={false} className={`pill ${searchParams.pos === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</Link>
         ))}
       </div>
 
@@ -298,15 +348,21 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         <table className="table-clean">
           <thead>
             <tr>
-              <th><a href={sortHref('pos')} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th><Link href={sortHref('pos')} scroll={false} prefetch={false} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
               <th>Name</th>
-              <th><a href={sortHref('age')} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</a></th>
+              <th><Link href={sortHref('age')} scroll={false} prefetch={false} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
               <th>
                 <span className="inline-flex items-center gap-1">
-                  <a href={sortHref('ovr')} className="hover:text-chalk">{fogged ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                  <Link href={sortHref('ovr')} scroll={false} prefetch={false} className="hover:text-chalk">{fogged ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
                   {/* Downward. The panel is an `overflow-x-auto` scroller, and
                       an auto on one axis clips the other too. */}
-                  <Tooltip placement="bottom" text={fogged ? tip('scoutedRange') : tip('overall')} />
+                  {/* The colour rides with the number (ratingColor, see the
+                      cell below) and had no explanation on any screen in the
+                      game. It joins the unfogged branch only: where the cell
+                      prints a range instead, the ink comes from the fogged
+                      centre, and describing that as the man's tier would hand
+                      back the thing the range is deliberately not saying. */}
+                  <Tooltip placement="bottom" text={fogged ? tip('scoutedRange') : `${tip('overall')} ${tip('ratingColours')}`} />
                 </span>
               </th>
               {/* Not sortable, deliberately: the sort keys are a closed set the
@@ -320,7 +376,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
               </th>
               <th>
                 <span className="inline-flex items-center gap-1">
-                  <a href={sortHref('market')} className="hover:text-chalk">Asking{sortKey === 'market' && (dir === -1 ? ' ▾' : ' ▴')}</a>
+                  <Link href={sortHref('market')} scroll={false} prefetch={false} className="hover:text-chalk">Asking{sortKey === 'market' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
                   <Tooltip placement="bottom" text={tip('askingPrice')} />
                 </span>
               </th>
@@ -331,7 +387,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
             {sorted.map(({ p, view, market, opening, verdict }) => (
               <tr key={p.id}>
                 <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
-                <td><a href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={26} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} /> {p.firstName} {p.lastName}</a></td>
+                <td><Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium flex items-center gap-2"><PlayerAvatar seed={p.id} age={p.age} size={26} weightLb={p.weightLb} heightIn={p.heightIn} position={p.position} /> {p.firstName} {p.lastName}</Link></td>
                 <td className="text-muted">{p.age}</td>
                 <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
                 <td><SlotVerdictBadge verdict={verdict} /></td>
@@ -344,7 +400,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
                     <div className="text-[11px] text-accent">was {formatMoney(opening)}</div>
                   )}
                 </td>
-                <td><a href={`/league/${league.id}/player/${p.id}?view=contract`} className="btn-secondary text-xs px-2.5 py-1">Negotiate</a></td>
+                <td><Link href={negotiateHref(p.id)} scroll={false} prefetch={false} className="btn-secondary text-xs px-2.5 py-1">Negotiate</Link></td>
               </tr>
             ))}
           </tbody>

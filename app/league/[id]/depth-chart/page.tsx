@@ -103,16 +103,50 @@ export default async function DepthChartPage({ params }: { params: { id: string 
             value: String(openStarterSlots),
             detail: openStarterSlots > 0 ? shortPositions.join(', ') : 'every starting slot filled',
             color: openStarterSlots > 0 ? 'text-bad' : 'text-accent',
+            // An empty starting slot is not fixed by reordering — there is
+            // nobody to reorder. The move is to go and sign one, so the tile
+            // opens free agency already filtered to the first position it
+            // names. First and not all of them because the strip carries one
+            // href: the GM works the list top-down, and the tile's own detail
+            // is in that order.
+            href: openStarterSlots > 0 ? `/league/${params.id}/free-agency?pos=${shortPositions[0]}` : undefined,
           },
           {
+            // THE COLOUR LEGEND LANDS HERE BECAUSE THIS PAGE HAS NO OVR COLUMN
+            // HEADER TO HANG IT ON. Every rating on the screen below is drawn
+            // in its tier's ink — DepthChartGroup renders each man's number
+            // through ratingColor — but the groups are cards, not a table, so
+            // there is no header row anywhere on this route. This tile is the
+            // one place on the page that is already about the rating, and it
+            // sits above every coloured number it explains. The alternative
+            // was a "?" inside the group card header, which would have printed
+            // the same bubble sixteen times down one screen.
             label: 'Starter OVR',
-            tip: tip('overall'),
+            tip: `${tip('overall')} ${tip('ratingColours')}`,
             value: starterAvgOvr.toFixed(1),
             detail: `across all ${starterOvrs.length} starters`,
             color: undefined,
           },
-          { label: 'No Backup', value: String(thinPositions.length), detail: thinPositions.length > 0 ? thinPositions.join(', ') : 'depth everywhere', tip: tip('rosterNeed'), color: thinPositions.length > 0 ? 'text-warn' : 'text-accent' },
-          { label: 'Injured Starters', value: String(injuredStarters), detail: injuredStarters > 0 ? 'reorder before kickoff' : 'none', color: injuredStarters > 0 ? 'text-bad' : 'text-accent' },
+          // Same reasoning as Open Starting Slots: cover for a starter comes
+          // from the market, not from this page.
+          { label: 'No Backup', value: String(thinPositions.length), detail: thinPositions.length > 0 ? thinPositions.join(', ') : 'depth everywhere', tip: tip('rosterNeed'), color: thinPositions.length > 0 ? 'text-warn' : 'text-accent', href: thinPositions.length > 0 ? `/league/${params.id}/free-agency?pos=${thinPositions[0]}` : undefined },
+          // THE COUNT IS REAL. THE INSTRUCTION UNDER IT WAS NOT, and it read
+          // "reorder before kickoff" for long enough to have cost somebody a
+          // season of Sundays. computeUnits (lib/sim/units.ts) filters the
+          // group through `isAvailable` BEFORE it applies the depth chart, so
+          // an injured man is skipped wherever the chart puts him and the next
+          // healthy man takes his snaps. Reordering by hand changed nothing at
+          // all — and obeying it was worse than ignoring it, because the demote
+          // was permanent and nothing on any screen prompts a GM to undo it
+          // when the man heals two or three weeks later. A starter left behind
+          // his own backup, for a press the sim never read.
+          //
+          // So the tile reports and stops. Who is missing this week is real
+          // information; the move it argues for is cover from the market, not
+          // an arrow on this page. Still no href — "No Backup" above already
+          // opens the wire, and sending a GM shopping over an injury that
+          // clears itself in a fortnight is a worse answer than none.
+          { label: 'Injured Starters', value: String(injuredStarters), detail: injuredStarters > 0 ? 'backups start automatically' : 'none', color: injuredStarters > 0 ? 'text-bad' : 'text-accent' },
           {
             label: 'Out Of Order',
             tip: tip('depthChart'),

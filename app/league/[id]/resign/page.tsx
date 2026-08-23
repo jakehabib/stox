@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { teamCapSummary } from '@/lib/cap-summary';
-import { capHit, formatMoney, unamortizedBonus } from '@/lib/cap';
+import { capHit, formatMoney, unamortizedBonus, marketValue } from '@/lib/cap';
 import { ResignRow } from '@/components/ResignRow';
 import type { DepthEntry } from '@/components/ds/DepthAtPosition';
 import { LetAiResignButton } from '@/components/LetAiResignButton';
@@ -215,6 +215,10 @@ export default async function ResignPage({ params }: { params: { id: string } })
               value: formatMoney(summary.capSpace),
               detail: `${formatMoney(summary.capUsed)} committed`,
               color: summary.capSpace >= 0 ? 'text-accent' : 'text-bad',
+              // The only tile on this strip with an elsewhere. Franchise Tag
+              // and Already Expired both resolve in the rows below — a link
+              // would just reload the screen the GM is already reading.
+              href: `/league/${league.id}/cap`,
             },
             {
               label: 'On The Books',
@@ -258,6 +262,18 @@ export default async function ResignPage({ params }: { params: { id: string } })
                */
               tagDeadMoney={unamortizedBonus(p.contract, settings.capMode)}
               depth={depthFor(p.id, p.position)}
+              /*
+               * THE OPEN-MARKET BENCHMARK, SO THE LIST CAN BE TRIAGED WITHOUT
+               * OPENING ELEVEN NEGOTIATIONS. `marketValue` is pure arithmetic on
+               * rating, position and age — no query, no session, nothing this
+               * page did not already have — and it is emphatically NOT what he
+               * will sign for: buildContext (lib/negotiation.ts) runs it through
+               * a personality, a decaying loyalty discount, a premium for
+               * whoever else is calling and a seeded wobble before it becomes a
+               * reservation price. The row prints it as a band, and printing his
+               * real number would end the minigame this window is built around.
+               */
+              marketApy={marketValue({ ovr: p.trueOvr, position: p.position as any, age: p.age, potential: p.potential })}
             />
           ))}
 

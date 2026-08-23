@@ -86,9 +86,25 @@ export default async function PlayerPage({
   searchParams,
 }: {
   params: { id: string; playerId: string };
-  searchParams: { split?: string; view?: string };
+  searchParams: { split?: string; view?: string; from?: string; fq?: string };
 }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
+  /**
+   * THE LIST HE WAS WORKING, so the signing card can hand it back.
+   *
+   * Only the QUERY travels, never a path: `fq` is free agency's own filter and
+   * sort string and the route is rebuilt here. A caller cannot use this to
+   * send anyone anywhere else, and a stale or junk value degrades to plain
+   * `/free-agency` rather than to a broken link.
+   */
+  const returnTo = searchParams?.from === 'fa'
+    ? {
+      href: `/league/${params.id}/free-agency${searchParams.fq ? `?${searchParams.fq}` : ''}`,
+      label: 'Back to Free Agency',
+    }
+    : searchParams?.from === 'cap'
+      ? { href: `/league/${params.id}/cap`, label: 'Back to the Cap Sheet' }
+      : undefined;
   // Which half of the year this card's stat sections are about. In the URL so
   // a reload and a shared link both keep it; regular season by absence.
   const statScope = parseStatScope(searchParams?.[STAT_SCOPE_PARAM]);
@@ -1071,7 +1087,11 @@ export default async function PlayerPage({
                     {player.contract.yearsRemaining > 2 ? ' years' : ' year'} after it.
                   </p>
                 )}
-                <CutButton leagueId={league.id} playerId={player.id} />
+                {/* A release from the cap page's route back under the ceiling
+                    is one step of a sequence, so it returns to the sheet that
+                    listed it rather than dropping the GM on /roster to find
+                    his way back for the second cut. */}
+                <CutButton leagueId={league.id} playerId={player.id} returnTo={searchParams?.from === 'cap' ? `/league/${league.id}/cap` : undefined} />
               </div>
             )}
 
@@ -1084,7 +1104,7 @@ export default async function PlayerPage({
         </div>
       ) : player.status === 'FREE_AGENT' && userTeam ? (
         <div className="panel p-5">
-          <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} />
+          <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} returnTo={returnTo} />
         </div>
       ) : (
         <div className="panel p-5">

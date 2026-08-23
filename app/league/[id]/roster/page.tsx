@@ -186,7 +186,8 @@ export default async function RosterPage({ params, searchParams }: { params: { i
   // signed player on this page is ever fogged and this reads "OVR" — but ask
   // the views rather than hard-coding it, so the label cannot drift away from
   // the column the way the free-agency one did.
-  const ovrLabel = rows.some((r) => !r.view.revealed) ? 'Scouted OVR' : 'OVR';
+  const fogged = rows.some((r) => !r.view.revealed);
+  const ovrLabel = fogged ? 'Scouted OVR' : 'OVR';
 
   const sortHref = (key: SortKey) => {
     const nextDir = sortKey === key && dir === -1 ? 'asc' : 'desc';
@@ -369,6 +370,10 @@ export default async function RosterPage({ params, searchParams }: { params: { i
             detail: expiring > 0 ? 'deals up within a year' : 'nothing up soon',
             tip: tip('expiringContract'),
             color: expiring > 0 ? 'text-warn' : undefined,
+            // The re-sign page IS the list of these men, one negotiation per
+            // row. Counting them here and making the GM find that screen from
+            // the nav was the whole dead end.
+            href: expiring > 0 ? `/league/${league.id}/resign` : undefined,
           },
           ...(capSummary ? [{
             label: 'Cap Space',
@@ -376,6 +381,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
             detail: `${formatMoney(capSummary.capUsed)} committed`,
             tip: tip('capSpace'),
             color: capSummary.capSpace >= 0 ? 'text-accent' : 'text-bad',
+            href: `/league/${league.id}/cap`,
           }] : []),
         ]}
       />
@@ -397,7 +403,20 @@ export default async function RosterPage({ params, searchParams }: { params: { i
                         `panel overflow-hidden` AND an `overflow-x-auto`
                         scroller — the exact pair that once rendered a Cap-page
                         tooltip perfectly and clipped it out of existence. */}
-                    <Tooltip placement="bottom" text={tip('overall')} />
+                    {/* THE COLOUR IS PART OF THE COLUMN, so it is part of the
+                        column's explanation. Every rating in this game is
+                        drawn in its tier's ink (ratingColor, lib/ratings.ts)
+                        and until now nothing anywhere told the player that —
+                        a re-sign screenshot with 93 gold, 88 green, 85 green,
+                        79 blue and 75 white in one column, and no legend on
+                        any screen. Gated on `fogged` for the same reason the
+                        label is: when the cell shows a RANGE, the ink comes
+                        from the fogged centre point, and calling that "the
+                        tier he falls in" would be promising a read the fog is
+                        there to withhold. No signed player is fogged today —
+                        fog is scoped to prospects — but the gate keeps this
+                        honest if that ever changes. */}
+                    <Tooltip placement="bottom" text={fogged ? tip('scoutedRange') : `${tip('overall')} ${tip('ratingColours')}`} />
                   </span>
                 </th>
                 <th>

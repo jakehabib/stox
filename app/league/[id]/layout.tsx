@@ -19,6 +19,7 @@ import { transactionCategory } from '@/lib/newsCategory';
 import { ensurePowerSnapshot, powerRankingWireItems } from '@/lib/powerRankings';
 import { prisma } from '@/lib/db';
 import { AccountBadge } from '@/components/auth/AccountBadge';
+import { tip } from '@/lib/glossary';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +40,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // capComplianceReport wraps teamCapSummary and short-circuits the extra
   // roster scan when the team is compliant, so this is no more work than
   // the plain summary this used to call, and never two of them.
-  const [compliance, workouts, tickerTx, powerItems, wireTeamRows, lineupRoster] = await Promise.all([
+  const [compliance, workouts, tickerTx, powerItems, wireTeamRows, lineupRoster, pendingOfferCount, walkYearCount] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : capComplianceReport(userTeam.id, league.seasonYear, ctx.settings.capMode),
     // Private workouts are the ONLY scarce thing left in scouting — the
     // consensus board is free and the shortlist costs nothing to work — which
@@ -104,6 +105,36 @@ export default async function LeagueLayout({ children, params }: { children: Rea
       where: { teamId: userTeam.id, status: { not: 'RETIRED' } },
       select: { position: true, injuryWeeks: true, status: true },
     }),
+    /*
+     * ===================================================================
+     * THE TWO COUNTS THE NAV WEARS. See LeagueNav's BADGES note for why
+     * these two and not others.
+     * ===================================================================
+     * Trade offers: the SAME query lib/frontOffice.ts counts the brief item
+     * from — pending, inbound, this league. A nav badge reading 3 above a
+     * trade page listing 2 would be this codebase's signature defect in a
+     * new place, so there is one definition and both read it.
+     */
+    prisma.tradeOffer.count({ where: { leagueId: league.id, toTeamId: userTeam.id, status: 'PENDING' } }),
+    /*
+     * Re-sign: men who walk at the END OF THIS LEAGUE YEAR, and only while
+     * the window is open. This is the phase-pinned cohort from the re-sign
+     * page itself — during OFFSEASON and RESIGN, contracts have already been
+     * aged, so `yearsRemaining: 0` is exactly the list that page renders and
+     * exactly the list `releaseUnresignedExpiringContracts` will take.
+     *
+     * Deliberately zero in every other phase, badge and all. In-season the
+     * same idea would count every walk-year man on the roster — non-zero
+     * essentially always, on a decision with a twelve-month clock — and a
+     * badge that is always on is furniture. The one that only lights when
+     * men are actually about to leave is the one a GM will still read in his
+     * fifth season.
+     */
+    league.phase === 'OFFSEASON' || league.phase === 'RESIGN'
+      ? prisma.player.count({
+        where: { teamId: userTeam.id, status: 'ACTIVE', contract: { yearsRemaining: 0 } },
+      })
+      : Promise.resolve(0),
   ]);
 
   // Write this week's ranking down once, the first time any league page is
@@ -177,6 +208,25 @@ export default async function LeagueLayout({ children, params }: { children: Rea
 
   // Only while games are being played. An empty slot in the offseason is a
   // roster still being built, not a hole you are about to lose a game to.
+  //
+  // A playtest asked for this to extend through OFFSEASON, RESIGN,
+  // FREE_AGENCY and DRAFT — "the entire period a GM is building his roster".
+  // DELIBERATELY NOT DOING THAT, and the reason is the same one that makes
+  // the banner worth having in-season: it has to differ by outcome or it is
+  // wallpaper. `releaseUnresignedExpiringContracts` empties every walk-year
+  // deal in the league the moment free agency opens, so on the first screen
+  // of the building period a normal club is missing several starters BY
+  // DESIGN. A standing red alarm that is on from the offseason roll until the
+  // roster is rebuilt is on for almost the whole period, and a GM learns to
+  // read past it — including in PRESEASON, where it is still here and where a
+  // gap genuinely does cost the next game.
+  //
+  // The building phases got doors instead of an alarm, which is what the
+  // playtest was actually short of: DepthChartGroup's Unmanned row now opens
+  // /free-agency?pos= for the position it names, and the depth chart's "Open
+  // Starting Slots" and "No Backup" masthead tiles do the same. Those state
+  // the hole where the GM is already looking at it, without claiming a
+  // deadline that has not arrived.
   const gaps = ['REGULAR', 'PLAYOFFS', 'PRESEASON'].includes(league.phase)
     ? lineupGaps(lineupRoster)
     : [];
@@ -205,17 +255,35 @@ export default async function LeagueLayout({ children, params }: { children: Rea
                 <div className="text-xs text-muted leading-tight">{userTeam.wins}-{userTeam.losses}{userTeam.ties ? `-${userTeam.ties}` : ''} · {userTeam.conference} {userTeam.division}</div>
               </div>
             </div>
+            {/* THE ONE PLACE CAP SPACE IS ALWAYS ON SCREEN was the one place
+                it was never defined. `capSpace` is in the glossary and is
+                tipped on the roster, cap, re-sign, free-agency and trade
+                screens; the header — where a first-timer meets the number
+                before he has opened any of them — carried neither a Tooltip
+                nor a title. A native title rather than a <Tooltip>, because
+                this strip is dense and a bubble here would open over the
+                Advance button. It is a link for the same reason Workouts
+                beside it is one: the number names a budget, and /cap is where
+                that budget is spent. */}
             {compliance && (
-              <div className="stat-tile hidden lg:block text-right">
+              <Link
+                href={`/league/${league.id}/cap`}
+                className="stat-tile hidden lg:block text-right hover:border-accent/50 transition-colors"
+                title={tip('capSpace')}
+              >
                 <div className="label-sm">Cap Space</div>
                 <div className={`text-sm font-mono font-semibold ${compliance.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(compliance.capSpace)}</div>
-              </div>
+              </Link>
             )}
             {workouts && (
               <Link
                 href={`/league/${league.id}/scouting`}
                 className="stat-tile hidden lg:block text-right hover:border-accent2/50 transition-colors"
-                title={workouts.windowLabel}
+                // The window label alone says WHEN, never WHAT. `privateWorkout`
+                // is written in the glossary and reached nothing; a GM who has
+                // not yet opened the scouting page had no way to learn what a
+                // workout is from the tile that counts them down.
+                title={`${workouts.windowLabel} — ${tip('privateWorkout')}`}
               >
                 <div className="label-sm">Workouts</div>
                 <div className={`text-sm font-mono font-semibold ${
@@ -232,7 +300,17 @@ export default async function LeagueLayout({ children, params }: { children: Rea
             <AdvanceWeekButton leagueId={league.id} currentPhase={league.phase} />
           </div>
         </div>
-        <LeagueNav leagueId={league.id} />
+        {/* Keyed by the nav item's own href so the nav never has to know what
+            any of these numbers mean. Zero and absent are the same thing to it
+            — no badge — so a phase where a count is deliberately not collected
+            needs no special case here. `gaps` is reused rather than recounted:
+            it is `lineupGaps` from lib/lineup.ts, the same definition the sim
+            fields and the depth chart draws, and the same one the banner below
+            reads, so the badge and the banner can never disagree. */}
+        <LeagueNav
+          leagueId={league.id}
+          counts={{ '/trade': pendingOfferCount, '/resign': walkYearCount, '/depth-chart': gaps.length }}
+        />
         {gaps.length > 0 && <LineupGapBanner leagueId={league.id} gaps={gaps} />}
         {compliance && !compliance.compliant && (
           <CapAlertBanner

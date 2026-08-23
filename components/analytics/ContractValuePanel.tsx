@@ -78,7 +78,7 @@ export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, tea
             return (
               <Link
                 key={r.playerId}
-                href={`/league/${leagueId}/player/${r.playerId}`}
+                href={`/league/${leagueId}/player/${r.playerId}?view=contract`}
                 className="grid grid-cols-[34px_minmax(190px,320px)_minmax(100px,1fr)_72px_66px] gap-2.5 items-center py-1 border-b border-line/45 hover:bg-raised/45"
                 title={`${r.name} (${r.position}, ${r.age}) · rated ${r.ovr} · cap hit ${formatMoney(r.hit)} against a ${formatMoney(r.marketValue)} market · ${positive ? 'surplus' : 'overpay'} ${formatMoney(Math.abs(r.surplus))}`}
               >

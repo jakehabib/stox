@@ -64,6 +64,7 @@ import { tip } from '@/lib/glossary';
 export function NegotiationPanel({
   initialSession, structure = DEFAULT_STRUCTURE, structureSlot, banner,
   onOffer, onSigned, onCancel, onReset, disabled, disabledReason, title = 'Contract Talks',
+  returnTo,
 }: {
   /** Resolved server-side. Replaced by whatever the server hands back on every submit. */
   initialSession: NegotiationSession;
@@ -98,6 +99,13 @@ export function NegotiationPanel({
   disabled?: boolean;
   disabledReason?: string;
   title?: string;
+  /**
+   * Where the GM came from, carried through to the signing card so the loop
+   * closes instead of stranding him on the man he just signed. Passed straight
+   * through — this panel never invents it, because only the screen that opened
+   * the talks knows what list was being worked. See SigningConfirmation.
+   */
+  returnTo?: { href: string; label: string };
 }) {
   const [session, setSession] = useState(initialSession);
   const { ctx, gate } = session;
@@ -217,7 +225,7 @@ export function NegotiationPanel({
     if (res.ok) {
       // `signed` is typed optional and is present exactly when `ok`; the guard
       // is so a missing deal produces no card rather than an empty one.
-      if (res.signed) moment?.show({ deal: res.signed, answeredAt: answered, onDismiss: onSigned });
+      if (res.signed) moment?.show({ deal: res.signed, answeredAt: answered, onDismiss: onSigned, returnTo });
       return 'Signed';
     }
     setHistory((h) => [...h, {
@@ -383,6 +391,7 @@ export function NegotiationPanel({
             deal={signedDeal}
             answeredAt={answeredAt}
             onDismiss={() => onSigned?.()}
+            returnTo={returnTo}
           />
         </div>
       ) : (

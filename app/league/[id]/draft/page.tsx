@@ -1579,7 +1579,20 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th>
                   <span className="inline-flex items-center gap-1">
                     <Link href={sortHref('ovr')} scroll={false} prefetch={false} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
-                    <Tooltip placement="bottom" text={settings.scoutingEnabled ? tip('scoutedRange') : tip('overall')} />
+                    {/* THE COLOUR LEGEND GOES ON THE UNFOGGED BRANCH ONLY, and
+                        this board is the reason the rule exists. With scouting
+                        off the cell prints one true number and the ink is
+                        honestly his tier, so the legend belongs. With scouting
+                        ON the cell prints a 25-point range while the ink comes
+                        off `ratingColor(view.scoutedOvr)` — the centre of the
+                        fog — and that ink lands in the band of the man's TRUE
+                        overall about 86.5% of the time across a real class. It
+                        already leaks most of what the range is hiding.
+                        Explaining it here as "the tier he falls in" would
+                        document the leak as a feature and teach every GM to
+                        read the hue instead of the range. Left unexplained on
+                        purpose; the leak itself is a separate call. */}
+                    <Tooltip placement="bottom" text={settings.scoutingEnabled ? tip('scoutedRange') : `${tip('overall')} ${tip('ratingColours')}`} />
                   </span>
                 </th>
                 <th>
@@ -1873,8 +1886,25 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           // for every pick (see the capital panel above). This line points at
           // them, and changes when the draft stops being a thing next season
           // and becomes the next thing on the calendar.
+          // THE EMPTY-CLASS BRANCH IS NOT COSMETIC. This line used to be
+          // picked without ever looking at `classSize`, so "scout them now"
+          // went out over a board with nobody on it — which is exactly what a
+          // brand-new league shows, because the class is seeded by the
+          // PRESEASON phase step (addDraftClass in lib/season.ts) and a league
+          // is created sitting IN preseason. A first-timer clicking here after
+          // free agency was handed an instruction, followed it, and got an
+          // empty screen with no way to tell whether it was broken, early, or
+          // his fault. The same hole opens again in the window after one draft
+          // finishes and before the next class comes in.
+          //
+          // The honest sentence already existed 700px lower, beside the
+          // workout counter (workoutWindowLabel in lib/workouts.ts). This one
+          // is in the same register and answers the same question: not yet,
+          // and here is when.
           subtitle={state || draftJustFinished
             ? undefined
+            : classSize === 0
+            ? 'No names on the board yet. The class is not put together until the season kicks off — from week one it is yours to scout, right through to the draft, which opens after free agency.'
             : upcomingDraftYear !== null && upcomingDraftYear === league.seasonYear
             ? 'The season is in the books and the class is graded — your selections and where they land are below. The draft opens when free agency closes.'
             : 'The incoming class is browsable all season — scout them now, the draft opens after free agency.'}

@@ -6,6 +6,7 @@ import { formatMoney } from '@/lib/cap';
 import { readJson } from '@/lib/json';
 import { shortResult } from '@/lib/sim/recap';
 import { teamNeeds, needSeverity } from '@/lib/ai/gm';
+import { startersAt } from '@/lib/lineup';
 import { buildFrontOfficeBrief } from '@/lib/frontOffice';
 import { buildGmCareerSummary } from '@/lib/gmCareer';
 import { buildLeagueRatings, estimateGameWinChance } from '@/lib/teamRating';
@@ -442,7 +443,16 @@ export default async function TeamDashboard({ params }: { params: { id: string }
         honors={myAllStars}
         nearMiss={snub}
       />
-      <OffseasonRoadmap currentPhase={league.phase} week={league.week} />
+      <OffseasonRoadmap
+        leagueId={league.id}
+        currentPhase={league.phase}
+        week={league.week}
+        // Suppresses itself on the FIRST preseason of a save — a five-stage
+        // checklist of an offseason that happened before the GM arrived, sitting
+        // above the two live decisions in his brief. See the note there.
+        seasonYear={league.seasonYear}
+        startYear={league.startYear}
+      />
       {league.phase === 'RESIGN' && (
         <Link href={`/league/${league.id}/resign`} className="card card-pad flex items-center justify-between gap-4 border-warn/40 hover:bg-raised transition-colors">
           <div>
@@ -519,7 +529,22 @@ export default async function TeamDashboard({ params }: { params: { id: string }
               {topNeeds.length === 0 ? (
                 <p className="text-sm text-muted">No glaring holes right now — nice work.</p>
               ) : (
-                <RosterNeeds needs={topNeeds.map(([pos, val]) => ({ position: pos, value: val, ...needSeverity(val) }))} />
+                <RosterNeeds
+                  needs={topNeeds.map(([pos, val]) => ({
+                    position: pos,
+                    value: val,
+                    ...needSeverity(val),
+                    // WHAT THE SEVERITY WORD COULD NOT SAY. Measured on a live
+                    // dashboard all five rows read "Moderate" — `needSeverity`'s
+                    // middle band is wide enough to swallow a whole normal
+                    // roster's top five. Bodies against starters differ on every
+                    // line and are the reason the score is what it is.
+                    // `startersAt` is lib/lineup.ts's, so this cannot disagree
+                    // with the depth chart or the sim about who starts.
+                    detail: `${roster.filter((p) => p.position === pos).length} rostered · ${startersAt(pos)} start`,
+                    href: `/league/${league.id}/free-agency?pos=${pos}`,
+                  }))}
+                />
               )}
             </div>
           </div>

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { FREE_AGENCY } from '@/lib/tuning';
 
 /**
@@ -56,6 +57,19 @@ const STAGES: {
   stepNames?: string[];
   /** The word for one advance here — the offseason moves in steps, free agency in weeks. */
   unit?: 'step' | 'week';
+  /**
+   * THE SCREEN WHERE THIS STAGE IS ACTUALLY PLAYED, league-relative.
+   *
+   * The roadmap named five stages, described what each one was for, sat near
+   * the top of the dashboard through every offseason phase — and contained no
+   * link of any kind. "Re-sign Window — decide which of your own expiring
+   * players to keep" is an instruction with no door under it.
+   *
+   * Housekeeping has none on purpose: there is no screen for it. It is what
+   * pressing Advance does, and inventing a destination for it would be the
+   * roadmap naming a button that is not on the screen it links to.
+   */
+  href?: string;
 }[] = [
   {
     phase: 'OFFSEASON',
@@ -68,11 +82,12 @@ const STAGES: {
       'Next: the draft class comes on the board and the re-sign window opens',
     ],
   },
-  { phase: 'RESIGN', label: 'Re-sign Window', desc: 'Decide which of your own expiring players to keep before they hit the market.' },
+  { phase: 'RESIGN', label: 'Re-sign Window', desc: 'Decide which of your own expiring players to keep before they hit the market.', href: '/resign' },
   {
     phase: 'FREE_AGENCY',
     label: 'Free Agency',
     desc: 'Sign from the league-wide pool — AI teams are bidding too.',
+    href: '/free-agency',
     advanceSteps: Array.from({ length: FREE_AGENCY.WEEKS }, () => 1),
     unit: 'week',
     stepNames: [
@@ -81,8 +96,11 @@ const STAGES: {
       'Last week before the draft goes on the clock',
     ],
   },
-  { phase: 'DRAFT', label: 'Rookie Draft', desc: "Draft this year's incoming class." },
-  { phase: 'PRESEASON', label: 'New Season', desc: 'Back to football.' },
+  { phase: 'DRAFT', label: 'Rookie Draft', desc: "Draft this year's incoming class.", href: '/draft' },
+  // Not /roster. "Back to football" means the lineup the sim is about to read,
+  // and the depth chart is the last thing that is still yours to set before a
+  // game counts.
+  { phase: 'PRESEASON', label: 'New Season', desc: 'Back to football.', href: '/depth-chart' },
 ];
 
 /**
@@ -100,13 +118,42 @@ function advanceNumberFor(advanceSteps: number[], week: number): number {
   return advanceSteps.length;
 }
 
-export function OffseasonRoadmap({ currentPhase, week }: {
+export function OffseasonRoadmap({ leagueId, currentPhase, week, seasonYear, startYear }: {
+  leagueId: string;
   currentPhase: string;
   /** League.week — 1-based within the current phase. */
   week?: number;
+  /**
+   * The current league year and the one this save was founded in. Together
+   * they are the only way to tell a GM's FIRST preseason from every later one.
+   * Both optional so a caller that has neither still renders the roadmap it
+   * always did.
+   */
+  seasonYear?: number;
+  startYear?: number | null;
 }) {
   const currentIdx = STAGES.findIndex((s) => s.phase === currentPhase);
   if (currentIdx === -1) return null;
+
+  /*
+   * A CHECKLIST OF AN OFFSEASON THAT HAPPENED BEFORE HE ARRIVED.
+   *
+   * On a brand-new save at Preseason Week 1 this is the largest thing above
+   * the fold — five stages, all four of the earlier ones drawn as COMPLETE —
+   * and not one of them happened. There was no re-sign window, no free agency
+   * and no draft; the league was generated into its first preseason. Measured
+   * at 1600x1000 it occupied y=180-310 and pushed the Front Office brief, the
+   * only two live decisions on the screen, to y=605 with its second item under
+   * the fold.
+   *
+   * Nothing here is reworded, because nothing here is wrong later. It just
+   * must not be the first thing a new GM reads. From his second offseason on,
+   * those ticks are his own history and the roadmap is worth its place.
+   */
+  const firstPreseasonOfNewSave = currentPhase === 'PRESEASON'
+    && startYear != null
+    && seasonYear === startYear;
+  if (firstPreseasonOfNewSave) return null;
 
   const stage = STAGES[currentIdx];
   // Clamped rather than trusted, at both ends: League.week is a step index and
@@ -129,8 +176,21 @@ export function OffseasonRoadmap({ currentPhase, week }: {
       <div className="flex items-stretch gap-1.5">
         {STAGES.map((s, i) => {
           const state = i < currentIdx ? 'done' : i === currentIdx ? 'current' : 'upcoming';
-          return (
-            <div key={s.phase} className="flex-1 min-w-0">
+          /*
+           * ONLY THE CURRENT STAGE IS A DOOR, and that is the whole of it.
+           *
+           * A done stage's window is shut and an upcoming stage's has not
+           * opened — /free-agency during RESIGN lists a pool the league has
+           * not released yet, and /resign after the window is a page with
+           * nothing on it to decide. Linking those would be this component
+           * naming a button that is not on the screen it points at, which is
+           * a defect this codebase has already had to fix once (see the
+           * 'Re-sign him' note in lib/frontOffice.ts). The stage you are
+           * standing in is the one with work in it.
+           */
+          const href = state === 'current' && s.href ? `/league/${leagueId}${s.href}` : null;
+          const body = (
+            <>
               {/* The current stage's bar is subdivided into its own advances,
                   so progress WITHIN a stage reads at a glance and three
                   Advances in a row stop looking identical. */}
@@ -158,9 +218,21 @@ export function OffseasonRoadmap({ currentPhase, week }: {
                   {/* What the next Advance brings, where the stage is a
                       sequence; the stage's standing description otherwise. */}
                   {stepName ?? s.desc}
+                  {href && <span className="text-accent2"> →</span>}
                 </div>
               )}
-            </div>
+            </>
+          );
+          return href ? (
+            <Link
+              key={s.phase}
+              href={href}
+              className="flex-1 min-w-0 block rounded-md -mx-1 px-1 py-0.5 hover:bg-raised transition-colors"
+            >
+              {body}
+            </Link>
+          ) : (
+            <div key={s.phase} className="flex-1 min-w-0">{body}</div>
           );
         })}
       </div>

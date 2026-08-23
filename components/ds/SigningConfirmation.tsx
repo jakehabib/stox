@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { formatMoney } from '@/lib/cap';
 import type { SignedDeal } from '@/lib/negotiation';
@@ -44,11 +45,25 @@ import { StatNumber } from './StatNumber';
  * the server's answer, and the button that produced it is already re-enabled.
  * Under reduced motion the entrance collapses to nothing and every fact stays.
  */
-export function SigningConfirmation({ deal, answeredAt, onDismiss }: {
+export function SigningConfirmation({ deal, answeredAt, onDismiss, returnTo }: {
   deal: SignedDeal;
   /** performance.now() when the server answered — used only to report paint latency. */
   answeredAt?: number;
   onDismiss: () => void;
+  /**
+   * BACK TO THE LIST YOU WERE WORKING.
+   *
+   * Dismissing put the GM on the card of the man he had just signed, which is
+   * the one screen with nothing left to decide on it. A new save is five or
+   * six signings short of the 53 ceiling, so that walk — back to free agency,
+   * unfiltered, re-sorted, on the tallest page in the app — runs immediately
+   * and runs again for every man after him.
+   *
+   * Optional, and absent it behaves exactly as it always has: the re-sign row
+   * and the extension form both sign a player you are already looking at, and
+   * on those screens there is nowhere else to be.
+   */
+  returnTo?: { href: string; label: string };
 }) {
   const [shown, setShown] = useState(false);
   const paintMs = useRef<number | null>(null);
@@ -164,9 +179,23 @@ export function SigningConfirmation({ deal, answeredAt, onDismiss }: {
         </p>
       )}
 
-      <button type="button" onClick={onDismiss} className="btn-secondary w-full">
-        Done
-      </button>
+      {returnTo ? (
+        <div className="flex gap-2">
+          {/* The continue button leads, because continuing is what a GM under
+              the roster minimum is doing. Done still exists and still does
+              exactly what it did — stay on his card. */}
+          <Link href={returnTo.href} onClick={onDismiss} className="btn-primary flex-1 text-center">
+            {returnTo.label}
+          </Link>
+          <button type="button" onClick={onDismiss} className="btn-secondary flex-1">
+            Done
+          </button>
+        </div>
+      ) : (
+        <button type="button" onClick={onDismiss} className="btn-secondary w-full">
+          Done
+        </button>
+      )}
     </div>
   );
 }

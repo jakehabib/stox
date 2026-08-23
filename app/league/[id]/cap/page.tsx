@@ -272,7 +272,11 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
                 {compliance.path.map((c) => (
                   <Link
                     key={c.playerId}
-                    href={`/league/${league.id}/player/${c.playerId}`}
+                    // from=cap so the release lands back on this sheet: the
+                    // panel above is a SEQUENCE of releases, and CutButton's
+                    // hard-coded push to /roster made the GM navigate back
+                    // here between every one of them.
+                    href={`/league/${league.id}/player/${c.playerId}?view=contract&from=cap`}
                     className="flex items-center gap-3 px-3 py-1.5 rounded-md bg-raised hover:bg-line transition-colors text-sm"
                   >
                     <span className={`pill ${positionBadgeClass(c.position)}`}>{c.position}</span>
@@ -295,7 +299,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
                 {compliance.relief.filter((r) => r.kind === 'RESTRUCTURE').map((r) => (
                   <Link
                     key={r.playerId}
-                    href={`/league/${league.id}/player/${r.playerId}`}
+                    href={`/league/${league.id}/player/${r.playerId}?view=contract&from=cap`}
                     className="flex items-center gap-3 px-3 py-1.5 rounded-md bg-raised hover:bg-line transition-colors text-sm"
                   >
                     <span className={`pill ${positionBadgeClass(r.position)}`}>{r.position}</span>
@@ -448,7 +452,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
             <tbody>
               {sorted.map(({ p, hit, base, dead, savings }) => (
                 <tr key={p.id}>
-                  <td><Link href={`/league/${league.id}/player/${p.id}`} className="hover:text-accent2 font-medium">{p.firstName} {p.lastName}</Link></td>
+                  <td><Link href={`/league/${league.id}/player/${p.id}?view=contract`} className="hover:text-accent2 font-medium">{p.firstName} {p.lastName}</Link></td>
                   <td><span className={`font-semibold text-xs ${positionBadgeClass(p.position)}`}>{p.position}</span></td>
                   <td className="text-muted">{p.age}</td>
                   <td className="stat-value text-stat-sm text-muted">{p.trueOvr}</td>
@@ -501,7 +505,7 @@ function ContractValueList({ title, hint, rows, leagueId, positive }: {
         {rows.map((r) => (
           <div key={r.playerId} className="px-4 py-2.5 flex items-center gap-3">
             <span className={`font-semibold text-xs w-10 shrink-0 ${positionBadgeClass(r.position)}`}>{r.position}</span>
-            <Link href={`/league/${leagueId}/player/${r.playerId}`} className="flex-1 min-w-0 hover:text-accent2">
+            <Link href={`/league/${leagueId}/player/${r.playerId}?view=contract`} className="flex-1 min-w-0 hover:text-accent2">
               <div className="font-medium text-sm truncate">{r.name}</div>
               <div className="text-xs text-muted">{r.ovr} OVR · age {r.age} · {formatMoney(r.hit)} vs {formatMoney(r.marketValue)} market</div>
             </Link>
