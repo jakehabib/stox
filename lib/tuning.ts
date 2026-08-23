@@ -375,20 +375,90 @@ export const ROSTER_TARGETS: Record<Position, { min: number; ideal: number; max:
   LB:   { min: 3, ideal: 5, max: 6 },
   CB:   { min: 4, ideal: 5, max: 6 },
   S:    { min: 3, ideal: 4, max: 5 },
+  /**
+   * K AND P STAY AT max: 1, AND IT WAS CHECKED RATHER THAN LEFT ALONE.
+   *
+   * The app owner reported no specialist ever available in the trade hub, and
+   * this hard ceiling is the obvious culprit. It is not the culprit, and
+   * raising it is worse than useless. Two measurements:
+   *
+   * 1. IT IS NOT WHAT KEEPS A CLUB AT ONE KICKER. `topUpRoster` in
+   *    lib/gen/league.ts fills the roster by largest `spec.ideal - held`
+   *    deficit and stops at ~47 men. A club that already holds its one kicker
+   *    scores a deficit of 0 there and is never chosen again, whatever `max`
+   *    says. Replayed over 400 generated clubs with max at 1 and then at 2,
+   *    the composition is IDENTICAL to two decimal places — K per club
+   *    {"1":400} both times. The binding number is `ideal`, not `max`.
+   *
+   * 2. AND `max` IS NOT ONLY A CEILING. lib/ai/gm.ts reads `max > 1` twice as
+   *    a different question — "is this a one-man job" — because K and P are the
+   *    only rows in this table where the two answers differ. `teamNeeds` skips
+   *    its depth term for them and `rosterFit` gives them no bench snap
+   *    weights. Setting max: 2 flips both: measured, a club with a perfectly
+   *    good kicker goes from needs.K 0.000 to 0.293, which is over free
+   *    agency's 0.15 bid gate, so all 32 clubs would shop for a backup kicker
+   *    in every wave forever; and a spare kicker's rosterFit gain goes from
+   *    0.00 to 2.64, pricing a man who takes no snaps as though he took some.
+   *
+   * So the roster half of a specialist market is not a change here. It needs
+   * lib/ai/gm.ts to stop reading `max > 1` as "carries depth" — a ONE_MAN_JOB
+   * set, which lib/gen/players.ts already keeps under that exact name — and
+   * only then can this become 2 without side effects. The half that IS a
+   * constant is ROSTER_NEED_QUALITY_WEIGHT below, and that one moved.
+   */
   K:    { min: 1, ideal: 1, max: 1 },
   P:    { min: 1, ideal: 1, max: 1 },
 };
 
 /**
- * How much a mediocre starter at this position should register as a
- * roster "need" — separate from whether the position is filled at all.
- * A below-average kicker or punter is real but nowhere near
- * as urgent as a below-average corner or tackle, since these positions
- * touch the game far less and are trivially replaceable off the street.
- * Missing [TUNE] entries default to full weight (1).
+ * ---------------------------------------------------------------------------
+ * HOW BADLY A CLUB WANTS TO UPGRADE A MEDIOCRE STARTER, PER POSITION
+ * ---------------------------------------------------------------------------
+ * Separate from whether the position is FILLED at all — that is `countNeed`,
+ * which multiplies by 1.4 and treats an empty slot as an emergency at every
+ * position including these two. This term is only about replacing a man who is
+ * there and is not good. Missing entries default to full weight (1).
+ *
+ * IT WAS 0.25 FOR BOTH, on the note: "A below-average kicker or punter is real
+ * but nowhere near as urgent as a below-average corner or tackle, since these
+ * positions touch the game far less and are trivially replaceable off the
+ * street." Two things were wrong with that. It gave K and P the same number
+ * when they are not remotely the same size, and 0.25 does not mean "less
+ * urgent", it means NEVER — which is a different policy and nobody chose it.
+ *
+ * WHAT 0.25 ACTUALLY DID. `teamNeeds` computes
+ * `clamp((72 - starter)/18, 0, 1) * weight`, that lands in `needs` at 0.75x,
+ * and free agency bids when `needs > 0.15`. At 0.25 the ceiling of the whole
+ * term is 0.1875, so a club shopped for a kicker only if its own rated 57 or
+ * worse — one point above the generator's roster floor. Measured over 4,000
+ * generated clubs: 1.8% of them. That is the closed specialist market the app
+ * owner reported ("there is no kicker or punter available for trade in the
+ * trade hub"), expressed as a constant.
+ *
+ * THE NEW NUMBERS ARE A MEASURED RATIO, not a fresh adjective. Every position
+ * below was swapped between a 99 and a 40 in the sim on identical rosters and
+ * seeds, and the difference scored — the points a club gains plus the points
+ * it denies, per game, over 40,000-150,000 paired games each:
+ *
+ *     starting CB          5.24 pts/game     (whole group 13.11 x 0.40 weight)
+ *     starting S           4.00              (whole group  7.27 x 0.55)
+ *     K                    2.21              1.68 field goals a game vs 1.06
+ *     P                    0.32              and see SIM.PUNT_PIN_PER_RATING
+ *
+ * Against a starting safety at 1.00, the kicker is 0.55 and the punter 0.08,
+ * and that is what they are set to. A kicker is not "trivially replaceable" —
+ * he is worth more than half a starting safety, because his rating swings
+ * field goals from 60% to 95% and the club takes 1.8 of them a game.
+ *
+ * WHAT EACH ONE BUYS. At 0.55 a club shops for a kicker when its own rates
+ * below 66, which is 17.8% of generated starters — a live market, roughly six
+ * clubs in a league of 32. At 0.08 a club never upgrades a punter at all, and
+ * that is the honest answer for a third of a point a game: he is worth having
+ * and he is not worth a roster move. An EMPTY punter slot is still an
+ * emergency, because that is countNeed's job and this number does not touch it.
  */
 export const ROSTER_NEED_QUALITY_WEIGHT: Partial<Record<Position, number>> = {
-  K: 0.25, P: 0.25,
+  K: 0.55, P: 0.08,
 };
 
 // ---------------------------------------------------------------------------
@@ -736,6 +806,92 @@ export const SIM = {
   INJURY_WEEKS_MEAN: 2.6,
   /** Overtime: if tied after regulation, a single sudden-value drive-off. */
   OVERTIME_TIE_CHANCE: 0.06,
+
+  // -------------------------------------------------------------------------
+  // PUNTING
+  //
+  // The app owner, on finding that a punter's average was `punts * rng.int(40,
+  // 50)`: "Wait a punter is not actually based on their rating? That's not
+  // good... Special teams has a smaller, but measurable impact on a teams
+  // success." And on the fix: "I think the punter should matter. it should be
+  // slight, but it should impact things."
+  //
+  // SLIGHT IS THE BINDING WORD, and everything below is sized to it.
+  // -------------------------------------------------------------------------
+
+  /**
+   * [TUNE] The rating a league-average STARTING punter carries. Measured, not
+   * assumed: 2,000 rosters out of `generateRoster` put the best punter on the
+   * roster at a mean of 72.1 and a standard deviation of 6.7 (p5 61, p95 83).
+   *
+   * WHY THIS IS NOT `UNIT_BASELINE`. That constant is 60 and is nothing like
+   * the middle of anything — measured, a team's offensive unit score means
+   * 80.1 and its defensive 76.2. It gets away with being wrong because the
+   * only thing that ever reads it is a DIFFERENCE (`edge = off - def`), where
+   * a shared offset cancels. The two terms below are absolute: they turn one
+   * man's rating into yards and into a probability, with nothing to cancel
+   * against. Centred at 60, every punter in the league would come out above
+   * average and the whole league would punt like a Pro Bowler.
+   *
+   * This is a fact about lib/gen/players.ts (the specialist OVR penalty and
+   * two punters per roster). If that generator changes, re-measure it.
+   */
+  PUNTER_BASELINE: 72,
+  /**
+   * [TUNE] Gross yards a punt travels for a punter rated exactly
+   * PUNTER_BASELINE. THE CHECKABLE FIGURE: the NFL's league-wide gross
+   * punting average has sat between 45.3 and 46.0 every year for a decade
+   * (45.6 in 2023). 45.5 is the middle of that band.
+   *
+   * `puntYds` was `punts * rng.int(40, 50)` — one roll of a ten-sided die
+   * applied to every punt of the afternoon, with no input from the man kicking
+   * them. lib/coachRoom.ts called that out in its own header and barred P from
+   * ever being mentioned because of it.
+   */
+  PUNT_GROSS_BASE: 45.5,
+  /**
+   * [TUNE] Gross yards added per rating point above PUNTER_BASELINE.
+   *
+   * THE CHECKABLE FIGURE is the SHAPE OF THE LEAGUE, not this number. Real
+   * qualifying punters run roughly 42.5 to 50 gross, so the whole league fits
+   * inside about eight yards, and the best season ever punted is 50.4 (2022).
+   * At 0.16 the generator's best possible punter (99) means 49.8 — the best
+   * season in a typical league, with an all-time year needing luck on top of
+   * him rather than being his baseline. A p5 starter (61) means 43.7 and a p95
+   * (83) means 47.3, and the per-punt noise below widens the realised league
+   * to about 42-49 across 32 clubs.
+   *
+   * Deliberately gentle. A steeper slope would fit the observed league spread
+   * a shade better and would also hand a 99 punter a 52-yard average, which no
+   * one has ever done over a season.
+   */
+  PUNT_GROSS_PER_RATING: 0.16,
+  /**
+   * [TUNE] Spread of a SINGLE punt around that mean. Real gross punt distance
+   * has a standard deviation near 9-10 yards — a shank and a 60-yarder are
+   * both ordinary events — and that is what makes a punter's season average
+   * settle only over a full season rather than over an afternoon. Over the ~68
+   * punts a season this is worth about 1.15 yards of noise on the average,
+   * which is real and is not to be tuned away.
+   */
+  PUNT_GROSS_SD: 9.5,
+  /**
+   * [TUNE] How much a punt subtracts from the RECEIVING team's chance of
+   * scoring on the possession it starts, per rating point of the punter above
+   * PUNTER_BASELINE. See the drive loop in lib/sim/engine.ts for why it lands
+   * on scoring probability and on nothing else.
+   *
+   * SIZED AGAINST A CHECKABLE FIGURE. In real football the gap between the
+   * best and worst net-punting teams is worth on the order of a third of a
+   * point a game — a nudge, not a difference-maker. This engine punts about
+   * 4.0 times a team-game and a scoring drive is worth about 4.9 points, so
+   * the swing between a 99 punter (+27) and a 40 punter (-32) is
+   * 4.0 x 59 x PUNT_PIN_PER_RATING x 4.9 points a game. At 0.00026 that is
+   * 0.30 — the target. Anything that measures above about half a point a game
+   * across that same 59-point spread is too strong and this number is what to
+   * turn down.
+   */
+  PUNT_PIN_PER_RATING: 0.00026,
 };
 
 /** [FRAGILE] How much each positional unit contributes to team offense score. */

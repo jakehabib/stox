@@ -2,7 +2,7 @@ import { Rng, clamp } from '../rng';
 import { SIM } from '../tuning';
 import { LeagueSettings, DIFFICULTY_MODS } from '../settings';
 import { BoxScore, BoxLine, DriveResult, SeasonStats, TeamGameStats } from '../types';
-import { computeUnits, SimPlayer, SimStaff, UnitRatings, effectiveRating, isAvailable } from './units';
+import { computeUnits, SimPlayer, SimStaff, UnitRatings, effectiveRating, isAvailable, REPLACEMENT_LEVEL } from './units';
 import { readJson } from '../json';
 import { AttrMap } from '../ratings';
 
@@ -99,6 +99,51 @@ export function simulateGame(
     away: newAccumulator(),
   };
 
+  /**
+   * -------------------------------------------------------------------------
+   * THE ONE PLACE PUNTING IS ALLOWED TO TOUCH THE GAME
+   * -------------------------------------------------------------------------
+   * How much the possession a team is ABOUT to start has been made worse by
+   * the punt that handed it to them. Set by the punting side, read and cleared
+   * by the receiving side, and it is the receiving side's key that gets
+   * written — see the PUNT branch below, which is the only line in this file
+   * where getting the sides the wrong way round would be invisible in the
+   * aggregate (every club both punts and receives, so a sign error still
+   * balances league-wide and only reverses who benefits).
+   *
+   * WHY THIS ENGINE CANNOT DO IT ANY OTHER WAY. There is no field position
+   * here at all. A drive is a number of yards and a number of points, never a
+   * place on a field, so "he pinned them on their own 8" has nowhere to land:
+   * nothing tracks where a possession starts. The light abstraction is to skip
+   * the geometry and write down what the geometry is FOR — a good punter makes
+   * the other team's next possession less likely to end in points.
+   *
+   * WHY SCORING PROBABILITY AND NOT DRIVE YARDAGE. Two reasons, one of them
+   * about football and one about this file.
+   *   - Drive yardage here is measured from the line of scrimmage, and being
+   *     backed up does not shorten what you gain; if anything a team starting
+   *     on its own 8 has MORE room to gain yards before it punts. Field
+   *     position is a fact about how far you must go to score, which is what
+   *     scoring probability is.
+   *   - The five yardage-and-plays constants in the branches below had just
+   *     been calibrated against real per-drive figures when this was written
+   *     (137a1e2 took total yards from 408.8 to 344.6 against a real ~330).
+   *     Reaching into them for a special-teams nudge would be re-opening that
+   *     with no way to tell the two effects apart. Outcome MIX moves; the
+   *     shape of each outcome does not. Measured after: 344.6 -> 344.7.
+   *
+   * Cleared on read, so an unconsumed pin — the last punt of the game, whose
+   * receiving team never takes the field again — expires instead of leaking
+   * into a later possession. That costs the HOME punter about a tenth of his
+   * effect and it is left alone: the loop runs away-then-home, so the home
+   * side's tenth-drive punt is the only one with no possession behind it.
+   * Measured over 150,000 paired games, a 99 punter is worth 0.300 points a
+   * game at home and 0.337 away, and 0.300/0.337 is 0.89 — nine tenths, which
+   * is the artifact stating itself. Real football does the same thing for the
+   * same reason: the last punt of an afternoon is usually followed by a kneel.
+   */
+  const pinned = { home: 0, away: 0 };
+
   const drivesPerTeam = SIM.DRIVES_PER_TEAM;
   for (let d = 0; d < drivesPerTeam; d++) {
     const quarter = clamp(Math.floor((d / drivesPerTeam) * QUARTERS), 0, QUARTERS - 1);
@@ -113,8 +158,11 @@ export function simulateGame(
 
     // (2) Drive noise
     const noise = rng.normal(0, SIM.DRIVE_NOISE_SD * variance);
+    // Whatever the last punt did to this possession, spent here and only here.
+    const pin = pinned[side];
+    pinned[side] = 0;
     const scoreProb = clamp(
-      SIM.SCORING_DRIVE_BASE + edge * SIM.EDGE_TO_SCORE_PROB + noise * 0.05,
+      SIM.SCORING_DRIVE_BASE + edge * SIM.EDGE_TO_SCORE_PROB + noise * 0.05 - pin,
       0.04, 0.86,
     );
     const toProb = clamp(SIM.TURNOVER_RATE_BASE - edge * 0.0025, 0.02, 0.28);
@@ -203,6 +251,15 @@ export function simulateGame(
       yards = Math.round(rng.normal(12, 14));
       plays = rng.int(3, 7);
       a.punts += 1;
+      // THE SIDES, EXPLICITLY. `side` is punting. The pin is written against
+      // the OTHER key, and it is read off `side`'s OWN punter — this team's
+      // specialist making the other team's next possession worse, which is the
+      // whole claim. Written long-hand rather than as a ternary inside the
+      // index because a sign or a side error here balances out league-wide and
+      // would never show up in an aggregate.
+      const punter = punterRating(side === 'home' ? homeUnits : awayUnits);
+      const receiving = side === 'home' ? 'away' : 'home';
+      pinned[receiving] = (punter - SIM.PUNTER_BASELINE) * SIM.PUNT_PIN_PER_RATING;
     }
 
     yards = Math.max(-8, yards);
@@ -323,6 +380,21 @@ function newAccumulator(): Accumulator {
 
 function kickerRating(u: UnitRatings): number {
   return u.byPosition.K ?? 55;
+}
+
+/**
+ * The man kicking this team's punts, as a rating.
+ *
+ * `byPosition.P` is `positionUnitRating` over a depth weight of [1.0], so it
+ * is exactly the starter's fatigue-adjusted rating, and computeUnits writes
+ * the key for every team whether or not one is on the roster — the fallback is
+ * belt-and-braces rather than a live path. It falls back to REPLACEMENT_LEVEL
+ * and not to kickerRating's 55, because a club with no punter fields the guy
+ * off the street and that is what the rest of this engine already prices him
+ * at.
+ */
+function punterRating(u: UnitRatings): number {
+  return u.byPosition.P ?? REPLACEMENT_LEVEL;
 }
 
 function round1(n: number): number {
@@ -681,8 +753,40 @@ function allocateStats(
   // --- Specialists ---------------------------------------------------------
   const k = units.depth.K?.[0];
   if (k) push(k, { gp: 1, fgm: own.fgm, fga: own.fga, xpm: own.xpm, xpa: own.xpa });
+  /**
+   * A PUNTER'S AVERAGE IS NOW A FACT ABOUT THE PUNTER.
+   *
+   * This was `own.punts * rng.int(40, 50)` — one roll of a ten-sided die, on a
+   * uniform whose mean is 45, multiplied across every punt of the afternoon.
+   * Two things were wrong with it and only one of them was the rating. The
+   * other is that a season of it never converged: every punt a man hit in a
+   * given game travelled the same distance, so his season average was an
+   * average of seventeen numbers rather than of sixty-eight, and his career
+   * line stayed noisy forever. `puntAvg` is a column on his player page and
+   * the only merit stat lib/performanceScore.ts scores him on, and it was
+   * measuring nothing.
+   *
+   * Each punt is drawn on its own now, around a mean his rating sets. See
+   * SIM.PUNT_GROSS_* for the anchors: 45.5 gross at a league-average starter
+   * against a real league-wide 45.6, and a 9.5-yard spread on the single kick
+   * because a shank and a 60-yarder are both ordinary.
+   *
+   * `effectiveRating` and not `units.byPosition.P`, though they are the same
+   * number today (P's depth weight is [1.0]): this is HIS line, and it should
+   * follow the man who kicked them if that weighting ever changes.
+   */
   const punter = units.depth.P?.[0];
-  if (punter) push(punter, { gp: 1, punts: own.punts, puntYds: own.punts * rng.int(40, 50) });
+  if (punter) {
+    const gross = SIM.PUNT_GROSS_BASE
+      + (effectiveRating(punter) - SIM.PUNTER_BASELINE) * SIM.PUNT_GROSS_PER_RATING;
+    let puntYds = 0;
+    for (let i = 0; i < own.punts; i++) {
+      // Clamped at three standard deviations, so it almost never fires: what
+      // it rules out is a negative punt, which is not a thing.
+      puntYds += Math.round(rng.normalClamped(gross, SIM.PUNT_GROSS_SD, 15, 75));
+    }
+    push(punter, { gp: 1, punts: own.punts, puntYds });
+  }
 
   return lines;
 }

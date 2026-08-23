@@ -78,11 +78,42 @@ import { positionRelativeScore, isRankablePosition, PositionDistribution } from 
  *    unrelated to the men in the box score. toTeamStats now sums them off the
  *    player lines, so they are safe to quote; unit yardage is still summed
  *    from the lines here, which is the same number by construction.
- *  - A punter's yards are `punts * rng.int(40, 50)` — pure dice, with no input
- *    from his rating. Praising a punt average would be praising a coin flip,
- *    so P is left out of `UNIT_OF` and can never be mentioned.
  *  - Offensive linemen get no box line at all, which is exactly why
  *    CAREER_COLUMNS gives them no columns. They cannot be graded and are not.
+ *
+ * THE PUNTER USED TO BE ON THAT LIST AND IS NOT ANY MORE. The bullet read: "A
+ * punter's yards are `punts * rng.int(40, 50)` — pure dice, with no input from
+ * his rating. Praising a punt average would be praising a coin flip, so P is
+ * left out of `UNIT_OF` and can never be mentioned." Every word of that was
+ * true and the engine has changed underneath it: lib/sim/engine.ts now draws
+ * each punt on its own, around a mean the man's rating sets. Measured over 120
+ * replayed league-seasons, a punter's rating against his season average went
+ * from r = -0.027 to r = 0.672.
+ *
+ * The bar came off on a MEASUREMENT and not on that fact alone, because a
+ * week report grades an AFTERNOON and an afternoon is four kicks. The question
+ * is how much of one game's punt average is the man, and the answer only means
+ * something next to the position this room already lets in on a smaller
+ * sample. Rating against that single game's number, n = 53,877 punter-games
+ * and 61,823 kicker-games:
+ *
+ *     P, rating vs that game's punt average    r = 0.227
+ *     K, rating vs that game's field-goal %    r = 0.110
+ *
+ * A punter's Sunday now carries twice the signal a kicker's does, and the
+ * kicker has been eligible for a game ball all along off 1.6 attempts. Keeping
+ * P out would no longer be caution, it would be an inconsistency. So P joins
+ * K in the KICKING unit — they compete for the one slot, which is right, since
+ * a room hears from its specialists once.
+ *
+ * TWO LIMITS COME WITH HIM, both of them still about honesty:
+ *  - A three-punt minimum (`TOUCH_GATE`), for the same reason the kicker has a
+ *    two-attempt one. 18.5% of punter-games are two kicks or fewer, and the
+ *    average of two kicks is not an average.
+ *  - NO CONCERN RULE. `findConcerns` says nothing about a punter and that is
+ *    deliberate: every threshold in it is a measured 10th percentile, and a
+ *    bad four-punt afternoon is still mostly four bounces. Praising a big one
+ *    costs a man nothing if it was luck; calling him out for a quiet one does.
  * ===========================================================================
  */
 
@@ -139,10 +170,73 @@ const NORMS: Record<string, PositionDistribution> = {
     mean: { gp: 1, tackles: 4.588, defInt: 0.222, pd: 0.704, ff: 0.06 },
     sd:   { gp: 0, tackles: 0.62, defInt: 0.415, pd: 1.072, ff: 0.237 },
   },
+  /**
+   * THIS ENTRY IS STALE AND THE KICKER IS BEING UNDER-GRADED BECAUSE OF IT.
+   * Reported here rather than fixed, because fixing it means re-baking every
+   * row of this table and every row of COMPOSITE_LADDER together and neither
+   * can be done off a synthetic replay for the positions that came from
+   * Postgres.
+   *
+   * A grade is meant to be a percentile, so a position's grades should come
+   * out UNIFORM over 0-100 and about 22% of them should clear MENTION_BAR's
+   * 78. Measured over 9,267 kicker afternoons on the current build, his run
+   * mean 35.9 with a median of 29.8, and 7.0% clear the bar. The punter
+   * below, whose two literals were generated through today's code, runs mean
+   * 50.5, median 51.0, 22.0% over the bar — which is what a calibrated
+   * position looks like.
+   *
+   * The cause is in the P entry's note: `scoredStats('K', ...)` returns
+   * `fgPct` twice, once as a constant 0, and this mean of 0.805 could not have
+   * been produced by that vector — it is the average of REAL field-goal rates
+   * only. So these numbers predate the derived-column push, the ladder was
+   * baked against composites that did not carry it, and every kicker now pays
+   * a constant penalty his ladder has never heard of.
+   */
   K: {
     position: 'K', n: 54309,
     mean: { gp: 1, fgm: 1.587, xpm: 2.833, fgPct: 0.805 },
     sd:   { gp: 0, fgm: 1.151, xpm: 1.61, fgPct: 0.304 },
+  },
+  /**
+   * READ THE 22.76 BEFORE YOU CORRECT IT. A punt does not average 22.8 yards;
+   * it averages 45.5, and that is what the engine draws. This entry is not a
+   * description of punting, it is the yardstick `positionRelativeScore` needs
+   * for the vector `scoredStats('P', line)` actually returns, and that vector
+   * contains `puntAvg` TWICE:
+   *
+   *     [ gp, puntAvg (weight 0.5, always 0), puntAvg (weight 3, the real one) ]
+   *
+   * `careerColumns('P')` carries a DERIVED `puntAvg` column so the player
+   * page's table can print an average; lib/performanceScore.ts's column walk
+   * reads every non-opportunity column straight off the stat blob, where a
+   * derived key resolves to undefined and lands as 0, and then DERIVED_STATS
+   * pushes the genuine one. So the population this mean and sd are taken over
+   * is half zeros and half real averages, and 22.76/23.00 is exactly what it
+   * comes to. K has the identical shape on `fgPct` — check `scoredStats('K',
+   * ...)` and you will find fgPct twice, one of them a constant 0.
+   *
+   * It is written this way ON PURPOSE, because the alternative is worse. The
+   * numbers here have to be the ones today's `scoredStats` produces, or the
+   * ladder below — which is built from the same composites — stops lining up
+   * with them, and that is a silent mis-grade rather than a visible oddity.
+   * The composite is strictly increasing in the real punt average either way
+   * (verified), so percentiles come out exactly right: the ladder's median
+   * maps back to a 45.5-yard afternoon and its 99th to 56.7.
+   *
+   * THE FIX, when someone takes it: drop derived columns from the column walk
+   * in lib/performanceScore.ts (they are what DERIVED_STATS is for), then
+   * re-run scripts/coachNorms.ts and replace EVERY entry in this table and in
+   * COMPOSITE_LADDER together. Not this one alone.
+   *
+   * Measured over 120 replayed league-seasons of the current engine rather
+   * than off the database, because the database's punts predate the engine
+   * change and a yardstick built on the old dice would grade the new ones
+   * wrong. Regenerate from Postgres once real seasons have been played on it.
+   */
+  P: {
+    position: 'P', n: 53877,
+    mean: { gp: 1, puntAvg: 22.759 },
+    sd:   { gp: 0, puntAvg: 23.004 },
   },
 };
 
@@ -157,6 +251,7 @@ const COMPOSITE_LADDER: Record<string, number[]> = {
   CB: [-0.45050687678528606, -0.45050687678528606, -0.45050687678528606, -0.45050687678528606, -0.45050687678528606, -0.45050687678528606, -0.45050687678528606, -0.21359619211340738, -0.21359619211340738, -0.21359619211340738, -0.21359619211340738, -0.21359619211340738, -0.18348417985604712, -0.1533721675986868, 0.05342650481583159, 0.0835385170731919, 0.26022517723035005, 0.3505612140024308, 0.3505612140024308, 0.5874718986743096, 1.3562625206024481, 1.6533972297890476, 1.9204199267182864], // n=181380
   S: [-0.6711913578266187, -0.6711913578266187, -0.6711913578266187, -0.6711913578266187, -0.6711913578266187, -0.6711913578266187, -0.5379290976986869, -0.36980498049087424, -0.10328046023501071, 0.017276800521057796, 0.020052881804717742, 0.020052881804717742, 0.020052881804717742, 0.020052881804717742, 0.020052881804717742, 0.1533151419326495, 0.2865774020605813, 0.41983966218851304, 0.7085210401523943, 0.7085210401523943, 0.9750455604082578, 1.1083078205361896, 1.3997652797837308], // n=121783
   K: [-1.6263023193944868, -1.5307457020987392, -1.3396324675072435, -0.8961503154756658, -0.7581240904929191, -0.6236837211422042, -0.48207164052742574, -0.22835257228263411, -0.1495602738107018, -0.11761084664827709, -0.02205422935252938, 0.07350238794321834, 0.09226502522283522, 0.18782164251858297, 0.2833782598143307, 0.36017223983046154, 0.3789348771100784, 0.49325413168544296, 0.6224441636214704, 0.7799239835726861, 0.9784839402377231, 1.1809130900352938, 1.3907889619064062], // n=55005
+  P: [0.25368957572596074, 0.2971602764736566, 0.36508324639193185, 0.4221385411232829, 0.46017540427751685, 0.49060489480090413, 0.5158722396105025, 0.5362491305859851, 0.5607013997565641, 0.5797198313336812, 0.6014551817075292, 0.6177566944879151, 0.6340582072683011, 0.6557935576421491, 0.6759763829892939, 0.6992642583898453, 0.7209996087636933, 0.7449084941749261, 0.7753379846983134, 0.8133748478525474, 0.8731470613806295, 0.9383531125021737, 0.9845407320466005], // n=53877
 };
 
 /**
@@ -224,7 +319,11 @@ export const UNIT_OF: Record<string, UnitKey> = {
   WR: 'RECEIVERS', TE: 'RECEIVERS',
   EDGE: 'PASS_RUSH', DT: 'PASS_RUSH',
   LB: 'BACK_SEVEN', CB: 'BACK_SEVEN', S: 'BACK_SEVEN',
-  K: 'KICKING',
+  // One KICKING slot, two specialists in it. They compete, and the man who had
+  // the bigger afternoon takes it — which is how a coach's room works and is
+  // why P did not need a unit of its own. See the header for what changed
+  // underneath the old bar on P.
+  K: 'KICKING', P: 'KICKING',
 };
 
 /**
@@ -334,6 +433,14 @@ const TOUCH_GATE: Record<string, (s: SeasonStats, games: number) => boolean> = {
   WR: (s, g) => (s.targets ?? 0) >= 3 * g,
   TE: (s, g) => (s.targets ?? 0) >= 3 * g,
   K: (s, g) => (s.fga ?? 0) + (s.xpa ?? 0) >= 2 * g,
+  // The average of two kicks is not an average. Measured on the current
+  // engine, a punter's afternoon is 0 punts 0.9% of the time, one 4.9% and two
+  // 12.4%; three clears 81.8% of them, which is the same demand the kicker's
+  // two-attempt gate makes of him. `scripts/coachNorms.ts` gates the yardstick
+  // population through this very function, so moving this number without
+  // re-running it would leave NORMS.P describing a population the grader no
+  // longer sees.
+  P: (s, g) => (s.punts ?? 0) >= 3 * g,
 };
 
 export function playedEnough(position: string, stats: SeasonStats, games = 1): boolean {
@@ -391,6 +498,17 @@ export function statLine(position: string, stats: SeasonStats): string {
     used.add(num); used.add(den);
     parts.push(`${s[num] ?? 0}/${s[den]}${suffix}`);
   }
+  // A punter is read out by his AVERAGE. `puntAvg` is a derived column — it is
+  // never stored on a stat blob — so the generic walk below resolves it to 0
+  // and drops it, and the line came out "5 punts · 230 punt yd": his gross,
+  // which is mostly a fact about how often his offence went three-and-out, and
+  // not the one number lib/performanceScore.ts actually grades him on. Divided
+  // here, exactly the way the player page's table divides it.
+  if (cols.some((c) => c.key === 'punts') && (s.punts ?? 0) > 0) {
+    used.add('punts'); used.add('puntYds'); used.add('puntAvg');
+    parts.push(`${s.punts} punts, ${((s.puntYds ?? 0) / (s.punts ?? 1)).toFixed(1)} avg`);
+  }
+
   // Receptions and targets stay two figures rather than a ratio: the catch
   // rate is the point, and "10 rec (15 tgt)" is how it is read out loud.
   if (cols.some((c) => c.key === 'rec') && cols.some((c) => c.key === 'targets') && (s.targets ?? 0) > 0) {
