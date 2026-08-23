@@ -4,8 +4,23 @@ import { useState } from 'react';
 
 export type DraftView = 'board' | 'room';
 
+export interface DraftPane {
+  /**
+   * WHICH OF THE TWO JOBS THIS PANE DOES, not what it is called today. `board`
+   * is always the men — the list, the filters, the club's own capital. `room`
+   * is always the draft as an event — the broadcast while it runs, its record
+   * once it is over. The label is free to change with the moment (see below);
+   * the id may not, because the situational default is written in terms of it.
+   */
+  id: DraftView;
+  label: string;
+  /** What is in it right now, e.g. "176 still available". */
+  hint?: string;
+  body: React.ReactNode;
+}
+
 /**
- * DRAFT DAY HAS TWO JOBS AND ONE SCREEN.
+ * DRAFT DAY HAS TWO JOBS AND ONE SCREEN — AND SO DOES THE MORNING AFTER.
  *
  * Everything on this page above the big board is something a GM READS — the
  * pick on screen, the feed, the run watch, the war room panel, both
@@ -20,12 +35,32 @@ export type DraftView = 'board' | 'room';
  * in exactly one of the two, and the clock stands above both, always, because
  * a GM must never be unable to see whose pick it is.
  *
+ * THE TOGGLE USED TO SWITCH ITSELF OFF AT THE END OF THE DRAFT, which is the
+ * one moment this page has the MOST on it: the recap arrives (the class, round
+ * one, every other round), and none of the broadcast leaves. Measured on a
+ * finished 224-pick save at 1600×1000, the page ran to 4,971px — five screens
+ * — against 1,882px for the same save mid-draft. The app owner: *"lets make
+ * sure we clean up the draft complete page too. its so long"*. The two jobs do
+ * not stop existing when the clock does; they change into THE CLASS (what the
+ * room did) and WHAT'S LEFT (the men nobody called, and next spring's picks).
+ * Which is why a pane carries an `id` for its job and a `label` for its name:
+ * the same two lanes, renamed for the moment they are read in.
+ *
  * THE DEFAULT IS SITUATIONAL, NOT STICKY. A sticky default is wrong in both
  * directions: pinned to the room, the board is buried when you go on the
  * clock; pinned to the board, you never see the draft happen. `urgent` is the
  * page's answer to "is this about to be your turn" — on the clock, or one name
  * away — and the spectacle plays until it flips, at which point the thing you
  * decide with is already in front of you.
+ *
+ * AFTER THE LAST CARD NOTHING IS URGENT EVER AGAIN, and that is the answer to
+ * "what does a GM land on the day after, and what does he land on a week
+ * later". `urgent` is false for a finished draft and cannot become true, so
+ * the room leads — and the room is now the recap, which is the whole reason to
+ * open this page once the drafting is done. It reads the same on the first
+ * visit and the tenth, because the record of a draft does not go stale. The
+ * one thing that does — the undrafted, who are free agents the moment the
+ * league moves on — is the other tab, named for exactly that.
  *
  * A MANUAL CHOICE IS SCOPED TO THE SITUATION IT WAS MADE IN. This page
  * re-renders every few seconds while a draft runs (LiveDraftTicker calls
@@ -37,7 +72,8 @@ export type DraftView = 'board' | 'room';
  * the clock's relationship to this club actually changes — waiting becomes
  * on-the-clock, or your selection goes in and the wait starts again — is the
  * choice forgotten and the situational default allowed back. One flip of the
- * real world, one override; never a re-render.
+ * real world, one override; never a re-render. A finished draft has no flips
+ * left in it, so a choice made there simply holds.
  *
  * SWITCHING IS STATE, NOT A URL, for the same reason PlayerCardTabs is (read
  * its comment): both panes are already rendered by the server when the page
@@ -46,19 +82,13 @@ export type DraftView = 'board' | 'room';
  * inactive pane is hidden rather than unmounted, so flipping is instant and
  * neither side re-lays-out under him.
  */
-export function DraftViewToggle({
-  urgent, urgentNote, boardHint, roomHint, board, room,
-}: {
+export function DraftViewToggle({ panes, urgent, urgentNote }: {
+  /** Both panes, in tab order — the leading one first. */
+  panes: [DraftPane, DraftPane];
   /** On the clock, or one selection away. Decides the default, nothing else. */
   urgent: boolean;
   /** Why it is urgent, in the room's own words — "You are on the clock." */
   urgentNote?: string;
-  /** What is on the board right now, e.g. "176 still available". */
-  boardHint?: string;
-  /** Where the draft is, e.g. "pick 89 of 224". */
-  roomHint?: string;
-  board: React.ReactNode;
-  room: React.ReactNode;
 }) {
   const [choice, setChoice] = useState<{ view: DraftView; madeWhileUrgent: boolean } | null>(null);
   // The situation moved on, so the choice made inside the old one is spent.
@@ -70,23 +100,6 @@ export function DraftViewToggle({
   const live = choice && choice.madeWhileUrgent === urgent ? choice.view : null;
   const view: DraftView = live ?? (urgent ? 'board' : 'room');
 
-  const tab = (id: DraftView, label: string, hint?: string) => (
-    <button
-      type="button" role="tab" aria-selected={view === id}
-      onClick={() => setChoice({ view: id, madeWhileUrgent: urgent })}
-      className={`relative flex-1 sm:flex-none flex flex-col items-start px-5 py-3 transition-colors ${
-        view === id ? 'text-chalk bg-chalk/[0.05]' : 'text-muted hover:text-chalk hover:bg-raised/40'
-      }`}
-    >
-      <span className="font-display font-bold uppercase tracking-[0.14em] text-base leading-none">{label}</span>
-      {hint && <span className="text-[11px] text-muted mt-1 leading-none">{hint}</span>}
-      <span
-        aria-hidden="true"
-        className={`absolute inset-x-0 bottom-0 h-[3px] ${view === id ? 'bg-accent' : 'bg-transparent'}`}
-      />
-    </button>
-  );
-
   return (
     <div className="space-y-6">
       <div
@@ -94,8 +107,23 @@ export function DraftViewToggle({
         aria-label="Draft day view"
         className="flex items-stretch flex-wrap rounded-lg border border-line/70 bg-ink/30 divide-x divide-line/40 overflow-hidden"
       >
-        {tab('board', 'The Board', boardHint)}
-        {tab('room', 'The Room', roomHint)}
+        {panes.map((pane) => (
+          <button
+            key={pane.id}
+            type="button" role="tab" aria-selected={view === pane.id}
+            onClick={() => setChoice({ view: pane.id, madeWhileUrgent: urgent })}
+            className={`relative flex-1 sm:flex-none flex flex-col items-start px-5 py-3 transition-colors ${
+              view === pane.id ? 'text-chalk bg-chalk/[0.05]' : 'text-muted hover:text-chalk hover:bg-raised/40'
+            }`}
+          >
+            <span className="font-display font-bold uppercase tracking-[0.14em] text-base leading-none">{pane.label}</span>
+            {pane.hint && <span className="text-[11px] text-muted mt-1 leading-none">{pane.hint}</span>}
+            <span
+              aria-hidden="true"
+              className={`absolute inset-x-0 bottom-0 h-[3px] ${view === pane.id ? 'bg-accent' : 'bg-transparent'}`}
+            />
+          </button>
+        ))}
         {urgent && urgentNote && (
           <div className="hidden md:flex items-center px-4 text-xs text-accent border-l-0">
             {view === 'board' ? `${urgentNote} The board is up.` : `${urgentNote} The board is one click away.`}
@@ -103,8 +131,11 @@ export function DraftViewToggle({
         )}
       </div>
 
-      <div role="tabpanel" aria-label="The Board" hidden={view !== 'board'} className="space-y-6">{board}</div>
-      <div role="tabpanel" aria-label="The Room" hidden={view !== 'room'} className="space-y-6">{room}</div>
+      {panes.map((pane) => (
+        <div key={pane.id} role="tabpanel" aria-label={pane.label} hidden={view !== pane.id} className="space-y-6">
+          {pane.body}
+        </div>
+      ))}
     </div>
   );
 }

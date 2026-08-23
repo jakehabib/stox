@@ -2,6 +2,7 @@ import { PlayerAvatar } from '../PlayerAvatar';
 import { TeamLogo } from '../TeamLogo';
 import { Tooltip } from '../Tooltip';
 import { SectionHeading } from './SectionHeading';
+import { RoundPicker } from '../draft/RoundPicker';
 import { positionBadgeClass } from './positionColor';
 import { ratingColor } from '@/lib/ratings';
 import { tip } from '@/lib/glossary';
@@ -123,7 +124,7 @@ export function DraftRecap({ year, teamAbbr, teamId, selections, roundOne, later
   teamId: string;
   selections: RecapSelection[];
   roundOne: RecapLeaguePick[];
-  /** Everything after round one, in pick order. Capped and scrolled — this is 190-odd rows. */
+  /** Everything after round one, in pick order. Read a round at a time — this is 190-odd rows. */
   later: RecapLeaguePick[];
   notes: RecapNote[];
 }) {
@@ -133,21 +134,18 @@ export function DraftRecap({ year, teamAbbr, teamId, selections, roundOne, later
   const half = Math.ceil(roundOne.length / 2);
   const columns = roundOne.length > 12 ? [roundOne.slice(0, half), roundOne.slice(half)] : [roundOne];
 
-  // Rounds two and on, grouped so the reader can see where each day of the
-  // draft starts, then split into two lanes of roughly equal depth. Both lanes
-  // scroll together inside one capped box: 192 rows laid out flat is a
-  // document, and this page was rebuilt specifically to stop being one.
+  // Rounds two and on, one group per round. 192 rows laid out flat is a
+  // document and this panel was built specifically to stop being one — but the
+  // cure was a capped box holding two lanes that scrolled together, rounds 2-4
+  // on the left and 5-7 on the right, which answers "what happened after round
+  // one" and refuses to answer "who went in round four". A round is a tab now
+  // (see RoundPicker): one at a time, all of it on screen, same height either
+  // way.
   const laterRounds: { round: number; picks: RecapLeaguePick[] }[] = [];
   for (const p of later) {
     const last = laterRounds[laterRounds.length - 1];
     if (last && last.round === p.round) last.picks.push(p);
     else laterRounds.push({ round: p.round, picks: [p] });
-  }
-  const laterLanes: { round: number; picks: RecapLeaguePick[] }[][] = [[], []];
-  let placed = 0;
-  for (const g of laterRounds) {
-    laterLanes[placed >= later.length / 2 ? 1 : 0].push(g);
-    placed += g.picks.length;
   }
 
   return (
@@ -324,24 +322,25 @@ export function DraftRecap({ year, teamAbbr, teamId, selections, roundOne, later
             </span>
             <span className="text-[11px] text-muted ml-auto">{later.length} selections</span>
           </div>
-          <div className="max-h-[26rem] overflow-y-auto scroll-shadow-y">
-            <div className="grid md:grid-cols-2 md:divide-x divide-line/40">
-              {laterLanes.map((lane, i) => (
-                <div key={i}>
-                  {lane.map((g) => (
-                    <div key={g.round}>
-                      <div className="sticky top-0 z-10 bg-raised/95 backdrop-blur px-3 py-1 label-sm border-y border-line/40">
-                        Round {g.round}
+          <RoundPicker
+            rounds={laterRounds.map((g) => {
+              // Same two-column split round one uses, for the same reason: a
+              // single lane of 32 names is twice as tall as it needs to be.
+              const cut = Math.ceil(g.picks.length / 2);
+              return {
+                round: g.round,
+                body: (
+                  <div className="grid md:grid-cols-2 md:divide-x divide-line/40">
+                    {[g.picks.slice(0, cut), g.picks.slice(cut)].map((col, i) => (
+                      <div key={i} className="divide-y divide-line/40">
+                        {col.map((p) => <LeaguePickRow key={p.overall} pick={p} />)}
                       </div>
-                      <div className="divide-y divide-line/40">
-                        {g.picks.map((p) => <LeaguePickRow key={p.overall} pick={p} />)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
+                    ))}
+                  </div>
+                ),
+              };
+            })}
+          />
         </div>
       )}
     </div>

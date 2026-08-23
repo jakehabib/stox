@@ -24,6 +24,7 @@ import { SectionHeading } from '@/components/ds/SectionHeading';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { WorkoutButton } from '@/components/ds/WorkoutButton';
 import { DraftCapitalPanel } from '@/components/ds/DraftCapitalPanel';
+import { RosterNeeds } from '@/components/ds/RosterNeeds';
 import type { DraftCapitalPick, DraftCapitalForfeit, DraftCapitalYear } from '@/components/ds/DraftCapitalPanel';
 import { DraftRecap } from '@/components/ds/DraftRecap';
 import type { RecapSelection, RecapLeaguePick, RecapNote } from '@/components/ds/DraftRecap';
@@ -1203,6 +1204,16 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     : undefined;
   /** The club-coloured band replaces the plain on-clock hero for a live rookie draft. */
   const broadcastHero = broadcast && !bcastComplete && !!state && !!onClockTeam;
+  /**
+   * EVERY CARD IS IN AND THE LEAGUE HAS NOT MOVED ON YET.
+   *
+   * The state this page spends the longest in after a draft — the GM presses
+   * Advance when he is ready, not when the seventh round ends — and the state
+   * it was longest in: 4,971px, five screens, against 1,882px for the same
+   * save mid-draft. It gets its own half of nearly every decision below,
+   * because a running draft and a finished one want different pages.
+   */
+  const draftClosed = broadcast && bcastComplete;
   const bcastUpcoming: UpcomingSlot[] = bcastComplete ? [] : bcastPicks.slice(bcastIndex, bcastIndex + UPCOMING_SLOTS).map((p) => {
     const club = teamById.get(p.ownerTeamId);
     return {
@@ -1228,15 +1239,24 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // screen. Can we maybe clean it up? or toggle 1 or 2 views?"*
   //
   // Each panel below is built once, here, and handed to whichever view it
-  // belongs to. Nothing is built twice and nothing is dropped: THE BOARD gets
-  // the big board and the club's draft capital, THE ROOM gets the broadcast,
-  // and the clock stands above both because whose pick it is is never behind a
-  // tab. Every page state that ISN'T a live rookie draft renders the same
-  // list, in the same order it always did — see `twoViews` below.
+  // belongs to. Nothing is built twice: THE BOARD gets the big board and the
+  // club's draft capital, THE ROOM gets the broadcast, and the clock stands
+  // above both because whose pick it is is never behind a tab.
+  //
+  // THE SAME TWO LANES SURVIVE THE LAST PICK, because the two jobs do. When
+  // the draft closes the recap lands on top of a broadcast that nobody
+  // switched off, and the page — which exists to not be one long document —
+  // became five screens of one. The lanes are renamed for the moment: THE
+  // CLASS is the room's record of what it did, WHAT'S LEFT is the men nobody
+  // called plus next spring's capital. What does NOT survive is the furniture
+  // of a running draft, which is dropped rather than moved: see `draftClosed`
+  // on each node below for what goes and why.
 
   // The scouts' one-paragraph verdict on the class. It belongs to THE ROOM
   // during a draft: it is the same sentence it was in September, and on the
-  // clock it is a banner between a GM and his board.
+  // clock it is a banner between a GM and his board. After the draft it heads
+  // THE CLASS, where the recap underneath it is the answer to what it
+  // predicted.
   const classOutlookNode = (
     <>
       {classOutlook && (
@@ -1248,10 +1268,19 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     </>
   );
 
+  // Where the board's early talent went, position by position. During a draft
+  // it is part of the broadcast; once every pick is in it is the shape of the
+  // pool free agency is about to be worked from, so it moves to WHAT'S LEFT
+  // and stands beside the men themselves. Built once — the two states it
+  // appears in are mutually exclusive.
+  const depletionNode = stock.length > 0
+    ? <BoardDepletion stock={stock} tierLabel={bcastComplete ? 'the whole class' : 'day-two grade or better'} />
+    : null;
+
   const broadcastBodyNode = (
     <>
       {/*
-        THE BROADCAST BODY.
+        THE BROADCAST BODY — a draft that is still running, and nothing else.
 
         THE FEED IS A TICKER, NOT A DOCUMENT. It is capped to the viewport and
         scrolls inside its own rail, so the height of this view is a constant
@@ -1260,12 +1289,15 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         column that stopped one screen in. Pinned below the sticky header, too:
         it is the thing you keep half an eye on while reading anything else.
 
-        All of this is THE ROOM's half of the page during a live draft (see
-        THE TWO VIEWS above), and the whole broadcast in every other state that
-        has one. It is built here either way — the toggle is handed nodes, it
-        does not decide what is in them.
+        NONE OF IT OUTLIVES THE LAST CARD. The pick on screen is the clock's
+        final frame held up after the clock has gone; the feed is a third
+        reading of the same 224 selections, after the recap has already given
+        them in pick order with the grade, the board rank and our own file on
+        each; and the war room's ledger reads 0 picks left, 0 starred men still
+        on the board. What the finished draft keeps out of this block is How It
+        Closed and the needs — see `closingNode`.
       */}
-      {broadcast && (
+      {broadcast && !bcastComplete && (
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
           <div className="xl:col-span-8 space-y-5">
             {/* Before the first card goes in there is no pick to put on screen
@@ -1280,7 +1312,6 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                   entries={runEntries}
                   windowSize={runWindow.length || RUN_WINDOW}
                   order={windowPositions}
-                  complete={bcastComplete}
                 />
               )}
               <WarRoomPanel
@@ -1292,9 +1323,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
               />
             </div>
 
-            {stock.length > 0 && (
-              <BoardDepletion stock={stock} tierLabel={bcastComplete ? 'the whole class' : 'day-two grade or better'} />
-            )}
+            {depletionNode}
           </div>
 
           <div className="xl:col-span-4">
@@ -1308,9 +1337,56 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   );
 
   // Both best-available columns — the room's board and ours, side by side.
+  //
+  // WHILE THERE IS A PICK TO MAKE, and not one second after. The two columns
+  // are the top eight of a board you are about to choose from, and their whole
+  // point is the disagreement between them at the moment it costs something.
+  // With the draft over they are the first eight rows of the table directly
+  // below them, re-laid-out — two readings of a board nobody is picking from.
   const bestAvailableNode = (
     <>
-      {broadcast && <BestAvailable leagueId={league.id} ours={ourBest} room={roomBest} verdict={bcastVerdict} />}
+      {broadcast && !bcastComplete && <BestAvailable leagueId={league.id} ours={ourBest} room={roomBest} verdict={bcastVerdict} />}
+    </>
+  );
+
+  /**
+   * THE MORNING AFTER, IN TWO PANELS.
+   *
+   * What a GM reads once the drafting is done is not the broadcast with the
+   * clock removed. It is: how did it end, and what did it not fix. The first
+   * is Run Watch's own closing form, which already exists and is the one thing
+   * in the broadcast written for this moment rather than surviving into it.
+   *
+   * The second is the needs bars, and they were the page's own quiet lie. The
+   * war room panel headed them "What We Came Here To Fix" — the pre-draft plan
+   * — while computing them off `bcastRoster`, which is this club's roster as
+   * it stands NOW, rookies included. So the numbers were always the day-after
+   * answer wearing the day-before label. Read straight, they are the most
+   * forward-looking thing on this page: seven picks in, here is what is still
+   * open, and the men in the other tab are who is left to close it.
+   */
+  const closingNode = (
+    <>
+      {/* items-start, not stretch: the needs are five bars against a run chart
+          with a twelve-pick strip under it, and stretched to match they left a
+          hand's width of empty panel under the last bar. */}
+      {draftClosed && madePicks.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+          <RunWatch entries={runEntries} windowSize={runWindow.length || RUN_WINDOW} order={windowPositions} complete />
+          {needList.length > 0 && (
+            <div className="panel p-4">
+              <div className="flex items-baseline justify-between gap-3 mb-3">
+                <h2 className="section-title">What The Draft Didn&rsquo;t Fix</h2>
+                <span className="text-[11px] font-mono text-muted">after {settings.draftRounds} rounds</span>
+              </div>
+              <RosterNeeds needs={needList} />
+              <p className="text-[11px] text-muted mt-3 pt-2.5 border-t border-line/50">
+                The men nobody called go on the wire when the league moves on.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 
@@ -1416,7 +1492,11 @@ export default async function DraftPage({ params, searchParams }: { params: { id
           screenshot run can prove where the first row lands. */}
       <div className="section" id="big-board">
         <SectionHeading
-          title={broadcast ? 'Still On The Board' : 'Big Board'}
+          // "Still on the board" is a thing you say while there is a board.
+          // Once the seventh round is over these men are simply the undrafted,
+          // which is also what the masthead calls them and what they become the
+          // moment the league moves on.
+          title={draftClosed ? 'Undrafted' : broadcast ? 'Still On The Board' : 'Big Board'}
           tip={tip('consensusBoard')}
           action={
             <div className="flex gap-2 flex-wrap items-center justify-end">
@@ -1447,8 +1527,15 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             unspent workouts there, in its own words and at the moment they
             stop being spendable, and a second line under the board repeating
             the ledger in different language would be the page arguing with
-            itself on the one screen where the point is urgency. */}
-        {!warRoom && (
+            itself on the one screen where the point is urgency.
+
+            AND NOT ONCE THE DRAFT IS OVER. "5 of 5 left · workouts closed for
+            this class" is a budget nobody can spend on men nobody can fly in,
+            reported above a table of men who have already gone undrafted. The
+            row control is gone with the window (see `workoutSlots.open` on the
+            column), so by then the line explains the absence of something the
+            reader never saw. */}
+        {!warRoom && !draftClosed && (
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 -mt-1">
             <span className="label-sm">Private Workouts</span>
             <span className={`text-sm font-semibold ${workoutSlots.remaining === 0 ? 'text-muted' : 'text-gold'}`}>
@@ -1695,13 +1782,24 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   /**
    * WHICH STATES GET A TOGGLE, AND WHY THE REST DO NOT.
    *
-   * Only a live rookie draft — a board that has been sent to the podium and
-   * has picks left in it. That is the one state where reading and acting
-   * compete for the same screen under a clock, which is the whole problem the
-   * toggle solves. `broadcastHero` is the exact condition (see above) and is
-   * used rather than `broadcast` on purpose: it also guarantees there is a
-   * club on the clock to head both views with, so neither view can ever be a
-   * draft page that cannot say whose pick it is.
+   * A rookie draft that has been sent to the podium — running OR finished.
+   * Both are states where two whole readings of the same draft want the same
+   * screen, which is the problem the toggle solves; the difference is only
+   * what the two readings are.
+   *
+   *   RUNNING (`broadcastHero`) — reading and acting compete under a clock.
+   *     THE BOARD is the men, THE ROOM is the broadcast. That condition is
+   *     used rather than `broadcast` on purpose: it also guarantees a club on
+   *     the clock to head both views with, so neither view can ever be a draft
+   *     page that cannot say whose pick it is.
+   *   FINISHED (`draftClosed`) — the clock is gone and the recap has arrived
+   *     on top of a broadcast that nobody switched off. THE CLASS is the
+   *     recap; WHAT'S LEFT is the undrafted, the shape of what remains by
+   *     position, and next spring's picks. This used to be excluded — "there
+   *     is nothing left to act on, so the page becomes one document" — and the
+   *     document ran to five screens, which is the one thing the toggle exists
+   *     to prevent. The men nobody called ARE something to act on, a week from
+   *     now on the wire; they are simply not the first thing to read.
    *
    *   THE WAR ROOM (board set, clock stopped) — no toggle. Nothing can be
    *     taken yet; the panel that starts the draft IS the page, and a "watch
@@ -1710,19 +1808,24 @@ export default async function DraftPage({ params, searchParams }: { params: { id
    *   PRE-DRAFT SCOUTING (no draft running) — no toggle. There is no
    *     broadcast to split off: the page is a masthead, your picks and the
    *     class. It is all board already.
-   *   THE RECAP (last card in, phase still DRAFT) — no toggle. The clock is
-   *     gone and there is nothing left to act on, so the page stops being two
-   *     jobs and becomes one document: the recap leads and the leftovers —
-   *     tomorrow's priority free agents — are read at the bottom of it.
+   *   AFTER THE PHASE MOVES ON — no toggle, and none needed. Advancing out of
+   *     DRAFT clears every isDraftee flag in the league, so the board empties
+   *     and the page is a masthead over the recap until the next class is
+   *     minted (see `recapYear`). One thing to read, one column to read it in.
    *   A FANTASY DRAFT — no toggle. It has no DraftPick rows and therefore no
    *     broadcast at all, so its board is already second on the page.
    */
-  const twoViews = broadcastHero;
+  const twoViews = broadcastHero || draftClosed;
 
   /**
    * IS IT ABOUT TO BE YOUR TURN? The one input the situational default takes.
    * One name away counts as your turn: the point is to be ALREADY looking at
    * the board when the room turns to you, not to start scrolling once it has.
+   *
+   * A FINISHED DRAFT IS NEVER URGENT AND CANNOT BECOME URGENT — no state, no
+   * next selection — so THE CLASS leads, on the first visit and on the tenth.
+   * That is the right default in both: the recap is why this page is open, and
+   * it does not go stale the way the leftovers do.
    */
   const boardUrgent = twoViews && (isUserOnClock || (bcastYourNext?.picksAway ?? Infinity) <= 1);
   const urgentNote = !boardUrgent
@@ -1951,16 +2054,44 @@ export default async function DraftPage({ params, searchParams }: { params: { id
         </div>
       )}
 
-      {draftJustFinished && recap}
+      {/* The recap leads a finished draft — but under the toggle it IS the
+          leading pane, so above it as well would be the same document twice.
+          This line is what a FANTASY draft's recap still comes out of. */}
+      {draftJustFinished && !twoViews && recap}
 
       {twoViews ? (
         <DraftViewToggle
           urgent={boardUrgent}
           urgentNote={urgentNote}
-          boardHint={`${stillOnBoard.length} still available`}
-          roomHint={`pick ${bcastIndex + 1} of ${bcastPicks.length}`}
-          board={<>{boardSectionNode}{capitalPanelNode}</>}
-          room={<>{classOutlookNode}{broadcastBodyNode}{bestAvailableNode}</>}
+          panes={draftClosed
+            ? [
+                {
+                  id: 'room',
+                  label: 'The Class',
+                  hint: `${madePicks.length} selections in`,
+                  body: <>{classOutlookNode}{recap}{closingNode}</>,
+                },
+                {
+                  id: 'board',
+                  label: "What's Left",
+                  hint: `${stillOnBoard.length} undrafted`,
+                  body: <>{boardSectionNode}{depletionNode}{capitalPanelNode}</>,
+                },
+              ]
+            : [
+                {
+                  id: 'board',
+                  label: 'The Board',
+                  hint: `${stillOnBoard.length} still available`,
+                  body: <>{boardSectionNode}{capitalPanelNode}</>,
+                },
+                {
+                  id: 'room',
+                  label: 'The Room',
+                  hint: `pick ${bcastIndex + 1} of ${bcastPicks.length}`,
+                  body: <>{classOutlookNode}{broadcastBodyNode}{bestAvailableNode}</>,
+                },
+              ]}
         />
       ) : (
         <>
