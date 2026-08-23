@@ -392,12 +392,14 @@ seasons deep each, landing at **0 violations**.
    midnight deleted. `settleClosingYearCapOverage` now carries the whole
    overage into the new league year; the same four cuts carry $17.1M, $20.5M
    and $28.0M forward and the loop erases $0.
-   **Not fixed here:** `executeTrade` (`lib/trade.ts`) hard-codes
-   `year: opts.seasonYear` and never calls `capChargeYear()` at all, so a
-   trade made in the pre-roll OFFSEASON window still files against the year
-   that is ending and is deleted unbilled. The carry-over covers the club that
-   was over the ceiling; it does not cover the club that was not. One line,
-   in a file another workstream owns.
+   **Since fixed, in the trade workstream:** `executeTrade` (`lib/trade.ts`)
+   used to hard-code `year: opts.seasonYear` and never call `capChargeYear()`,
+   so a trade made in the pre-roll OFFSEASON window filed against the year that
+   was ending and was deleted unbilled. It now asks the function — the same
+   call `cutPlayer` makes — so a change to how charges are dated needs no edit
+   at that call site. Verified at OFFSEASON week 1 of 2026: the charge files
+   against 2027, and the `CapCharge` table and `teamCapSummary` agree to the
+   dollar.
 7. **Going further over the cap switched the advance gate off, for free.**
    `capComplianceBlock` returns `null` — advance — when `!report.fixable`, and
    that escape is correct: a club whose dead money alone exceeds the ceiling

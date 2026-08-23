@@ -1,5 +1,5 @@
 import { Rng, clamp } from '../rng';
-import { AI, ROSTER_TARGETS, ROSTER_NEED_QUALITY_WEIGHT, MARKET, Position, POSITIONS, PICK_VALUE_CHART, LEAGUE, TRADE_VALUE, TRADE_VALUE_TIER } from '../tuning';
+import { AI, CAP, ROSTER_TARGETS, ROSTER_NEED_QUALITY_WEIGHT, MARKET, Position, POSITIONS, PICK_VALUE_CHART, LEAGUE, TRADE_VALUE, TRADE_VALUE_TIER } from '../tuning';
 import { GmProfile } from '../types';
 import { askingPrice, marketValue, remainingValue, capHit, proration, capSavingsOnCut, formatMoney, ContractLike } from '../cap';
 import { startersAt } from '../lineup';
@@ -538,7 +538,28 @@ export interface ValueBreakdown {
   capMult: number;
   /** The club's competitive window against this man's age — see windowMultiplier. */
   windowMult: number;
+  /**
+   * The BARGAIN half of the contract read: 1.0 or above, never below. An
+   * overpay is not a multiplier any more — see `contractBurden`.
+   */
   contractMult: number;
+  /**
+   * The OVERPAY half, in value points, already SUBTRACTED from `total`. Zero
+   * on any deal at or below market. Exposed because lib/trade.ts charges it a
+   * second time as the price of the favour (SPREAD.BAD_CONTRACT_TAX) and must
+   * not have to reconstruct it from a multiplier that no longer encodes it.
+   */
+  contractBurden: number;
+  /**
+   * The same fact in dollars: everything he is owed above what a man of his
+   * level fetches, across every year still to run. Carried beside the points
+   * rather than derived from them by a caller, because the conversion lives in
+   * one place (CONTRACT_BURDEN_PER_CAP_YEAR) and a second copy of it in a
+   * refusal message is how a screen ends up quoting a figure the engine is not
+   * using. This is the number a GM can act on; the points are the number the
+   * verdict is computed from.
+   */
+  contractOverMarket: number;
   scarcityMult: number;
   noiseMult: number;
   /** The depth-chart read behind `fitMult`, or null when no roster was supplied. */
@@ -662,29 +683,90 @@ export function playerValueDetailed(
     reasons.push({ text: "He's young and still ascending — that's worth a premium to us.", weight: ageSwing });
   }
 
-  // Contract surplus: expectedMarketCost - actualControlledCost, scaled by
-  // how many years of control are actually left (a one-year rental's
-  // "surplus" doesn't compound the way a four-year team-friendly deal's
-  // does) and clamped to a bounded range — a great contract can meaningfully
-  // raise value, a bad one can meaningfully lower it, but neither can run
-  // away unbounded.
+  /**
+   * =========================================================================
+   * A BARGAIN IS A MULTIPLIER. AN OVERPAY IS A BILL.
+   * =========================================================================
+   * These used to be the same number — one bounded multiplier that a good
+   * deal pushed up to 1.30 and a bad one pushed down to a floor of 0.60. That
+   * is fine going up and structurally incapable of going down far enough, and
+   * the app owner's worst exploit lived in exactly that gap.
+   *
+   * WHY A MULTIPLIER CANNOT PRICE A BAD CONTRACT. `base` is surplus over
+   * REPLACEMENT LEVEL, so a man at replacement is worth zero by construction —
+   * MID's replacementLevel is 62 and a 62 corner scores a flat 0. Multiply
+   * zero by anything, including a negative, and it is still zero. The measured
+   * case: a 62 corner owed $135.4M over five years priced at 1.0 points, the
+   * old `Math.max(1, total)` floor, and every club in the league took him for
+   * nothing. No stack of multipliers could ever have said otherwise, because
+   * there was nothing for them to multiply.
+   *
+   * SO THE DEFICIT IS SUBTRACTED, IN DOLLARS. What an overpay costs a club is
+   * the cap it can no longer spend, and that is the same money whoever is
+   * being overpaid — $60M above market on a franchise quarterback and $60M
+   * above market on a special-teamer are the same $60M hole. It does not scale
+   * with the man, so it is not a multiplier on him. The surplus side stays
+   * multiplicative, because a cheap deal genuinely IS worth more on a better
+   * player: a rookie contract on a star is the most valuable asset in the
+   * sport and the same discount on a backup is worth nothing.
+   *
+   * The consequence is the point: `total` can now come out NEGATIVE, and a man
+   * whose paper is worth far more than he is becomes something you have to be
+   * PAID to take on. See CONTRACT_BURDEN_PER_CAP_YEAR for the exchange rate
+   * and the football sentence it is anchored to.
+   */
   let contractMult = 1;
+  let contractBurden = 0;
+  let contractOverMarket = 0;
   if (capMode !== 'OFF' && p.contract) {
     const expectedApy = marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential });
-    const actualAnnual = remainingValue(p.contract, capMode) / Math.max(1, p.contract.yearsRemaining);
-    const surplusFraction = clamp((expectedApy - actualAnnual) / Math.max(expectedApy, 1), -1.5, 1.5);
-    const controlFactor = clamp(p.contract.yearsRemaining / TRADE_VALUE.CONTRACT_CONTROL_YEARS_FULL, 0.25, 1);
-    contractMult = clamp(1 + surplusFraction * controlFactor * TRADE_VALUE.CONTRACT_SURPLUS_WEIGHT, TRADE_VALUE.CONTRACT_MULT_MIN, TRADE_VALUE.CONTRACT_MULT_MAX);
-    const contractSwing = base * Math.abs(contractMult - 1);
+    const yearsLeft = Math.max(1, p.contract.yearsRemaining);
+    const actualAnnual = remainingValue(p.contract, capMode) / yearsLeft;
+    const controlFactor = clamp(yearsLeft / TRADE_VALUE.CONTRACT_CONTROL_YEARS_FULL, 0.25, 1);
+
+    // The bargain half, unchanged: below-market pay, scaled by how many years
+    // of control it actually runs for, bounded at CONTRACT_MULT_MAX.
+    const surplusFraction = clamp((expectedApy - actualAnnual) / Math.max(expectedApy, 1), 0, 1.5);
+    contractMult = clamp(1 + surplusFraction * controlFactor * TRADE_VALUE.CONTRACT_SURPLUS_WEIGHT, 1, TRADE_VALUE.CONTRACT_MULT_MAX);
     if (contractMult > 1.12) {
       reasons.push({
         text: p.contract.isRookieDeal
           ? "His rookie contract creates significant surplus value."
           : 'This contract pays well below market for his level — real surplus value.',
-        weight: contractSwing,
+        weight: base * (contractMult - 1),
       });
-    } else if (contractMult < 0.9) {
-      reasons.push({ text: 'The contract is expensive relative to expected production.', weight: contractSwing });
+    }
+
+    /*
+     * The bill half. Every dollar he is owed above what a man of his level
+     * fetches on the open market, for every year still to run — NOT scaled by
+     * `controlFactor`, because years of control are what makes a bargain
+     * compound and what makes an overpay WORSE, and dividing the bill by four
+     * would have been the same "can't say no loudly enough" mistake in
+     * miniature. A one-year rental at $10M over market costs $10M; a five-year
+     * deal at $10M over costs $50M, and that is simply what it costs.
+     *
+     * The band comes off first — see CONTRACT_FAIR_BAND_PER_YEAR. `marketValue`
+     * is an estimate wearing a [FRAGILE PLACEHOLDER] tag, and charging its
+     * noise as dead money made an ordinary punter contract a liability.
+     */
+    contractOverMarket = Math.max(0, actualAnnual - expectedApy - TRADE_VALUE.CONTRACT_FAIR_BAND_PER_YEAR) * yearsLeft;
+    contractBurden = (contractOverMarket / CAP.BASE_CAP) * TRADE_VALUE.CONTRACT_BURDEN_PER_CAP_YEAR;
+    /*
+     * Stated only once it is actually moving the number: 15 points is about a
+     * sixth-round pick, and a reason worth less than that pushes a real driver
+     * off the three the trade screen shows.
+     *
+     * "PAST A FAIR PRICE", not "more than he is worth", because the band has
+     * already come off this figure — it is the excess beyond anything you
+     * could defend, not the raw gap to a point estimate. A sentence has to be
+     * true of the number it is quoting.
+     */
+    if (contractBurden > 15) {
+      reasons.push({
+        text: `His deal runs ${formatMoney(contractOverMarket)} past a fair price for a player at his level — taking that on is the real cost of this trade, not him.`,
+        weight: contractBurden,
+      });
     }
   }
 
@@ -823,6 +905,7 @@ export function playerValueDetailed(
 
   let total = (base + upside) * ageMult * contractMult * fitMult * scarcityMult * capMult;
 
+
   // Imperfect evaluation. Lower sharpness (easier difficulty) = noisier AI.
   let noiseMult = 1;
   if (opts.rng) {
@@ -837,8 +920,34 @@ export function playerValueDetailed(
   // punter can never be worth a first-round pick," not just the base curve.
   total = Math.min(total, curve.ceiling);
 
+  /*
+   * THE BILL, LAST, AND OUTSIDE EVERYTHING ABOVE.
+   *
+   * After the CEILING, because the ceiling is a statement about how much a
+   * position can be worth ON THE FIELD and has nothing to say about money
+   * owed. Subtracted before it, a club's best quarterback pinned at the 5000
+   * cap would have had his contract forgiven entirely by the clamp — the bill
+   * would vanish into the rounding on precisely the biggest deals in the game.
+   *
+   * And outside the NOISE on purpose. Every other term here is a scouting
+   * judgement and the noise is what makes clubs disagree about one; a contract
+   * is a public document and there is nothing to disagree about. So thirty-two
+   * front offices read the same player differently and the same bill
+   * identically, which is also how it works.
+   */
+  total -= contractBurden;
+
   reasons.sort((a, b) => b.weight - a.weight);
-  return { base, upside, ageMult, fitMult, windowMult, capMult, contractMult, scarcityMult, noiseMult, fit, total: Math.max(1, total), reasons };
+  /*
+   * NO FLOOR. `total` used to come back through `Math.max(1, total)`, which
+   * meant no asset in this economy could ever be worth less than one point and
+   * therefore no contract could ever be a liability. That floor, and the
+   * matching one in lib/trade.ts's assetValues, are what made a 62 corner owed
+   * $135.4M a positive asset that thirty of thirty-one clubs accepted for
+   * nothing. A man can now be a cost, which is the only honest answer for a
+   * man whose paper is worth more than he is.
+   */
+  return { base, upside, ageMult, fitMult, windowMult, capMult, contractMult, contractBurden, contractOverMarket, scarcityMult, noiseMult, fit, total, reasons };
 }
 
 /** Convenience wrapper for callers that only need the number. */

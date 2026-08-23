@@ -6,10 +6,11 @@ import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, rosterFit, p
 import { draftOrderContext, type DraftOrderContext } from './draft';
 import { CapMode } from './types';
 import { recordTrade } from './tradeRetro';
-import { unamortizedBonus, formatMoney } from './cap';
+import { unamortizedBonus, formatMoney, capChargeYear } from './cap';
 import { teamCapSummary } from './cap-summary';
 import { reconcileDepthChart } from './gen/league';
 import { assertCapRoom, tradeCapDeltas, autoTrimRosterToLimit } from './capEnforcement';
+import { describeValue } from './tradeWords';
 
 /**
  * ===========================================================================
@@ -48,6 +49,17 @@ export interface TradeEvaluation {
   ratio: number;
   /** The ratio the offer needed to clear to be accepted — lets the UI render a score bar, not just accept/reject text. */
   requiredRatio: number;
+  /**
+   * Value still needed to clear the club's bar, in the same points as
+   * `sendValue`/`receiveValue`. 0 once the offer clears.
+   *
+   * IT LIVES HERE BECAUSE THE BAR MOVED. Callers used to re-derive it as
+   * `sendValue * requiredRatio - receiveValue`, which is only the bar when the
+   * club is actually giving something up — with nothing (or nothing but
+   * burdens) going out the bar is the plain net, and a second copy of the rule
+   * would have had Trade Intel quoting a figure the verdict was not using.
+   */
+  shortfall: number;
   counter?: { message: string };
   /** Why the AI valued things this way — the strongest 1-3 notes across all assets on each side. */
   explanation: { give: string[]; receive: string[] };
@@ -159,6 +171,7 @@ async function assetValues(
 ): Promise<AssetSide> {
   const each: { label: string; value: number; isPlayer: boolean }[] = [];
   const weighted: { text: string; weight: number }[] = [];
+  let worstDeal: { label: string; overMarket: number } | null = null;
   for (const a of assets) {
     if (a.type === 'PLAYER') {
       const p = await prisma.player.findUniqueOrThrow({ where: { id: a.id }, include: { contract: true } });
@@ -166,19 +179,39 @@ async function assetValues(
         profile, needs, rng: new Rng(`${noisePrefix}-${a.type}:${a.id}`), capMode, scarcity,
         roster: club.roster, capSpace: club.capSpace,
       });
-      let value = v.total;
-      if (spread.side === 'send') {
-        value *= 1 + spread.poach;
-      } else {
-        value *= 1 - spread.haircut;
+      const name = `${p.firstName} ${p.lastName}`;
+      /*
+       * THE SPREAD IS A PRICE FOR A MAN. IT IS NOT A DISCOUNT ON A BILL.
+       *
+       * `v.total` can now come back NEGATIVE — see the contract block in
+       * lib/ai/gm.ts — and multiplying a negative by (1 - haircut) marks the
+       * burden DOWN, which is a club handing itself a discount on a debt it is
+       * about to be handed. The other direction is just as wrong: a poach
+       * premium on a liability would say prising an albatross loose costs
+       * MORE than he is worth. So the spread is applied to the talent, and the
+       * money owed rides through at face value on both sides.
+       */
+      const talent = Math.max(0, v.total);
+      const owed = Math.min(0, v.total);
+      let value = spread.side === 'send'
+        ? talent * (1 + spread.poach) + owed
+        : talent * (1 - spread.haircut) + owed;
+      if (spread.side === 'receive') {
         // What the bad contract already cost him, charged again as the price
         // of the favour: the club taking a burden on wants paying for it, and
         // how much depends on the difficulty. Zero on any fair deal.
-        const deficit = v.contractMult < 1 ? v.total * (1 / v.contractMult - 1) : 0;
-        value = Math.max(1, value - deficit * spread.badContractTax);
+        //
+        // NO FLOOR. This used to end in `Math.max(1, ...)`, which is one of
+        // the two floors that made a liability impossible: however toxic the
+        // deal, the man came out of here worth at least a point, and a point
+        // is a positive asset.
+        value -= v.contractBurden * spread.badContractTax;
+        if (v.contractOverMarket > (worstDeal?.overMarket ?? 0)) {
+          worstDeal = { label: name, overMarket: v.contractOverMarket };
+        }
       }
-      each.push({ label: `${p.firstName} ${p.lastName}`, value, isPlayer: true });
-      for (const r of v.reasons) weighted.push({ text: `${p.firstName} ${p.lastName}: ${r.text}`, weight: r.weight });
+      each.push({ label: name, value, isPlayer: true });
+      for (const r of v.reasons) weighted.push({ text: `${name}: ${r.text}`, weight: r.weight });
     } else {
       const pick = await prisma.draftPick.findUniqueOrThrow({ where: { id: a.id } });
       each.push({
@@ -193,16 +226,28 @@ async function assetValues(
   // factor on asset #2 just by having been evaluated first.
   const reasons = weighted.sort((a, b) => b.weight - a.weight).map((r) => r.text);
 
-  // A pile is worth less than the sum of its parts — see TRADE_VALUE.PACKAGE.
+  /*
+   * A pile is worth less than the sum of its parts — see TRADE_VALUE.PACKAGE.
+   *
+   * ONLY THE ASSETS ARE WEIGHTED. A liability is not made smaller by standing
+   * in a crowd: the weighting exists because a roster fields eleven men and
+   * the fifth piece of a package genuinely does less for the club receiving
+   * it, and none of that reasoning survives being pointed at a contract. Left
+   * on the same footing, an albatross sorted to the back of a five-man pile
+   * would have had 45% of its bill weighted away — a fresh way to launder the
+   * same exploit, one asset removed.
+   */
   const ranked = [...each].sort((a, b) => b.value - a.value);
-  const total = ranked.reduce(
+  const pieces = ranked.filter((a) => a.value > 0);
+  const bills = ranked.filter((a) => a.value <= 0);
+  const total = pieces.reduce(
     (sum, asset, i) => sum + asset.value * (TRADE_VALUE.PACKAGE.CONCENTRATION[i] ?? TRADE_VALUE.PACKAGE.CONCENTRATION_TAIL),
     0,
-  );
+  ) + bills.reduce((sum, asset) => sum + asset.value, 0);
   // "First-round quality" is read off the chart itself rather than written
   // down, so it stays true if the league ever changes size.
   const premiumLine = PICK_VALUE_CHART(LEAGUE.TEAM_COUNT);
-  return { total, reasons, best: ranked[0] ?? null, premiumCount: ranked.filter((a) => a.value >= premiumLine).length };
+  return { total, reasons, best: ranked[0] ?? null, premiumCount: ranked.filter((a) => a.value >= premiumLine).length, worstDeal };
 }
 
 /** One side of a proposed trade, priced. See assetValues and TRADE_VALUE.PACKAGE. */
@@ -214,6 +259,13 @@ interface AssetSide {
   best: { label: string; value: number; isPlayer: boolean } | null;
   /** How many assets here are worth a first-round pick or more — the headline rule's second clause. */
   premiumCount: number;
+  /**
+   * The single worst contract coming AT the club and what it is over market
+   * by, in dollars — what the salary-dump refusal names. Only ever set on the
+   * pile the AI would be receiving: a burden it is handing away is a saving,
+   * not a bill it can be charged for.
+   */
+  worstDeal: { label: string; overMarket: number } | null;
 }
 
 /**
@@ -353,7 +405,56 @@ export async function evaluateTrade(opts: {
   const explanation = { give: receive.reasons.slice(0, 3), receive: send.reasons.slice(0, 3) };
 
   const requiredRatio = opts.settings.aiAcceptsLopsided ? 0.9 : AI.TRADE_ACCEPT_RATIO;
-  const ratio = sendValue === 0 ? Infinity : receiveValue / sendValue;
+
+  /**
+   * ==========================================================================
+   * WHEN THEIR SIDE IS EMPTY THE QUESTION IS NOT A RATIO
+   * ==========================================================================
+   * This line was `sendValue === 0 ? Infinity : receiveValue / sendValue`, and
+   * that Infinity was the worst exploit in the game. A club being asked to
+   * give up nothing cleared any threshold ever set, so the pile coming AT it
+   * was never priced at all: a 62-overall corner owed $135.4M went to thirty
+   * of the league's thirty-one clubs for nothing, and they thanked you for it.
+   *
+   * A ratio needs a denominator. With nothing going out there isn't one, and
+   * the honest question is the plain one — is what we are being handed worth
+   * more than nothing? So the bar is stated as a NET: at a positive ask it is
+   * the same `sendValue x requiredRatio` it always was, and at a zero or
+   * negative ask it is simply `sendValue`, which is the point where the club
+   * is no worse off than if it had said no.
+   *
+   * A NEGATIVE ASK IS NOT A TYPO. `sendValue` can now come out below zero, and
+   * it should: a club asked to hand over an albatross is being done a favour,
+   * and the deal it will accept for that is correspondingly cheaper. Note the
+   * bar is NOT `sendValue x requiredRatio` there — multiplying a negative by
+   * 1.04 moves the bar the wrong way and would have the club demanding LESS
+   * the more toxic the contract it is shedding.
+   *
+   * WHAT THIS DELIBERATELY DOES NOT CHANGE is the gift. An offer of a 91
+   * receiver for nothing is one the AI genuinely accepts and should — see the
+   * note in app/actions/trade.ts, which reasons about exactly this and is
+   * right. `receiveValue >= 0` is true of every real asset and false only of a
+   * liability, which is the whole distinction the old line could not draw.
+   */
+  const netBar = sendValue > 0 ? sendValue * requiredRatio : sendValue;
+  const clears = receiveValue >= netBar;
+
+  /**
+   * `ratio` is the meter's number (see AcceptanceMeter) and every consumer
+   * divides it by `requiredRatio` to get "how far to yes", so it has to stay
+   * one number with one meaning on every path. Where a ratio exists it is the
+   * ratio, unchanged. Where it does not, the gap to the bar is measured
+   * against the size of what is actually on the table and mapped onto the same
+   * scale, so 100% still means yes and the meter never has to render Infinity,
+   * NaN, or a division by a negative.
+   *
+   * Floored at a cornerstone's worth so that a trivial offer of nothing much
+   * for nothing much cannot read as a landslide either way.
+   */
+  const netScale = Math.max(Math.abs(receiveValue), Math.abs(netBar), TRADE_VALUE.PACKAGE.HEADLINE_THRESHOLD);
+  const ratio = sendValue > 0
+    ? receiveValue / sendValue
+    : requiredRatio * Math.max(0, Math.min(1.5, 1 + (receiveValue - netBar) / netScale));
 
   /**
    * HOW MUCH MORE, STATED SO THAT DOING IT ACTUALLY CLOSES THE DEAL.
@@ -371,8 +472,15 @@ export async function evaluateTrade(opts: {
    * A gap under half a percent rounded to a flat "we're about 0% short on
    * value" — a club turning down a deal while saying it needs nothing more,
    * which reads as broken rather than close.
+   *
+   * ONLY MEANINGFUL WITH A POSITIVE ASK. A percentage of what the club is
+   * giving up is not a number at all when it is giving up nothing, and the
+   * branches that fire on that path say the shortfall in points and dollars
+   * instead — the same vocabulary the Insider report already uses.
    */
   const shortPct = Math.max(1, Math.round((requiredRatio / Math.max(ratio, 0.01) - 1) * 100));
+  /** What the offer is still missing, in value points. Zero once it clears. */
+  const shortfallPoints = Math.max(0, netBar - receiveValue);
 
   /**
    * A deal the club has no room for is not a deal, however good the value.
@@ -411,12 +519,22 @@ export async function evaluateTrade(opts: {
      * what lands on our cap, and make the value back up in picks, which cost
      * us nothing. That is one instruction, and it is the one that works.
      */
-    const valueShort = ratio < requiredRatio;
-    const ask = valueShort
-      ? ` The value is short too, by about ${shortPct}%. Adding picks won't move the cap number — only less salary coming at us will. Swap an expensive man for picks and you fix both at once.`
-      : ` Take a contract back the other way, or send someone cheaper, and we'll talk — we like the deal otherwise.`;
+    /*
+     * ...AND THE CAP IS NOT ALWAYS THE ONLY THING WRONG WITH IT. "We like the
+     * deal otherwise" is a sentence about a deal the club would take if it had
+     * the room, and it is a lie about a salary dump: those fail the cap AND
+     * the value, and telling a user to send someone cheaper implies the rest
+     * of it is fine. Each of the three cases now gets the instruction that
+     * actually applies to it.
+     */
+    const valueShort = !clears;
+    const ask = !valueShort
+      ? ` Take a contract back the other way, or send someone cheaper, and we'll talk — we like the deal otherwise.`
+      : sendValue > 0
+        ? ` The value is short too, by about ${shortPct}%. Adding picks won't move the cap number — only less salary coming at us will. Swap an expensive man for picks and you fix both at once.`
+        : ` And the room isn't the only problem — you're asking us to take a contract on and hand nothing back, which we wouldn't do at any cap number.`;
     return {
-      accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy, capBlock,
+      accepted: false, sendValue, receiveValue, ratio, requiredRatio, shortfall: shortfallPoints, explanation, philosophy, capBlock,
       counter: {
         message: `We can't fit this on our cap — it adds ${formatMoney(capBlock.added)} against ${formatMoney(capBlock.available)} of room, ${formatMoney(capBlock.shortfall)} more than we have.${ask}`,
       },
@@ -449,10 +567,10 @@ export async function evaluateTrade(opts: {
    * problem instead of "we're 12% short", which would send a user off to add
    * more of the same. It just cannot contradict the meter any more.
    */
-  const headline = ratio < requiredRatio ? headlineShortfall(receive, send) : null;
+  const headline = !clears ? headlineShortfall(receive, send) : null;
   if (headline) {
     return {
-      accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy,
+      accepted: false, sendValue, receiveValue, ratio, requiredRatio, shortfall: shortfallPoints, explanation, philosophy,
       counter: {
         /*
          * TWO PERCENTAGES ON ONE CARD HAD TO STOP LOOKING LIKE ONE.
@@ -468,28 +586,72 @@ export async function evaluateTrade(opts: {
          * wrong problem.
          *
          * And it said "we're not moving HIM" about a 2027 first-round pick.
+         *
+         * THE "THE TOTALS ARE FINE" HALF IS GONE, because it could not happen.
+         * This test is gated on the offer NOT clearing (see `headline` above,
+         * which is the fix that stopped a 102% meter sitting over the word
+         * TURNED DOWN), so the value is short every time this sentence is
+         * printed. A branch the gate above makes unreachable is a claim the
+         * screen can never make, and leaving it in reads as though it can.
          */
         message: `${headline.name} is a cornerstone for us — we're not moving ${headline.isPlayer ? 'him' : 'it'} for depth. `
           + `At least one piece coming back has to be a real asset in its own right, and the best single piece `
           + `you've offered is worth about ${Math.round((headline.best / Math.max(headline.wanted, 1)) * 100)}% of what that alone would take.`
-          + (ratio < requiredRatio
-            ? ` The overall value is short too — the meter is what to watch for that.`
-            : ` The totals themselves are fine; it is the shape of the offer we can't take.`),
+          + ` The overall value is short too — the meter is what to watch for that.`,
       },
     };
   }
 
-  if (ratio >= requiredRatio) {
-    return { accepted: true, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy };
+  /*
+   * NOTHING FOR NOTHING IS NOT A TRADE. Both piles empty prices at 0 against a
+   * bar of 0, which clears — the old Infinity accepted it too. The Trade
+   * screen refuses to submit it (see TradeBuilder), but a server action is a
+   * public endpoint and this one would have written a Transaction row and a
+   * retrospective for a deal in which nothing moved.
+   */
+  if (opts.give.length === 0 && opts.get.length === 0) {
+    return {
+      accepted: false, sendValue, receiveValue, ratio, requiredRatio, shortfall: shortfallPoints, explanation, philosophy,
+      counter: { message: `There's nothing on the table. Put something in the offer and we'll look at it.` },
+    };
   }
+
+  if (clears) {
+    return { accepted: true, sendValue, receiveValue, ratio, requiredRatio, shortfall: shortfallPoints, explanation, philosophy };
+  }
+
+  /**
+   * THE SALARY DUMP, REFUSED IN WORDS A GM CAN ACT ON.
+   *
+   * `receiveValue < 0` means the pile coming at this club is worth less than
+   * nothing to it — the money owed on it outruns the football in it. There is
+   * no percentage to quote (a percentage of nothing is nothing) and "we're
+   * about 12% short" would send the user off to add another backup, so this
+   * says what the actual obstacle is: the contract, by name and by dollar,
+   * and what closing the gap would take.
+   */
+  if (receiveValue < 0) {
+    const worst = receive.worstDeal;
+    return {
+      accepted: false, sendValue, receiveValue, ratio, requiredRatio, shortfall: shortfallPoints, explanation, philosophy,
+      counter: {
+        message: worst
+          ? `It isn't ${worst.label} we have a problem with, it's his contract — it runs ${formatMoney(worst.overMarket)} past a fair price for a player at his level, and you're asking us to carry that. `
+            + `We'd need real compensation to do you that favour: ${describeValue(shortfallPoints)} on top, or take some of that money back the other way.`
+          : `What you're offering costs us more than it's worth once the contracts are counted. `
+            + `We'd need ${describeValue(shortfallPoints)} on top before this is worth a conversation.`,
+      },
+    };
+  }
+
   if (ratio >= requiredRatio - AI.TRADE_COUNTER_WINDOW) {
     return {
-      accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy,
+      accepted: false, sendValue, receiveValue, ratio, requiredRatio, shortfall: shortfallPoints, explanation, philosophy,
       counter: { message: `Close, but we need a bit more. Try sweetening the offer — we're about ${shortPct}% short on value.` },
     };
   }
   return {
-    accepted: false, sendValue, receiveValue, ratio, requiredRatio, explanation, philosophy,
+    accepted: false, sendValue, receiveValue, ratio, requiredRatio, shortfall: shortfallPoints, explanation, philosophy,
     counter: { message: `Not enough here for us to consider it.` },
   };
 }
@@ -615,6 +777,27 @@ export async function executeTrade(opts: {
   ]);
   const capMode: CapMode = JSON.parse(league.settings).capMode ?? 'REALISTIC';
 
+  /**
+   * WHICH LEAGUE YEAR THE ACCELERATION BELONGS TO, ASKED RATHER THAN ASSUMED.
+   *
+   * The charge below was written with `year: opts.seasonYear`, hard-coded, and
+   * it was right only by accident. `capChargeYear()` exists because the
+   * offseason bumps League.seasonYear at the RESET_STANDINGS step and
+   * expireStaleCapCharges() then deletes every charge filed against the year
+   * that just ended — so a charge booked in OFFSEASON weeks 1-2 under the OLD
+   * year is swept away before anybody pays it. That is the bug that made an
+   * in-season release free, and this is the same class of it.
+   *
+   * It has never fired here for one reason: isTradeDeadlinePassed() closes
+   * trading through OFFSEASON and RESIGN, so the only phases that reach this
+   * line are ones where capChargeYear() returns seasonYear anyway. That is an
+   * accident of the deadline rule, not a guard — the deadline is a league
+   * SETTING (`tradeDeadlineEnabled`) and a league with it switched off can
+   * execute a trade in OFFSEASON week 1 today. Routed through the one function
+   * that knows the answer, so it stays right whatever the deadline does.
+   */
+  const chargeYear = capChargeYear({ phase: league.phase, week: league.week, seasonYear: opts.seasonYear });
+
   // Before anything is charged, recorded or moved: does either club actually
   // have what it is offering? See NOBODY TRADES WHAT THEY DON'T HAVE above.
   const sides: TradeSide[] = [
@@ -635,6 +818,18 @@ export async function executeTrade(opts: {
     ...(await tradeCapDeltas(opts.aToB, opts.teamA, opts.teamB, capMode)),
     ...(await tradeCapDeltas(opts.bToA, opts.teamB, opts.teamA, capMode)),
   ];
+  /*
+   * The GATE still asks about `opts.seasonYear` while the acceleration CHARGE
+   * above is dated by capChargeYear(), and in the one window where those can
+   * differ — OFFSEASON weeks 1-2 with the trade deadline switched off — they
+   * are answering different questions on purpose. `tradeCapDeltas` returns
+   * this season's salary movement, so this season's sheet is the right thing
+   * to test it against; the accelerated bonus is a new charge and belongs to
+   * whichever year will actually be billed for it. Passing chargeYear here
+   * would check next year's ceiling against this year's salaries, which is
+   * neither. Flagged rather than silently reconciled: lib/capEnforcement.ts
+   * belongs to the cap workstream and this is its call to make.
+   */
   await assertCapRoom({ action: 'Trade', seasonYear: opts.seasonYear, capMode, charges: deltas });
 
   /*
@@ -751,7 +946,7 @@ export async function executeTrade(opts: {
               await tx.capCharge.create({
                 data: {
                   teamId: fromTeam,
-                  year: opts.seasonYear,
+                  year: chargeYear,
                   amount: accelerated,
                   label: `Traded away — ${p.firstName} ${p.lastName}`,
                 },
@@ -915,6 +1110,21 @@ export async function maybeGenerateAiTradeOffer(leagueId: string, userTeamId: st
   // makes the ask reflect that he is SURPLUS. Without it the AI priced its
   // fourth receiver as though he were about to start somewhere.
   const askValue = playerValueDetailed(surplus as unknown as RosterPlayer, { profile, needs, rng, capMode, roster: roster as RosterPlayer[] }).total;
+
+  /*
+   * A CLUB DOES NOT SHOP A MAN IT WOULD HAVE TO PAY SOMEONE TO TAKE.
+   *
+   * `total` can now be negative — a contract worth more than the player on it
+   * is a cost, not an asset (see the contract block in lib/ai/gm.ts). Left
+   * unguarded, the ask below would have gone looking for the cheapest pick
+   * worth at least 0.8x a NEGATIVE number, matched the user's last seventh,
+   * and put an albatross on his desk described only by rating and position.
+   * Worse, respondToTradeOfferAction executes an accepted offer without
+   * re-evaluating it, so nothing downstream would have caught it. Shopping
+   * surplus and dumping salary are different moves; this function is the
+   * first one.
+   */
+  if (askValue <= 0) return null;
 
   const userPicks = await prisma.draftPick.findMany({ where: { ownerTeamId: userTeamId, used: false }, orderBy: [{ year: 'asc' }, { round: 'asc' }] });
   // Find the cheapest pick (by this team's own pick-value scale) that still

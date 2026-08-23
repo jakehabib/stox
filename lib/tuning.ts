@@ -1721,22 +1721,67 @@ export const TRADE_VALUE = {
   CONTRACT_SURPLUS_WEIGHT: 0.55,
   CONTRACT_CONTROL_YEARS_FULL: 4, // years of control at which the surplus/discount fraction applies at full strength
   /**
-   * [TUNE] Clamped to the bands the trade-valuation research recommends
-   * (section 7, "Contract value should be modeled as surplus/deficit"):
-   * an exceptional bargain is worth at most about +30% on talent value, a
-   * severe overpay about -25 to -40%. Was 0.55/1.75 — the +75% end was the
-   * larger error, because it stacked on top of the potential term and made a
-   * cheap young ascending player nearly untouchable, which is the same
-   * "young controlled players are mispriced" failure the research names, in
-   * the direction nobody checks.
+   * [TUNE] WHAT A DEAD DOLLAR COSTS, IN JIMMY JOHNSON POINTS.
    *
-   * The floor is not the whole downside story and is not meant to be: a
-   * contract a club genuinely cannot fit is priced a second time by `capMult`
-   * in lib/ai/gm.ts (down to 0.6x), so a toxic deal at a club with no room
-   * bottoms out near 0.36x of talent — the research's "can create negative
-   * standalone asset value", as close as a multiplicative model gets to it.
+   * This replaces CONTRACT_MULT_MIN, which was 0.60 and was the constant that
+   * capped how bad a contract could ever look. Two floors made that cap
+   * unrecoverable — playerValueDetailed returned `Math.max(1, total)` and
+   * assetValues did `Math.max(1, value - deficit * tax)` — so the worst deal
+   * in the game reduced a man to 60% of a talent value that was itself
+   * floored at one point. A 62 corner owed $135.4M over five years priced at
+   * 1.0, and thirty of the league's thirty-one clubs took him for nothing.
+   *
+   * A multiplier could never have fixed it. `base` is surplus over
+   * REPLACEMENT LEVEL, so a replacement-level man is worth exactly zero before
+   * any multiplier runs, and zero times a negative is still zero. The bill has
+   * to be SUBTRACTED, which means it has to be denominated — hence this.
+   *
+   * THE ANCHOR, in one checkable football sentence: burning a full season's
+   * salary cap on a man who gives you nothing costs about what a cornerstone
+   * is worth. PACKAGE.HEADLINE_THRESHOLD puts a cornerstone at 800 points and
+   * this is 900, a shade dearer, because a cap year is spent and a cornerstone
+   * is still on your roster afterwards.
+   *
+   * Read against real trades at the sizes that actually happen:
+   *   $22M above market   0.09 cap-years  ~  78 pts, a fourth-rounder. That is
+   *                       roughly what clubs have really paid to have a bad
+   *                       contract absorbed.
+   *   $60M above market   0.24 cap-years  ~ 212 pts, a third.
+   *   $130M above market  0.51 cap-years  ~ 459 pts, a second — the $135.4M
+   *                       albatross, which now costs a real pick to be rid of
+   *                       instead of being a gift somebody thanks you for.
+   *
+   * It is deliberately linear and deliberately not steeper. The bar this has
+   * to clear is "a liability must cost something", and an AI that refuses
+   * every trade is worse than one that accepts too many — the market is most
+   * of this game. Measured against the ordinary-trade sweep in
+   * scripts/_lb_trade.ts, this leaves fair player-for-picks and man-for-man
+   * deals accepted at the same rate as before.
    */
-  CONTRACT_MULT_MIN: 0.60,
+  CONTRACT_BURDEN_PER_CAP_YEAR: 900,
+
+  /**
+   * [TUNE] HOW FAR OVER MARKET A DEAL GOES BEFORE ANYONE CALLS IT BAD.
+   *
+   * `marketValue` in lib/cap.ts carries a [FRAGILE PLACEHOLDER] tag and rounds
+   * to $100K, and no front office in football looks at a man a million and a
+   * half over the estimate and calls him an albatross. Without a band the
+   * burden charged that noise: an 85-overall punter at $3.5M against a $2.3M
+   * market — an ordinary deal, one year left — came out a NEGATIVE asset,
+   * because his entire trade value is about four points and $1.2M is worth
+   * four. (scripts/benchmarkTradeValue.ts catches exactly that, and did.)
+   *
+   * FLAT DOLLARS, NOT A PERCENTAGE OF MARKET. A 20% band would forgive $1.2M
+   * on the punter and $8M a year on a quarterback, which is forgiveness that
+   * grows precisely where the money is. The mispricing this exists to absorb
+   * is the estimator's, and the estimator's error is roughly a fixed number of
+   * dollars, not a fixed share of a salary.
+   *
+   * Stated against CAP.BASE_CAP like the rate above — about 0.8% of a cap.
+   * It costs the albatross case almost nothing: the $135.4M contract goes from
+   * $129.9M over market to $119.9M, still a second-round pick to be rid of.
+   */
+  CONTRACT_FAIR_BAND_PER_YEAR: 2_000_000,
   CONTRACT_MULT_MAX: 1.30,
 
   /**

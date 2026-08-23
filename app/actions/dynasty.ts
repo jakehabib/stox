@@ -6,6 +6,7 @@ import { prisma } from '@/lib/db';
 import { assertLeagueOwner } from '@/lib/owner';
 import { readJson, writeJson } from '@/lib/json';
 import { attrsForPosition } from '@/lib/ratings';
+import { describeValue as describeValueShared } from '@/lib/tradeWords';
 import type { AttrMap } from '@/lib/ratings';
 import {
   DYNASTY, SKILL_BY_ID, buildDynastyState, fullScoutMax, loadDynastyProfile, lockedReason, parseSkills,
@@ -407,7 +408,9 @@ export async function tradeIntelAction(
     unlocked: true,
     theirValue: Math.round(e.sendValue),
     yourValue: Math.round(e.receiveValue),
-    shortfall: Math.max(0, Math.round(e.sendValue * e.requiredRatio - e.receiveValue)),
+    // Straight off the evaluation — see TradeEvaluation.shortfall for why
+    // this is no longer re-derived here.
+    shortfall: Math.round(e.shortfall),
   };
 }
 
@@ -450,7 +453,7 @@ export async function insiderReadAction(
     settings: { aiAcceptsLopsided: settings.aiAcceptsLopsided },
   });
 
-  const needed = Math.max(0, Math.round(evaluation.sendValue * evaluation.requiredRatio - evaluation.receiveValue));
+  const needed = Math.round(evaluation.shortfall);
   const report = evaluation.accepted
     ? `They'd sign off on this today — you are about ${Math.round((evaluation.ratio - evaluation.requiredRatio) * 100)}% clear of their bar. Anything you add is money left on the table.`
     : `They value what you're asking for at ${Math.round(evaluation.sendValue)} and your offer at ${Math.round(evaluation.receiveValue)}. To get to yes you need roughly ${needed} more points of value — about ${describeValue(needed)}.`;
@@ -469,19 +472,18 @@ export async function insiderReadAction(
 /**
  * Translate a raw trade-value gap into something a GM can act on.
  *
- * [TUNE] Calibrated against the actual scale lib/ai/gm.ts's pickValue emits
- * (measured, not assumed: a mid-round-1 pick prices around 680, R2 ~300,
- * R3 ~135, R4 ~60, R5 ~26, R6 ~12, R7 ~5). If AI.PICK_VALUE_BIAS or the
- * 0.30 chart scalar in gm.ts moves, these move with it.
+ * THE TABLE ITSELF LIVES IN lib/tradeWords.ts, because the club's own refusal
+ * messages have to quote the same one — two copies of "what is 300 points" is
+ * how one panel tells a user he needs a third and another a second. All this
+ * adds is the Insider's extra clause at the top of the range.
+ *
+ * The comment that used to sit here calibrated the thresholds against "the
+ * 0.30 chart scalar in gm.ts" and a mid-first at 680. Both are gone:
+ * pickValue returns Jimmy Johnson points unscaled, so a mid-first is 1000 and
+ * the thresholds are read straight off the chart. A calibration note against a
+ * constant that no longer exists is worse than none.
  */
 function describeValue(v: number): string {
-  if (v <= 0) return 'nothing';
-  if (v < 8) return 'a seventh-rounder';
-  if (v < 20) return 'a sixth-rounder';
-  if (v < 45) return 'a fifth-rounder';
-  if (v < 100) return 'a fourth-rounder';
-  if (v < 220) return 'a third-rounder';
-  if (v < 480) return 'a second-rounder';
-  if (v < 900) return 'a first-round pick';
-  return 'more than a first-round pick — a starter has to be in this';
+  const phrase = describeValueShared(v);
+  return phrase.startsWith('more than') ? `${phrase} — a starter has to be in this` : phrase;
 }
