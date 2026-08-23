@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { Verdict } from '@/lib/negotiation';
+import { INTEREST_TICKS, type Verdict } from '@/lib/negotiation';
 import { Tooltip } from '../Tooltip';
 import { tip } from '@/lib/glossary';
 
@@ -23,11 +23,16 @@ const VERDICT_STYLE: Record<Verdict, { label: string; text: string; bar: string 
 };
 
 /** CONSIDERING, CLOSE and ACCEPT, in the order they are crossed. */
-// Tick marks, aligned to the verdict boundaries in lib/negotiation.ts
-// (CONSIDERING 45, CLOSE 72, certain yes at ACCEPT_INTEREST 90). A second
-// copy of a threshold is how a meter comes to disagree with the decision it
-// is drawing; these are the same numbers, and they move together.
-const THRESHOLDS = [45, 72, 90];
+// Tick marks, aligned to the verdict boundaries in lib/negotiation.ts. THE
+// SAME array the decision runs on, imported — not a second copy of it.
+//
+// The comment that used to sit here said these were "the same numbers, and
+// they move together", and they were neither: 90 was a hand-written copy of
+// ACCEPT_INTEREST, so moving the constant would have left this tick behind and
+// the meter would have drawn a boundary the decision no longer used. A comment
+// describing a policy the code does not follow is as wrong as a bad number,
+// and this one was asserting the exact property it lacked.
+const THRESHOLDS = INTEREST_TICKS;
 
 /**
  * The live read on how an offer is landing.

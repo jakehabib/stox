@@ -134,9 +134,18 @@ export const GLOSSARY = {
     definition: 'Average per year — total contract value divided by its length. The standard shorthand for what a player is paid.',
     why: 'It hides the shape. A back-loaded deal has an APY he never earns in any single season, and on an extension the quoted APY usually covers only the new years, not the ones already on the books.',
   },
+  /*
+   * NOT "ON AN EXTENSION". This read *"On an extension, the money attached to
+   * the years being added"*, and it is the tip the SALARY control wears on
+   * every deal that appends — which has included a walk-year re-sign since
+   * `extendContract` started appending (lib/freeagency.ts). So a GM re-signing
+   * his own quarterback got a definition of a screen he was not on. The
+   * mechanic is "years added to a deal he is already on", and both screens
+   * that do it are named.
+   */
   newMoney: {
     term: 'New money',
-    definition: 'On an extension, the money attached to the years being added. The seasons already on his deal keep their existing salaries.',
+    definition: 'The money attached to the years being ADDED to a deal he is already on — an extension, or a re-sign in his walk year. The seasons already on his contract keep the salaries they were promised.',
     why: 'A "4 year, $120M extension" is $30M a year of new money. Averaged across the whole contract it is a smaller number — quoting either as the other is how a cap sheet surprises somebody.',
   },
   franchiseTag: {

@@ -3,12 +3,11 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { openExtensionNegotiationAction, submitExtensionOfferAction } from '@/app/actions/extension';
-import { capHit, formatMoney, type ContractLike } from '@/lib/cap';
+import { type ContractLike } from '@/lib/cap';
 import type { DealStructure, NegotiationSession } from '@/lib/negotiation';
 import { CapMode } from '@/lib/types';
 import { NegotiationPanel } from './NegotiationPanel';
 import { DealStructureControls, DEFAULT_ESCALATION } from './DealStructureControls';
-import { SuitorRumour } from './ds/SuitorRumour';
 import { ContractLedger } from './ds/ContractLedger';
 
 /** Where a fresh deal opens. Reset terms returns the shape here. */
@@ -38,6 +37,21 @@ const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidY
  * makes "new money" the number he negotiates and the full contract a longer,
  * cheaper-per-year thing: both are on screen, under their own names, because
  * quoting either as the other is the lying metric this flow invites.
+ *
+ * WHICH IS WHY THE PARAGRAPH THAT SAID SO IS GONE. This form opened with four
+ * lines explaining that the extension adds years on top, that the years he is
+ * already owed keep their salaries, what his current deal charges the cap this
+ * season, and that the two lots of dead money combine. Counted against the
+ * panel underneath it, on the same screen at the same moment: the term control
+ * reads "+4 → 7 yrs", the cap-hit row is captioned "the whole contract, old
+ * years and new" and followed by a sentence naming exactly which years he was
+ * already owed, the guarantee control prints the combined dead money live, and
+ * the season's current charge is on the player card's own hero above. Four
+ * claims, every one of them made again in a place where it moves as you drag.
+ *
+ * The one thing the paragraph had that nothing else did is what is being torn
+ * up, year by year — and that was always the `details` below it, which is the
+ * sentence with the figures attached rather than the sentence.
  */
 export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDone }: {
   leagueId: string; playerId: string; capMode: CapMode;
@@ -82,34 +96,21 @@ export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDo
       onOffer={(offer, str, fingerprint) =>
         submitExtensionOfferAction(leagueId, playerId, offer, str, fingerprint)}
       banner={
-        <>
-          {/* The sentence the old form never said. An extension is a
-              replacement, and the years already on the books go away with it. */}
-          <div className="text-sm px-3 py-2.5 rounded-lg border border-accent2/30 bg-accent2/10 text-accent2">
-            This <span className="font-semibold">adds years on top</span> of his current deal. The{' '}
-            {contract.yearsRemaining} year{contract.yearsRemaining === 1 ? '' : 's'} he is already owed keep
-            their salaries — {formatMoney(capHit(contract, capMode))} against this year&apos;s cap right now —
-            and the new money goes on the end. Whatever bonus he has left carries into the extended deal,
-            so the dead money if you ever cut him is both put together.
-          </div>
+        /* Exactly what he is on now, year by year, with the dead money each of
+           those years would cost. On screen before anything is agreed rather
+           than discoverable afterwards — and closed by default, because it is
+           the answer to a question you ask once, not a fact you need beside
+           every drag of the salary slider.
 
-          {/* And here is exactly what is being torn up, year by year, with the
-              dead money each of those years would have cost. "It replaces his
-              deal" is a sentence; this is the sentence with the figures
-              attached, on screen before anything is agreed rather than
-              discoverable afterwards. */}
-          <details className="rounded-lg border border-line bg-raised/40 px-3 py-2">
-            <summary className="text-sm cursor-pointer select-none">
-              The deal he is on now, before anything is added
-            </summary>
-            <ContractLedger contract={contract} capMode={capMode} seasonYear={session.ctx.seasonYear} className="pt-3" />
-          </details>
-
-          {/* He cannot be bid on — but the club that would want him if he ever
-              got out is a real one, and it hardens what he asks for. Same
-              evidence the re-sign window shows, for the same reason. */}
-          {session.suitor && <SuitorRumour session={session} />}
-        </>
+           The suitor is NOT passed any more: a club that would come for him if
+           he ever got out is a fact about the negotiation, not about this
+           screen, and the panel draws it on all three tables now. */
+        <details className="rounded-lg border border-line bg-raised/40 px-3 py-2">
+          <summary className="text-sm cursor-pointer select-none">
+            The deal he is on now, before anything is added
+          </summary>
+          <ContractLedger contract={contract} capMode={capMode} seasonYear={session.ctx.seasonYear} className="pt-3" />
+        </details>
       }
       structureSlot={
         (years) => <DealStructureControls capMode={capMode} contractYears={years} structure={structure} onChange={setStructure} />

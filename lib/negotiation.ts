@@ -61,6 +61,41 @@ export const PERSONALITY_BLURB: Record<Personality, string> = {
 };
 
 /**
+ * ===========================================================================
+ * THE SAME MAN, AT A TABLE HE HAS NEVER SAT AT BEFORE
+ * ===========================================================================
+ * `PERSONALITY_BLURB` above is keyed on personality and nothing else, and one
+ * of its four entries is a claim about a shared past: LOYAL reads *"He wants
+ * to finish what he started here"*. Rendered over an outside free agent — a
+ * man who has never played a down for this club, whose `incumbent` is false
+ * and whose `loyaltyDiscount` is therefore exactly 0 — that is a sentence
+ * about a relationship the save does not contain. Reproduced on a LOYAL free
+ * agent in the scratch league: the panel opened with "he wants to finish what
+ * he started here" over a WR the user had never employed.
+ *
+ * So the blurb is a function of the CONTEXT, not of the personality alone.
+ * Only LOYAL differs, because only LOYAL made a claim about history; the
+ * other three are facts about the man and travel unchanged.
+ *
+ * The incumbent line also loses its second sentence — *"There is a discount
+ * in that — but it is not unlimited"* — because the panel's own discount line
+ * is rendered three inches below it saying the same thing off the real
+ * `loyaltyDiscount`, as a band rather than a hand-wave (NegotiationPanel's
+ * EdgeLine). Two sentences about one discount, one of them measured: the
+ * measured one stays. (README design principle 7.)
+ */
+export function personalityBlurb(ctx: Pick<NegotiationContext, 'personality' | 'incumbent'>): string {
+  if (ctx.personality === 'LOYAL' && !ctx.incumbent) {
+    // What LOYAL actually means about a man with no history here: he is
+    // shopping for somewhere to stay, which is worth something to a club that
+    // can offer it — and worth nothing yet, because he owes this one nothing.
+    return 'He is looking for a place to settle rather than the highest bidder. None of that is owed to this club yet.';
+  }
+  if (ctx.personality === 'LOYAL') return 'He wants to finish what he started here.';
+  return PERSONALITY_BLURB[ctx.personality];
+}
+
+/**
  * What the panel says about an offer.
  *
  * Two of these are DISPLAY states that `evaluateOffer` never returns, and
@@ -767,6 +802,40 @@ export function loyaltyBand(discount: number): 'NONE' | 'SLIGHT' | 'REAL' | 'LAR
   return 'LARGE';
 }
 
+/**
+ * ===========================================================================
+ * HAS HIS ASK ACTUALLY COME DOWN, OR HAS IT JUST ROUNDED DOWN
+ * ===========================================================================
+ * The panel used to decide this with `ctx.openMarketApy > ctx.marketApy` and
+ * then tell a story: *"Asking $13.6M/yr, down from $13.7M"* — a story about
+ * nobody returning a man's calls, over a $100K step.
+ *
+ * Measured on the scratch league's free agents: `unsignedAskMultiplier` is
+ * 0.997 at one week on the wire, so a $13.7M ask becomes $13.7M — and once
+ * `askingPrice` rounds to the nearest $100K, the first week produces either
+ * no change at all or exactly one step of it, depending on where the
+ * unrounded figure happened to sit. One tick of rounding is not a market
+ * telling you something; it is the same number, printed twice, with a
+ * sentence between them.
+ *
+ * So the claim has a size. It has to clear BOTH a share and a floor: 5% is
+ * about four weeks unsigned (the multiplier is 0.95 there), and $500K is five
+ * of the rounding steps that produced the false positive, so a minimum-salary
+ * body cannot trip it on a rounding artefact either.
+ *
+ * REJECTED: keying it on `weeksUnsigned` instead. That is not on the context
+ * — and it would answer a different question anyway. What the line claims is
+ * that the number came down, so the test has to be that the number came down.
+ * ===========================================================================
+ */
+export const ASK_FALL_SHARE = 0.05;
+export const ASK_FALL_FLOOR = 500_000;
+
+export function askHasFallen(ctx: Pick<NegotiationContext, 'marketApy' | 'openMarketApy'>): boolean {
+  const fall = ctx.openMarketApy - ctx.marketApy;
+  return fall >= ASK_FALL_FLOOR && fall >= ctx.openMarketApy * ASK_FALL_SHARE;
+}
+
 // --- Evaluation (pure; runs on the client on every keystroke) ---------------
 
 /**
@@ -1004,8 +1073,8 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   let verdict: Verdict;
   if (insulting) verdict = 'INSULTED';
   else if (interest >= ACCEPT_INTEREST) verdict = 'ACCEPT';
-  else if (interest >= 72) verdict = 'CLOSE';
-  else if (interest >= 45) verdict = 'CONSIDERING';
+  else if (interest >= CLOSE_INTEREST) verdict = 'CLOSE';
+  else if (interest >= CONSIDERING_INTEREST) verdict = 'CONSIDERING';
   else verdict = 'COLD';
 
   const demands: string[] = [];
@@ -1025,16 +1094,24 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
           : 'The term is not what he had in mind.',
     );
   }
-  // The floor first, because it is a different sentence: not "more would
-  // help" but "not without this". A player under his floor always gets it,
-  // however good the guarantee score reads against what he WANTS.
-  if (underGuaranteed) {
-    demands.push('He will not sign a deal this size on a promise — a real share of it has to be guaranteed.');
-  } else if (guaranteeScore < 0.85) {
+  // NOT A DEMAND WHEN HE IS UNDER HIS FLOOR, and that is a deletion rather
+  // than an oversight. The panel already says that refusal twice at the point
+  // where it can be acted on: the headline below reads "His agent wants it in
+  // writing. He is not signing this on a handshake", and the line under the
+  // guarantee control itself says what to do about it. A third copy in the
+  // demand list — *"He will not sign a deal this size on a promise"* — was
+  // the same claim a third time, in the one list on this panel that is
+  // supposed to be the things he still wants MORE of.
+  if (!underGuaranteed && guaranteeScore < 0.85) {
     demands.push('He wants more of it guaranteed.');
   }
   if (ctx.competition > 0.5 && interest < ACCEPT_INTEREST) demands.push('Other teams are calling. This will not sit on the table long.');
-  if (demands.length === 0 && interest < ACCEPT_INTEREST) demands.push('He is close. Something small is still missing.');
+  // `!underGuaranteed`: an offer he has refused on structure is not "close",
+  // and without this guard removing the demand above would have handed the
+  // fallback to exactly the offer it is most wrong about.
+  if (demands.length === 0 && !underGuaranteed && interest < ACCEPT_INTEREST) {
+    demands.push('He is close. Something small is still missing.');
+  }
 
   const headline =
     verdict === 'ACCEPT' ? `${ctx.playerName} will sign this.`
@@ -1191,6 +1268,28 @@ export type SignBand = 'NO' | 'MAYBE' | 'YES' | 'LOSING' | 'BLOCKED';
  * what a negotiation is.
  */
 export const ACCEPT_INTEREST = 90;
+
+/**
+ * ===========================================================================
+ * THE TICKS ON THE METER ARE THE DECISION'S OWN NUMBERS
+ * ===========================================================================
+ * `evaluateOffer` wrote `interest >= 72` and `interest >= 45` as literals, and
+ * `InterestMeter` drew its three tick marks off `const THRESHOLDS = [45, 72,
+ * 90]` under a comment claiming "these are the same numbers, and they move
+ * together". They were not the same numbers — they were four literals and a
+ * copy of ACCEPT_INTEREST in a different file, and nothing made either half
+ * follow the other. Move CLOSE to 70 and the meter's tick stays at 72: the
+ * bar changes colour a pixel and a half from where the mark says it will,
+ * which is this project's recurring bug (a displayed number that is not the
+ * number the system used) drawn at 1.5px.
+ *
+ * So there is one declaration and the meter reads it. Anything that draws the
+ * scale must import INTEREST_TICKS rather than write the numbers down again.
+ */
+export const CONSIDERING_INTEREST = 45;
+export const CLOSE_INTEREST = 72;
+/** CONSIDERING, CLOSE and a certain yes, in the order they are crossed. */
+export const INTEREST_TICKS: number[] = [CONSIDERING_INTEREST, CLOSE_INTEREST, ACCEPT_INTEREST];
 
 /**
  * The divisor that makes the advertised asking price a price that signs him —
@@ -1723,6 +1822,28 @@ export interface OfferDecision {
   newMoneyValue: number;
   /** Length of the resulting contract — add-on plus existing years on an extension. */
   contractYears: number;
+  /**
+   * ===========================================================================
+   * WHERE THE YEARS YOU ARE BUYING START IN `capHitSchedule`
+   * ===========================================================================
+   * 0 on a fresh deal. On one that appends it is the index of the first NEW
+   * year, and it comes straight off `buildExtension`, which is the function
+   * that writes the contract.
+   *
+   * The panel used to mark the added years with `i >= ctx.controlYears`, which
+   * is a SECOND rule for the same boundary. `buildExtension` computes its own
+   * as `remainingBases.length` — the stored base salaries from the elapsed
+   * year onward, PADDED up to `yearsRemaining` and never truncated to it. The
+   * two agree on every deal this league generates, because a well-formed
+   * contract row has one base salary per year. They are not the same rule: a
+   * row carrying more bases than the years it has left (an older save, a
+   * hand-edited row, any future path that shortens a deal without trimming the
+   * array) appends after the extra ones, and the panel would highlight the
+   * wrong pills — telling a GM he is buying a season he was already owed.
+   *
+   * One rule, computed by the writer, read by the reader.
+   */
+  firstNewYearIndex: number;
   guaranteedMoney: number;
   /** What releasing him in year 1 would leave on the books. */
   deadMoneyIfCut: number;
@@ -1970,6 +2091,8 @@ export function decideOffer(
     totalValue,
     newMoneyValue,
     contractYears,
+    // The writer's own boundary, never a second reading of `controlYears`.
+    firstNewYearIndex: ext ? ext.firstNewYearIndex : 0,
     // Read back off the contract this offer WRITES, floored at the signing
     // bonus, because that is the figure the club is held to — on a deal
     // signed today it is exactly `deadMoneyIfCut` below, and those two sitting

@@ -14,7 +14,6 @@ import { DealStructureControls, DEFAULT_ESCALATION } from './DealStructureContro
 import { cutPlayerAction } from '@/app/actions/roster';
 import { openResignNegotiationAction, submitResignOfferAction, setAsideResignAction } from '@/app/actions/resign';
 import { ActionButton } from './ds/ActionButton';
-import { SuitorRumour, LoyaltyLine } from './ds/SuitorRumour';
 import { DepthAtPosition, type DepthEntry } from './ds/DepthAtPosition';
 import { Tooltip } from './Tooltip';
 import { tip } from '@/lib/glossary';
@@ -37,8 +36,9 @@ const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidY
  *   - He is an INCUMBENT, so a player who wants to stay will take a real
  *     discount to do it, and the longer he has been here the bigger it is —
  *     but that discount now DECAYS as his deal runs out, which is what makes
- *     "when" a question with an answer. LoyaltyLine states which side of it
- *     you are on before you touch a slider.
+ *     "when" a question with an answer. The panel states which side of it you
+ *     are on before you touch a slider (NegotiationPanel's EdgeLine), on this
+ *     table and on the other two.
  *   - Nobody else may SIGN him yet — but somebody already wants him, and the
  *     panel names them. SuitorRumour is a real club with real room and a real
  *     hole at his position, resolved by the same function free agency uses, so
@@ -364,18 +364,17 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
               structureSlot={
                 (years) => <DealStructureControls capMode={capMode} contractYears={years} structure={structure} onChange={setStructure} />
               }
-              banner={
-                <>
-                  {/* Both halves of the same clock, above the meter and before
-                      any control is touched: what staying is worth to him right
-                      now, and who is waiting if it stops being worth enough.
-                      Neither is revealed after the fact — a pressure you only
-                      learn about once you have committed is a gotcha, not a
-                      mechanic. */}
-                  <LoyaltyLine session={session} />
-                  <SuitorRumour session={session} />
-                </>
-              }
+              /* NO BANNER. Both halves of the clock — what staying is worth to
+                 him, and who is waiting if it stops being worth enough — were
+                 assembled here, and the extension screen assembled the second
+                 one for itself while free agency wrote a third sentence of its
+                 own about who was bidding. They are the panel's now, mounted
+                 once off the session, so the three tables cannot say three
+                 different things about one mechanic (the app owner's standing
+                 rule: it applies equally to free agents and re-signs). Nothing
+                 was dropped and nothing moved on screen: the same two
+                 components, in the same order, in the same place above the
+                 meter. */
             />
           )}
           {/* "Not now" USED TO BE HERE, and being here was the whole problem:
