@@ -711,9 +711,17 @@ export async function runAiPicksUntilUser(leagueId: string, userTeamId: string, 
    * roster finds nothing and writes nothing.
    *
    * THIS IS NOT THE ONLY MOMENT IT SHOULD RUN. Free agency and the cut-down
-   * churn rosters too, and the natural home for a league-wide sweep is the
-   * offseason step in lib/season.ts beside `autoDepthChartAll`. That file is
-   * held elsewhere tonight; the draft is the one churn point this module owns.
+   * churn rosters too, and the league-wide sweep now lives at the PRESEASON
+   * step in lib/season.ts as `autoDepthChartAiClubs` — behind every offseason
+   * roster move and ahead of the opener, plus at the in-season progression
+   * checkpoints, because a chart goes stale when the RATINGS under it move
+   * and progression is a bulk update that touches no depth chart.
+   *
+   * It is NOT "beside `autoDepthChartAll`", which is what this comment used to
+   * say: that function was imported into lib/season.ts and never called, and
+   * it could never have been the call — it sorts every club including the
+   * user's, and the user's order is a decision this codebase does not
+   * overwrite. The draft is still the one churn point this module owns.
    */
   if (draftComplete) {
     const league = await prisma.league.findUnique({ where: { id: leagueId }, select: { week: true } });

@@ -112,15 +112,23 @@ npm run build         # production build: generates the Prisma client,
    open their **Player** page — attribute-by-attribute scouted ranges, a
    role/potential **label** (Prospect → Star → Franchise → Generational,
    reading off the same fogged data so it can be wrong until
-   scouting narrows in), contract details, a **Release** button, and a
-   **Scout** button to spend weekly scouting points narrowing the range. A
+   scouting narrows in), contract details, a **Release** button, and — on a
+   draft prospect — **Full Scout** (a two-step confirm: the first press asks,
+   the second spends) and **Work him out**. There is no weekly-scouting-points
+   button: that system was replaced by the shortlist, which spends your staff's
+   attention automatically every week on the men you have starred. A
    draft prospect's card also shows a **College Profile**: a full college
    season box score (revealed progressively across the NFL season) plus
    combine/pro-day testing and a competition-strength grade.
-4. **Depth Chart** — reorder each position group with the ▲/▼ buttons; this
-   is the exact order the sim engine snaps to on game day, except that
-   unavailable men are filtered out *before* the order is read, so an injured
-   starter is not something to reorder around — his backup starts on his own.
+4. **Depth Chart** — reorder each position group with the ▲/▼ buttons. This is
+   the order the sim allocates the ball and the tackles in, and it feeds scheme
+   fit — so it decides who leads your team in receiving, not who wins you the
+   game. The unit ratings that actually decide a game read the best available
+   man at each position regardless of chart order (measured: moving a chart
+   around moves a club's offensive and defensive ratings by 0.19 points on
+   average, entirely through scheme fit). Unavailable men are filtered out
+   *before* the order is read, so an injured starter is not something to
+   reorder around — his backup starts on his own.
    Every row carries its cap hit and every group header carries "$X committed
    here". "Auto-Sort by Rating" resets it to true-value order.
 5. Hit **Advance ▸** in the top-right repeatedly to sim games — the dropdown

@@ -662,6 +662,158 @@ export async function autoDepthChart(teamId: string) {
   if (rows.length) await prisma.depthChartSlot.createMany({ data: rows });
 }
 
+/**
+ * ===========================================================================
+ * DROP CHART ROWS NAMING MEN WHO ARE NOT ON THE ROSTER ANY MORE
+ * ===========================================================================
+ * `reconcileDepthChart` already does this, and every path that moves ONE
+ * player calls it — a trade, a signing, a cut, a draft pick. The paths that
+ * move a hundred at once do not: retirement (`progressAllPlayers`), contracts
+ * expiring into free agency (`releaseUnresignedExpiringContracts`) and
+ * cut-down day all set `Player.teamId = null` in bulk and leave the slot
+ * behind. Measured on the dev database, 533 of 8,836 chart rows in
+ * nine-season saves (6.0%) and 2,118 of 96,774 at one season old name a man
+ * his club no longer employs.
+ *
+ * IT IS NOT COSMETIC ON THE USER'S OWN SCREEN. app/league/[id]/depth-chart
+ * takes the first `startersAt(pos)` ids off the chart and then filters out the
+ * ones it cannot resolve to a player, so an orphan sitting at rank 0 does not
+ * shuffle the man behind him up — it reports the club a starter SHORT at that
+ * position, with a real receiver two rows down. Measured across every save on
+ * the dev database: 608 orphan rows are sitting inside a STARTING slot, on
+ * 333 clubs. The sim is unaffected — `mergeUnnamed` never sees an id that is
+ * not on the roster — which is exactly why this survived: the game played on
+ * correctly while the screen describing it was wrong.
+ *
+ * DELETE-ONLY, ON PURPOSE, so it is safe to run on the user's club as well as
+ * the AI's. It removes rows and reorders nothing, so the order he set stands
+ * exactly as he set it, minus the men who are gone. Ranks are left
+ * non-contiguous — every reader treats rank as relative (`orderBy: rank`),
+ * and the alternative, renumbering, is a write per surviving row to change
+ * nothing anybody can observe.
+ *
+ * Rejected: calling `reconcileDepthChart` once per club instead. Same effect
+ * on the data, 32 clubs x 2 reads + a rewrite of every chart that changed,
+ * against one statement here.
+ */
+export async function dropOrphanDepthChartSlots(leagueId: string): Promise<number> {
+  return prisma.$executeRaw`
+    DELETE FROM "DepthChartSlot" d
+    USING "Team" t
+    WHERE t.id = d."teamId"
+      AND t."leagueId" = ${leagueId}
+      AND NOT EXISTS (
+        SELECT 1 FROM "Player" p WHERE p.id = d."playerId" AND p."teamId" = d."teamId"
+      )
+  `;
+}
+
+/**
+ * ===========================================================================
+ * RE-SORT EVERY *AI* CLUB'S DEPTH CHART BY RATING — NEVER THE USER'S
+ * ===========================================================================
+ * WHAT WAS ACTUALLY BROKEN. Not arrivals: `reconcileDepthChart` below slots a
+ * new man in on merit, so a club that signs a 90 in March does NOT play him
+ * last. What nothing in the game did was re-sort a chart when the RATINGS
+ * under it moved. Progression is a bulk `UPDATE "Player" SET "trueOvr"`
+ * (lib/development.ts, both the in-season checkpoints and the offseason
+ * PROGRESS step) and it touches no depth chart at all, so a chart written in
+ * 2026 still ranks men by what they were worth in 2026. Measured across 6,752
+ * clubs in 117 real saves (scripts/_dc_gap.ts), the distance between the
+ * lineup a club FIELDS and the best lineup its roster could field grows with
+ * the age of the save:
+ *
+ *     league age   0     1     2     3     4     6     9
+ *     mean gap   1.12  2.28  3.32  6.74 10.27 11.56 11.33   rating points
+ *     clubs >=5   8%   17%   25%   45%   59%   75%   58%
+ *
+ * WHAT THAT COSTS, HONESTLY. It is NOT wins. `positionUnitRating` in
+ * lib/sim/units.ts re-sorts its input by rating, so every unit-weighted term
+ * the engine scores a game with is order-INVARIANT; the only channel from the
+ * chart to the scoreboard is `schemeFit`, which reads `depth[pos][0]`, and
+ * that moved off/def by a mean of 0.19 and a maximum of 3.57 rating points
+ * across 1,216 clubs (scripts/_dc_effect.ts). What it costs is the BOX SCORE:
+ * `allocateStats` hands targets, carries, tackles and the passing line to
+ * `units.depth[pos]` in chart order, and on those same 1,216 clubs 5.9% were
+ * about to give their passing line to a quarterback who was not their best,
+ * 15.1% their WR1 targets to the wrong receiver, 13.5% their CB1 snaps to the
+ * wrong corner. Awards, leaderboards and career lines are all downstream.
+ *
+ * WHY THE USER'S CLUB IS EXEMPT, AND THAT IS NOT A HALF-FIX. His order is a
+ * decision. `autoDepthChart` used to run on every draft pick and threw away
+ * his hand-set order every time he made one (see lib/draft.ts); the whole
+ * reason `reconcileDepthChart` exists is that a roster move must never
+ * relitigate what he ranked. An AI club has no such decision to protect — it
+ * has never expressed an order in its life — so re-sorting it destroys no
+ * information. He keeps Auto-Sort, which is the same call, on his own button.
+ *
+ * ONE PASS, FOUR QUERIES, whatever the league size, and it writes only the
+ * clubs whose order actually changed. The obvious shape —
+ * `for (const t of teams) await autoDepthChart(t.id)`, which is what
+ * `autoDepthChartAll` does — is two round trips per club before it writes
+ * anything, and it rewrites all of them unconditionally. Measured on a
+ * nine-season 32-club league (scripts/_dc_cost.ts): 182-184ms for the loop,
+ * 92-159ms batched from a fully stale chart, and 15-21ms batched once the
+ * league is already sorted. The steady-state number is the one that decided
+ * it, because that is the case that runs four or five times a season.
+ */
+export async function autoDepthChartAiClubs(leagueId: string): Promise<{ clubs: number; rewritten: number }> {
+  const league = await prisma.league.findUnique({ where: { id: leagueId }, select: { userTeamId: true } });
+  const teams = await prisma.team.findMany({
+    where: { leagueId, ...(league?.userTeamId ? { id: { not: league.userTeamId } } : {}) },
+    select: { id: true },
+  });
+  const teamIds = teams.map((t) => t.id);
+  if (teamIds.length === 0) return { clubs: 0, rewritten: 0 };
+
+  const [players, slots] = await Promise.all([
+    prisma.player.findMany({
+      where: { teamId: { in: teamIds } },
+      select: { id: true, teamId: true, position: true, trueOvr: true },
+    }),
+    prisma.depthChartSlot.findMany({ where: { teamId: { in: teamIds } }, orderBy: { rank: 'asc' } }),
+  ]);
+
+  const byTeam = new Map<string, { id: string; position: string; trueOvr: number }[]>();
+  for (const p of players) (byTeam.get(p.teamId!) ?? byTeam.set(p.teamId!, []).get(p.teamId!)!).push(p);
+  const slotsByTeam = new Map<string, typeof slots>();
+  for (const s of slots) (slotsByTeam.get(s.teamId) ?? slotsByTeam.set(s.teamId, []).get(s.teamId)!).push(s);
+
+  const changed: string[] = [];
+  const rows: { teamId: string; playerId: string; position: string; rank: number }[] = [];
+  for (const teamId of teamIds) {
+    const roster = byTeam.get(teamId) ?? [];
+    const byPos: Record<string, { id: string; trueOvr: number }[]> = {};
+    for (const p of roster) (byPos[p.position] ??= []).push(p);
+    const want: { teamId: string; playerId: string; position: string; rank: number }[] = [];
+    for (const [position, group] of Object.entries(byPos)) {
+      // Tie-break on id. Postgres hands rows back in no guaranteed order, so
+      // two equal ratings would otherwise swap places between runs and mark a
+      // club "changed" forever — a write every week that alters nothing.
+      group.sort((a, b) => b.trueOvr - a.trueOvr || a.id.localeCompare(b.id));
+      group.forEach((p, rank) => want.push({ teamId, playerId: p.id, position, rank }));
+    }
+    const have = slotsByTeam.get(teamId) ?? [];
+    const key = (r: { position: string; rank: number }) => `${r.position}#${r.rank}`;
+    const existing = new Map(have.map((s) => [key(s), s.playerId]));
+    const same = want.length === have.length && want.every((r) => existing.get(key(r)) === r.playerId);
+    if (same) continue;
+    changed.push(teamId);
+    rows.push(...want);
+  }
+  if (changed.length === 0) return { clubs: teamIds.length, rewritten: 0 };
+
+  // Delete-then-insert per the same reasoning as reconcileDepthChart:
+  // `@@unique([teamId, position, rank])` makes an in-place shuffle a minefield
+  // of transient collisions. Both statements in one transaction so a club is
+  // never left with no chart at all if the second one fails.
+  await prisma.$transaction([
+    prisma.depthChartSlot.deleteMany({ where: { teamId: { in: changed } } }),
+    prisma.depthChartSlot.createMany({ data: rows }),
+  ]);
+  return { clubs: teamIds.length, rewritten: changed.length };
+}
+
 /** The subset of PrismaClient reconcileDepthChart uses — lets it run inside an interactive $transaction. */
 type DepthChartClient = Pick<typeof prisma, 'player' | 'depthChartSlot'>;
 

@@ -9,7 +9,7 @@ import { generateRecap } from './sim/recap';
 import { SimPlayer, SimStaff } from './sim/units';
 import { retirementChance, bumpForMilestone } from './progression';
 import { AttrMap } from './ratings';
-import { applyInSeasonProgression, progressFreeAgents } from './development';
+import { applyInSeasonProgression, checkpointShare, progressFreeAgents } from './development';
 import { proration, deadMoneyOnCut } from './cap';
 import { runAiFreeAgencyWave, fillTeamsToRosterMinimum, runInSeasonSignings } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
@@ -24,7 +24,14 @@ import { checkAndUpdateRecords, recordBreakHeadline } from './records';
 import { syncPlayerSeasons } from './playerSeasons';
 import { reseedDraftOrder, startRookieDraft } from './draft';
 import { ensureSeasonSchedule } from './scheduleSeason';
-import { autoDepthChartAll, generateFringeFreeAgents, fringeShortfall } from './gen/league';
+/**
+ * `autoDepthChartAll` used to be imported here and never called — an import is
+ * a claim that this file does the thing, and it did not. It sorts EVERY club
+ * including the user's, so it can never be what runs on an advance; what runs
+ * is `autoDepthChartAiClubs`, which leaves his order alone. See the header on
+ * that function for the measurement that says why anything runs here at all.
+ */
+import { autoDepthChartAiClubs, dropOrphanDepthChartSlots, generateFringeFreeAgents, fringeShortfall } from './gen/league';
 import { observe } from './scouting';
 import { applyShortlistAttention } from './shortlistAttention';
 import { resetWorkoutSlots } from './workouts';
@@ -382,6 +389,31 @@ async function runPhaseStep(leagueId: string) {
         leagueId, seasonYear: league.seasonYear, week: league.week, phase: 'PRESEASON', settings,
       });
 
+      /**
+       * The last moment before anybody plays a game. Free agency, the draft,
+       * re-signings and the cut-down have all churned these rosters since the
+       * last time anything looked at an order, and the offseason PROGRESS step
+       * aged and developed every player in the league without touching a chart
+       * — so this is where an AI club's lineup is made to match the roster it
+       * actually has, for the season it is about to play.
+       *
+       * REJECTED: putting it in the PROGRESS step instead. PROGRESS is where
+       * the ratings move, so it looks like the natural home, but four more
+       * offseason steps of roster churn happen after it and the chart would be
+       * stale again by the opener. Here it is behind all of them. Cost is once
+       * a league year, 92-159ms on a nine-season league (scripts/_dc_cost.ts).
+       */
+      await autoDepthChartAiClubs(leagueId);
+      /**
+       * And every club — the user's included — loses the chart rows naming men
+       * who retired, whose contracts expired, or who went on cut-down day.
+       * Those three are the only roster moves in the game that do NOT run
+       * `reconcileDepthChart`, because they move a hundred players at once
+       * rather than one. This is delete-only and therefore safe on a
+       * hand-set order; see the function's header for why an orphan row is
+       * worse than untidy on the depth-chart screen.
+       */
+      await dropOrphanDepthChartSlots(leagueId);
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'REGULAR', week: 1 } });
       const campNote = camp.signings > 0
         ? ` ${camp.signings} club${camp.signings === 1 ? '' : 's'} went to the wire for help before the opener.`
@@ -756,6 +788,27 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   // withRoundLock, which is where its exactly-once guarantee lives.
   await recoverFatigueAndInjuries(leagueId);
   await applyInSeasonProgression(leagueId, league.seasonYear, week, settings.seasonLength, rng, settings.progressionSpeed);
+  /**
+   * RATINGS JUST MOVED, SO THE ORDER THEY IMPLY JUST MOVED WITH THEM.
+   *
+   * `applyInSeasonProgression` is a bulk `UPDATE "Player" SET "trueOvr"` and
+   * touched no depth chart, so a club's chart went on ranking men by what they
+   * were worth in week 1 — and `allocateStats` (lib/sim/engine.ts) hands the
+   * passing line, the targets and the carries to `units.depth[pos]` in exactly
+   * that order. Measured across 1,216 real clubs, 5.9% were about to credit
+   * the wrong quarterback and 15.1% the wrong WR1 (scripts/_dc_effect.ts).
+   *
+   * GATED ON `checkpointShare` — the same function that decides whether
+   * progression ran — rather than on `week % INTERVAL === 0` written out a
+   * second time here. Two copies of that rule is how a sweep ends up running
+   * on weeks nothing changed, or missing the week everything did.
+   *
+   * REJECTED: sweeping every week. It costs 15-21ms on a settled league
+   * (scripts/_dc_cost.ts), which is not the objection — the objection is that
+   * on the fourteen weeks between checkpoints no rating has moved, so it is
+   * fourteen reads of every roster in the league to write nothing at all.
+   */
+  if (checkpointShare(week, settings.seasonLength) > 0) await autoDepthChartAiClubs(leagueId);
   // Your staff spent the week on the players you starred. This is the ONLY
   // ongoing scouting input in the game and it runs whether or not the user
   // ever opened a scouting screen — advancing a week is not supposed to be
