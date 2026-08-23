@@ -184,11 +184,36 @@ export function CreateLeagueForm({
                 REALISTIC: 'Full cap: bonuses prorate, cuts leave dead money.',
               }}
             />
+            {/* NORMAL, not "PRO". Difficulty used to be the four-rung console
+                ladder (Rookie/Pro/All-Pro/Legend) and this default was left
+                behind when it became three rungs — see LEGACY_DIFFICULTY in
+                lib/settings.ts. "PRO" matches none of the three options, so
+                `value` started as a string no button carried: all three
+                rendered unpressed, the form posted difficulty=PRO, and the
+                whitelist in app/actions/league.ts quietly turned it into
+                NORMAL. The player got Normal either way — he was simply never
+                told which one he was on, and could not get back to the blank
+                state once he clicked. Measured on the live DOM at /new.
+
+                The hint is the other half of the same complaint: this was the
+                only setting on the form with no line under it, and it is the
+                one a first-timer most wants a sentence about. Both effects
+                named below are real and are the ONLY two — aiUnitBonus tilts
+                every AI club's unit scores in lib/sim/engine.ts, and
+                userScoutPenalty widens the user's own scouting bands in
+                lib/scouting.ts. The third knob, aiSharpness, has no consumer
+                anywhere in the codebase, so nothing here claims rival GMs
+                drive a harder bargain. */}
             <Field
               label="Difficulty"
               name="difficulty"
               options={[['EASY', 'Easy'], ['NORMAL', 'Normal'], ['HARD', 'Hard']]}
-              defaultValue="PRO"
+              defaultValue="NORMAL"
+              hint={{
+                EASY: 'The rest of the league plays a little under what its roster is worth, and your scouts come back surer of a prospect than they have any right to be.',
+                NORMAL: 'Every club plays what its roster is worth, and your scouts report exactly what they have on a man.',
+                HARD: 'Every rival plays a little above what its roster is worth, and your scouts hedge — a prospect comes back as a wider range, so more of the draft is a guess.',
+              }}
             />
 
             {/* Desktop only. On a phone the sticky bar at the foot of the form
