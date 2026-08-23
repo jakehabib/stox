@@ -357,28 +357,83 @@ async function runPhaseStep(leagueId: string) {
         }
       }
 
-      await releaseUnresignedExpiringContracts(leagueId, league.seasonYear);
-      // The wire, before anybody shops it. This league's own expiring
-      // contracts are the market's real names; the fringe population is the
-      // several hundred camp bodies underneath them that a real offseason
-      // always has and this one never did. Runs BEFORE the roster-filling
-      // below on purpose — that is what the short clubs are meant to sign.
-      const minted = await addFringeFreeAgents(leagueId, rng);
-      // Every AI team that came out of that below a legal roster fills back up
-      // immediately, at the league minimum, from the players who just hit the
-      // market. Without this a team that had a bad re-sign year stayed 20
-      // bodies short for the rest of its existence — measured on 19 of 22
-      // pre-existing saves, min roster 27 and median 33.
-      const refilled = await fillTeamsToRosterMinimum(leagueId, league.seasonYear, 1, settings, rng);
-      await prisma.league.update({ where: { id: leagueId }, data: { phase: 'FREE_AGENCY', week: 1 } });
-      return {
-        summary: [
-          releasedBefore > 0 ? `${releasedBefore} unsigned player(s) hit free agency.` : null,
-          minted > 0 ? `${minted} veteran(s) and camp bodies worked out for clubs and are on the wire.` : null,
-          refilled > 0 ? `${refilled} minimum-salary signing(s) got short-handed rosters back to a legal size.` : null,
-          'Free agency is open.',
-        ].filter(Boolean).join(' '),
-      };
+      /**
+       * =====================================================================
+       * THE WAY OUT OF RESIGN IS CLAIMED BEFORE IT RUNS
+       * =====================================================================
+       * It wasn't, and it was the last transition in the phase machine that
+       * both moved time and did non-idempotent work with nothing guarding it.
+       * A regular-season week claims itself; a playoff round takes a lock; every
+       * offseason step claims itself before it runs, for the reasons written out
+       * above runOffseasonStepClaimed. This one just did the work and set the
+       * phase at the end.
+       *
+       * The button in front of it does not hold the door. `runSingle` in
+       * components/AdvanceWeekButton.tsx wraps the call in
+       * `startTransition(async () => …)`, and on React 18 `isPending` goes false
+       * at the first `await` — so the button re-enables while the advance is
+       * still running and the second half of a double click reaches this block
+       * alongside the first.
+       *
+       * WHAT THAT LOOKED LIKE, and it is why the stack trace was so misleading:
+       * a P2025 out of `contract.delete` on an id read five lines earlier, in
+       * releaseUnresignedExpiringContracts. The row had not vanished — the other
+       * advance had already released the same man. Reproduced by driving two
+       * concurrent advances out of RESIGN on a scratch league: one returns a
+       * normal summary, the other throws exactly that.
+       *
+       * The throw was the visible half. The silent half is worse and would have
+       * outlived it: `addFringeFreeAgents` sizes its batch off a pool count, so
+       * two runners read the same shortfall and each mint the whole of it, and
+       * `fillTeamsToRosterMinimum` signs two rounds of minimum deals into the
+       * same holes. Making the delete idempotent on its own would have hidden
+       * the crash and kept both of those.
+       *
+       * So the PHASE is the claim, compare-and-set, exactly as the offseason
+       * does it: a second advance arriving anywhere inside this block finds a
+       * league that is no longer in RESIGN and does nothing at all. Rolled back
+       * if the work throws, so a failed advance leaves the window open and the
+       * press repeatable rather than stranding the league one phase on with the
+       * release half done.
+       */
+      const claimedResign = await prisma.league.updateMany({
+        where: { id: leagueId, phase: 'RESIGN' },
+        data: { phase: 'FREE_AGENCY', week: 1 },
+      });
+      if (claimedResign.count === 0) return { summary: 'Free agency is already open.' };
+
+      try {
+        await releaseUnresignedExpiringContracts(leagueId, league.seasonYear);
+        // The wire, before anybody shops it. This league's own expiring
+        // contracts are the market's real names; the fringe population is the
+        // several hundred camp bodies underneath them that a real offseason
+        // always has and this one never did. Runs BEFORE the roster-filling
+        // below on purpose — that is what the short clubs are meant to sign.
+        const minted = await addFringeFreeAgents(leagueId, rng);
+        // Every AI team that came out of that below a legal roster fills back up
+        // immediately, at the league minimum, from the players who just hit the
+        // market. Without this a team that had a bad re-sign year stayed 20
+        // bodies short for the rest of its existence — measured on 19 of 22
+        // pre-existing saves, min roster 27 and median 33.
+        const refilled = await fillTeamsToRosterMinimum(leagueId, league.seasonYear, 1, settings, rng);
+        return {
+          summary: [
+            releasedBefore > 0 ? `${releasedBefore} unsigned player(s) hit free agency.` : null,
+            minted > 0 ? `${minted} veteran(s) and camp bodies worked out for clubs and are on the wire.` : null,
+            refilled > 0 ? `${refilled} minimum-salary signing(s) got short-handed rosters back to a legal size.` : null,
+            'Free agency is open.',
+          ].filter(Boolean).join(' '),
+        };
+      } catch (err) {
+        // Back to exactly the week the claim took it from, and only from the
+        // value the claim wrote — if anything else has moved the league on
+        // since, this is no longer ours to put back.
+        await prisma.league.updateMany({
+          where: { id: leagueId, phase: 'FREE_AGENCY', week: 1 },
+          data: { phase: 'RESIGN', week: league.week },
+        });
+        throw err;
+      }
     }
 
     case 'FREE_AGENCY': {
@@ -1730,6 +1785,22 @@ async function expireStaleCapCharges(leagueId: string, seasonYear: number) {
  * real deal ends — void years are borrowing against the future, and this is
  * where the bill arrives. Without this the slider was free money, since a
  * cap charge was only ever raised by cutting a player early.
+ *
+ * THE DELETE IS THE CLAIM, and the order of these three writes is the reason.
+ * This was the one `contract.delete({ where: { id } })` in the codebase — every
+ * other release in the game uses `deleteMany` or deletes by `playerId`, the
+ * forms that shrug at a row already gone — and it threw P2025 on ids the
+ * findMany above had just returned, which reads as impossible until you notice
+ * a second advance in the same window releasing the same men (see the claim in
+ * the RESIGN case, which is where that is actually fixed).
+ *
+ * It could have been left as a shrug. It is not, because the cap charge was
+ * written FIRST: two runners both booked the void-year bill before either
+ * deleted anything, so the club paid the same stranded proration twice and only
+ * the crash said so. Deleting first turns the row into the token — exactly one
+ * runner can take a given man off the books, and only that runner charges his
+ * club and puts him on the street. Anyone who arrives second finds nothing to
+ * take and moves on.
  */
 async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: number) {
   const expired = await prisma.contract.findMany({
@@ -1737,6 +1808,8 @@ async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: 
     include: { player: true },
   });
   for (const c of expired) {
+    const claimed = await prisma.contract.deleteMany({ where: { id: c.id } });
+    if (claimed.count === 0) continue;
     // Charged so far = proration × the real years actually played. Anything
     // left of the bonus is what the void years pushed past the deal's end.
     const stranded = c.voidYears > 0
@@ -1752,7 +1825,6 @@ async function releaseUnresignedExpiringContracts(leagueId: string, seasonYear: 
         },
       });
     }
-    await prisma.contract.delete({ where: { id: c.id } });
     await prisma.player.update({ where: { id: c.playerId }, data: { status: 'FREE_AGENT', teamId: null } });
   }
 }
