@@ -1652,7 +1652,7 @@ function capSeededCareers(rng: Rng, careers: Map<string, VeteranCareer>, records
 // ---------------------------------------------------------------------------
 
 /**
- * Which of his club's titles a player was actually around for. Nothing in the
+ * Which of his club's SEEDED titles a player was around for. Nothing in the
  * schema records where a generated veteran was in 2019, so this derives it —
  * deterministically from his own id, so it never changes between page loads —
  * from the only two things that are knowable: his club won the title that
@@ -1661,6 +1661,23 @@ function capSeededCareers(rng: Rng, careers: Map<string, VeteranCareer>, records
  * backup who has bounced around the league. A 92-overall veteran collects the
  * rings his franchise won during his career; a 62-overall backup almost
  * never does.
+ *
+ * IT ROLLS A DIE, AND THAT IS ONLY LEGITIMATE FOR THE BACKSTORY. This ran
+ * against EVERY title in `titleYears`, seeded and real alike, which meant a
+ * title the save itself produced — with the man on the roster, in the
+ * database, the week it happened — was decided by `Rng.bool()`. Measured on a
+ * league driven through a real season to a real title by the game's own
+ * `advanceWeek`: of the 49 men holding the trophy, this function named 25.
+ * Twenty-four genuine champions were told they had never won one. The app
+ * owner found it the ordinary way — *"we just won the championship. i go to
+ * re-sign one of my players and see this — that hes never won one"*.
+ *
+ * `resolveRingYears()` below is the door now: it reads the record for every
+ * year the save actually played and calls this one only for the years that
+ * predate the league, which are the only years with no record to read.
+ * Callers must not reach past it. The signature is unchanged and the Rng key
+ * is unchanged, so a seeded veteran's backstory rings are byte-identical to
+ * what they were before this split.
  */
 export function ringYearsFor(opts: {
   playerId: string; trueOvr: number; careerStartYear: number;
@@ -1674,6 +1691,225 @@ export function ringYearsFor(opts: {
     if (new Rng(`${opts.playerId}:ring:${year}`).bool(base * recency)) out.push(year);
   }
   return out;
+}
+
+/**
+ * ===========================================================================
+ * A RING WON INSIDE THE SAVE IS A MATTER OF RECORD, NOT A DIE ROLL
+ * ===========================================================================
+ * THE ONE DOOR to "which championships has this man won". Everything on a
+ * player card goes through here, so the count on the card and the years in
+ * the pills can never be two different answers to one question.
+ *
+ * The league's founding year (`resolveStartYear`, lib/leagueYear.ts) splits
+ * the question in half, and the two halves are answered by different things
+ * because the database knows different things about them:
+ *
+ *   year <  startYear   SEEDED BACKSTORY. No player existed, no game was
+ *                       played, nothing recorded who was on that roster.
+ *                       `ringYearsFor()` derives it, exactly as before.
+ *
+ *   year >= startYear   A SEASON THIS SAVE PLAYED. Every snap is on disk.
+ *                       Read it.
+ *
+ * WHAT THE RECORD IS, in order of how much it knows:
+ *
+ *   1. HE PRODUCED FOR THE CHAMPION THAT YEAR. A PlayerSeason row (or, for
+ *      the season still in progress, the box-score replay behind it) keyed to
+ *      the winning club. This is not evidence, it is the fact: PlayerSeason
+ *      exists precisely to answer "which club did he play for that year"
+ *      (see the model comment in prisma/schema.prisma, and buildGmTenureMen
+ *      in lib/gmTenure.ts, which counts a tenure off the same rows).
+ *
+ *   2. HE PRODUCED FOR SOMEBODY ELSE THAT YEAR. Same table, different club:
+ *      a hard NO, and the reason a mid-season trade lands on the right side.
+ *
+ *   3. THE RECORD IS SILENT. He took no snap any box score counts — and a box
+ *      score counts nobody but the quarterback, three backs, six receivers,
+ *      fourteen defenders and the two specialists (`allocateStats` in
+ *      lib/sim/engine.ts). MEASURED on a real champion's 49-man roster: 31
+ *      men had a row and 18 did not, and the 18 were every offensive lineman
+ *      on the club (0 of 10) plus the backups behind the men who play. A
+ *      left tackle who started nineteen games including the final has no
+ *      counting stat in this game and never will.
+ *
+ *      So silence is not absence, and treating it as absence would swap a die
+ *      roll for a different wrong answer — the whole offensive line loses a
+ *      ring it won. For those men the club's own LEDGER is asked instead:
+ *      he is on the champion's roster today, nothing places him at another
+ *      club that season, no trade since has moved him, and the earliest year
+ *      anything in the record can put him at that club is on or before the
+ *      title. `arrivalBound` below is that year. This is inference and it is
+ *      labelled as such, but every input is a stored fact and it can only
+ *      ever answer for a man who is STILL THERE — it cannot invent a spell at
+ *      a club he never had.
+ *
+ * WHAT IT STILL CANNOT ANSWER, stated rather than papered over: a man who
+ * recorded no stat in the title year AND has since left the champion. He is
+ * unreachable — the ledger claim needs him on the roster, and there is no
+ * stored roster from the day of the game. Measured one full league year on
+ * from a real title: 47 champions, 39 named, 5 lost this way (plus 2 to the
+ * bound below and 1 retirement). The fix for those 5 is not a cleverer
+ * inference, it is writing the roster down when the trophy is handed over —
+ * see the ChampionRoster proposal in the report accompanying this change.
+ *
+ * REJECTED: keying the whole thing off `Contract.signedYear` alone. It reads
+ * as an arrival and is not one — `executeTrade` carries the signed year onto
+ * the acquiring club, so a man traded in three years after the fact would
+ * inherit the ring. It is used here only as ONE of several floors, all
+ * minimised together, and the trade guard sits over the top of it.
+ *
+ * REJECTED: dropping the derivation for seeded years and reading the seeded
+ * PlayerSeason rows instead. Those rows are real rows, but they are fiction
+ * by construction (clubHistory() picks the club off the seeded Rng), and the
+ * brief for this file is that the backstory stays as it is. Determinism is
+ * the property that matters there and it is preserved exactly.
+ *
+ * Server-side only — it reads the database. It lives beside the derivation it
+ * replaces rather than in a new module so the two can never drift apart, and
+ * so nobody adds a second caller of `ringYearsFor` without reading why it is
+ * only half the answer.
+ */
+export interface RingInputs {
+  leagueId: string;
+  /** `resolveStartYear(league)` — the first season this save actually played. */
+  leagueStartYear: number;
+  /** `league.seasonYear`. */
+  currentYear: number;
+  player: { id: string; teamId: string | null; trueOvr: number; isDraftee: boolean };
+  /** `seasonYear - experience`, only ever used by the seeded derivation. */
+  careerStartYear: number;
+  /** Every title season of the club he is on now — seeded AND real. */
+  clubTitleYears: number[];
+  /**
+   * His own season rows: PlayerSeason for the finished years, the box-score
+   * replay for the season in progress. The caller already has these for the
+   * year-by-year table, and passing them in is what makes the ring count and
+   * the career table two views of one set of rows instead of two queries that
+   * can disagree.
+   */
+  seasons: { seasonYear: number; teamId: string | null }[];
+  /** His current deal, when he has one. `signedYear` is a floor, never a proof. */
+  contract: { teamId: string | null; signedYear: number } | null;
+}
+
+export async function resolveRingYears(opts: RingInputs): Promise<number[]> {
+  // A draftee has never played a down in this league and is on nobody's
+  // roster; the old call site short-circuited him and so does this one.
+  if (opts.player.isDraftee) return [];
+
+  // --- The half with no record: unchanged, still derived -------------------
+  const seeded = ringYearsFor({
+    playerId: opts.player.id,
+    trueOvr: opts.player.trueOvr,
+    careerStartYear: opts.careerStartYear,
+    currentYear: opts.currentYear,
+    titleYears: opts.clubTitleYears.filter((y) => y < opts.leagueStartYear),
+  });
+
+  // --- The half with a record ----------------------------------------------
+  // Every title this league has actually decided, at EVERY club — not just the
+  // one whose crest he is wearing today. The old read filtered to his current
+  // club, which got both ends wrong: it offered him titles won years before he
+  // arrived (the die roll then handed some of them over), and it could never
+  // show the ring he won in another city, including the one he won last season
+  // for the club that just let him reach free agency.
+  const champions = await prisma.teamSeasonRecord.findMany({
+    where: { leagueId: opts.leagueId, playoffResult: 'CHAMPION', year: { gte: opts.leagueStartYear } },
+    select: { year: true, teamId: true },
+  });
+  if (champions.length === 0) return seeded.sort((a, b) => a - b);
+
+  const clubsByYear = new Map<number, string[]>();
+  for (const c of champions) clubsByYear.set(c.year, [...(clubsByYear.get(c.year) ?? []), c.teamId]);
+
+  const linesByYear = new Map<number, Set<string>>();
+  for (const l of opts.seasons) {
+    if (l.teamId == null) continue;
+    const set = linesByYear.get(l.seasonYear) ?? new Set<string>();
+    set.add(l.teamId);
+    linesByYear.set(l.seasonYear, set);
+  }
+
+  const real: number[] = [];
+  /** Years the record is silent on, where his current club is the champion. */
+  const needLedger: number[] = [];
+  for (const [year, clubs] of clubsByYear) {
+    const played = linesByYear.get(year);
+    if (played) {
+      // Clauses 1 and 2. The rows say where he was; nothing else is consulted.
+      if (clubs.some((id) => played.has(id))) real.push(year);
+      continue;
+    }
+    if (opts.player.teamId && clubs.includes(opts.player.teamId)) needLedger.push(year);
+  }
+
+  if (needLedger.length > 0) {
+    const clubId = opts.player.teamId!;
+    const [arrivals, movedSince] = await Promise.all([
+      // Every dated row the champion's own ledger holds about this man, and
+      // what each TYPE actually proves:
+      //
+      //   SIGN / DRAFT   he was the club's player IN that season. A free-agent
+      //                  arrival, a draft pick — and also an extension and a
+      //                  restructure, both of which write SIGN against the club
+      //                  he is already on. Those two read a year late, and the
+      //                  contract floor below rescues them: neither rewrites
+      //                  `Contract.signedYear`.
+      //   RESIGN / TAG   he was the club's player the season BEFORE. Both only
+      //                  happen to a man whose deal with THIS club has just run
+      //                  out, in the offseason that follows the season he
+      //                  played on it. Read as arrivals they were a year late
+      //                  and cost a real ring: measured on a real save, the
+      //                  champion's starting left tackle — no counting stat in
+      //                  this game, ever — was re-signed by the AI wave in the
+      //                  offseason after the title, which rewrote his contract
+      //                  with the NEW league year on it and left this the only
+      //                  row that could still place him. Shifted by one, he
+      //                  keeps the ring he won.
+      prisma.transaction.findMany({
+        where: {
+          leagueId: opts.leagueId, teamId: clubId, playerId: opts.player.id,
+          type: { in: ['SIGN', 'RESIGN', 'TAG', 'DRAFT'] },
+        },
+        select: { seasonYear: true, type: true },
+        orderBy: { seasonYear: 'asc' },
+      }),
+      // THE TRADE GUARD. A trade carries the contract — signed year and all —
+      // onto the acquiring club (`executeTrade`, lib/trade.ts), and the TRADE
+      // transaction it writes is about two clubs and a package, not about a
+      // man, so it carries no playerId. TradeRecord is the row that does name
+      // him: `aToB`/`bToA` are the JSON asset snapshots and each PLAYER entry
+      // carries his id (lib/tradeRetro.ts). If any trade since the title moved
+      // him, nothing about where he is today says where he was then.
+      prisma.tradeRecord.findMany({
+        where: {
+          leagueId: opts.leagueId,
+          seasonYear: { gte: Math.min(...needLedger) },
+          OR: [{ aToB: { contains: opts.player.id } }, { bToA: { contains: opts.player.id } }],
+        },
+        select: { seasonYear: true },
+      }),
+    ]);
+
+    const floors: number[] = [];
+    for (const t of arrivals) floors.push(t.type === 'RESIGN' || t.type === 'TAG' ? t.seasonYear - 1 : t.seasonYear);
+    if (opts.contract && opts.contract.teamId === clubId) floors.push(opts.contract.signedYear);
+    for (const l of opts.seasons) if (l.teamId === clubId) floors.push(l.seasonYear);
+    // NO EVIDENCE AT ALL means the founding roster, not "unknown". League
+    // generation writes one league-wide "founded" transaction and no per-player
+    // signing (lib/gen/league.ts), so a man who has been at this club since
+    // day one leaves no arrival row anywhere — and day one is the start year.
+    const arrivalBound = floors.length > 0 ? Math.min(...floors) : opts.leagueStartYear;
+
+    for (const year of needLedger) {
+      if (arrivalBound > year) continue;
+      if (movedSince.some((t) => t.seasonYear > year)) continue;
+      real.push(year);
+    }
+  }
+
+  return [...new Set([...seeded, ...real])].sort((a, b) => a - b);
 }
 
 // ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ import { tip } from '@/lib/glossary';
 import { CareerHonors, HonorAward } from '@/components/ds/CareerHonors';
 import { CareerStatTable } from '@/components/ds/CareerStatTable';
 import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/ds/StatScopeToggle';
-import { ringYearsFor } from '@/lib/gen/leagueHistory';
+import { resolveRingYears } from '@/lib/gen/leagueHistory';
 import { allStarYearsFor } from '@/lib/allStars';
 import { slotVerdict } from '@/components/ds/DepthCompare';
 import { DepthList, type DepthEntry } from '@/components/ds/DepthAtPosition';
@@ -221,7 +221,13 @@ export default async function PlayerPage({
   //
   // A draftee has never played a down here, so he gets the College Profile
   // above instead and this doesn't run at all.
-  const careerTable = player.isDraftee ? null : await (async () => {
+  //
+  // IT ALSO HANDS BACK THE RAW SEASON ROWS, because the Championships figure
+  // in Career & Honors is now read off exactly these rows (resolveRingYears in
+  // lib/gen/leagueHistory.ts). One load, two views: the years in the table and
+  // the years on the ring pills are the same rows, so they cannot disagree —
+  // which is the whole failure mode a second query for the same fact creates.
+  const career = player.isDraftee ? null : await (async () => {
     const [persisted, startYear] = await Promise.all([
       loadPlayerSeasons(league.id, player.id),
       resolveStartYear(league),
@@ -245,23 +251,29 @@ export default async function PlayerPage({
       const live = withAges(
         await reconstructPlayerSeasons(league.id, player.id, league.seasonYear), player, basis,
       );
-      return buildCareerTable({
-        ...common,
-        seasons: persisted.filter((l) => l.seasonYear < league.seasonYear),
-        live,
-      });
+      const seasons = persisted.filter((l) => l.seasonYear < league.seasonYear);
+      return {
+        table: buildCareerTable({ ...common, seasons, live }),
+        lines: [...seasons, ...live],
+        startYear,
+      };
     }
 
     // No rows for this league yet — a save that hasn't rolled over since the
     // table landed. Replay everything instead of showing an empty table; the
     // numbers are identical, it just isn't indexed.
     const aged = withAges(await reconstructPlayerSeasons(league.id, player.id), player, basis);
-    return buildCareerTable({
-      ...common,
-      seasons: aged.filter((l) => l.seasonYear < league.seasonYear),
-      live: aged.filter((l) => l.seasonYear === league.seasonYear),
-    });
+    return {
+      table: buildCareerTable({
+        ...common,
+        seasons: aged.filter((l) => l.seasonYear < league.seasonYear),
+        live: aged.filter((l) => l.seasonYear === league.seasonYear),
+      }),
+      lines: aged,
+      startYear,
+    };
   })();
+  const careerTable = career?.table ?? null;
 
   // Your team's current depth at this player's position — the point is
   // answering "do I need a replacement here" without leaving the card,
@@ -426,12 +438,18 @@ export default async function PlayerPage({
   // --- Career honors -------------------------------------------------------
   // Awards are matched by name because Transaction has no player relation —
   // safe here because lib/gen/names.ts's NameRegistry guarantees no two
-  // players in a league ever share one. Rings can't be looked up at all:
-  // nothing records which roster a generated veteran was on eight years ago,
-  // so lib/gen/leagueHistory.ts derives them deterministically from his own
-  // id, his club's actual title years, and his calibre. Both queries return
-  // nothing for a save created before any of this existed, and the block
-  // simply doesn't render.
+  // players in a league ever share one.
+  //
+  // RINGS ARE READ, NOT ROLLED. `titleSeasons` below is his club's whole title
+  // roll, seeded backstory included, and it used to be handed straight to
+  // `ringYearsFor()` — which rolls a die at every year in it. That is a fair
+  // way to invent where a generated veteran was in 2019 and a lie about a
+  // season this save played: on a league driven to a real title, 25 of the 49
+  // men who won it were shown the ring and 24 were told they had never won
+  // one. `resolveRingYears` splits the roll at the league's founding year and
+  // reads the record for everything after it — see the block comment on it.
+  // It still returns nothing for a save with no history and no seasons on
+  // record, and the block simply doesn't render.
   const careerStartYear = league.seasonYear - player.experience;
   const [awardTxs, titleSeasons, allStarYears] = await Promise.all([
     // HIS TROPHIES, BY ID. This matched the headline as a string — "First Last
@@ -467,9 +485,16 @@ export default async function PlayerPage({
   const honorAwards: HonorAward[] = awardTxs.map((t) => ({
     year: t.seasonYear, label: AWARD_LABEL[t.type] ?? t.type, statLine: t.detail,
   }));
-  const ringYears = player.isDraftee ? [] : ringYearsFor({
-    playerId: player.id, trueOvr: player.trueOvr, careerStartYear,
-    currentYear: league.seasonYear, titleYears: titleSeasons.map((s) => s.year),
+  const ringYears = await resolveRingYears({
+    leagueId: league.id,
+    leagueStartYear: career?.startYear ?? await resolveStartYear(league),
+    currentYear: league.seasonYear,
+    player: { id: player.id, teamId: player.teamId, trueOvr: player.trueOvr, isDraftee: player.isDraftee },
+    careerStartYear,
+    clubTitleYears: titleSeasons.map((s) => s.year),
+    // The same rows the year-by-year table above is drawn from.
+    seasons: career?.lines ?? [],
+    contract: player.contract ? { teamId: player.contract.teamId, signedYear: player.contract.signedYear } : null,
   });
   const market = marketValue({ ovr: view.scoutedOvr, position: player.position as any, age: player.age, potential: player.potential });
   // WHAT HE WILL SIGN FOR, which is only a different number for a man standing
