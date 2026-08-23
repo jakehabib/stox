@@ -1,8 +1,9 @@
 import { prisma } from './db';
 import { CapMode } from './types';
-import { capChargeYear, capForYear, capHit, proration } from './cap';
-import { CAP } from './tuning';
-import { capForLeague, resolveStartYear } from './leagueYear';
+import { capChargeYear, capHit, capHitSchedule, deadMoneyOnCut, proration } from './cap';
+import { CAP, rosterMinFor } from './tuning';
+import { capForLeague, type LeagueCapFields } from './leagueYear';
+import { parseSettings } from './settings';
 
 export interface CapSummary {
   capTotal: number;
@@ -269,5 +270,288 @@ export async function deadMoneyRunway(
     beyondItems: beyond,
     lastYear: items.length > 0 ? Math.max(...items.map((it) => it.year)) : null,
     largest: items.reduce<DeadMoneyItem | null>((best, it) => (best && best.amount >= it.amount ? best : it), null),
+  };
+}
+
+/**
+ * ===========================================================================
+ * THE MULTI-YEAR CAP SHEET — ONE COMPUTATION, TWO PANELS
+ * ===========================================================================
+ * The Advanced tab used to carry two four-year charts of the same future cap,
+ * and neither could answer the question on its own:
+ *
+ *   MULTI-YEAR CAP OUTLOOK  four years of ACTIVE contract charges against the
+ *                           ceiling. Its own tooltip said "dead money and new
+ *                           signings aren't included".
+ *   THE DEAD MONEY RUNWAY   four years of ONLY dead money, with names.
+ *
+ * One drew the future cap with the dead money taken out; the other drew the
+ * dead money with the future cap taken out. Both were four columns wide, both
+ * were on one screen, and the only way to get the number a GM plans against —
+ * room — was to read a bar off a grey line in one panel and subtract a column
+ * from the other by eye. Worse, they were dated off DIFFERENT YEARS (the
+ * outlook counted forward from `league.seasonYear`, the runway dated its void
+ * bills off `capChargeYear`) and nothing reconciled them.
+ *
+ * THE FIX IS NOT ONE PANEL. The app owner set the layout himself — *"lets move
+ * the dead money towards the bottom of the advanced cap tab, and multi year
+ * outlook as a bar graph to the top so its easy to look at"* — so there are
+ * still two panels, at opposite ends of the tab. What changes is that they are
+ * now SUMMARY AND DETAIL rather than two halves of one answer, and they are
+ * both rendered from THIS ONE FUNCTION:
+ *
+ *   TOP     MultiYearOutlookPanel  — every dollar charged in each year,
+ *           active contracts AND dead money, stacked against that year's
+ *           ceiling. Room is the headline. It is the COMPLETE picture, which
+ *           is exactly what the old outlook was not.
+ *   BOTTOM  DeadMoneyRunwayPanel   — the itemisation of one segment of those
+ *           bars: which deals, which years, what clears when.
+ *
+ * Because the top bar is a SUM of what the bottom panel LISTS — the same
+ * `deadMoneyRunway` result, carried on `CapSheet.dead`, feeds both — the two
+ * cannot disagree. That is what makes this split legitimate where the old one
+ * was not. Two independent charts each showing half the future is the defect;
+ * a summary whose components are itemised further down is not.
+ *
+ * REJECTED: folding both into a single panel (which is what the first pass
+ * built). It reads well and it fixes the arithmetic, but it buries the one
+ * number the owner wants at a glance under a 20-line ledger, and he asked for
+ * the opposite.
+ * REJECTED: leaving the outlook excluding dead money and simply reordering the
+ * two panels. The reordering is cosmetic; the two-halves-of-one-answer defect
+ * survives it untouched.
+ *
+ * WHAT ROOM MEANS HERE, exactly: `capTotal - activeSalary - deadMoney`, the
+ * same three quantities `teamCapSummary` computes for the current season, one
+ * year at a time. Column 0 is that function's arithmetic reproduced — see the
+ * year-alignment note below for why it has to be, and what that costs in one
+ * window of the calendar.
+ *
+ * WHAT IS DELIBERATELY NOT IN IT, and this is the honesty problem
+ * `rookieCapOutlook` (lib/draft.ts) solves the same way. A future year has no
+ * rookies drafted, no free agents signed, and — the one that actually
+ * misleads — an INCOMPLETE ROSTER. Measured across all 6,976 clubs in the dev
+ * database, a club carries a median of 44 men under contract this year, 30
+ * next year, 18 the year after and 8 in the fourth column. So a raw "$180M of
+ * room in 2043" is a lie by omission: it is room to sign 38 men with, not
+ * money spare. Every column therefore carries `menSigned` and `floorCost` —
+ * what it would cost, at the league minimum, just to reach the roster floor
+ * this league plays to — and the top panel prints both. No estimate of what
+ * those men will really cost is attempted: that number does not exist in the
+ * game, and inventing one is the lying metric wearing a helpful face.
+ *
+ * THE WINDOW IS FOUR COLUMNS, AND IT WAS MEASURED RATHER THAN ROUNDED. The
+ * app owner asked for "four or five". Across all 318,249 live contracts in the
+ * dev database, the share still charging the cap N years out is:
+ *
+ *     +0  94.85%      +2  39.72%      +4   4.53%
+ *     +1  64.73%      +3  18.78%      +5   0.46%
+ *
+ * A fifth column is 4.53% of contracts and a MEDIAN OF ZERO men per club — at
+ * more than half of all clubs it is a blank column reading "$255M of room",
+ * which is the exact lie the paragraph above is about, printed at its loudest.
+ * Four columns is where the data stops being about the roster and starts being
+ * about a handful of outliers. Nothing past the window is dropped, though:
+ * `beyondActive` and `beyondActiveMen` carry the long contracts out, and
+ * `dead.beyondWindow` / `dead.beyondItems` carry the stranded void bills out
+ * by name — the discipline `deadMoneyRunway` already applied.
+ *
+ * YEAR ALIGNMENT, AND THE ONE WINDOW WHERE THE LABELS SKEW.
+ * Column i is labelled `league.seasonYear + i` and is fed by
+ * `capHitSchedule(contract)[i]`. Those agree everywhere except OFFSEASON weeks
+ * 1-2, where `ageContractsForYear` has already stepped the ledger onto the new
+ * league year but `RESET_STANDINGS` has not moved `seasonYear` yet — so in
+ * that window index 0 is really NEXT year's charge.
+ *
+ * That skew is `teamCapSummary`'s own and it is the whole page's: the masthead
+ * reads "<seasonYear> Salary Cap" over an active-salary figure written in next
+ * year's terms, and the compliance gate runs on the same figure. Column 0 is
+ * pinned to reproduce it EXACTLY rather than corrected here, because a cap
+ * sheet whose first column disagreed with the gate the game is enforcing would
+ * be the lying metric — just pointed the other way. What this does instead is
+ * SAY SO: `preRoll` is set through that window and the top panel prints a
+ * sentence naming it, which is more than anything else on the page has ever
+ * done.
+ * REJECTED: dating the whole window off `capChargeYear(league)` so the labels
+ * are externally true. It makes column 0 stop matching the masthead's Dead
+ * Money tile and the ceiling in the tile beside it, i.e. it trades one skew
+ * for three visible contradictions on the same screen.
+ * ===========================================================================
+ */
+
+/** Columns. See the window measurement in the header — this is 4 on evidence, not on roundness. */
+export const CAP_SHEET_YEARS = 4;
+
+export interface CapSheetYear {
+  year: number;
+  /** This league's own ceiling that season — its founding year AND its growth rung. */
+  capTotal: number;
+  activeSalary: number;
+  deadBooked: number;
+  deadScheduled: number;
+  deadTotal: number;
+  /** activeSalary + deadTotal. */
+  committed: number;
+  /** capTotal - committed. THE number a GM plans against. Negative is over. */
+  room: number;
+  /** Men under contract in this year. Column 0 is the roster; column 3 rarely is. */
+  menSigned: number;
+  /** Slots between `menSigned` and the roster floor this league plays to. */
+  openSlots: number;
+  /** Those slots at the league minimum — the floor under what the year still costs. */
+  floorCost: number;
+}
+
+export interface CapSheet {
+  years: CapSheetYear[];
+  /**
+   * The dead-money half, EXACTLY as `deadMoneyRunway` returns it, carried
+   * rather than flattened. The bottom panel renders this object unchanged —
+   * it is the same panel that shipped in b5a91c1, taking the same prop — while
+   * `years[i].deadBooked + deadScheduled` above is the segment the top panel
+   * stacks. One value, two readings, so the summary is arithmetically the sum
+   * of the detail and the two panels cannot drift apart.
+   */
+  dead: DeadMoneyRunway;
+  /** Active contract dollars charged past the last column, and to how many men. */
+  beyondActive: number;
+  beyondActiveMen: number;
+  /** Last league year carrying any commitment at all, active or dead. */
+  lastYear: number | null;
+  /** The roster floor this league plays to (`rosterMinFor`, 46 of 53 by default). */
+  rosterFloor: number;
+  /** OFFSEASON weeks 1-2: the ledger has rolled and `seasonYear` has not. */
+  preRoll: boolean;
+  /** The league year the contract ledger is currently written in. */
+  ledgerYear: number;
+}
+
+/**
+ * The whole future cap for one club, in one call.
+ *
+ * It fetches its own roster rather than taking the Cap page's `players` array
+ * so that a probe — and the next caller — gets the same answer without having
+ * to know which query to run first. One extra player read on a view that
+ * already runs four is the price, and it is what makes column 0 reconcilable
+ * against `teamCapSummary` line for line.
+ *
+ * Dead money is NOT re-derived here: it is `deadMoneyRunway` above, called
+ * with this window, so the booked/scheduled split, the void-year arithmetic
+ * and the beyond-window accounting all have exactly one implementation. Two
+ * derivations of one figure is how this app has repeatedly shipped a panel
+ * quoting a number it was not using.
+ */
+export async function capSheet(
+  teamId: string,
+  league: LeagueCapFields & { phase: string; week: number },
+  mode: CapMode,
+  windowYears: number = CAP_SHEET_YEARS,
+): Promise<CapSheet | null> {
+  // The Cap page renders a different screen entirely with the cap off, and
+  // every figure below would be zero or meaningless. Null rather than an empty
+  // sheet, so a caller cannot render a panel of noughts by accident.
+  if (mode === 'OFF') return null;
+
+  const settings = parseSettings(league.settings);
+  const rosterFloor = rosterMinFor(settings.rosterMax);
+
+  const [players, runway, ...ceilings] = await Promise.all([
+    prisma.player.findMany({
+      where: { teamId, status: 'ACTIVE' },
+      select: { id: true, firstName: true, lastName: true, position: true, contract: true },
+    }),
+    deadMoneyRunway(teamId, league, mode, windowYears),
+    ...Array.from({ length: windowYears }, (_, i) => capForLeague(league, league.seasonYear + i)),
+  ]);
+
+  const lastWindowYear = league.seasonYear + windowYears - 1;
+  /** Active cap charges per league year, and the men behind them. */
+  const activeByYear = new Map<number, number>();
+  const menByYear = new Map<number, number>();
+  let beyondActive = 0;
+  const beyondMen = new Set<string>();
+  let lastActiveYear: number | null = null;
+
+  for (const p of players) {
+    if (!p.contract) continue;
+    /**
+     * THE EXPIRING MAN, AND THE BUG THE OLD OUTLOOK CHART SHIPPED WITH.
+     *
+     * `capHitSchedule` returns one entry per REMAINING year, so a contract at
+     * `yearsRemaining: 0` returns an EMPTY array — and the Multi-Year Cap
+     * Outlook this panel replaces summed exactly that. But `capHit` still
+     * charges such a man (it reads the last base salary plus any proration
+     * still inside the window), `teamCapSummary` sums `capHit`, and the cap
+     * gate runs on `teamCapSummary`. He is on the roster and on the books
+     * until `releaseUnresignedExpiringContracts` drops him at the end of
+     * RESIGN.
+     *
+     * Every contract sits at zero remaining through the whole offseason roll,
+     * because `ageContractsForYear` steps the ledger the moment the season
+     * ends. MEASURED on a scratch league driven to OFFSEASON week 1
+     * (scripts/_mc_probe.ts): the old chart's first column read $117.2M of
+     * committed cap where the gate read $202.6M — it was hiding $85.4M, 42% of
+     * the club's real commitment, in the one window where a GM is actually
+     * making cuts. That is the lying metric, and it is why column zero here is
+     * pinned to `capHit` rather than to the schedule's first entry.
+     *
+     * A man at zero remaining is charged THIS year and never again, so his
+     * schedule is exactly one column long. REJECTED: dropping him from the
+     * sheet entirely to match the old chart — it reproduces the understatement
+     * and puts the panel back at odds with the masthead tile above it.
+     */
+    const schedule = p.contract.yearsRemaining >= 1
+      ? capHitSchedule(p.contract, mode)
+      : [capHit(p.contract, mode)];
+    for (let i = 0; i < schedule.length; i++) {
+      const year = league.seasonYear + i;
+      lastActiveYear = Math.max(lastActiveYear ?? year, year);
+      if (year > lastWindowYear) {
+        beyondActive += schedule[i];
+        beyondMen.add(p.id);
+        continue;
+      }
+      activeByYear.set(year, (activeByYear.get(year) ?? 0) + schedule[i]);
+      menByYear.set(year, (menByYear.get(year) ?? 0) + 1);
+    }
+  }
+
+  const years: CapSheetYear[] = Array.from({ length: windowYears }, (_, i) => {
+    const year = league.seasonYear + i;
+    const activeSalary = activeByYear.get(year) ?? 0;
+    const dead = runway.years[i];
+    const deadBooked = dead?.booked ?? 0;
+    const deadScheduled = dead?.scheduled ?? 0;
+    const deadTotal = deadBooked + deadScheduled;
+    const committed = activeSalary + deadTotal;
+    const menSigned = menByYear.get(year) ?? 0;
+    const openSlots = Math.max(0, rosterFloor - menSigned);
+    return {
+      year,
+      capTotal: ceilings[i],
+      activeSalary,
+      deadBooked,
+      deadScheduled,
+      deadTotal,
+      committed,
+      room: ceilings[i] - committed,
+      menSigned,
+      openSlots,
+      floorCost: openSlots * CAP.MIN_SALARY,
+    };
+  });
+
+  const lastDeadYear = runway.lastYear;
+  return {
+    years,
+    dead: runway,
+    beyondActive,
+    beyondActiveMen: beyondMen.size,
+    lastYear: lastActiveYear === null ? lastDeadYear
+      : lastDeadYear === null ? lastActiveYear
+        : Math.max(lastActiveYear, lastDeadYear),
+    rosterFloor,
+    preRoll: capChargeYear(league) !== league.seasonYear,
+    ledgerYear: capChargeYear(league),
   };
 }

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { positionSortKey } from '@/lib/league-data';
-import { teamCapSummary, deadMoneyRunway } from '@/lib/cap-summary';
+import { teamCapSummary, capSheet } from '@/lib/cap-summary';
 import { formatMoney, capHit, deadMoneyOnCut, capSavingsOnCut, capHitSchedule, capForYear, marketValue } from '@/lib/cap';
 import { resolveStartYear } from '@/lib/leagueYear';
 import { capGrowthRate } from '@/lib/settings';
@@ -10,11 +10,11 @@ import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
 import { POSITION_GROUPS, positionGroup } from '@/lib/positionGroups';
 import { HorizontalBarChart } from '@/components/charts/HorizontalBarChart';
-import { LineChart } from '@/components/charts/LineChart';
 import { ScatterChart } from '@/components/charts/ScatterChart';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { MetricTiles } from '@/components/ds/MetricTiles';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { MultiYearOutlookPanel } from '@/components/cap/MultiYearOutlookPanel';
 import { DeadMoneyRunwayPanel } from '@/components/cap/DeadMoneyRunwayPanel';
 import { buildCapHealth, rankContractValue, classifyContractValue, type CapHealth, type SurplusRow } from '@/lib/analytics';
 import { capComplianceReport } from '@/lib/capEnforcement';
@@ -56,18 +56,21 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
     );
   }
 
-  const [summary, players, runway, compliance] = await Promise.all([
+  const [summary, players, sheet, compliance] = await Promise.all([
     teamCapSummary(team.id, league.seasonYear, settings.capMode),
     prisma.player.findMany({ where: { teamId: team.id, status: 'ACTIVE' }, include: { contract: true } }),
-    // Was a bare `capCharge.findMany({ year: seasonYear })` feeding a list of
-    // this year's rows at the foot of the page. Same rows, four years wide and
-    // with the year on them — see DeadMoneyRunwayPanel for why that list is
-    // gone rather than kept alongside this.
+    // The whole future cap in one call — ceilings, contracts and dead money.
+    // It feeds BOTH Advanced-only panels: the outlook bars at the top of the
+    // tab and the dead-money runway at the foot of it. That is the point of
+    // fetching it once rather than twice — the top bar's dead segment and the
+    // bottom panel's ledger are the same numbers, so the summary is the sum of
+    // the detail and the two can no longer be dated off different calendars,
+    // which is exactly what the two charts they replace were doing.
     //
-    // Only fetched for the view that renders it. It reads the ledger and then
-    // walks every live contract looking for void years, so paying for it on a
-    // Basic view that will not show it is a query and a walk for nothing.
-    advanced ? deadMoneyRunway(team.id, league, settings.capMode) : Promise.resolve(null),
+    // Only fetched for the view that renders it. It reads the roster, the
+    // ledger and every live contract's void years, so paying for it on a Basic
+    // view that will not show it is three reads and a walk for nothing.
+    advanced ? capSheet(team.id, league, settings.capMode) : Promise.resolve(null),
     capComplianceReport(team.id, league.seasonYear, settings.capMode),
   ]);
 
@@ -108,7 +111,6 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
 
   // --- Advanced-view data -----------------------------------------------
   let allocationBars: { label: string; value: number; displayValue: string; color: string }[] = [];
-  let outlookSeries: { label: string; color: string; points: { x: string; y: number }[] }[] = [];
   let valuePoints: { id: string; x: number; y: number; label: string; color: string; detail?: string }[] = [];
   let vsLeagueBars: { label: string; value: number; displayValue: string; color: string }[] = [];
   let health: CapHealth | null = null;
@@ -151,36 +153,18 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       .map((g) => ({ label: g, value: byGroup.get(g) ?? 0, displayValue: `${formatMoney(byGroup.get(g) ?? 0)} (${summary.capUsed > 0 ? Math.round(((byGroup.get(g) ?? 0) / summary.capUsed) * 100) : 0}%)`, color: GROUP_COLOR[g] }))
       .sort((a, b) => b.value - a.value);
 
-    const OUTLOOK_YEARS = 4;
-    const totals = new Array(OUTLOOK_YEARS).fill(0);
-    for (const { p } of rows) {
-      if (!p.contract) continue;
-      const schedule = capHitSchedule(p.contract, settings.capMode);
-      for (let i = 0; i < OUTLOOK_YEARS; i++) totals[i] += schedule[i] ?? 0;
-    }
-    // The ceiling rises at THIS LEAGUE'S OWN rate, so a single flat baseline
-    // at this year's limit understated future headroom by tens of millions.
-    // Draw the real ceiling for each year instead.
+    // THE MULTI-YEAR OUTLOOK CHART USED TO BE BUILT HERE and is gone, not
+    // moved: `capSheet` above draws the same four years with the dead money
+    // put back in and room — the number a GM actually plans against — as the
+    // headline. What died with it is a second, subtly different derivation of
+    // the ceiling curve on this same page.
     //
-    // The rate is a league setting now (FLAT / SLOW / FAST, lib/settings.ts)
-    // and it has to be passed: the two-argument form falls back to the tuning
-    // default, so a FLAT league's outlook would have sloped upward on a curve
-    // it is not being played on — measured at $255.0M against $265.3M two
-    // years in. A chart of headroom you do not have is the exact bug class
-    // this project keeps paying for.
+    // `startYear` stays, because buildCapHealth below still needs next year's
+    // ceiling. The rate has to be passed with it: the two-argument form of
+    // capForYear falls back to the tuning default, so a FLAT league would be
+    // measured against a curve it is not being played on — $255.0M against
+    // $265.3M two years in, on a league whose ceiling never moves.
     const startYear = await resolveStartYear(league);
-    outlookSeries = [
-      {
-        label: 'Committed Cap',
-        color: '#3987e5',
-        points: totals.map((v, i) => ({ x: String(league.seasonYear + i), y: v })),
-      },
-      {
-        label: 'Cap Limit',
-        color: '#93939c',
-        points: totals.map((_, i) => ({ x: String(league.seasonYear + i), y: capForYear(league.seasonYear + i, startYear, capGrowthRate(settings)) })),
-      },
-    ];
 
     const surplusRows: SurplusRow[] = rows
       .filter(({ p }) => p.contract)
@@ -356,25 +340,15 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
         </div>
       </div>
 
-      {/* Directly under the usage bar, because it is that bar's dead slice
-          told forward in time — and above the contract table, because
-          "when does this end" is a decision and a 53-row table is a
-          reference.
-          ADVANCED ONLY. It shipped on both views, and the comment here used to
-          say so in as many words: the ask had been for it "on the cap page,
-          not behind a toggle". The app owner has since moved it himself —
-          *"lets move the dead money graphic and runway to the advanced tab of
-          the Cap"* — which is what the two views are for. Basic keeps the one
-          number every GM checks, the masthead's Dead Money tile; the four-year
-          shape and the names behind it are a reading, and readings live on
-          Advanced beside the concentration and contract-value panels.
-          What Basic loses is the itemisation: with the old foot-of-page list
-          replaced by this panel, a Basic view now carries a dead-money TOTAL
-          and no breakdown at all. That is the trade, it is one click, and it
-          is stated here so nobody re-adds a second list to fill the gap. */}
-      {advanced && runway && (
-        <DeadMoneyRunwayPanel runway={runway} leagueId={league.id} seasonYear={league.seasonYear} />
-      )}
+      {/* THE TOP OF THE ADVANCED TAB, which is where the app owner put it:
+          *"multi year outlook as a bar graph to the top so its easy to look
+          at"*. Above the tile row, above the contract-value lists, above the
+          chart grid — the first thing on the tab and the only Advanced panel
+          a reader meets before scrolling.
+          It sits directly under the usage bar because it is that bar told
+          forward in time: same three quantities, four years of them, with the
+          room left over as the headline instead of the share used. */}
+      {advanced && sheet && <MultiYearOutlookPanel sheet={sheet} />}
 
       {advanced && health && (
         <MetricTiles
@@ -441,15 +415,6 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
 
           <div className="panel p-4">
             <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
-              Multi-Year Cap Outlook
-              <Tooltip text="Total cap already committed in each future year from contracts on the books today (dead money and new signings aren't included — this is just what you'd owe if the roster froze exactly as it is). The grey line is the salary cap ceiling in each of those years, which rises every season." />
-            </h2>
-            <p className="text-xs text-muted mb-3">Already-committed cap dollars, {league.seasonYear}–{league.seasonYear + 3}.</p>
-            <LineChart series={outlookSeries} formatY="money" />
-          </div>
-
-          <div className="panel p-4">
-            <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
               Spend vs. League Average
               <Tooltip text="How your cap allocation at each position group compares to the league-wide average team. Blue = spending less than average there; red = more. Neither is inherently good or bad on its own — a position running red might be a deliberate strength, or an overpay; running blue might be a bargain, or a real hole." />
             </h2>
@@ -470,6 +435,21 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
             />
           </div>
         </div>
+      )}
+
+      {/* THE FOOT OF THE ADVANCED TAB — *"lets move the dead money towards the
+          bottom of the advanced cap tab"*. This is the panel that shipped in
+          b5a91c1, restored unchanged and taking the same prop; what moved is
+          where it sits and what it is now the DETAIL OF. The top bar chart
+          stacks this same money as a segment of every year (both read one
+          `capSheet`), so this is the itemisation of that segment rather than a
+          second, rival account of the future — which is what it and the old
+          line chart were when they sat side by side.
+          Below the analytics grid and above the Contracts table rather than
+          dead last: Contracts is the page's reference table, it closes the
+          page on Basic too, and an Advanced panel after it would strand it. */}
+      {advanced && sheet && (
+        <DeadMoneyRunwayPanel runway={sheet.dead} leagueId={league.id} seasonYear={league.seasonYear} />
       )}
 
       <div className="panel overflow-hidden">

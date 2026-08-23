@@ -15,6 +15,33 @@ import type { DeadMoneyItem, DeadMoneyRunway } from '@/lib/cap-summary';
  * year on them and no sense of an end. Nothing reads twice as a result: that
  * list is the first column here, with three more years of runway behind it.
  *
+ * WHY THIS IS THE DETAIL AND NOT A SECOND OPINION — the thing that was wrong
+ * when this panel sat beside the old Multi-Year Cap Outlook, and the reason it
+ * is legitimate now that it sits at the foot of the same tab.
+ *
+ * The outlook charted ACTIVE contract charges only and said so in its own
+ * tooltip ("dead money and new signings aren't included"). So the tab carried
+ * two four-year charts, one of the future cap MINUS this money and one of this
+ * money ALONE, and a reader had to add them in his head to get the figure he
+ * actually plans against. They were even dated off different years — the
+ * outlook counted forward from `league.seasonYear`, the runway dates its void
+ * bills off `capChargeYear` — and nothing reconciled them.
+ *
+ * MultiYearOutlookPanel is a bar chart now, and its bars are the COMPLETE
+ * picture: active salary and dead money stacked together against each year's
+ * ceiling. Every figure it stacks and every figure this panel lists comes from
+ * ONE `capSheet` call (lib/cap-summary.ts) — the top chart's dead segment is
+ * `years[i].deadBooked + deadScheduled`, this panel is `sheet.dead`, and both
+ * are the same `deadMoneyRunway` result. So the summary at the top of the tab
+ * is arithmetically the SUM of the detail at the foot of it, and the two
+ * cannot drift apart. That is what makes a summary-and-detail pair legitimate
+ * where two independent halves were not.
+ *
+ * NOTHING ELSE ABOUT THIS FILE CHANGED, deliberately. Its two fills were
+ * measured (see below) and its layout, hover, "clear" baseline and
+ * beyond-window handling all still do the job they were written for. It takes
+ * the same `DeadMoneyRunway` prop it always took.
+ *
  * WHY COLUMNS AND NOT FOUR NUMBERS IN A ROW. The answer a GM wants is a SHAPE
  * — "it halves next year and then it is gone" — and four figures in a row make
  * him do that comparison himself. The bars share one scale so the fall-off is
