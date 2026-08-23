@@ -141,7 +141,7 @@ export const GLOSSARY = {
   },
   franchiseTag: {
     term: 'Franchise tag',
-    definition: 'A one-year deal you can force on a single expiring player, priced at the average of the five biggest salaries at his position.',
+    definition: 'A one-year deal you can force on a single player whose contract is up, priced at the average of the five biggest salaries at his position. One club, one tag, one league year — and it goes on during the re-sign window, before free agency opens.',
     why: 'It keeps a star off the market for a season without a long commitment. It is expensive, it is fully guaranteed, and it buys you a year rather than a solution. It does not wipe out his old contract either: whatever signing bonus that deal had not finished amortising accelerates onto this year\'s cap as dead money the moment you tag him.',
   },
   rookieDeal: {
@@ -203,8 +203,19 @@ export const GLOSSARY = {
   },
   walkYear: {
     term: 'Walk year',
-    definition: 'The last season on a player\'s contract. He is still yours, nobody else may sign him, and free agency is one offseason away.',
-    why: 'This is the cheap window. The discount for staying is at its biggest here and mostly gone once the deal has actually expired.',
+    definition: 'The last season on a player\'s contract — one more year of football for you, and then he can leave. He is still yours for all of it, and nobody else may sign him.',
+    why: 'This is the cheap window. The discount for staying is at its biggest here and mostly spent by the offseason his deal is up, so getting ahead of a re-sign is worth real money.',
+  },
+  /*
+   * THE STATE THE APP OWNER READ AS A LOSS. It was labelled "expired" and
+   * drawn in the red this app uses for dead money, and he asked twice what it
+   * meant — so this entry leads with what is still true and names the three
+   * exits, because the default one is the expensive one.
+   */
+  dealUp: {
+    term: 'Deal up this offseason',
+    definition: 'His contract has no seasons left on it. He is still yours, nobody else may sign him, and he only reaches free agency if the re-sign window shuts with him undecided.',
+    why: 'Nothing is lost yet — but the hometown discount is nearly spent, so keeping him now costs close to what the open market would pay. Re-sign him, tag him, or let him walk: one of those happens by default.',
   },
   loyaltyDiscount: {
     term: 'Hometown discount',
@@ -214,7 +225,7 @@ export const GLOSSARY = {
   setAside: {
     term: 'Set aside',
     definition: 'A decision parked rather than made. He is not released and you can bring him back at any time before the window closes.',
-    why: 'Parking is not keeping. Anyone still set aside with an expired deal walks to free agency when the phase ends.',
+    why: 'Parking is not keeping. Anyone still set aside whose deal is up walks to free agency when the phase ends.',
   },
   suitor: {
     term: 'Suitor',
@@ -539,8 +550,8 @@ export const GLOSSARY = {
   },
   expiringContract: {
     term: 'Expiring',
-    definition: 'A contract with no seasons left after this one. Unless he is re-signed or tagged, he reaches free agency.',
-    why: 'Roughly a quarter of a roster expires every year. Deciding which quarter to keep is most of the job.',
+    definition: 'A deal near its end — either one season left to play, or none at all. The difference is the whole decision: a man with a season still to run is next offseason\'s question, while a man whose deal is up walks the moment the re-sign window shuts.',
+    why: 'Roughly a quarter of a roster expires every year. Deciding which quarter to keep — and which of them you can afford to leave until next winter — is most of the job.',
   },
   rosterNeed: {
     term: 'Need',

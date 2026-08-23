@@ -11,13 +11,15 @@ import { positionBadgeClass } from './ds/positionColor';
 import { CapMode } from '@/lib/types';
 import type { DealStructure, NegotiationSession } from '@/lib/negotiation';
 import { DealStructureControls, DEFAULT_ESCALATION } from './DealStructureControls';
-import { cutPlayerAction, applyFranchiseTagAction } from '@/app/actions/roster';
+import { cutPlayerAction } from '@/app/actions/roster';
 import { openResignNegotiationAction, submitResignOfferAction, setAsideResignAction } from '@/app/actions/resign';
 import { ActionButton } from './ds/ActionButton';
 import { SuitorRumour, LoyaltyLine } from './ds/SuitorRumour';
 import { DepthAtPosition, type DepthEntry } from './ds/DepthAtPosition';
 import { Tooltip } from './Tooltip';
 import { tip } from '@/lib/glossary';
+import { contractStagePill } from '@/lib/contractClock';
+import { FranchiseTagButton } from './FranchiseTagButton';
 
 /** Where a fresh deal opens. Reset terms returns the shape here. */
 const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidYears: 0 };
@@ -51,21 +53,30 @@ const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidY
  * behaviour once patience is server state: a negotiation you walked out of has
  * to still be the negotiation you walked out of when you come back to it.
  */
-export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, canTag, tagDeadMoney, weightLb, heightIn, depth, marketApy, setAside }: {
+export function ResignRow({ leagueId, playerId, name, position, age, ovr, currentApy, capMode, yearsRemaining, tag, weightLb, heightIn, depth, marketApy, setAside, initialOpen }: {
   leagueId: string; playerId: string; name: string; position: string; age: number; ovr: number;
-  currentApy: number; capMode: CapMode; yearsRemaining: number; canTag?: boolean;
+  currentApy: number; capMode: CapMode; yearsRemaining: number;
   /**
-   * Signing bonus on his EXPIRING deal that has not finished amortising, and
-   * which accelerates onto this year's cap as dead money the moment he is
-   * tagged — the tag writes a new contract over the old one but does not
-   * retire what the old one still owes (applyFranchiseTag, and INV-21's second
-   * clause). It used to evaporate, so the button used to be free and honest
-   * about being free. It is not free now, and a control with no confirmation
-   * step has to say what it costs before it is pressed rather than after.
-   * Resolved on the server by the page; 0 on most deals and in every cap mode
-   * but Realistic, and the line is simply absent then.
+   * Arrive with talks already open. Set by the page for the one man named in
+   * the query string — the player card's Re-sign button used to point at this
+   * LIST and leave a GM to find him again in it. He is scrolled to by the
+   * fragment on the row's own id, which is why that id is unconditional.
    */
-  tagDeadMoney?: number;
+  initialOpen?: boolean;
+  /**
+   * THE TAG, AS THE PLAYER CARD OFFERS IT — the same component, the same
+   * server-priced preview, the same confirm (FranchiseTagButton). This row
+   * used to own a small pill that committed on one press and a paragraph of
+   * its own about the dead money it books; both are inside that control now,
+   * so the two places a man can be tagged cannot drift apart in what they say
+   * or in what they ask.
+   *
+   * Undefined when the league has tags switched off: one greyed button per row
+   * down a list of nineteen teaches nothing that the settings screen does not
+   * already say. `blocked` carries the reason on any row where the tag is on
+   * but this man cannot take it.
+   */
+  tag?: { blocked: string | null; isTagged: boolean };
   /**
    * He is parked — "not now" rather than "let him walk". The row draws itself
    * closed, with the one control that undoes it, and nothing about his
@@ -94,7 +105,7 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   availableSpace?: number;
   weightLb?: number; heightIn?: number;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen ?? false);
   const [session, setSession] = useState<NegotiationSession | null | undefined>(undefined);
   // The deal SHAPE — front/back-load and void years. The re-sign window simply
   // did not have this: it passed no structure at all, so every re-signed deal
@@ -109,14 +120,21 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   // pop-out "always needs to show the starter".
   const [showDepth, setShowDepth] = useState(true);
   const [confirmingWalk, setConfirmingWalk] = useState(false);
-  const [tagPending, setTagPending] = useState(false);
-  const [tagMessage, setTagMessage] = useState<string | null>(null);
+  // A release can legitimately fail — see notResign. Named for what it is now
+  // that the tag keeps its own messages inside its own control.
+  const [failure, setFailure] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
 
   // Still mid-deal (this is his walk year, but the season isn't over) —
   // there's nothing to "decide" yet, just re-sign early if you want to.
   const isTrulyExpiring = yearsRemaining === 0;
+  // WHICH CLOCK HE IS ON, in the words every other surface uses. This was two
+  // inline ternaries — one here and one in the set-aside branch — reading
+  // "Expired" and "Walk Year", and the app owner read the first as meaning the
+  // contract was already lost. See lib/contractClock.ts for the pair of names
+  // and why neither of the old ones survived.
+  const stagePill = contractStagePill(yearsRemaining);
 
   /**
    * ===========================================================================
@@ -196,25 +214,14 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   };
 
   const notResign = () => {
-    setTagMessage(null);
+    setFailure(null);
     startTransition(async () => {
       // A release can legitimately fail — he is already gone, or a second tab
       // got there first. This used to await a promise that threw and say
       // nothing at all, which read as the button doing nothing.
       const result = await cutPlayerAction(leagueId, playerId);
-      if (!result.ok) { setTagMessage(result.message); return; }
+      if (!result.ok) { setFailure(result.message); return; }
       router.refresh();
-    });
-  };
-
-  const tag = () => {
-    setTagPending(true);
-    setTagMessage(null);
-    startTransition(async () => {
-      const result = await applyFranchiseTagAction(leagueId, playerId);
-      setTagPending(false);
-      setTagMessage(result.message);
-      if (result.ok) router.refresh();
     });
   };
 
@@ -236,7 +243,7 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   // point of the pile is that you can look at it and pick somebody back out.
   if (setAside) {
     return (
-      <div className="panel overflow-hidden opacity-70">
+      <div id={`p-${playerId}`} className="panel overflow-hidden opacity-70">
         <div className="w-full flex items-center gap-3 px-4 py-2.5">
           <PlayerAvatar seed={playerId} age={age} size={26} weightLb={weightLb} heightIn={heightIn} position={position} />
           <div className="flex-1 min-w-0">
@@ -246,9 +253,7 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
               <span className="text-muted">Age {age}</span>
               <span className="text-muted">·</span>
               <span className="text-muted">~{formatMoney(currentApy)}/yr</span>
-              {isTrulyExpiring
-                ? <span className="pill border-bad/40 text-bad text-[10px]">Expired</span>
-                : <span className="pill border-warn/40 text-warn text-[10px]">Walk Year</span>}
+              {stagePill && <span className={`pill ${stagePill.className} text-[10px]`}>{stagePill.label}</span>}
             </div>
           </div>
           <span className={`stat-value text-stat-sm ${ratingColor(ovr)}`}>{ovr}</span>
@@ -264,7 +269,10 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
   }
 
   return (
-    <div className="panel overflow-hidden">
+    // The id is the landing point for a link that names one man — see
+    // `initialOpen`. Unconditional, so the fragment resolves whether or not
+    // this is the row that was asked for.
+    <div id={`p-${playerId}`} className="panel overflow-hidden">
       {/* THE HEADER IS TWO CONTROLS, NOT ONE. "Not now" used to live inside the
           `{open && …}` block below — so parking a man cost a click to open
           talks, a session resolved on the server, and a second click, for the
@@ -282,9 +290,7 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
               <span className="text-muted">Age {age}</span>
               <span className="text-muted">·</span>
               <span className="text-muted">~{formatMoney(currentApy)}/yr</span>
-              {isTrulyExpiring
-                ? <span className="pill border-bad/40 text-bad text-[10px]">Expired</span>
-                : <span className="pill border-warn/40 text-warn text-[10px]">Walk Year</span>}
+              {stagePill && <span className={`pill ${stagePill.className} text-[10px]`}>{stagePill.label}</span>}
             </div>
             {(succession || band) && (
               <div className="text-xs mt-1 flex items-center gap-1.5 flex-wrap">
@@ -378,6 +384,16 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
               now, one press, no session resolved. It is deliberately NOT also
               duplicated here — one control, one place, and it sits nowhere near
               "Not Re-sign", which releases a player and cannot be undone. */}
+          {/* THE OTHER WAY TO KEEP HIM, at the weight the app owner asked for
+              and with the same priced confirm the player card gives it. It is
+              above the walk link rather than opposite it: one of these keeps a
+              player and one lets him go, and they should not read as a pair of
+              equals on the same line. */}
+          {tag && <FranchiseTagButton
+            compact
+            leagueId={leagueId} playerId={playerId} playerName={name}
+            blocked={tag.blocked} isTagged={tag.isTagged}
+          />}
           {isTrulyExpiring && (
             <div className="flex items-center justify-between gap-3 flex-wrap">
               {confirmingWalk ? (
@@ -393,28 +409,9 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
                   Not Re-sign — let him walk
                 </button>
               )}
-              {canTag && (
-                <span className="inline-flex items-center gap-1.5">
-                  <button disabled={tagPending} onClick={tag} className="pill border-gold/40 text-gold text-xs hover:bg-gold/10">
-                    {tagPending ? 'Tagging…' : 'Franchise Tag'}
-                  </button>
-                  <Tooltip text={tip('franchiseTag')} />
-                </span>
-              )}
             </div>
           )}
-          {/* THE BILL THE TAG DOES NOT CANCEL. Named before the press, with
-              the figure, because the tag is a one-click move and this is the
-              part of its price that is not the tag number. */}
-          {isTrulyExpiring && canTag && (tagDeadMoney ?? 0) > 0 && (
-            <p className="text-xs text-warn">
-              Tagging {name} does not end his old contract&apos;s accounting. {formatMoney(tagDeadMoney!)} of signing
-              bonus the club has already paid him has not finished amortising, and it lands on this year&apos;s cap as
-              dead money the moment the tag is signed — on top of the tag itself. That bonus is owed either way:
-              letting him walk charges the same figure.
-            </p>
-          )}
-          {tagMessage && <p className={`text-xs ${tagMessage.startsWith('Tagged') ? 'text-accent' : 'text-bad'}`}>{tagMessage}</p>}
+          {failure && <p className="text-xs text-bad">{failure}</p>}
         </div>
       )}
     </div>

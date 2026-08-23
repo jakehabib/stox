@@ -162,8 +162,39 @@ export async function buildFrontOfficeBrief(
   }
 
   // --- Contracts -----------------------------------------------------------
+  /*
+   * NOT THE MEN HE HAS ALREADY DEALT WITH. The app owner: *"when you 'set
+   * aside' a player the notification for that player should disappear."*
+   *
+   * "Not now" is a decision — the re-sign screen parks him where he can be
+   * found again (NegotiationTalks.dismissedAt, app/actions/resign.ts) — and
+   * this panel kept telling him to get ahead of a contract he had explicitly
+   * put down that week. A brief that re-asks a question you just answered
+   * reads as staff who were not listening, and this is the panel most likely
+   * to be read every week.
+   *
+   * It FALLS THROUGH rather than going quiet: the exclusion is in the `where`,
+   * so `orderBy` simply hands over the next man. A GM with four expiring
+   * players and one parked still has three decisions and the brief still names
+   * the best of them. Bringing a man back clears his row's `dismissedAt` and
+   * he is eligible again on the next render — the gate is a live read, not a
+   * flag written into the brief.
+   *
+   * IT DOES NOT SILENCE THE CONSEQUENCE. Parking a man does not keep him:
+   * `releaseUnresignedExpiringContracts` still lets him go when the window
+   * shuts, and the advance itself stops once to say so and NAME the parked men
+   * (lib/season.ts). Those are different facts on different screens, and only
+   * the "go and do something about him now" prompt is answered by parking him.
+   */
+  const setAside = await prisma.negotiationTalks.findMany({
+    where: { teamId, seasonYear, dismissedAt: { not: null } },
+    select: { playerId: true },
+  });
   const expiring = await prisma.player.findFirst({
-    where: { teamId, contract: { yearsRemaining: { lte: 1 } }, status: 'ACTIVE' },
+    where: {
+      teamId, contract: { yearsRemaining: { lte: 1 } }, status: 'ACTIVE',
+      ...(setAside.length > 0 ? { id: { notIn: setAside.map((r) => r.playerId) } } : {}),
+    },
     orderBy: { trueOvr: 'desc' },
   });
   if (expiring) {

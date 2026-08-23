@@ -7,7 +7,9 @@ import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFr
 import { decideOffer, type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer } from '@/lib/negotiation';
 import { parseSettings } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
-import { capHit, deadMoneyOnCut, capSavingsOnCut, formatMoney, unamortizedBonus, guaranteedSalaryOwed, restructureContract as computeRestructure } from '@/lib/cap';
+import { capHit, deadMoneyOnCut, capSavingsOnCut, formatMoney, unamortizedBonus, guaranteedSalaryOwed, franchiseTagValue, restructureContract as computeRestructure } from '@/lib/cap';
+import { franchiseTagBlockReason } from '@/lib/franchiseTag';
+import { PHASE_LABELS } from '@/lib/season';
 import { autoDepthChart, reconcileDepthChart } from '@/lib/gen/league';
 import { readJson, writeJson } from '@/lib/json';
 import { AttrMap, positionMove, canChangePositionTo, relatedPositions } from '@/lib/ratings';
@@ -255,6 +257,122 @@ export async function submitOfferAction(
  * leaving it exported would have closed the door and left the window open.
  */
 
+export interface FranchiseTagImpact {
+  /** False in OFF mode — the preview then shows no dollar figures at all, exactly as CutImpact does. */
+  capEnabled: boolean;
+  playerName: string;
+  position: string;
+  /** The league year the tag would be signed in, so the preview can date its own rows. */
+  seasonYear: number;
+  /** The 1-year, fully guaranteed salary the tag pays. `franchiseTagValue`, the function that writes the contract. */
+  tagValue: number;
+  /** The cap hits that average was taken over, biggest first — what the number is MADE of. */
+  topSalaries: number[];
+  /** What he counts against this year's cap on the deal the tag replaces, and which comes back off. */
+  currentHit: number;
+  /** Signing bonus from that old deal which has not finished amortising and accelerates the moment the tag is signed. */
+  deadMoney: number;
+  /** tagValue + deadMoney - currentHit. What the move really costs this year's books. */
+  netCost: number;
+  capSpaceBefore: number;
+  capSpaceAfter: number;
+  /** The tag would leave the club over the ceiling — which is also what the server would refuse on. */
+  leavesOverCap: boolean;
+  /** Non-null when the tag cannot be applied at all; the same sentence the greyed control carries. */
+  blocked: string | null;
+}
+
+/**
+ * ===========================================================================
+ * WHAT THE TAG WOULD DO, BEFORE IT IS SIGNED
+ * ===========================================================================
+ * The app owner, on the third pass over this control: *"clicking it should
+ * show the cap implications just like a regular contract would and ask to
+ * confirm instead of just 1-clicking into it"*. He is right, and the tag had
+ * become the worst place in the game to be missing that: since it started
+ * booking the old deal's unamortised bonus (applyFranchiseTag, INV-21) the
+ * number on the button is no longer the number on the bill.
+ *
+ * So this is `cutImpactAction` for the tag, and it is deliberately built the
+ * same way: resolved by the server when the confirm step opens, from the exact
+ * functions the commit path uses — `franchiseTagValue` over the same position
+ * rows, `unamortizedBonus` for the acceleration, `teamCapSummary` for the
+ * room. A preview that quotes a figure the action does not charge is the
+ * lying-metric bug this codebase treats as a class rather than a slip, and on
+ * a once-a-year irreversible move it is the worst possible place for one.
+ *
+ * `capSpaceAfter` is the gate's own arithmetic, not a second opinion:
+ * `assertCapRoom` is handed `delta: tagValue + accelerated` against
+ * `creditBack: oldHit`, so the room after is the room now, plus the hit that
+ * comes off, minus both halves of what goes on.
+ *
+ * It also returns `blocked`, from the shared rule (lib/franchiseTag.ts). The
+ * button that opened this panel was greyed or not by a page render that may be
+ * a navigation old — a tag used in another tab since then must not be found
+ * out at the press.
+ * ===========================================================================
+ */
+export async function franchiseTagImpactAction(leagueId: string, playerId: string): Promise<FranchiseTagImpact> {
+  await assertLeagueOwner(leagueId);
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
+  const name = `${player.firstName} ${player.lastName}`;
+
+  const heldContract = player.teamId
+    ? await prisma.contract.findFirst({
+      where: { teamId: player.teamId, isFranchiseTag: true, signedYear: league.seasonYear, NOT: { playerId } },
+      include: { player: { select: { lastName: true, position: true } } },
+    })
+    : null;
+  const blocked = franchiseTagBlockReason({
+    enabled: settings.franchiseTagEnabled,
+    phase: league.phase,
+    phaseLabel: PHASE_LABELS[league.phase] ?? league.phase,
+    yearsRemaining: player.contract?.yearsRemaining ?? 0,
+    heldBy: heldContract ? { position: heldContract.player.position, lastName: heldContract.player.lastName } : null,
+  });
+
+  // Priced even in OFF and SIMPLIFIED, because the tag's SALARY is a real
+  // number in every mode — it is only the cap consequences that stop existing.
+  const peers = await prisma.player.findMany({
+    where: { leagueId, position: player.position, status: 'ACTIVE' },
+    include: { contract: true },
+  });
+  const salaries = peers.map((p) => capHit(p.contract, settings.capMode)).filter((v) => v > 0).sort((a, b) => b - a);
+  const tagValue = franchiseTagValue(salaries);
+
+  if (settings.capMode === 'OFF' || !player.contract || !player.teamId) {
+    return {
+      capEnabled: false, playerName: name, position: player.position, seasonYear: league.seasonYear,
+      tagValue, topSalaries: salaries.slice(0, 5),
+      currentHit: 0, deadMoney: 0, netCost: 0, capSpaceBefore: 0, capSpaceAfter: 0, leavesOverCap: false, blocked,
+    };
+  }
+
+  const summary = await teamCapSummary(player.teamId, league.seasonYear, settings.capMode);
+  const currentHit = capHit(player.contract, settings.capMode);
+  const deadMoney = unamortizedBonus(player.contract, settings.capMode);
+  const netCost = tagValue + deadMoney - currentHit;
+  const after = summary.capSpace - netCost;
+
+  return {
+    capEnabled: true,
+    playerName: name,
+    position: player.position,
+    seasonYear: league.seasonYear,
+    tagValue,
+    topSalaries: salaries.slice(0, 5),
+    currentHit,
+    deadMoney,
+    netCost,
+    capSpaceBefore: summary.capSpace,
+    capSpaceAfter: after,
+    leavesOverCap: after < 0,
+    blocked,
+  };
+}
+
 export async function applyFranchiseTagAction(leagueId: string, playerId: string) {
   await assertLeagueOwner(leagueId);
   try { await assertPlayerOnUserTeam(leagueId, playerId); }
@@ -263,6 +381,27 @@ export async function applyFranchiseTagAction(leagueId: string, playerId: string
   const settings = parseSettings(league.settings);
   if (!settings.franchiseTagEnabled) return { ok: false, message: 'Franchise tags are disabled in league settings.' };
   if (league.phase !== 'RESIGN') return { ok: false, message: 'The franchise tag can only be used during the Re-sign window.' };
+  /*
+   * A TAG REPLACES A DEAL THAT IS UP — and nothing said so on this side.
+   *
+   * The re-sign row has always gated its button on `yearsRemaining === 0`, and
+   * the player card now says the same thing in words where the control would
+   * be. This is a POST endpoint, so a UI rule it does not share is not a rule:
+   * handed a man with three years to run it would have torn up his contract
+   * and written a one-year tag over it, which is a way to walk out of a long
+   * deal that no other path in the game offers. `applyFranchiseTag` prices
+   * that case correctly, but pricing a move is not permitting it.
+   */
+  const contract = await prisma.contract.findUnique({
+    where: { playerId }, select: { yearsRemaining: true },
+  });
+  if (!contract) return { ok: false, message: 'He has no contract for the tag to replace.' };
+  if (contract.yearsRemaining !== 0) {
+    return {
+      ok: false,
+      message: `The tag is for a man whose deal is up. His has ${contract.yearsRemaining} season${contract.yearsRemaining === 1 ? '' : 's'} still to run.`,
+    };
+  }
   try {
     const result = await applyFranchiseTag({ leagueId, playerId, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week });
     revalidatePath(`/league/${leagueId}`, 'layout');

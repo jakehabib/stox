@@ -17,6 +17,8 @@ import {
   loadPlayerSeasons, reconstructPlayerSeasons, withAges, ageBasisYear, buildCareerTable,
 } from '@/lib/playerSeasons';
 import { CutButton } from '@/components/CutButton';
+import { resignListCutoff } from '@/lib/contractClock';
+import { franchiseTagBlockReason } from '@/lib/franchiseTag';
 import { ContractActions } from '@/components/ContractActions';
 import { ContractLedger } from '@/components/ds/ContractLedger';
 import { FullScoutButton } from '@/components/FullScoutButton';
@@ -88,7 +90,7 @@ export default async function PlayerPage({
   params: { id: string; playerId: string };
   searchParams: { split?: string; view?: string; from?: string; fq?: string };
 }) {
-  const { league, settings, userTeam } = await getLeagueContext(params.id);
+  const { league, settings, userTeam, phaseLabel } = await getLeagueContext(params.id);
   /**
    * THE LIST HE WAS WORKING, so the signing card can hand it back.
    *
@@ -577,6 +579,59 @@ export default async function PlayerPage({
   })();
 
   /**
+   * ===========================================================================
+   * THE FRANCHISE TAG — THE CONTROL, OR THE REASON THERE ISN'T ONE
+   * ===========================================================================
+   * *"I don't see any way to franchise tag someone. I see the option in the
+   * contract tab, but no option to use it."* The thing he saw is the status
+   * badge in the section heading, which only ever appears on a man who has
+   * ALREADY been tagged. The only control in the game was a pill at the bottom
+   * of an expanded row on the re-sign screen, and outside the re-sign window
+   * it existed nowhere at all.
+   *
+   * So the card asks the shared rule (lib/franchiseTag.ts) why not, in the
+   * order `applyFranchiseTagAction` refuses in, and greys the control with
+   * that sentence instead of hiding it. What the tag would COST is not
+   * resolved here — the control fetches that from the server when its confirm
+   * step opens (franchiseTagImpactAction), which is the same thing CutButton
+   * does and keeps a page that mostly renders other men from pricing a tag
+   * nobody is going to take.
+   */
+  const tagCard = await (async () => {
+    const c = player.contract;
+    if (!c || !isOwnRoster || !userTeam) return null;
+    // Only asked once every other rule has passed, which on an ordinary card
+    // is never: the same query `applyFranchiseTag` guards on.
+    const held = settings.franchiseTagEnabled && league.phase === 'RESIGN' && c.yearsRemaining === 0 && !c.isFranchiseTag
+      ? await prisma.contract.findFirst({
+        where: { teamId: userTeam.id, isFranchiseTag: true, signedYear: league.seasonYear },
+        include: { player: { select: { lastName: true, position: true } } },
+      })
+      : null;
+    return {
+      isTagged: c.isFranchiseTag,
+      blocked: c.isFranchiseTag ? null : franchiseTagBlockReason({
+        enabled: settings.franchiseTagEnabled,
+        phase: league.phase,
+        phaseLabel,
+        yearsRemaining: c.yearsRemaining,
+        heldBy: held ? { position: held.player.position, lastName: held.player.lastName } : null,
+      }),
+    };
+  })();
+
+  /**
+   * HIS re-sign, not the list of them. The button under his contract used to
+   * point at /resign and stop there. It names him now — and it is null in the
+   * one case where that page would not have him: a man with a season still to
+   * run, once the offseason has begun, whom the window deliberately keeps off
+   * the list. The cutoff is that page's rule, imported rather than copied.
+   */
+  const resignHref = player.contract && player.contract.yearsRemaining <= resignListCutoff(league.phase)
+    ? `/league/${league.id}/resign?player=${player.id}#p-${player.id}`
+    : null;
+
+  /**
    * ATTRIBUTES, ORDERED BY WHAT THEY DECIDE.
    *
    * The share is the weight `computeOverall` actually applies — normalised
@@ -1002,9 +1057,15 @@ export default async function PlayerPage({
                 Rookie Deal<Tooltip text={tip('rookieDeal')} />
               </span>
             )}
+            {/* PAST TENSE, BECAUSE IT IS A STATE. This read "Franchise Tag",
+                sat in the heading's action slot beside real controls, and the
+                app owner reasonably took it for the offer — it is why he
+                reported seeing "the option in the contract tab, but no option
+                to use it". The offer is a button in the box below now; this is
+                what happened to him. */}
             {player.contract?.isFranchiseTag && (
               <span className="pill border-warn/30 text-warn bg-warn/10 gap-1.5">
-                Franchise Tag<Tooltip text={tip('franchiseTag')} />
+                Franchise Tagged<Tooltip text={tip('franchiseTag')} />
               </span>
             )}
             {player.contract && (
@@ -1073,13 +1134,17 @@ export default async function PlayerPage({
             {isOwnRoster && userTeam && (
               <div className="space-y-3 pb-3 border-b border-line/60">
                 <ContractActions
-                  leagueId={league.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age}
+                  leagueId={league.id} playerId={player.id} playerName={`${player.firstName} ${player.lastName}`} ovr={view.scoutedOvr} position={player.position} age={player.age}
                   contract={{
                     years: player.contract.years, yearsRemaining: player.contract.yearsRemaining, signedYear: player.contract.signedYear,
                     baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
                     guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
                   }}
                   availableSpaceForExtension={capSpace + hit} capSpace={capSpace} capMode={settings.capMode}
+                  resignHref={resignHref}
+                  // Non-null wherever this renders: the same three conditions
+                  // that gate this block are the ones tagCard resolves under.
+                  tag={tagCard!}
                 />
                 {restructureFrees > 0 && (
                   <p className="text-sm text-muted">
@@ -1133,6 +1198,9 @@ export default async function PlayerPage({
         // earlier. Restructure needs years left to push money into.
         contractShortcuts={isOwnRoster && userTeam && player.contract ? [
           ...(player.contract.yearsRemaining > 1 ? [{ key: 'extend', label: 'Extend' }] : []),
+          // Named on the stats face only while it can actually be taken. A tag
+          // is the rarest move on this card and the one nobody found.
+          ...(tagCard && !tagCard.blocked && !tagCard.isTagged ? [{ key: 'tag', label: 'Franchise Tag' }] : []),
           ...(restructureFrees > 0 ? [{ key: 'restructure', label: 'Restructure' }] : []),
           { key: 'release', label: 'Release' },
         ] : undefined}

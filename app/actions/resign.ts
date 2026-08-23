@@ -163,6 +163,12 @@ export async function setAsideResignAction(leagueId: string, playerId: string, a
   const result = await setResignSetAside({
     leagueId, teamId: team.id, playerId, seasonYear: league.seasonYear, aside,
   });
-  revalidatePath(`/league/${leagueId}/resign`);
+  // THE WHOLE LEAGUE SHELL, NOT JUST THIS PAGE. Parking a man now changes what
+  // the dashboard's front-office brief says about him — it stops prompting for
+  // a decision he has just made, and bringing him back starts again
+  // (lib/frontOffice.ts) — and the nav badge and the brief live on other
+  // routes. Revalidating only /resign left the panel he was reading last week
+  // still nagging about the man he had put down.
+  revalidatePath(`/league/${leagueId}`, 'layout');
   return { ok: true, aside: result.aside };
 }

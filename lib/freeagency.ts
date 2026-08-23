@@ -796,10 +796,13 @@ export async function signExtension(opts: {
  * club walks away owing him the rest. A tag owes only the bonus, because the
  * salary obligation is not escaped — it is REPLACED by the tag, which is
  * itself fully guaranteed and is being charged in full on the new row. Billing
- * both would charge the club two salaries for one player-season. On the shape
- * the Re-sign screen can actually reach — his deal has expired, so
- * `guaranteedSalaryOwed` is already 0 — the two are the same figure anyway;
- * this only decides the mid-deal case the Server Action can still be handed.
+ * both would charge the club two salaries for one player-season. On the only
+ * shape that reaches this function — his deal is up, so `guaranteedSalaryOwed`
+ * is already 0 — the two are the same figure anyway. The mid-deal case is
+ * refused one level up now (applyFranchiseTagAction: a tag replaces a deal
+ * that is up, and a Server Action that only the re-sign row's own gate stopped
+ * was a way to walk out of a long contract). Pricing it correctly is still
+ * this function's job for any caller that is ever handed one.
  * ===========================================================================
  */
 export async function applyFranchiseTag(opts: {

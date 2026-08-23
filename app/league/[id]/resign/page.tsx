@@ -1,16 +1,29 @@
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { teamCapSummary } from '@/lib/cap-summary';
-import { capHit, formatMoney, unamortizedBonus, marketValue } from '@/lib/cap';
+import { capHit, formatMoney, marketValue } from '@/lib/cap';
 import { ResignRow } from '@/components/ResignRow';
 import type { DepthEntry } from '@/components/ds/DepthAtPosition';
 import { LetAiResignButton } from '@/components/LetAiResignButton';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
+import { resignListCutoff } from '@/lib/contractClock';
+import { franchiseTagBlockReason } from '@/lib/franchiseTag';
 
-export default async function ResignPage({ params }: { params: { id: string } }) {
-  const { league, settings, userTeam } = await getLeagueContext(params.id);
+export default async function ResignPage({ params, searchParams }: {
+  params: { id: string };
+  /**
+   * ONE MAN, NAMED. The player card's Re-sign button pointed at this list and
+   * stopped there, which is only half an answer on a roster with eleven deals
+   * running out: you arrive at a screen of rows and have to find him again.
+   * `player` opens his talks on arrival and the fragment scrolls to his row.
+   * A junk or stale id costs nothing — no row matches, and the page is the
+   * list it always was.
+   */
+  searchParams?: { player?: string };
+}) {
+  const { league, settings, userTeam, phaseLabel } = await getLeagueContext(params.id);
   const team = userTeam!;
 
   // Contracts show up here from the year they enter their FINAL season
@@ -39,21 +52,25 @@ export default async function ResignPage({ params }: { params: { id: string } })
    * is more urgent still and is never hidden.
    */
   const offseasonCycle = league.phase === 'OFFSEASON' || league.phase === 'RESIGN';
-  const expiringCutoff = offseasonCycle ? 0 : 1;
+  // The cutoff itself is exported (lib/contractClock.ts) rather than written
+  // out here, because the player card has to ask the same question before it
+  // offers a Re-sign button that points at this page.
+  const expiringCutoff = resignListCutoff(league.phase);
   const expiring = await prisma.player.findMany({
     where: { teamId: team.id, status: 'ACTIVE', contract: { yearsRemaining: { lte: expiringCutoff } } },
     include: { contract: true },
     /*
      * BEST MAN FIRST. This used to lead on `yearsRemaining`, so the list ran
-     * expired-then-walk-year and the rating column started over halfway down.
+     * deals-up-first and the rating column started over halfway down.
      * The app owner read that as no order at all: *"on the contracts running
      * out page, its sorted randomly. we should have it sort by overall from
      * top to bottom."*
      *
      * Rating leads now and the deadline is the tiebreak. Nothing is lost by
-     * it — every row already wears its own Expired or Walk Year pill, so the
-     * urgent ones are still marked; they are just no longer allowed to bury
-     * the best player on the list under men you were always going to let go.
+     * it — every row still wears the pill that says where his deal is on its
+     * clock, so the urgent ones are marked; they are just no longer allowed to
+     * bury the best player on the list under men you were always going to let
+     * go.
      */
     orderBy: [{ trueOvr: 'desc' }, { contract: { yearsRemaining: 'asc' } }],
   });
@@ -140,6 +157,27 @@ export default async function ResignPage({ params }: { params: { id: string } })
       })
     : null;
   const alreadyTagged = canTag ? tagContract !== null : true;
+  /**
+   * THE TAG CONTROL'S STATE, PER ROW — from the shared rule, so this screen
+   * and the player card grey the same button for the same reason and the
+   * server refuses in the same order (lib/franchiseTag.ts). Undefined when the
+   * league has tags switched off: nineteen dead buttons down a list teaches
+   * nothing the settings screen has not already said.
+   */
+  const tagStateFor = (p: { id: string; contract: { yearsRemaining: number; isFranchiseTag: boolean } | null }) => {
+    if (!settings.franchiseTagEnabled) return undefined;
+    const held = tagContract && tagContract.playerId !== p.id ? tagContract : null;
+    return {
+      isTagged: p.contract?.isFranchiseTag ?? false,
+      blocked: p.contract?.isFranchiseTag ? null : franchiseTagBlockReason({
+        enabled: settings.franchiseTagEnabled,
+        phase: league.phase,
+        phaseLabel,
+        yearsRemaining: p.contract?.yearsRemaining ?? 0,
+        heldBy: held ? { position: held.player.position, lastName: held.player.lastName } : null,
+      }),
+    };
+  };
 
   // What these deals currently occupy on the books. This is NOT a cost to
   // re-sign them: teamCapSummary's activeSalary already counts every active
@@ -168,13 +206,16 @@ export default async function ResignPage({ params }: { params: { id: string } })
          */
         eyebrow={inWindow ? `${league.seasonYear} Offseason` : `${league.seasonYear} Season`}
         title={inWindow ? 'Re-sign Window' : 'Contracts Running Out'}
-        subtitle={"Players whose deals are up or about to be. Nobody else may sign them while they are still yours — but somebody is already watching, and open talks will tell you who, what room they have and what they would pay. The hometown discount is real and it is on a clock: it is at its biggest while a contract still has a season to run and mostly gone once it has expired." + (inWindow ? ' Whoever you leave undecided is released to free agency when this window shuts, and the rest of the league can call.' : ' The window itself opens in the offseason — that is when a decision becomes a deadline. Until then this is a list, and getting ahead of it is up to you.')
+        subtitle={"Players whose deals are up or about to be. Nobody else may sign them while they are still yours — but somebody is already watching, and open talks will tell you who, what room they have and what they would pay. The hometown discount is real and it is on a clock: it is at its biggest while a contract still has a season to run, and mostly spent by the offseason his deal is up." + (inWindow ? ' Whoever you leave undecided is released to free agency when this window shuts, and the rest of the league can call.' : ' The window itself opens in the offseason — that is when a decision becomes a deadline. Until then this is a list, and getting ahead of it is up to you.')
           + (offseasonCycle
             ? ' Only the men whose deals have actually run out are here. Anyone with a season still to play is next year\'s decision and is deliberately kept off it.'
             : ' Only the men whose deals end when this season does are here — anyone with more than that left is not your problem yet.')}
         action={expiring.length > 0 ? <LetAiResignButton leagueId={league.id} /> : undefined}
         facts={[
-          { label: 'Decisions', value: String(onTheList.length), detail: parked.length > 0 ? `${parked.length} more set aside` : 'contracts on the clock', tip: tip('walkYear') },
+          // tip('expiringContract') rather than tip('walkYear'): this count is
+          // both cohorts at once in-season, and the reader's question — twice
+          // asked — is what separates them.
+          { label: 'Decisions', value: String(onTheList.length), detail: parked.length > 0 ? `${parked.length} more set aside` : 'contracts on the clock', tip: tip('expiringContract') },
           /*
            * THE TAG EXISTS AND NOTHING SAID SO. It is one per league year, it
            * only works inside this window, and the control is a small pill
@@ -201,12 +242,38 @@ export default async function ResignPage({ params }: { params: { id: string } })
                 detail: 'usable once the window opens',
               },
           ] : []),
+          /*
+           * THIS TILE SAID "ALREADY EXPIRED", IN RED, ABOUT MEN STILL ON THE
+           * ROSTER. The app owner: *"the term 'expired' on re-sign makes it
+           * feel like the contract is lost. maybe we just say 'expiring this
+           * offseason'"* — and before that, *"what is the difference between
+           * walk year and expired?"*. Twice is the words being wrong, not the
+           * reader. Nothing is lost: they are under contract, nobody may sign
+           * them, and they only walk if this window shuts undecided. So the
+           * label is his own phrase, the detail says what is still true rather
+           * than what is gone, and the ink is a deadline's amber instead of
+           * dead money's red. Same names as the pills below — see
+           * lib/contractClock.ts.
+           */
           {
-            label: 'Already Expired',
-            tip: tip('loyaltyDiscount'),
+            label: 'Expiring This Offseason',
+            tip: tip('dealUp'),
             value: String(trulyExpiringCount),
-            detail: trulyExpiringCount > 0 ? 'last call — discount is gone' : 'none yet',
-            color: trulyExpiringCount > 0 ? 'text-bad' : 'text-accent',
+            /*
+             * PARKED MEN ARE COUNTED HERE AND NOT IN "DECISIONS", and the two
+             * tiles have to reconcile out loud or the strip looks like it
+             * cannot add up. The rule across every surface: a count that
+             * PROMPTS you about a man drops the ones you have set aside
+             * (Decisions, and the dashboard brief); a count of what will
+             * HAPPEN keeps them, because "not now" was never "he stays". This
+             * one is the second kind.
+             */
+            detail: trulyExpiringCount === 0
+              ? 'none yet'
+              : parkedExpiring > 0
+                ? `${parkedExpiring} of them set aside — they still walk`
+                : 'last call — but they are still yours',
+            color: trulyExpiringCount > 0 ? 'text-warn' : 'text-accent',
           },
           ...(summary ? [
             {
@@ -216,7 +283,7 @@ export default async function ResignPage({ params }: { params: { id: string } })
               detail: `${formatMoney(summary.capUsed)} committed`,
               color: summary.capSpace >= 0 ? 'text-accent' : 'text-bad',
               // The only tile on this strip with an elsewhere. Franchise Tag
-              // and Already Expired both resolve in the rows below — a link
+              // and the expiry count both resolve in the rows below — a link
               // would just reload the screen the GM is already reading.
               href: `/league/${league.id}/cap`,
             },
@@ -242,25 +309,23 @@ export default async function ResignPage({ params }: { params: { id: string } })
           {onTheList.map((p) => (
             <ResignRow
               key={p.id}
+              initialOpen={p.id === searchParams?.player}
               leagueId={league.id} playerId={p.id} name={`${p.firstName} ${p.lastName}`} position={p.position} age={p.age} ovr={p.trueOvr}
               weightLb={p.weightLb} heightIn={p.heightIn}
               currentApy={p.contract ? capHit(p.contract, settings.capMode) : 0}
               availableSpace={summary ? summary.capSpace + (p.contract ? capHit(p.contract, settings.capMode) : 0) : Number.MAX_SAFE_INTEGER}
               capMode={settings.capMode}
               yearsRemaining={p.contract?.yearsRemaining ?? 0}
-              canTag={canTag && !alreadyTagged}
               /*
-               * WHAT TAGGING HIM ACTUALLY COSTS ON TOP OF THE TAG. The tag
-               * replaces his contract, it does not retire the old deal's
-               * accounting: whatever signing bonus that deal had not finished
-               * amortising accelerates as dead money the moment it is signed
-               * (applyFranchiseTag). The button is one press with no
-               * confirmation, so the number has to be on screen BEFORE it,
-               * not in the message afterwards. Zero in every mode but
-               * REALISTIC, and zero on most deals, which is why the row only
-               * draws the line when there is something to say.
+               * WHAT TAGGING HIM COSTS IS THE CONTROL'S OWN BUSINESS NOW. This
+               * used to hand the row a dead-money figure for a warning line
+               * beside a pill that committed on one press. The pill is a
+               * priced, confirmed control (FranchiseTagButton), it resolves
+               * the whole bill from the server when it opens, and it is the
+               * same one the player card renders — so the row passes the rule,
+               * not the arithmetic.
                */
-              tagDeadMoney={unamortizedBonus(p.contract, settings.capMode)}
+              tag={tagStateFor(p)}
               depth={depthFor(p.id, p.position)}
               /*
                * THE OPEN-MARKET BENCHMARK, SO THE LIST CAN BE TRIAGED WITHOUT
@@ -279,7 +344,7 @@ export default async function ResignPage({ params }: { params: { id: string } })
 
           {/* THE PILE, AND WHAT IT COSTS. Set aside is reversible and says so
               with a count and a control on every row — but a man parked here
-              with an expired deal still walks when the phase ends, so this
+              whose deal is up still walks when the phase ends, so this
               states that in front of the decision rather than after it. The
               advance itself refuses once and names them (lib/season.ts). */}
           {parked.length > 0 && (
@@ -291,7 +356,7 @@ export default async function ResignPage({ params }: { params: { id: string } })
                 </span>
                 <span className="text-xs text-muted">
                   {parkedExpiring > 0
-                    ? `Not released — but ${parkedExpiring} of them ${parkedExpiring === 1 ? 'has an expired deal and walks' : 'have expired deals and walk'} when this phase ends.`
+                    ? `Not released — but ${parkedExpiring} of them ${parkedExpiring === 1 ? 'is out of contract and walks' : 'are out of contract and walk'} when this phase ends.`
                     : 'Not released. Their deals still have a season to run.'}
                 </span>
               </div>
