@@ -430,6 +430,22 @@ const SCHEME_PASS_RATE: Record<string, number> = {
 const YARDS_PER_PASS = 6.3;
 const YARDS_PER_RUSH = 4.3;
 
+/** What share of a club's yardage goes through the air, given its pass rate. */
+function passYardShareFor(rate: number): number {
+  return (rate * YARDS_PER_PASS) / (rate * YARDS_PER_PASS + (1 - rate) * YARDS_PER_RUSH);
+}
+
+/**
+ * The mean of `passYardShareFor` across the schemes, DERIVED rather than
+ * written down, so that editing SCHEME_PASS_RATE cannot silently move the
+ * league-wide pass/run touchdown split off PASS_TD_SHARE. See
+ * TD_SPLIT_SCHEME_SLOPE for what it anchors.
+ */
+const LEAGUE_PASS_YARD_SHARE = (() => {
+  const shares = Object.values(SCHEME_PASS_RATE).map(passYardShareFor);
+  return shares.reduce((a, b) => a + b, 0) / shares.length;
+})();
+
 /**
  * [TUNE] How many tackles a game the fourteen defenders this sim actually
  * names record BETWEEN THEM. It was 62, which is roughly a real team's whole
@@ -473,6 +489,83 @@ const PASSES_DEFENSED_PER_GAME = 3.6;
 const FORCED_FUMBLES_PER_GAME = 0.55;
 /** [TUNE] Share of a team's rushing touchdowns scored by the quarterback. */
 const QB_RUSH_TD_SHARE = 0.18;
+
+/** [TUNE] League-wide share of touchdowns scored through the air. */
+const PASS_TD_SHARE = 0.62;
+
+/**
+ * ---------------------------------------------------------------------------
+ * A TEAM'S TOUCHDOWNS FOLLOW ITS YARDS, WHICH FOLLOW ITS SCHEME
+ * ---------------------------------------------------------------------------
+ * The pass/run touchdown split used to be a flat PASS_TD_SHARE for every club
+ * in the league, while the pass/run YARDAGE split ten lines above it already
+ * moved with the scheme. Two halves of one box score disagreeing about whether
+ * a team runs the ball.
+ *
+ * Measured over 120 league-seasons, that is what a lead back's touchdown column
+ * looked like across the five schemes:
+ *
+ *   scheme          team rush att/g   his rush yds   his rush TD   yds per TD
+ *   Power Run                  32.3           1349           8.3          163
+ *   Spread Option              27.1           1072           8.5          126
+ *   Balanced                   25.7            990           8.1          122
+ *   West Coast                 24.0            926           8.6          108
+ *   Air Raid                   19.3            689           8.6           80
+ *
+ * The yardage column doubles and the touchdown column does not move at all: a
+ * back's rushing touchdowns were independent of how much his team ran the ball,
+ * and the yards-per-touchdown column therefore ran BACKWARDS — the club that
+ * ran it 32 times a game needed twice as many yards per score as the one that
+ * ran it 19 times. Real football is emphatically not like that. In 2023 the
+ * most run-heavy NFL club scored 24 rushing touchdowns and the most pass-heavy
+ * one scored 10, a 2.4x spread at team level and about 1.9x once the
+ * quarterbacks are taken out of both. This engine's spread was 0.97x. The
+ * visible symptom is a back who scores fourteen times on 653 yards, one every
+ * 47: each number individually defensible, the pair of them reading as broken.
+ *
+ * So the touchdown split slides with the yardage split, anchored on
+ * LEAGUE_PASS_YARD_SHARE so the LEAGUE-wide share stays PASS_TD_SHARE. This
+ * moves touchdowns between the run and the pass WITHIN a club; it does not
+ * create or destroy any, and a club's POINTS are decided upstream in the drive
+ * loop and never see this at all. Measured across 120 league-seasons on
+ * identical seeds, the league's share of touchdowns through the air is 62.7 /
+ * 62.8 / 62.8% before and 62.8 / 62.5 / 62.8% after, on three seed-sets.
+ *
+ * 0.8, OFF A SWEEP, AND THE COLUMN THAT CHOSE IT IS THE PASSING ONE. Every
+ * touchdown this takes off an Air Raid running back is handed to that club's
+ * quarterback, so the price of the fix is paid in the passing record book.
+ * Over the same 120 league-seasons:
+ *
+ *   slope   PowRun TD  AirRaid TD  ratio   rush TD leader  pass TD leader  13TD&<700yd
+ *   0.0           8.3         8.6  0.97x            15.4            42.5           17
+ *   0.4           9.3         7.7  1.21x            15.7            42.8            3
+ *   0.6           9.8         7.3  1.34x            16.0            43.2            1
+ *   0.8          10.4         6.7  1.55x            16.4            43.7            0
+ *   1.0          10.9         6.3  1.73x            16.8            44.7            0
+ *   1.5          12.0         5.2  2.31x            18.2            46.3            0
+ *
+ * The last column is the shape that started this: lead-back seasons pairing 13
+ * or more rushing touchdowns with under 700 rushing yards, of 3,840. It is gone
+ * by 0.8 without a cap being placed on either number — the pairing simply stops
+ * being a thing the arithmetic can produce often.
+ *
+ * 1.0 and above are rejected on the passing side, not the rushing one. A
+ * league-year's leading passer already throws 42.5 touchdowns here against a
+ * real 38-40, and at 1.0 the best of 120 league-seasons reaches 60 and at 1.5
+ * it reaches 63 — past the real all-time 55, and past the top of the record
+ * band lib/gen/leagueHistory.ts seeds a brand-new league with (53-58), which
+ * makes the seeded record beatable in year one. At 0.8 the best of 120 is 58,
+ * exactly where the unchanged engine's own tail already sits on a second
+ * seed-set, so the tail is not made worse than it was. 0.4 and 0.6 are rejected
+ * from the other end: they leave the scheme spread at 1.21-1.34x against a real
+ * ~1.9x and still leave the 13-touchdown-on-650-yards season on the table.
+ *
+ * 0.8's 1.55x is deliberately short of the real ~1.9x. That last stretch costs
+ * more in the passing record book than it buys in the rushing one, and the two
+ * cannot be bought separately — they are the same touchdown.
+ * [TUNE]
+ */
+const TD_SPLIT_SCHEME_SLOPE = 0.8;
 /**
  * [TUNE] How much more concentrated scoring is than yardage. Red-zone looks go
  * to the men you trust, so a lead receiver's or a lead back's share of his
@@ -497,8 +590,90 @@ const TARGET_SHARE = {
   RB: [0.11, 0.04, 0.01],
 };
 
-/** Share of a team's carries and rushing yards, by backfield slot. [TUNE] */
+/**
+ * Share of a team's CARRIES, by backfield slot. [TUNE]
+ *
+ * Carries only. It used to be carries and rushing yards both, off this one
+ * vector, which is what made yards per carry a fact about a backfield rather
+ * than about a back — see RB_YPC_TILT.
+ *
+ * Three entries against a ROSTER_TARGETS.RB of {min 3, ideal 4, max 5}, and
+ * `allocateStats` slices the depth chart to three before this is applied, so
+ * nothing renormalises across a variable count: the lead back's realised share
+ * of his backs' carries is 57.3% measured over 120 league-seasons (real lead
+ * backs take 55-70%), and a fourth back takes none at all. That is 13.9% of
+ * RB-seasons finishing on zero carries, which is a defensible way to describe
+ * a gameday scratch and is left alone deliberately — a fourth slot here also
+ * lands him a share of TARGET_SHARE.RB's receiving work, which he should not
+ * have, and that is a separate change with its own measurement to do.
+ */
 const CARRY_SHARE = [0.55, 0.31, 0.14];
+
+/**
+ * ---------------------------------------------------------------------------
+ * YARDS PER CARRY IS A FACT ABOUT THE BACK
+ * ---------------------------------------------------------------------------
+ * [TUNE] How hard a back's rating bends his yards per carry away from the rest
+ * of his backfield's.
+ *
+ * A back's carries and his rushing yards used to come off one weight vector —
+ * `const rbWeights = rushTdWeights; // carries and rushing yards share one
+ * prior` — and the arithmetic consequence of that is that every back on a club
+ * averages the SAME yards per carry, exactly, every afternoon. Measured over
+ * 120 league-seasons the first, second and third backs in the league all
+ * averaged 4.52, to the hundredth, and a back's rating against his own yards
+ * per carry ran r = 0.233 with a top-quartile-over-bottom-quartile ratio of
+ * 1.069x. What little correlation there was came from team quality — good
+ * clubs gain more on the ground and their backs are better — and none at all
+ * from the back. A 90 OVR starter and the 58 OVR third-stringer behind him
+ * produced identical efficiency; only volume separated them.
+ *
+ * That is the same defect the linebacker's tackle count had (r = 0.082, fixed
+ * to 0.659) and the punter's average had (r = -0.027, fixed to 0.672), in the
+ * one column a player page prints as a back's headline efficiency stat.
+ *
+ * THIS IS A REDISTRIBUTION AND CANNOT BE ANYTHING ELSE. The team's rushing
+ * yardage is decided upstream by the drive sim, so a good back can only gain
+ * more than the men behind him, never more than his club gained — and his club
+ * already gained more for having him, because the backfield feeds the offensive
+ * unit rating (OFFENSE_UNIT_WEIGHTS.RB). The multiplier is normalised against
+ * the CARRY-WEIGHTED mean rating of the same three backs, which makes the
+ * weighted multiplier exactly 1 and the total exactly conserved.
+ *
+ * 0.9, CHOSEN OFF A SWEEP, NOT OFF A FEELING. Measured over 120 league-seasons
+ * on identical rosters and seeds, with the first, second and third backs' yards
+ * per carry, the league-wide spread of qualifying seasons (>= 100 carries), and
+ * a back's rating against his own average:
+ *
+ *   tilt   RB1 / RB2 / RB3 ypc      sd      r     top-q/bot-q   league leader
+ *   0.0    4.52 / 4.52 / 4.52    0.460   0.233      1.069x           1,574
+ *   0.5    4.62 / 4.43 / 4.28    0.471   0.363      1.107x           1,615
+ *   0.9    4.69 / 4.35 / 4.09    0.499   0.445      1.138x           1,649
+ *   1.4    4.79 / 4.26 / 3.85    0.555   0.516      1.178x           1,691
+ *
+ * 1.4 was rejected even though it lands the league-wide spread nearest a real
+ * qualifying field's: it buys that spread by putting 0.94 yards a carry between
+ * a starter and his club's third back, where real depth charts run about half
+ * to two-thirds of that. 0.9 puts 0.60 between them and still lands the spread
+ * at sd 0.499 against a real field's ~0.48-0.55, which is the number that chose
+ * it. 0.5 was rejected as too timid to be worth the change: it moves the
+ * correlation less than half as far for a third of the separation.
+ *
+ * r = 0.445 IS THE HONEST CEILING HERE AND IS NOT THE 0.659 THE LINEBACKER PASS
+ * REACHED. Two reasons, both real. The club's rushing total is fixed upstream,
+ * so a back can only out-gain his own teammates, never his own offensive line;
+ * and yards per carry is the noisiest, most line-and-scheme-dependent number in
+ * football, which is why real backs' averages swing a full yard year to year on
+ * unchanged ability. A rating that explained most of it would be the lie in the
+ * other direction.
+ *
+ * The league's leading rusher moving 1,574 -> 1,649 against a real ~1,700 is a
+ * side-effect and not a target: not one extra yard is rushed for anywhere, the
+ * best back in a league-year simply keeps more of what his club already gained.
+ * Floored at 0.45 for the same reason `shareWeights` floors its own tilt: a
+ * replacement-level fill-in gains less, he does not go backwards.
+ */
+const RB_YPC_TILT = 0.9;
 
 /**
  * ---------------------------------------------------------------------------
@@ -610,8 +785,17 @@ function allocateStats(
   const passAtt = Math.max(12, Math.round(own.plays * passRate + rng.normal(0, 3)));
   const rushAtt = Math.max(8, own.plays - passAtt);
 
-  // Touchdowns split between pass and rush. [TUNE] 62% through the air.
-  const passTd = Math.round(own.td * clamp(0.62 + rng.normal(0, 0.12), 0.2, 0.9));
+  // Touchdowns split between pass and rush, tracking the afternoon this club
+  // actually had rather than a league-wide constant — see
+  // TD_SPLIT_SCHEME_SLOPE. Read off the REALISED yardage split rather than off
+  // `passYardShare`, so a game a team happened to run the ball in is a game it
+  // happened to score on the ground in; the deterministic scheme value was the
+  // alternative and it throws that coupling away for nothing.
+  const passTdShare = clamp(
+    PASS_TD_SHARE + TD_SPLIT_SCHEME_SLOPE * (passYards / totalYards - LEAGUE_PASS_YARD_SHARE),
+    0.2, 0.9,
+  );
+  const passTd = Math.round(own.td * clamp(passTdShare + rng.normal(0, 0.12), 0.2, 0.9));
   const rushTd = Math.max(0, own.td - passTd);
 
   const push = (p: SimPlayer, stats: SeasonStats) => {
@@ -701,13 +885,23 @@ function allocateStats(
   }
 
   // --- Running backs -------------------------------------------------------
-  const rbWeights = rushTdWeights; // carries and rushing yards share one prior
+  // Carries are a depth-chart fact; yards per carry is a fact about the back.
+  // They used to be one vector — see RB_YPC_TILT for the measurement that
+  // separated them and for why the yard weights are renormalised rather than
+  // scaled, which is what keeps the club's rushing total exactly where the
+  // drive sim put it.
+  const rbWeights = rushTdWeights;
+  const carryMeanRating = rbs.reduce((a, p, i) => a + effectiveRating(p) * rbWeights[i], 0) || 1;
+  const rbYardRaw = rbs.map((p, i) => rbWeights[i]
+    * Math.max(0.45, 1 + RB_YPC_TILT * (effectiveRating(p) / carryMeanRating - 1)));
+  const rbYardSum = rbYardRaw.reduce((a, b) => a + b, 0) || 1;
+  const rbYardWeights = rbYardRaw.map((w) => w / rbYardSum);
   rbs.forEach((p, i) => {
     const rec = recLine[targets.length + i];
     push(p, {
       gp: 1,
       rushAtt: Math.round(backRushAtt * rbWeights[i]),
-      rushYds: Math.round(backRushYds * rbWeights[i]),
+      rushYds: Math.round(backRushYds * rbYardWeights[i]),
       rushTd: groundTds[i],
       ...rec.stats,
     });

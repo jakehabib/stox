@@ -42,18 +42,33 @@
  *   tuning (lib/tuning.ts, lib/ratings.ts, lib/cap.ts) or from a real-sport
  *   fact — never from a number invented to sound authoritative.
  *
- *   AND WHERE THE TWO DISAGREE, THIS LEAGUE WINS. Several per-play rates here
- *   do not land where real football lands — measured over fifteen played
- *   seasons the median passer sits at 5.4 yards an attempt (the real game is
- *   nearer 7.0), the median back at 5.4 a carry (the real game is nearer 4.3),
- *   the median receiver at 8.6 a catch (the real game is nearer 12) and the
- *   median starting passer at an 87 rating. Quoting the real-world figure
- *   beside a table that never produces it would be the lying-metric failure in
- *   its purest form: a tooltip telling a GM his best quarterback is bad at a
- *   number no quarterback in this league has ever reached. So the passing,
- *   rushing, receiving and kicking benchmarks describe THIS league's
- *   landscape. Completion rate, touchdown rate and interception rate land
- *   close enough to the real game that the two agree anyway.
+ *   AND WHERE THE TWO DISAGREE, THIS LEAGUE WINS. Quoting a real-world figure
+ *   beside a table that never produces it is the lying-metric failure in its
+ *   purest form: a tooltip telling a GM his best quarterback is bad at a number
+ *   no quarterback in this league has ever reached. So every benchmark below
+ *   describes THIS league's landscape.
+ *
+ *   THE GAP HAS SINCE MOSTLY CLOSED, AND THE BANDS HAD TO BE RE-MEASURED WHEN
+ *   IT DID. This paragraph used to record a median back at 5.4 a carry, a
+ *   median passer at 5.4 an attempt and a median receiver at 8.6 a catch —
+ *   all correct when written, all measured against the engine as it stood
+ *   before the drive simulation was recalibrated (137a1e2) and the backfield's
+ *   efficiency split landed. Measured on the engine that ships today: a back
+ *   runs 4.55 league-wide and 4.68 at the median starter (real ~4.3), a passer
+ *   6.26 an attempt (real ~7.0), a receiver 10.11 a catch (real ~12). Close
+ *   enough that the two now nearly agree — but the entries still quote this
+ *   league, because that is the rule and because the next recalibration will
+ *   move them again.
+ *
+ *   The old figures did not stop being true of anything: 20,764 back-seasons
+ *   already stored in PlayerSeason still have a median of 5.35, because they
+ *   were simmed by that engine. A band written against a retired engine is the
+ *   same defect as a comment describing a policy the code no longer follows —
+ *   which is why THIS paragraph is dated by the commit that made it wrong, and
+ *   why anyone retuning the sim must re-measure these before shipping.
+ *
+ *   Completion rate, touchdown rate and interception rate land close enough to
+ *   the real game that the two agreed all along.
  * ===========================================================================
  */
 
@@ -427,7 +442,20 @@ export const GLOSSARY = {
     // GM his best back was below average. Found while the Stats page was
     // being rebuilt: a 90-overall back at 4.8 ranked T-27th of 88 and read
     // as a problem.
-    why: 'Around 4.35 is the middle of the pack, the same as the real thing. Past 5 is a real running game; under 4 and the run is costing you more than it gains.',
+    // RE-MEASURED over 120 league-seasons of the live engine rather than
+    // one finished save: 4.55 league-wide across every carry, and 4.68 at
+    // the median lead back after the efficiency split below. The first
+    // correction here read 4.35, which was a single 17-game save's
+    // qualified backs — right in kind, 0.2 low in fact.
+    //
+    // AND THE ORIGINAL 5.4 IS NOW EXPLAINED rather than merely wrong: the
+    // 20,764 qualifying back-seasons already stored in PlayerSeason have
+    // a median of 5.35. That was true of the pre-137a1e2 engine and is
+    // still true of those saved rows — and of no season this engine sims.
+    // A band written against an engine that has since been recalibrated
+    // is the same defect as a comment describing a policy the code no
+    // longer follows.
+    why: 'Around 4.5 is the middle of the pack, a shade above the real thing\u2019s 4.3. Past 5 is a real running game; under 4 and the run is costing you more than it gains.',
   },
   catchRate: {
     term: 'Catch %',
