@@ -9,7 +9,7 @@ import { ratingColorForRange, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE } from '@/lib/tuning';
 import { bandCutoffs, consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
-import { draftOrderContext, pickNumbers, projectionAppliesTo, draftIsStarted, rookieCapOutlook } from '@/lib/draft';
+import { draftOrderContext, pickNumbers, projectionAppliesTo, draftIsStarted, rookieCapOutlook, overallPickNumber } from '@/lib/draft';
 import { needSeverity, teamNeeds } from '@/lib/ai/gm';
 import { loadWorkoutSlots } from '@/lib/workouts';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -454,7 +454,14 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     include: { player: { select: { firstName: true, lastName: true, position: true } } },
     orderBy: [{ year: 'asc' }, { round: 'asc' }],
   });
-  const overallOf = (round: number, slot: number) => (round - 1) * roundSize + slot;
+  // The draft's own arithmetic, borrowed rather than written out again. This
+  // was `(round - 1) * roundSize + slot` — the same formula overallPickNumber
+  // already is, and the same one pickNumbers derives its `overall` from, which
+  // is three copies of one sentence on a page that prints all three numbers
+  // beside each other. Identical today (roundSize IS LEAGUE.TEAM_COUNT); the
+  // point is that a board reading "#32" can never sit over a recap reading
+  // "#1" because one of the copies moved.
+  const overallOf = (round: number, slot: number) => overallPickNumber({ round, slot });
   // The one year whose order has actually been reseeded: see seededDraftYear
   // in lib/draft.ts, which walks the phase machine and says why the phase —
   // not the year, and not DraftState — is the honest test.

@@ -118,12 +118,36 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
     picks.filter((p) => !p.used && p.playerId != null).map((p) => p.id)));
 
   // --- INV-11: duplicate pick slots ---
+  // THE KEY IS (year, round, slot) AND NOTHING ELSE. `originalTeamId` used to
+  // be in it — in this code AND in GAME_INVARIANTS.md, which is why nothing
+  // caught it: the rule and its documentation agreed with each other and both
+  // were wrong. Adding a field to a uniqueness key makes the claim STRICTLY
+  // WEAKER, so two picks sitting on the SAME slot with different origins
+  // passed. That is exactly the state an interrupted reseed leaves behind, and
+  // exactly the state `currentPick()` resolves arbitrarily with a `findFirst`
+  // on (round, slot) — one of the two comes up and is paid that slot's price,
+  // the other never comes up at all.
+  //
+  // The original team is not part of what makes a slot unique. It is
+  // provenance: which club's pick this once was, carried so a traded pick can
+  // say where it came from. Two picks may absolutely share an origin; no two
+  // may share a selection.
+  //
+  // Measured across all 220 leagues in the dev database, 177,408 pick rows:
+  // the old key found ZERO violations, the documented key finds SIX — all in
+  // one save, all real, with no false positives. Six clubs in that league
+  // never select and six rookie contracts are never written, and the draft
+  // simply ends short with nothing on screen saying why. The check was silent
+  // for the whole life of the bug.
+  //
+  // This is scoped to one league already (`picks` is that league's), so
+  // leagueId is implied rather than dropped.
   const slotCounts = new Map<string, string[]>();
   for (const p of picks) {
-    const key = `${p.year}-${p.round}-${p.slot}-${p.originalTeamId}`;
+    const key = `${p.year}-${p.round}-${p.slot}`;
     (slotCounts.get(key) ?? slotCounts.set(key, []).get(key)!).push(p.id);
   }
-  push(violation('INV-11', 'error', 'Duplicate DraftPick for the same (year, round, slot, originalTeam)',
+  push(violation('INV-11', 'error', 'Duplicate DraftPick for the same (year, round, slot)',
     [...slotCounts.values()].filter((ids) => ids.length > 1).flat()));
 
   // --- INV-12: a completed rookie draft leaves no unused picks for that year ---

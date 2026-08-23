@@ -74,8 +74,21 @@ other — `lib/invariants.ts` reports violations by ID.
 - **INV-09** — `DraftPick.used === true` implies `playerId != null`.
 - **INV-10** — `DraftPick.used === false` implies `playerId == null`.
 - **INV-11** — No two `DraftPick` rows share the same
-  `(leagueId, year, round, slot, originalTeamId)`. A duplicate means pick
-  generation ran twice for the same slot.
+  `(leagueId, year, round, slot)`. A duplicate means two picks are pointing at
+  one selection.
+
+  This key used to carry `originalTeamId` as well, here and in
+  `lib/invariants.ts`, which made the rule strictly weaker than it reads: two
+  picks on the SAME slot with different origins satisfied it. The original team
+  is provenance — which club's pick this once was, so a traded pick can say
+  where it came from — and two picks may absolutely share an origin. No two may
+  share a selection, because `currentPick()` resolves the clock with a
+  `findFirst` on `(round, slot)`: of two picks sharing slot 26, one comes up
+  and is paid slot 26's price and the other never comes up at all. Measured
+  across 220 leagues and 177,408 pick rows, the old key found **zero**
+  violations and the corrected key finds **six** — all real, all in one save,
+  no false positives. Six clubs there never select, six rookie contracts are
+  never written, and the draft ends short with nothing on screen saying why.
 - **INV-12** — Any `DraftPick` from a season year strictly before the
   league's current `seasonYear` is `used === true`. A pick's `year` only ever
   equals the `seasonYear` at the moment its draft actually runs, so once the

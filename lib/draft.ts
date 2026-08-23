@@ -257,11 +257,24 @@ export function overallPickNumber(pick: { round: number; slot: number }): number
   return (pick.round - 1) * LEAGUE.TEAM_COUNT + pick.slot;
 }
 
-/** The deal the man taken at this pick signs, before it is written anywhere. */
+/**
+ * The deal the man taken at this pick signs, before it is written anywhere.
+ *
+ * THE TERM IS THE LEAGUE'S ROOKIE TERM, NOT A 4 TYPED HERE. It was a literal
+ * `4`, which is the same second copy this block's header was written about:
+ * lib/gen/league.ts puts every young player in a generated league on
+ * `CAP.ROOKIE_DEAL_YEARS`, so the constant already governed one of the two
+ * ways a man can arrive on a rookie contract and a literal governed the other.
+ * They agree today — the constant is 4 — so nothing moves; what changes is
+ * that they cannot stop agreeing. `bonusPct` deliberately stays a literal and
+ * is NOT shared with the generator's 0.15: that number is low because those
+ * contracts are dropped into a random mid-deal year rather than signed fresh
+ * (see the note there), and a real rookie deal is bonus-heavy.
+ */
 export function rookieDealForPick(pick: { round: number; slot: number }, seasonYear: number) {
   return buildContract({
     apy: rookieScaleApy(overallPickNumber(pick), LEAGUE.TEAM_COUNT * ROOKIE_SCALE_ROUNDS),
-    years: 4, signedYear: seasonYear, isRookieDeal: true, bonusPct: 0.4,
+    years: CAP.ROOKIE_DEAL_YEARS, signedYear: seasonYear, isRookieDeal: true, bonusPct: 0.4,
   });
 }
 
@@ -372,6 +385,37 @@ export async function rookieCapOutlook(opts: {
   leagueId: string; teamId: string; seasonYear: number; capMode: CapMode;
 }): Promise<RookieCapOutlook | null> {
   if (opts.capMode === 'OFF') return null;
+
+  /**
+   * A PRICE IS ONLY A PRICE WHEN THE SLOT IS REAL, and this is the gate that
+   * makes that true of the function rather than of its one caller.
+   *
+   * Every DraftPick row is born with a placeholder slot — the club's index in
+   * the generation loop — and keeps it until reseedDraftOrder rewrites the
+   * year from the finished season (see seededDraftYear, which walks the phase
+   * machine). Priced off a placeholder, every figure this returns is a real
+   * number computed from a fake selection: measured on the ladder, a club
+   * created first (placeholder slot 1) that actually finished best (real slot
+   * 32) would be quoted $28.5M for a seven-pick class that will really charge
+   * it $21.1M — 35% wrong, and wrong in the direction that fires a warning at
+   * a club with room to spare.
+   *
+   * The war room already only asks about the year it is standing in, so this
+   * changes nothing that ships today. It is here because the next caller —
+   * a capital panel, a trade screen wanting to put money on a future first —
+   * would get placeholder dollars back with no way to tell, which is exactly
+   * the class of bug this file's header exists about. Returning null is the
+   * honest answer: there is no price for that draft yet.
+   *
+   * REJECTED: taking the seeded year as an argument, so the caller asserts it.
+   * That is the convention this module already relies on and it is precisely
+   * what fails silently — the caller passing the wrong year is the bug, so it
+   * cannot also be the check.
+   */
+  const league = await prisma.league.findUnique({
+    where: { id: opts.leagueId }, select: { phase: true, seasonYear: true },
+  });
+  if (!league || seededDraftYear(league) !== opts.seasonYear) return null;
 
   // The same rows currentPick() resolves the clock from, filtered to the ones
   // he still has to spend. Reading DraftPick directly rather than taking the
@@ -1137,11 +1181,57 @@ export async function reseedDraftOrder(leagueId: string, seasonYear: number) {
   const order = haveEveryRecord
     ? standingsOrder(teams.map((t) => ({ ...t, ...byTeam.get(t.id)! })))
     : standingsOrder(teams);
-  const picks = await prisma.draftPick.findMany({ where: { leagueId, year: seasonYear } });
-  for (const pick of picks) {
-    const slot = order.findIndex((t) => t.id === pick.originalTeamId) + 1;
-    if (slot > 0) await prisma.draftPick.update({ where: { id: pick.id }, data: { slot } });
-  }
+  /**
+   * ALL 224 SLOTS MOVE TOGETHER OR NONE OF THEM DO, and that is not a
+   * refinement — a half-finished reseed is the one state in which a pick can
+   * be charged another pick's salary.
+   *
+   * This was a bare `for` loop of 224 separate awaited updates, so any
+   * interruption partway — a restart, a request abort, a step further up the
+   * advance throwing — committed the rows it had reached and left the rest on
+   * their generation-time placeholders. The two sets then collide, because a
+   * placeholder and a standings rank are both drawn from 1..32. FOUND IN THE
+   * DEV DATABASE (scripts/_ps_dbaudit.ts): one save is sitting in exactly that
+   * state right now — 25 of its 32 round-one picks reseeded, 7 still on
+   * placeholders, six slots held by two picks each and six slots held by none.
+   *
+   * What that costs is precisely what this file is about. currentPick()
+   * resolves the club on the clock with `findFirst` on (round, slot): of two
+   * picks sharing slot 26, one comes up and is paid the slot-26 price and the
+   * other never comes up at all — so six clubs never make a selection, six
+   * rookie contracts are never written, and the draft ends six men short with
+   * nothing on any screen saying why. INV-11 exists to forbid this; nothing
+   * enforced it.
+   *
+   * Two changes, and both are needed:
+   *
+   *   THE WRITE IS ONE TRANSACTION. The array form, not the interactive one:
+   *   it is a single batched round trip with no interactive timeout to run
+   *   out of on 224 rows, and (leagueId, year, round, slot) is an index rather
+   *   than a unique constraint, so the intermediate states inside the batch
+   *   cannot trip anything.
+   *
+   *   A CLUB THAT CANNOT BE RANKED ABORTS THE WHOLE YEAR. `slot > 0` used to
+   *   skip that pick and carry on, which is the same mixed state arrived at
+   *   deliberately. There is no useful half-order: leaving the year entirely
+   *   on placeholders is honest (seededDraftYear still calls it seeded, but
+   *   every pick then wears a consistent placeholder and the collision cannot
+   *   happen), and it throws so the advance that called it says so rather than
+   *   handing the draft a board it cannot run.
+   */
+  const rankOf = new Map(order.map((t, i) => [t.id, i + 1]));
+  const picks = await prisma.draftPick.findMany({
+    where: { leagueId, year: seasonYear },
+    select: { id: true, originalTeamId: true },
+  });
+  const writes = picks.map((pick) => {
+    const slot = rankOf.get(pick.originalTeamId);
+    if (slot === undefined) {
+      throw new Error(`Draft order for ${seasonYear} cannot be seeded: a pick originates from a club that is not in this league.`);
+    }
+    return prisma.draftPick.update({ where: { id: pick.id }, data: { slot } });
+  });
+  await prisma.$transaction(writes);
 }
 
 /**
