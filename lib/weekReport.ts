@@ -9,7 +9,7 @@ import { computeClinchStatus, clinchScenarioTag, StandingsTeam } from './clinchS
 import { generateTeamLogoParams } from './gen/teamLogo';
 import { buildLeagueRatings, estimateGameWinChance, TeamRating } from './teamRating';
 import { rankWire } from './wireRank';
-import { projectedDraftOrder } from './draft';
+import { projectedDraftOrder, draftSlotAmong } from './draft';
 import { statScore } from './news';
 import { generateStorylines } from './storyline';
 import { careerColumns, formatColumn, isDerived } from './statLabels';
@@ -39,6 +39,9 @@ import { resolveStartYear } from './leagueYear';
  * covering the whole span (see components/AdvanceWeekButton.tsx), never one
  * per week. The Tier-0 payload below it (`TrophyMoment`) is the only
  * full-screen interruption in the game and can fire at most once per season.
+ * It is rendered by components/ds/TrophyMoment.tsx after a single advance and
+ * by components/ds/SeasonEndCard.tsx when the same press also carried a
+ * stretch of weeks — one payload, two screens, still never both at once.
  * ===========================================================================
  */
 
@@ -99,6 +102,27 @@ export interface ReportChange {
   clinch: { label: string; tone: 'good' | 'bad' } | null;
   /** The clinch line only shouts on the week it actually flips. */
   clinchFlipped: boolean;
+  /**
+   * Mathematically out of the playoff picture — not "unlikely", the same
+   * adversarial projection lib/clinchScenario.ts uses to say "clinched".
+   *
+   * WHY THE BAND NEEDS THIS AS A FLAG AND NOT JUST A LABEL. Once this is
+   * true, "Playoff position: 12th → 12th · 4.0 GB" is not a quiet week, it
+   * is a row describing a race that has finished. It gets replaced by the
+   * board below, which is the number still moving.
+   */
+  playoffsOut: boolean;
+  /**
+   * Where this club would pick if the season ended on these standings, before
+   * and after the week — the real worst-first rule (draftSlotAmong), not a
+   * reordering of the standings table.
+   *
+   * Always computed, only rendered once `playoffsOut`. A club still in the
+   * race does not want to be told it is climbing the draft board; a club
+   * that is out has nothing else that moved.
+   */
+  draftSlotBefore: number;
+  draftSlotAfter: number;
 }
 
 export interface ReportGameBall {
@@ -112,6 +136,16 @@ export interface ReportGameBall {
   heightIn: number;
   weightLb: number;
   teamColor: string;
+  /**
+   * He is in the last year of his deal.
+   *
+   * The one piece of front-office context that changes what a good afternoon
+   * MEANS, and it costs one already-joined column. It matters most in the
+   * weeks this report was thinnest: a season that is mathematically over still
+   * has men auditioning in it, and "who is playing for a contract" is a real
+   * answer to "what was that Sunday for".
+   */
+  contractYear: boolean;
 }
 
 /**
@@ -198,10 +232,17 @@ export interface CoachPayload {
   lines: CoachLine[];
   team: CoachTeamContext | null;
   shape: GameShape | null;
-  injuries: (ReportInjury & { playerId: string })[];
+  injuries: ReportInjury[];
 }
 
 export interface ReportInjury {
+  /**
+   * Carried so the room can link a name to the man. It was already on the
+   * Coach's Comments copy of this row and missing from the one the panel
+   * renders, which is why the report could name your starting quarterback and
+   * give you no way to go and look at him.
+   */
+  playerId: string;
   name: string;
   position: string;
   weeks: number;
@@ -604,8 +645,10 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
       // which is exactly what seedPlayoffs() builds the bracket from.
       const seedIndex = (rows: TeamStandingRow[]) => conferenceSeedOrder(rows).findIndex((t) => t.id === userTeam.id) + 1;
 
-      const clinchBefore = clinchScenarioTag(computeClinchStatus(userTeam.id, confBefore as unknown as StandingsTeam[]));
-      const clinchAfter = clinchScenarioTag(computeClinchStatus(userTeam.id, confAfter as unknown as StandingsTeam[]));
+      const statusBefore = computeClinchStatus(userTeam.id, confBefore as unknown as StandingsTeam[]);
+      const statusAfter = computeClinchStatus(userTeam.id, confAfter as unknown as StandingsTeam[]);
+      const clinchBefore = clinchScenarioTag(statusBefore);
+      const clinchAfter = clinchScenarioTag(statusAfter);
 
       base.changed = {
         recordBefore: recordString(beforeRow),
@@ -622,6 +665,19 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
         pointDiff: afterRow.pointsFor - afterRow.pointsAgnst,
         clinch: clinchAfter,
         clinchFlipped: (clinchAfter?.label ?? null) !== (clinchBefore?.label ?? null),
+        // THE ROW A DEAD SEASON STILL MOVES.
+        //
+        // Measured on a losing week 7: most of this band reported no change,
+        // and the one row that was guaranteed never to change again — playoff
+        // position, for a club that is mathematically out — kept printing a
+        // seed and a games-back figure as if the race were live. A season that
+        // has stopped moving does not stop having a number in it; the number
+        // is the draft board, and it moves every single week from here to the
+        // end. Both slots come from the standings already in hand, over the
+        // exact rule that seeds the real draft.
+        playoffsOut: statusAfter.playoffEliminated,
+        draftSlotBefore: draftSlotAmong(userTeam.id, before.teams),
+        draftSlotAfter: draftSlotAmong(userTeam.id, afterTeams),
       };
     }
   }
@@ -646,7 +702,12 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
   const roster = wantedIds.length
     ? await prisma.player.findMany({
         where: { id: { in: wantedIds } },
-        select: { id: true, age: true, heightIn: true, weightLb: true, position: true, experience: true },
+        select: {
+          id: true, age: true, heightIn: true, weightLb: true, position: true, experience: true,
+          // One extra column on a query that was already being made, not a
+          // fourth round trip. See ReportGameBall.contractYear.
+          contract: { select: { yearsRemaining: true } },
+        },
       })
     : [];
   const byId = new Map(roster.map((p) => [p.id, p]));
@@ -675,13 +736,17 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
         heightIn: player?.heightIn ?? 73,
         weightLb: player?.weightLb ?? 220,
         teamColor,
+        // Absent contract row means an unsigned body on the roster, which is
+        // not the same claim as "expiring" — so it stays false rather than
+        // guessing.
+        contractYear: (player?.contract?.yearsRemaining ?? 0) === 1,
       };
     }
   }
 
   // --- Band 4: the room ----------------------------------------------------
   base.injuries = myInjuries.map((i) => ({
-    name: i.name, position: byId.get(i.playerId)?.position ?? '', weeks: i.weeks, type: i.type,
+    playerId: i.playerId, name: i.name, position: byId.get(i.playerId)?.position ?? '', weeks: i.weeks, type: i.type,
   }));
 
   // --- Coach's Comments: numbers only -------------------------------------
@@ -783,7 +848,13 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
       oppId: opp.id, oppAbbr: opp.abbr, oppCity: opp.city, oppNickname: opp.nickname,
       oppRecord: oppRow ? recordString(oppRow) : '',
       atHome, winChance,
-      stakes: await stakesLine(leagueId, userTeam.id, opp.id, league.seasonYear),
+      stakes: await stakesLine(
+        leagueId, userTeam.id, opp.id, league.seasonYear, afterTeams,
+        // Only the regular season has a "your season is over but theirs isn't"
+        // state. A playoff round has no standings band, so there is no honest
+        // elimination flag to read here and the old ordering stands.
+        opts.trackStandings && (base.changed?.playoffsOut ?? false),
+      ),
     };
   } else if (!opts.trackStandings) {
     // No next game and this was a postseason round: either they were knocked
@@ -834,8 +905,39 @@ export async function buildWeekReport(leagueId: string, opts: BuildWeekReportOpt
  * "what it changed" band already prints; MILESTONE and PLAYER_ARC are about
  * a player's season, not about Sunday, and reading one under "Next up" is a
  * non-sequitur.
+ *
+ * ONE EXCEPTION, AND IT IS THE WHOLE POINT OF THE DEAD WEEKS. When YOUR season
+ * is mathematically over and theirs is not, the head-to-head is trivia and the
+ * live fact is that the men across the field still have something to lose. A
+ * club playing out the string is the most dangerous fixture on anyone's
+ * schedule, and that is the one thing worth knowing about a week 14 game a
+ * spreadsheet says is meaningless. So it goes first, and only then.
  */
-async function stakesLine(leagueId: string, teamId: string, oppId: string, seasonYear: number): Promise<string | null> {
+async function stakesLine(
+  leagueId: string,
+  teamId: string,
+  oppId: string,
+  seasonYear: number,
+  rows: TeamStandingRow[],
+  myPlayoffsOut: boolean,
+): Promise<string | null> {
+  if (myPlayoffsOut) {
+    const oppRow = rows.find((t) => t.id === oppId);
+    if (oppRow) {
+      const oppConf = rows.filter((t) => t.conference === oppRow.conference);
+      const oppStatus = computeClinchStatus(oppId, oppConf as unknown as StandingsTeam[]);
+      if (!oppStatus.playoffEliminated) {
+        const gb = gamesBackOfCutLine(oppId, oppConf);
+        if (gb === null) {
+          const seed = conferenceSeedOrder(oppConf).findIndex((t) => t.id === oppId) + 1;
+          return `They are holding the ${ordinal(seed)} seed. You can take it off them.`;
+        }
+        return gb === 0
+          ? 'They are level with the last playoff spot. This one decides something for them.'
+          : `They are ${gb.toFixed(1)} games out of the last playoff spot and still alive.`;
+      }
+    }
+  }
   const met = await prisma.game.findFirst({
     where: {
       leagueId, seasonYear, played: true,

@@ -8,6 +8,8 @@ import { formatMoney } from '@/lib/cap';
 import type { WeekReport, TrophyMoment as TrophyData, CoachPayload } from '@/lib/weekReport';
 import { WeekReportPanel, WeekReportSpan } from '@/components/ds/WeekReportPanel';
 import { TrophyMoment } from '@/components/ds/TrophyMoment';
+import { SeasonEndCard } from '@/components/ds/SeasonEndCard';
+import { foldSeasonEnd, SeasonEndSummary } from '@/lib/seasonEndCard';
 
 /**
  * A refusal to advance, plus the sentence explaining it. The salary-cap gate
@@ -160,6 +162,9 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
   // decision — so neither blocks anything the user wants to do next.
   const [report, setReport] = useState<{ report: WeekReport; span: WeekReportSpan | null; coach: (CoachPayload | null)[] } | null>(null);
   const [trophy, setTrophy] = useState<TrophyData | null>(null);
+  // The third artifact, and the narrowest: a long advance that ended in the
+  // postseason. It is not a trophy with a report behind it — see finish().
+  const [seasonEnd, setSeasonEnd] = useState<{ data: TrophyData; season: SeasonEndSummary } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
@@ -244,25 +249,80 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
    *
    * A report replaces the toast when there is one; a phase with nothing to
    * report (an offseason step, the preseason roll) still gets exactly the
-   * toast it got before, unchanged. The Tier-0 moment supersedes both — but
-   * only ever one of them is on screen at a time.
+   * toast it got before, unchanged. A Tier-0 moment supersedes both.
+   *
+   * There are now THREE artifacts this can raise and the rule has not moved:
+   * only ever ONE of them is on screen at a time. The third is not a fourth
+   * tier and it is not two artifacts queued — it is the one screen that owns
+   * the intersection where a Tier-0 moment and a whole stretch of season
+   * arrive on the same press. See the gate below.
    */
   const finish = (text: string, reports: WeekReport[], earned: TrophyData | null) => {
     setCapBlock(null);
     router.refresh();
+    // Every week's coach payload travels, not just the last one. The panel
+    // renders the final week's standings and the WHOLE span's comments — "who
+    // carried the stretch" has no meaning inside one game.
+    //
+    // `span` is null for a single advance and non-null the moment two or more
+    // weeks were folded together, so it is also the honest test for "did this
+    // press cover a stretch" — see foldSpan, which returns null under two
+    // reports. A multi-advance that only got one step in (Advance to Offseason
+    // pressed on the final itself) has no stretch and is not treated as one.
+    const span = foldSpan(reports);
+    const staged = reports.length > 0
+      ? { report: reports[reports.length - 1], span, coach: reports.map((r) => r.coach) }
+      : null;
+
     if (earned) {
       setToast(null);
       setReport(null);
+      /*
+       * THE GATE. Four combinations, and this branch owns two of them.
+       *
+       * THE BUG IT REPLACES: this branch used to call setReport(null) and
+       * raise the trophy, full stop. So a club that missed the playoffs and
+       * jumped twenty-two weeks got the whole span strip — every result, both
+       * records, every injury — and a club that WON THE TITLE on the same
+       * press got the ring and had those twenty-two weeks discarded. The
+       * season you would most want the record of was the one that threw it
+       * away.
+       *
+       * The fix is NOT to queue the span behind the trophy. The interruption
+       * budget's rule is that the Tier-0 moment supersedes both and only ever
+       * one of them is on screen at a time, and two artifacts back to back is
+       * that rule with the corner filed off. Instead the intersection —
+       * a long stretch AND a season that ended — is its own event and gets its
+       * own single artifact, which tells the season and the title as one
+       * thing. Nothing is stacked and nothing is thrown away.
+       *
+       *   single advance, no trophy  → the week report      (below)
+       *   single advance, trophy     → the trophy moment    (here, span null)
+       *   multi advance,  no trophy  → the span strip       (below)
+       *   multi advance,  trophy     → the season-end card  (here, span set)
+       *
+       * `earned` is at most one per run however far the batch travelled —
+       * runMultiple keeps the FIRST Tier-0 it sees, so a jump that passes
+       * through the title game and carries on into the offseason still arrives
+       * here with exactly one. Both its kinds are handled: CHAMPION and the
+       * elimination that ends everyone else's January are the same event from
+       * the card's point of view, which is that the year is over, and the
+       * twenty-two weeks were being destroyed for both of them.
+       */
+      if (span) {
+        setTrophy(null);
+        setSeasonEnd({ data: earned, season: foldSeasonEnd(reports) });
+        return;
+      }
+      setSeasonEnd(null);
       setTrophy(earned);
       return;
     }
-    if (reports.length > 0) {
+    if (staged) {
       setToast(null);
       setTrophy(null);
-      // Every week's coach payload travels, not just the last one. The
-      // panel renders the final week's standings and the WHOLE span's
-      // comments — "who carried the stretch" has no meaning inside one game.
-      setReport({ report: reports[reports.length - 1], span: foldSpan(reports), coach: reports.map((r) => r.coach) });
+      setSeasonEnd(null);
+      setReport(staged);
       return;
     }
     showToast(text);
@@ -273,6 +333,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
     setCapBlock(null);
     setReport(null);
     setTrophy(null);
+    setSeasonEnd(null);
     router.refresh();
     setTimeout(() => setToast(null), 7000);
   };
@@ -281,20 +342,36 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
     setToast(null);
     setReport(null);
     setTrophy(null);
+    setSeasonEnd(null);
     setCapBlock(block ? { ...block, summary } : { teamAbbr: '', shortfall: 0, path: [], summary });
     router.refresh();
   };
 
   return (
     <div className="relative" ref={ref}>
-      {trophy && <TrophyMoment data={trophy} leagueId={leagueId} onClose={() => setTrophy(null)} />}
-      {!trophy && report && (
+      {/* Exactly one of these three is ever set — finish() clears the other
+          two on every path — but the guards are kept anyway, because the cost
+          of being wrong here is two full-screen overlays at once. */}
+      {seasonEnd && (
+        <SeasonEndCard
+          data={seasonEnd.data}
+          season={seasonEnd.season}
+          leagueId={leagueId}
+          onClose={() => setSeasonEnd(null)}
+        />
+      )}
+      {!seasonEnd && trophy && <TrophyMoment data={trophy} leagueId={leagueId} onClose={() => setTrophy(null)} />}
+      {!trophy && !seasonEnd && report && (
         <WeekReportPanel
           report={report.report}
           span={report.span}
           coach={report.coach}
           leagueId={leagueId}
           onClose={() => setReport(null)}
+          // The panel covers this button while it is open (see the footer
+          // comment in WeekReportPanel), so the loop has to be able to
+          // continue from inside it. Same handler the header button runs.
+          onAdvance={runSingle}
         />
       )}
       <div className="flex">
@@ -302,11 +379,21 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
           {pending ? (progress ?? 'Working…') : 'Advance ▸'}
         </button>
         {OPTIONS.length > 0 && (
+          /* THIS STAYS A BARE ▾ ON PURPOSE, and it was briefly not one.
+             It carried a "Jump ahead" label for a while on the grounds that a
+             playtester never found the menu. But the cadence has been ruled
+             on: watching a season go past one week at a time IS the game, and
+             the offseason is already the truncated part. A word on this
+             control advertises the skip next to the button whose whole job is
+             not to be skipped. The menu keeps its accessible name and its
+             expanded state for anyone navigating by keyboard or screen
+             reader; what it does not get is a poster. */
           <button
             onClick={() => setMenuOpen((v) => !v)}
             disabled={pending}
             className="btn-primary rounded-l-none border-l border-black/20 px-2"
             aria-label="More advance options"
+            aria-expanded={menuOpen}
           >
             ▾
           </button>

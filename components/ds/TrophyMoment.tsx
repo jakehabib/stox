@@ -12,7 +12,7 @@ import { GameShapePath } from './GameShapePath';
 
 /**
  * ===========================================================================
- * TIER 0 — the only full-screen interruption in the game
+ * TIER 0 — the full-screen interruption a finished season is allowed
  * ===========================================================================
  * Winning the championship used to return the string 'The championship game
  * is complete! Welcome to the offseason.' in the same 320px corner card, in
@@ -36,6 +36,15 @@ import { GameShapePath } from './GameShapePath';
  * history line is COUNTED off TeamSeasonRecord, never asserted, and the GM's
  * own share of it is bounded on his hire year the way lib/gmCareer.ts bounds
  * everything: a title won in 2011 belongs to the club, not to him.
+ *
+ * ONE PRESS CAN NOW ARRIVE HERE CARRYING A WHOLE SEASON, and when it does
+ * this screen is not the one that renders. A multi-week advance that ends in
+ * the postseason hands its stretch of week reports and this payload to
+ * components/ds/SeasonEndCard.tsx instead, because raising the trophy on that
+ * path used to discard every week behind it. This component still owns the
+ * single advance — the round you pressed Advance for and watched end your
+ * year — and the budget is unchanged either way: exactly one full-screen
+ * interruption, at most once a season, and never two in a row.
  *
  * DEFEAT IS NOT THE WIN SCREEN IN RED. The elimination state deliberately
  * spends less: the stage barely glows, the headline is chalk rather than a

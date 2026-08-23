@@ -22,10 +22,16 @@ import { CoachComments } from './CoachComments';
  *
  * INTERRUPTION BUDGET (see docs/design-research/moments/findings.md, Part 3).
  * This is Tier 1, and Tier 1's whole licence is that it costs zero extra
- * clicks. So it closes on Escape, on a click anywhere outside it, on any
- * link inside it, and on the Continue button — four ways out, none of them
- * mandatory. Getting that wrong turns it into a required click seventeen
- * times a season, which is the single most likely way this fails.
+ * clicks. So it closes on Escape, on a click anywhere outside it, on any link
+ * inside it, and on Close — four ways out, none of them mandatory. Getting
+ * that wrong turns it into a required click seventeen times a season, which
+ * is the single most likely way this fails.
+ *
+ * "Zero extra clicks" was a claim, and it was false for the one press that
+ * matters most: taking the NEXT week. This overlay covers the league header,
+ * so the Advance button the reader just used is underneath it and a click
+ * aimed at it only dismisses the panel. That is why the pinned action bar at
+ * the bottom of this file carries its own Advance. See the comment there.
  *
  * It also has to visibly differ by outcome, or it becomes wallpaper: a
  * one-point win and a thirty-point loss produce different score weights,
@@ -44,7 +50,7 @@ export interface WeekReportSpan {
   gamesPlayed: number;
 }
 
-export function WeekReportPanel({ report, span, coach, onClose, leagueId }: {
+export function WeekReportPanel({ report, span, coach, onClose, onAdvance, leagueId }: {
   report: WeekReport;
   span?: WeekReportSpan | null;
   /**
@@ -55,6 +61,12 @@ export function WeekReportPanel({ report, span, coach, onClose, leagueId }: {
    */
   coach?: (CoachPayload | null | undefined)[];
   onClose: () => void;
+  /**
+   * Take one more week without leaving the panel. Optional so the panel still
+   * renders standalone (a screenshot harness, a story) — without it the footer
+   * is exactly what it was, one dismiss button.
+   */
+  onAdvance?: () => void;
   leagueId: string;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -238,6 +250,12 @@ export function WeekReportPanel({ report, span, coach, onClose, leagueId }: {
                         {report.gameBall.position}
                       </span>
                       <div className="font-mono text-[11px] text-muted mt-1 leading-snug">{report.gameBall.line}</div>
+                      {/* What the afternoon was worth to HIM. Kept to four
+                          words because it is context on a stat line, not a
+                          second headline. */}
+                      {report.gameBall.contractYear && (
+                        <div className="text-[11px] text-warn mt-0.5 leading-snug">Final year of his deal</div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -246,9 +264,39 @@ export function WeekReportPanel({ report, span, coach, onClose, leagueId }: {
               <div>
                 <h3 className="label-sm mb-2">The room</h3>
                 <div className="space-y-1.5">
+                  {/* THE REPORT NAMES A MAN AND USED TO OFFER NOTHING.
+                      "Carter Hargrove left the game and is expected to miss 3
+                      weeks" was a dead end: no way to look at him, no way to do
+                      anything about it. Two links now, and deliberately no
+                      third one — the depth chart is NOT offered here, because
+                      lib/sim/units.ts drops unavailable players before depth
+                      order is applied, so reordering around an injury changes
+                      nothing on Sunday and telling a GM otherwise would be
+                      inventing a chore. What is real is the wire. */}
                   {report.injuries.map((inj, i) => (
                     <RoomRow key={`inj-${i}`} dot="bg-bad">
-                      <b>{inj.name}</b>{inj.position ? ` (${inj.position})` : ''} — {inj.type.toLowerCase()}, out {inj.weeks} week{inj.weeks === 1 ? '' : 's'}
+                      <Link
+                        href={`/league/${leagueId}/player/${inj.playerId}`}
+                        onClick={onClose}
+                        className="font-bold hover:text-accent2 transition-colors"
+                      >
+                        {inj.name}
+                      </Link>
+                      {inj.position ? ` (${inj.position})` : ''} — {inj.type.toLowerCase()}, out {inj.weeks} week{inj.weeks === 1 ? '' : 's'}
+                      {/* A week or two is what a backup is for. Three is a
+                          fifth of the season, which is the point at which
+                          looking at the wire is a real move rather than a
+                          twitch — so the offer appears then, and it is an
+                          offer to LOOK, not an instruction to sign. */}
+                      {inj.weeks >= 3 && inj.position && (
+                        <Link
+                          href={`/league/${leagueId}/free-agency?pos=${inj.position}`}
+                          onClick={onClose}
+                          className="block text-[11px] text-accent2 hover:underline mt-0.5"
+                        >
+                          See who is available at {inj.position} →
+                        </Link>
+                      )}
                     </RoomRow>
                   ))}
                   {report.headlines.map((h, i) => (
@@ -306,18 +354,8 @@ export function WeekReportPanel({ report, span, coach, onClose, leagueId }: {
             <div className="panel px-4 py-3 text-sm text-muted">{report.nextNote}</div>
           ) : null}
 
-          {/* --- footer -------------------------------------------------- */}
-          <div className="flex items-center gap-3 pt-3 border-t border-line">
-            <button onClick={onClose} className="btn-primary">Continue</button>
-            {r && (
-              <Link href={`/league/${leagueId}/game/${r.gameId}`} onClick={onClose} className="btn-secondary text-xs">
-                Open box score
-              </Link>
-            )}
-            <span className="ml-auto text-[11px] text-muted hidden sm:inline">Esc, or a click outside, also closes this</span>
-          </div>
-
-          {/* Linescore last: it is reference, not headline. */}
+          {/* Linescore last of the bands: it is reference, not headline. The
+              action bar below it is pinned, so nothing is buried under this. */}
           {r?.quarters && (
             <details className="panel px-4 py-2.5">
               <summary className="label-sm cursor-pointer select-none">Linescore</summary>
@@ -331,6 +369,56 @@ export function WeekReportPanel({ report, span, coach, onClose, leagueId }: {
               </div>
             </details>
           )}
+
+          {/* --- the action bar ------------------------------------------
+              WHY ADVANCE LIVES IN HERE, AND WHY THIS BAR IS PINNED.
+
+              The header comment above claims Tier 1 "costs zero extra clicks".
+              It was not true. This panel is `fixed inset-0` over the whole
+              viewport, so the league header's Advance button sits UNDER the
+              backdrop while the report is up — measured, not assumed:
+              elementFromPoint at that button's own coordinates returns
+              `DIV.fixed inset-0 … report-backdrop`, and a click there dismisses
+              the panel and leaves the week exactly where it was. Dismiss, then
+              re-aim, then press. Twenty-one times a league year, paid by
+              exactly the player who is enjoying pressing Advance.
+
+              NOT FIXED BY LETTING THE CLICK FALL THROUGH. A modal whose
+              backdrop secretly actuates a control the reader cannot see is a
+              worse thing than the bug. The panel gets its own Advance instead,
+              which is the honest reading of the moment anyway: this panel
+              exists BECAUSE you pressed Advance, and the next thing you want
+              is another week.
+
+              AND IT IS STICKY BECAUSE PUTTING IT AT THE BOTTOM WAS NOT ENOUGH.
+              A full report is taller than a laptop viewport — the button
+              measured at y=1064 on a 1000px-tall window, below the fold, so
+              "one click" was really a scroll and then a click. Pinned to the
+              bottom of the scrollport it is on screen the instant the report
+              opens, wherever the reader is in it. Close sits right beside it
+              and every other exit — Esc, outside click, ✕, any link — is
+              untouched.
+
+              This bar is not a nudge to skip anything: it advances ONE week,
+              which is the cadence the game is built on. The jump menu is not
+              repeated here and never will be. */}
+          {/* Bleeds sideways to the panel edge so the rule reads as a bar rather
+              than a boxed row. NOT downwards: the parent's `space-y-4` sets
+              margin-bottom on every child it touches and beats a `-mb-*`
+              utility on specificity, so a negative bottom margin here would be
+              a class that does nothing. */}
+          <div className="sticky bottom-0 z-10 -mx-5 sm:-mx-6 px-5 sm:px-6 py-3 border-t border-line bg-card/95 backdrop-blur-sm flex flex-wrap items-center gap-3">
+            {onAdvance && (
+              <button onClick={() => { onClose(); onAdvance(); }} className="btn-primary">Advance ▸</button>
+            )}
+            <button onClick={onClose} className={onAdvance ? 'btn-secondary text-xs' : 'btn-primary'}>Close</button>
+            {r && (
+              <Link href={`/league/${leagueId}/game/${r.gameId}`} onClick={onClose} className="btn-secondary text-xs">
+                Open box score
+              </Link>
+            )}
+            <span className="ml-auto text-[11px] text-muted hidden sm:inline">Esc, or a click outside, also closes this</span>
+          </div>
         </div>
       </div>
     </div>,
@@ -373,6 +461,19 @@ function ChangedBand({ report }: { report: WeekReport }) {
   const divDown = c.divRankAfter > c.divRankBefore;
   const seedUp = c.seedAfter < c.seedBefore;
   const seedDown = c.seedAfter > c.seedBefore;
+  // A LOWER pick number is a better pick, so "up the board" is a shrinking
+  // number — the opposite direction to every other row here, which is exactly
+  // why it gets its own pair of names rather than being folded into seedUp.
+  const pickUp = c.draftSlotAfter < c.draftSlotBefore;
+  const pickDown = c.draftSlotAfter > c.draftSlotBefore;
+  // AND IT IS ONLY GREEN ONCE THE RACE IS OVER. The board shows from the week
+  // you fall outside the cut line, which is a week you probably lost — and
+  // climbing it is the direct consequence of losing. Painting that in the same
+  // accent the band uses for a division win would be the report congratulating
+  // a club still chasing a playoff spot for dropping a game. Once elimination
+  // is mathematical the pick genuinely is the thing that improved, and then it
+  // gets the colour. Before that it is a number, printed plainly.
+  const boardIsGain = c.playoffsOut;
 
   return (
     <div className="panel p-4">
@@ -386,13 +487,39 @@ function ChangedBand({ report }: { report: WeekReport }) {
           {divDown && <span className="text-bad"> ▼{c.divRankAfter - c.divRankBefore}</span>}
         </>}
       />
-      <Kv
-        k="Playoff position"
-        v={<>
-          <span className="text-muted">{ordinal(c.seedBefore)}</span> → <b className={seedUp ? 'text-accent' : seedDown ? 'text-bad' : ''}>{ordinal(c.seedAfter)}</b>
-          {c.gamesBack !== null && <span className="text-muted"> · {c.gamesBack.toFixed(1)} GB</span>}
-        </>}
-      />
+      {/* THE ROW THAT STOPS MOVING, AND THE ONE THAT NEVER DOES.
+          Measured on a losing week 7 and again across a whole 6-11 season:
+          from about week 9 the seed row prints 13th → 13th, 12th → 12th,
+          12th → 12th while the club's draft slot moves 13 → 9 → 6 → 10 → 9
+          underneath it. The band was reporting the number that had frozen and
+          hiding the number that was live.
+
+          So the board appears the moment you are outside the cut line — where
+          it is true and worth knowing alongside the chase — and REPLACES the
+          seed once elimination is mathematical, because at that point a seed
+          and a games-back figure describe a race that has finished. Inside the
+          field it never shows at all: a team in the picture is not picking
+          high and does not want to be told it is. */}
+      {!c.playoffsOut && (
+        <Kv
+          k="Playoff position"
+          v={<>
+            <span className="text-muted">{ordinal(c.seedBefore)}</span> → <b className={seedUp ? 'text-accent' : seedDown ? 'text-bad' : ''}>{ordinal(c.seedAfter)}</b>
+            {c.gamesBack !== null && <span className="text-muted"> · {c.gamesBack.toFixed(1)} GB</span>}
+          </>}
+        />
+      )}
+      {(c.playoffsOut || c.gamesBack !== null) && (
+        <Kv
+          k="Draft board"
+          v={<>
+            <span className="text-muted">{ordinal(c.draftSlotBefore)}</span> → <b className={pickUp && boardIsGain ? 'text-accent' : ''}>{ordinal(c.draftSlotAfter)}</b>
+            {pickUp && <span className={boardIsGain ? 'text-accent' : 'text-muted'}> ▲{c.draftSlotBefore - c.draftSlotAfter}</span>}
+            {pickDown && <span className="text-muted"> ▼{c.draftSlotAfter - c.draftSlotBefore}</span>}
+          </>}
+          title="Where you would pick if the season ended today. Worst record picks first."
+        />
+      )}
       <Kv
         k="Point differential"
         v={<>
@@ -419,10 +546,10 @@ function ChangedBand({ report }: { report: WeekReport }) {
   );
 }
 
-function Kv({ k, v }: { k: string; v: React.ReactNode }) {
+function Kv({ k, v, title }: { k: string; v: React.ReactNode; title?: string }) {
   return (
     <div className="flex justify-between items-baseline gap-3 py-1.5 border-b border-line/50 last:border-b-0 text-[13px]">
-      <span className="text-muted">{k}</span>
+      <span className="text-muted" title={title}>{k}</span>
       <span className="font-mono text-[12.5px] text-right">{v}</span>
     </div>
   );
