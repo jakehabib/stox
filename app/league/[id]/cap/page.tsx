@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { positionSortKey } from '@/lib/league-data';
-import { teamCapSummary } from '@/lib/cap-summary';
+import { teamCapSummary, deadMoneyRunway } from '@/lib/cap-summary';
 import { formatMoney, capHit, deadMoneyOnCut, capSavingsOnCut, capHitSchedule, capForYear, marketValue } from '@/lib/cap';
 import { resolveStartYear } from '@/lib/leagueYear';
 import { Tooltip } from '@/components/Tooltip';
@@ -14,6 +14,7 @@ import { ScatterChart } from '@/components/charts/ScatterChart';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { MetricTiles } from '@/components/ds/MetricTiles';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import { DeadMoneyRunwayPanel } from '@/components/cap/DeadMoneyRunwayPanel';
 import { buildCapHealth, rankContractValue, classifyContractValue, type CapHealth, type SurplusRow } from '@/lib/analytics';
 import { capComplianceReport } from '@/lib/capEnforcement';
 import { capComplianceDueNow } from '@/lib/season';
@@ -54,10 +55,14 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
     );
   }
 
-  const [summary, players, deadRows, compliance] = await Promise.all([
+  const [summary, players, runway, compliance] = await Promise.all([
     teamCapSummary(team.id, league.seasonYear, settings.capMode),
     prisma.player.findMany({ where: { teamId: team.id, status: 'ACTIVE' }, include: { contract: true } }),
-    prisma.capCharge.findMany({ where: { teamId: team.id, year: league.seasonYear } }),
+    // Was a bare `capCharge.findMany({ year: seasonYear })` feeding a list of
+    // this year's rows at the foot of the page. Same rows, four years wide and
+    // with the year on them — see DeadMoneyRunwayPanel for why that list is
+    // gone rather than kept alongside this.
+    deadMoneyRunway(team.id, league, settings.capMode),
     capComplianceReport(team.id, league.seasonYear, settings.capMode),
   ]);
 
@@ -339,6 +344,13 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
         </div>
       </div>
 
+      {/* Directly under the usage bar, because it is that bar's dead slice
+          told forward in time — and above the contract table, because
+          "when does this end" is a decision and a 53-row table is a
+          reference. Basic view as well as Advanced: the app owner asked for
+          it on the cap page, not behind a toggle. */}
+      <DeadMoneyRunwayPanel runway={runway} leagueId={league.id} seasonYear={league.seasonYear} />
+
       {advanced && health && (
         <MetricTiles
           metrics={[
@@ -479,19 +491,6 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
         </div>
       </div>
 
-      {deadRows.length > 0 && (
-        <div className="panel p-4">
-          <h2 className="font-semibold mb-2 text-sm inline-flex items-center gap-1.5">
-            Dead Money Charges
-            <Tooltip text={tip('deadMoney')} />
-          </h2>
-          {deadRows.map((r) => (
-            <div key={r.id} className="flex justify-between text-sm py-1">
-              <span className="text-muted">{r.label}</span><span className="font-mono">{formatMoney(r.amount)}</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
