@@ -4,14 +4,29 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { openExtensionNegotiationAction, submitExtensionOfferAction } from '@/app/actions/extension';
 import { type ContractLike } from '@/lib/cap';
-import type { DealStructure, NegotiationSession } from '@/lib/negotiation';
+import { DEFAULT_CONVERT_PCT, type DealStructure, type NegotiationSession } from '@/lib/negotiation';
 import { CapMode } from '@/lib/types';
 import { NegotiationPanel } from './NegotiationPanel';
 import { DealStructureControls, DEFAULT_ESCALATION } from './DealStructureControls';
 import { ContractLedger } from './ds/ContractLedger';
 
-/** Where a fresh deal opens. Reset terms returns the shape here. */
-const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidYears: 0 };
+/**
+ * Where a fresh deal opens. Reset terms returns the shape here.
+ *
+ * IT OPENS ON THE FULL CONVERSION of this season's owed salary into the new
+ * signing bonus, which is what an extension IS in real football. Opening at 0
+ * was the alternative and it is the shipped bug: the tester extended a man and
+ * watched his cap hit go UP, measured at +$1.58M in the median case across 400
+ * real contracts. The GM drags it down when he would rather keep the later
+ * years clean — the control is inside the panel, beside the cap figures it
+ * moves.
+ *
+ * `DEFAULT_CONVERT_PCT`, not a literal 1: the meter and the Server Action
+ * resolve an unset `convertPct` through that same constant, and a screen
+ * opening on a different figure from the one the write would apply is the
+ * whole class of bug this panel keeps closing.
+ */
+const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidYears: 0, convertPct: DEFAULT_CONVERT_PCT };
 
 /**
  * Extending a player who is still under contract — the third contract screen,
@@ -93,6 +108,10 @@ export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDo
       onSigned={() => { router.refresh(); onDone?.(); }}
       onReset={() => setStructure(OPENING_STRUCTURE)}
       onCancel={onDone}
+      /* The conversion control lives inside the panel, beside the cap figures
+         it moves, but the structure is this screen's state — same arrangement
+         `structureSlot` already uses for the deal-shape controls. */
+      onStructure={setStructure}
       onOffer={(offer, str, fingerprint) =>
         submitExtensionOfferAction(leagueId, playerId, offer, str, fingerprint)}
       banner={

@@ -124,6 +124,7 @@ import {
 } from '../lib/negotiation';
 import { capHit, formatMoney, marketValue, willingnessHorizon, maxYearsForAge, suggestedYears, TERM } from '../lib/cap';
 import { teamCapSummary } from '../lib/cap-summary';
+import { CAP } from '../lib/tuning';
 import { maxOffer, parseGmProfile, teamNeeds, type RosterPlayer } from '../lib/ai/gm';
 import { FREE_AGENCY } from '../lib/tuning';
 import { parseSkills, signBandMultFor } from '../lib/dynasty';
@@ -1177,9 +1178,47 @@ async function main() {
         fail(`${subject.lastName}: extension produced ${after.years} years, expected ${before.yearsRemaining} + ${addYears}`);
       }
       if (after.yearsRemaining !== after.years) fail(`${subject.lastName}: an appended deal is not fully remaining`);
-      if (JSON.stringify(afterBases.slice(0, kept.length)) !== JSON.stringify(kept)) {
-        fail(`${subject.lastName}: the years he was already owed did not keep their salaries`);
+      // WHAT AN OWED YEAR MAY DO IS FALL, NEVER RISE, AND NEVER BELOW THE FLOOR.
+      //
+      // This used to compare the stored base-salary ARRAYS and demand the owed
+      // years came through untouched. That encoded the old rule, and it began
+      // failing the moment an extension could convert this season's salary
+      // into signing bonus — the mechanic real clubs extend FOR, and whose
+      // absence made a beta tester's extension raise his cap hit instead of
+      // lowering it.
+      //
+      // Conversion pays the man the same money sooner, so the array is
+      // deliberately different and comparing arrays is the wrong claim. What
+      // must still hold, and what the original check was really protecting, is
+      // that an owed year is never quietly rewritten UPWARD and never
+      // disappears: money can move out of a base and into the bonus, and it
+      // can never move the other way, and no base may be cut below the league
+      // minimum a player is guaranteed.
+      //
+      // Money conservation itself is asserted where the arithmetic actually
+      // lives — `buildExtension().oldMoneyRemaining` is identical at every
+      // conversion share, checked across 400 real contracts in that fix's own
+      // probe. This harness is the end-to-end read, so it checks the shape the
+      // database can prove on its own.
+      const afterOld = afterBases.slice(0, kept.length);
+      if (afterOld.length !== kept.length) {
+        fail(`${subject.lastName}: an owed year vanished — ${kept.length} before, ${afterOld.length} after`);
       }
+      for (let i = 0; i < kept.length; i++) {
+        if (afterOld[i] > kept[i] + 1) {
+          fail(
+            `${subject.lastName}: owed year ${i + 1} rose from ${formatMoney(kept[i])} to ` +
+            `${formatMoney(afterOld[i])} — an extension may move salary out of an owed year, never into one`,
+          );
+        }
+        if (afterOld[i] < CAP.MIN_SALARY) {
+          fail(
+            `${subject.lastName}: owed year ${i + 1} was cut to ${formatMoney(afterOld[i])}, ` +
+            `below the ${formatMoney(CAP.MIN_SALARY)} floor`,
+          );
+        }
+      }
+
       // capHit indexes with years - yearsRemaining, which the append rebases to
       // 0. If that ever slipped, the compliance gate would read the wrong year.
       const hitNow = capHit(after, settings.capMode);

@@ -105,6 +105,29 @@ export function usableVoidYears(years: number, requested: number): number {
   return clamp(Math.round(requested), 0, room);
 }
 
+/**
+ * HOW MUCH OF THIS SEASON'S SALARY MAY BE TURNED INTO SIGNING BONUS — the one
+ * answer, for the restructure and the extension alike.
+ *
+ * Everything above the league minimum, and not a dollar more: no year of any
+ * contract may pay under CAP.MIN_SALARY (`buildContract` enforces the same
+ * floor when it writes one), and real deals leave a man a small base behind
+ * rather than zeroing him out for the season. It is exported because the panel
+ * has to be able to say "there is nothing here to convert" BEFORE the GM
+ * commits — a man in the last year of a minimum deal is the one shape where an
+ * extension raises his cap hit and cannot lower it.
+ *
+ * REJECTED: converting the whole base. It is expressible — nothing in the
+ * ledger breaks — but it writes a contract year paying $0 against a league
+ * minimum the rest of the game enforces, and it would let a club park a man on
+ * a zero-salary season while the money sat in a bonus prorating past the end
+ * of his deal.
+ */
+export function convertibleBase(c: ContractLike): number {
+  const bases = readJson<number[]>(c.baseSalaries, []);
+  return Math.max(0, (bases[yearIndex(c)] ?? 0) - CAP.MIN_SALARY);
+}
+
 /** Annual proration of a signing bonus (realistic mode only), for the years it is charged in. */
 export function proration(c: ContractLike): number {
   const yrs = prorationYears(c);
@@ -369,9 +392,17 @@ export function capHitSchedule(c: ContractLike, mode: CapMode): number[] {
  * does it real life"*. So this is the real shape:
  *
  *   A man with 3 years left signs a 4-year extension. He is under contract for
- *   SEVEN years. The 3 existing years keep their base salaries exactly as they
- *   were. The 4 new years are appended. A new signing bonus is paid now and
- *   prorates from now, still capped at CAP.MAX_PRORATION_YEARS.
+ *   SEVEN years. The 3 existing years keep the money he was already promised.
+ *   The 4 new years are appended. A new signing bonus is paid now and prorates
+ *   from now, still capped at CAP.MAX_PRORATION_YEARS.
+ *
+ * "THE MONEY HE WAS PROMISED", not "the base salaries exactly as they were",
+ * which is what this said and what the code did until the conversion below.
+ * THIS SEASON's base salary can now be paid to him as bonus instead — same
+ * dollars, handed over sooner, charged to the cap differently. Every later
+ * year he was owed keeps its salary untouched, and `oldMoneyRemaining` is
+ * identical at every setting of `convertPct`, which is the arithmetic version
+ * of the same sentence.
  *
  * WHAT "NEW MONEY" MEANS, because it is the number he negotiates and the one
  * most likely to mislead. A "4 year, $120M extension" is $30M/yr on the NEW
@@ -385,13 +416,97 @@ export function capHitSchedule(c: ContractLike, mode: CapMode): number[] {
  * separately; a contract row here has a single `signingBonus` field and a
  * single proration, so the old bonus's unamortized remainder is carried into
  * the combined bonus and re-prorated across what is now left. This is exactly
- * what `restructureContract` above already does and for the same reason, it
- * keeps the total dead money right (every unamortized dollar is still on the
- * books and still accelerates on a cut), and its visible effect — this year's
- * cap hit drops a little while the later years rise — is the real-world effect
- * of extending anyway. What it does NOT do is let the old bonus vanish: after
- * an extension the dead money is the sum of both bonuses, which is precisely
- * why extending early is a commitment rather than a freebie.
+ * what `restructureContract` above already does and for the same reason, and
+ * it keeps the total dead money right: every unamortized dollar is still on
+ * the books and still accelerates on a cut. What it does NOT do is let the old
+ * bonus vanish: after an extension the dead money is the sum of both bonuses,
+ * which is precisely why extending early is a commitment rather than a
+ * freebie.
+ *
+ * ===========================================================================
+ * AND AN EXTENSION IS A CAP-RELIEF INSTRUMENT, WHICH IS THE POINT OF ONE
+ * ===========================================================================
+ * The paragraph above used to end by claiming that carrying the old bonus made
+ * "this year's cap hit drop a little while the later years rise — the
+ * real-world effect of extending anyway". It did not. Measured through this
+ * function over 400 real contracts out of real saves (78+ ovr, the men anybody
+ * actually extends), +3 years at market APY with 40% of the new money as
+ * bonus:
+ *
+ *     current-year cap hit went UP on 387, DOWN on 13, unchanged on 0
+ *     delta  p5 +$268K  |  p50 +$1.58M  |  p95 +$4.47M
+ *
+ * It cannot go down, and the arithmetic says why: the remaining years keep
+ * their base salaries EXACTLY as they were, so this season's base does not
+ * move, and a new signing bonus prorates on top of it. A comment describing a
+ * behaviour the code does not have is as wrong as a number on a screen, and a
+ * beta tester found both halves at once — *"he extended one of his players,
+ * and it actually increased the player's cap hit in the current season,
+ * whereas in many instances, it should actually lower the cap hit"*.
+ *
+ * WHAT WAS MISSING IS THE HALF THAT DOES THE WORK. A real club lowers this
+ * year by CONVERTING base salary the man is already owed this season into
+ * signing bonus; adding years is what makes that conversion cheap, because
+ * there are more seasons to spread it over. This did the "add years" half and
+ * none of the "convert" half. So `convertPct` below does it, and it does it by
+ * calling `restructureContract` — the function that already implements this
+ * exact mechanic, floor and guarantee-frame included. Two implementations of
+ * one piece of arithmetic drifting apart is this codebase's most persistent
+ * defect; there is one here, and the extension is a caller of it.
+ *
+ * IT DEFAULTS TO ZERO HERE AND TO THE FULL CONVERSION AT THE NEGOTIATING
+ * TABLE, and that split was decided by a measurement rather than by taste.
+ *
+ * REJECTED, and this was the first implementation: default the conversion ON
+ * right here, so every caller gets the real instrument and nobody has to know
+ * the option exists. It is the tidier rule and it is wrong, because one caller
+ * is not a GM looking at a screen. The AI's re-sign wave (lib/season.ts) prices
+ * a re-sign on its YEAR-ONE cap hit and budgets against that alone — it has no
+ * model of the later years at all — so handing it an instrument that borrows
+ * from those years is handing it a blank cheque it cannot read. Measured, on
+ * `npm run sim:health -- 3 3`, identical seeds:
+ *
+ *     INV-19 (a club over the cap)   12 hits / 124 rows  ->  50 hits / 251 rows
+ *     INV-20 (roster under minimum)  22 hits /  66 rows  ->  74 hits / 218 rows
+ *     34 warnings across the run     ->  124
+ *
+ * Clubs re-signed men they could afford this season, the bill arrived the next
+ * one, and by the season after that they could not afford a 46th body. An
+ * extension has to stay a real commitment — it lowers this year and raises
+ * every year after, and the later years are the price — which is exactly the
+ * half of the trade the AI budgeter is blind to.
+ *
+ * So the default here is 0: a caller that has not thought about the later
+ * years does not borrow from them. The default the GM meets is 1, and it lives
+ * in `DEFAULT_CONVERT_PCT` (lib/negotiation.ts) where every negotiated deal —
+ * extension, walk-year re-sign, whichever screen — reads it, because that is
+ * the path with the whole schedule, the dead money and the room-after on
+ * screen while he drags. Declining is a real decision, so it is a control and
+ * not a hidden constant: converted salary becomes bonus, and bonus is dead
+ * money if he is ever cut.
+ *
+ * WHAT IT MAY TAKE, and the anchor: everything above the league minimum, which
+ * is `convertibleBase` — the same figure and the same floor a restructure
+ * uses, and the same rule real deals follow when they leave a man a minimum
+ * base behind. A man ALREADY on a minimum base has nothing to convert, so his
+ * extension still raises this year's hit; that is honest and it is why the
+ * builder reports `converted` and `convertibleBase` back, so the screen can
+ * say so before he commits rather than after.
+ *
+ * WHAT IT DOES, ON THE SAME 400 CONTRACTS, at the default a GM meets:
+ *
+ *     current-year cap hit went UP on 21, DOWN on 379, unchanged on 0
+ *     delta  p5 -$12.6M  |  p50 -$4.63M  |  p95 +$80K
+ *
+ * The 21 that still rise are honest: 20 of them are men whose current season
+ * was already a cheap year of a back-loaded deal, so there was little to
+ * convert against a large new bonus, and one had nothing convertible at all.
+ * That is what the panel's before-and-after pair is for.
+ *
+ * IT MOVES WHEN, NEVER HOW MUCH. `oldMoneyRemaining` is unchanged by any
+ * conversion — the dollar comes out of a base salary and goes into the bonus
+ * in the same breath — and the life-of-deal total is conserved, which
+ * scripts/checkRestructure.ts holds this function to (R-2/R-6).
  * ===========================================================================
  */
 export function buildExtension(opts: {
@@ -407,6 +522,21 @@ export function buildExtension(opts: {
   bonusPct?: number;
   guaranteedPct?: number;
   voidYears?: number;
+  /**
+   * How much of THIS season's convertible base salary is turned into signing
+   * bonus, 0..1 of `convertibleBase`. Defaults to 0 — no conversion, the
+   * behaviour every caller had before the option existed. Everything a GM
+   * negotiates passes `DEFAULT_CONVERT_PCT` (1) instead; see the block above
+   * for the sim-health measurement that put the two defaults in different
+   * places.
+   *
+   * A SHARE, NOT A DOLLAR FIGURE, because the control that sets it lives on a
+   * screen where the term and the guarantee are still moving underneath it: a
+   * GM who set "$6.0M converted" and then dragged the years would silently be
+   * converting a different fraction of a different salary. The share is stable
+   * under every other control; the dollars it produces are reported back.
+   */
+  convertPct?: number;
 }): {
   years: number;
   yearsRemaining: number;
@@ -421,10 +551,43 @@ export function buildExtension(opts: {
   oldMoneyRemaining: number;
   /** Index into baseSalaries where the extension starts. */
   firstNewYearIndex: number;
+  /**
+   * Base salary ACTUALLY moved out of this season and into the bonus, after
+   * the league-minimum floor clamped the request. Zero on a man already on a
+   * minimum base, which is exactly the case where an extension raises his hit
+   * instead of lowering it — the screen has to be able to say which of the two
+   * happened, and it cannot infer it from the bonus moving (the bonus moves on
+   * every extension anyway).
+   */
+  converted: number;
+  /** What COULD have been converted — this year's base above the league minimum. */
+  convertibleBase: number;
 } {
-  const bases = readJson<number[]>(opts.current.baseSalaries, []);
-  const elapsed = Math.max(0, opts.current.years - opts.current.yearsRemaining);
-  // The years he is still owed, at the salaries he was already promised.
+  // ---------------------------------------------------------------------
+  // THE CONVERSION, DONE BY THE FUNCTION THAT ALREADY DOES CONVERSIONS.
+  //
+  // `restructureContract` rebases the deal onto the years that are left,
+  // moves the requested salary out of this season's base and into the
+  // bonus, clamps the request at the league-minimum floor and restates the
+  // guarantee in the rebased frame. That is every step this needs, and
+  // writing any of it out again here is how two implementations of one rule
+  // start disagreeing (see the block above).
+  //
+  // At `convertPct: 0` this is EXACTLY what this function did before it took
+  // the option: `restructureContract(c, 0, …)` returns the remaining base
+  // salaries untouched and `signingBonus === unamortizedBonus(c)`, which is
+  // the figure the paragraph below used to compute directly. Read straight
+  // off the rebased row rather than re-derived, so the two cannot drift and
+  // the carried figure is not rounded through `proration` twice.
+  const rebased = restructureContract(
+    opts.current,
+    Math.round(convertibleBase(opts.current) * clamp(opts.convertPct ?? 0, 0, 1)),
+    { nowYear: opts.signedYear },
+  );
+  const bases = rebased.baseSalaries;
+  const elapsed = 0; // rebased: the schedule now starts at the season being played
+  // The years he is still owed, at the salaries he was already promised —
+  // less whatever of this season's salary was just turned into bonus.
   //
   // Padded to the number of years he is actually owed. A well-formed contract
   // has one base salary per year and this does nothing — but `capHit` already
@@ -435,20 +598,22 @@ export function buildExtension(opts: {
   while (remainingBases.length < opts.current.yearsRemaining) {
     remainingBases.push(remainingBases[remainingBases.length - 1] ?? bases[bases.length - 1] ?? CAP.MIN_SALARY);
   }
-  // Bonus money already paid but not yet charged to a cap. It does not
-  // disappear because a new deal was signed on top of it.
+  // Bonus money already paid but not yet charged to a cap, PLUS whatever
+  // salary the conversion just turned into more of it. Neither half
+  // disappears because a new deal was signed on top of it.
   //
-  // `unamortizedBonus`, not `proration x yearsRemaining` — the two are the
-  // same number only while the deal fits inside the proration window, and
-  // this counted the wrong one in both directions the moment it did not.
-  // Years left is not bonus years left: a 7-year deal two seasons in has 5
-  // years to run and only 3 of bonus window, so it carried 5 years of
-  // proration off a bonus with 3 left and charged the difference a second
-  // time — the same double-charge `restructureContract` above carried. A
-  // deal with void years fails the other way: 3 real years plus 2 void, one
-  // played, has 4 years of window left and carried only 2, quietly writing
-  // off bonus that must still be paid for and would still accelerate on a cut.
-  const carriedBonus = unamortizedBonus(opts.current, 'REALISTIC');
+  // `rebased.signingBonus` is that sum by construction and is the only place
+  // it is computed. It was `unamortizedBonus(opts.current, 'REALISTIC')` here
+  // — the same figure, and the note that earned it is worth keeping: it is
+  // NOT `proration x yearsRemaining`, which is bonus years left only while
+  // the deal fits inside the proration window. A 7-year deal two seasons in
+  // has 5 years to run and 3 of window, so that form carried 5 years of
+  // proration off a bonus with 3 left and charged the difference twice; a
+  // 3+2-void deal one year in fails the other way, carrying 2 where 4 are
+  // owed and writing off bonus that would still accelerate on a cut.
+  // `restructureContract` carries it through `unamortizedBonus` for exactly
+  // those reasons.
+  const carriedBonus = rebased.signingBonus;
 
   const addYears = Math.max(1, Math.round(opts.addYears));
   const fresh = buildContract({
@@ -476,6 +641,14 @@ export function buildExtension(opts: {
     // What is locked in GOING FORWARD: bonus money already paid plus whatever
     // the new years guarantee. The old deal's guarantee figure described money
     // some of which has already been paid out, so it is not carried whole.
+    //
+    // `rebased.guaranteed` is deliberately NOT used, though the conversion
+    // came through it. That figure restates the OLD deal's guarantee in the
+    // rebased frame; this rule is the extension's own and it already holds
+    // both halves the conversion touches — the converted salary is inside
+    // `carriedBonus`, because it is cash paid now, which is why dead money
+    // rises by exactly what was converted and by nothing else
+    // (scripts/_ex_write.ts, W-5).
     guaranteed: carriedBonus + fresh.guaranteed,
     // Clamped against the FULL appended length, not the added years: an
     // extension that takes a man to six contract years has already exhausted
@@ -483,8 +656,16 @@ export function buildExtension(opts: {
     // stored claiming otherwise. See usableVoidYears.
     voidYears: usableVoidYears(years, opts.voidYears ?? 0),
     newMoneyTotal: fresh.baseSalaries.reduce((a, b) => a + b, 0) + fresh.signingBonus,
+    // UNMOVED BY ANY CONVERSION, and that is the conservation proof in one
+    // line: the dollar leaves `remainingBases[0]` and arrives in
+    // `carriedBonus` in the same breath, so what he is still owed for the
+    // years he was already promised is the same figure at every setting of
+    // `convertPct`. A conversion changes WHEN the cap is charged, never how
+    // much.
     oldMoneyRemaining: remainingBases.reduce((a, b) => a + b, 0) + carriedBonus,
     firstNewYearIndex: remainingBases.length,
+    converted: rebased.converted,
+    convertibleBase: convertibleBase(opts.current),
   };
 }
 
@@ -550,7 +731,12 @@ export function restructureContract(
   const bases = readJson<number[]>(c.baseSalaries, []);
   const yearIdx = Math.max(0, c.years - c.yearsRemaining);
   const currentBase = bases[yearIdx] ?? 0;
-  const converted = clamp(Math.round(convertAmount), 0, Math.max(0, currentBase - CAP.MIN_SALARY));
+  // `convertibleBase`, not `currentBase - CAP.MIN_SALARY` written out here.
+  // The extension converts through this same function now (see
+  // buildExtension), and the panel states the ceiling before anything is
+  // dragged; three readings of one floor is three chances to disagree about
+  // what a man may be left on.
+  const converted = clamp(Math.round(convertAmount), 0, convertibleBase(c));
 
   const remainingBases = bases.slice(yearIdx);
   remainingBases[0] = currentBase - converted;

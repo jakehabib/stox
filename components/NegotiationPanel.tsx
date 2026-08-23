@@ -2,8 +2,9 @@
 
 import { useState, type ReactNode } from 'react';
 import {
-  DEFAULT_STRUCTURE, askHasFallen, loyaltyBand, personalityBlurb, PERSONALITY_LABEL,
+  DEFAULT_CONVERT_PCT, DEFAULT_STRUCTURE, askHasFallen, loyaltyBand, personalityBlurb, PERSONALITY_LABEL,
   type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer,
+  type OfferDecision,
 } from '@/lib/negotiation';
 import { formatMoney } from '@/lib/cap';
 import { useNegotiation } from './negotiate/useNegotiation';
@@ -119,7 +120,7 @@ import { tip } from '@/lib/glossary';
  * in full on an extension.
  */
 export function NegotiationPanel({
-  initialSession, structure = DEFAULT_STRUCTURE, structureSlot, banner,
+  initialSession, structure = DEFAULT_STRUCTURE, structureSlot, onStructure, banner,
   onOffer, onSigned, onCancel, onReset, disabled, disabledReason, title = 'Contract Talks',
   returnTo,
 }: {
@@ -134,6 +135,19 @@ export function NegotiationPanel({
    * sized off it or it offers positions the contract will silently discard.
    */
   structureSlot?: (contractYears: number) => ReactNode;
+  /**
+   * Lets the panel MOVE the structure the screen owns — used by the one
+   * control that has to live in here rather than in `structureSlot`: how much
+   * of this season's owed salary an extension converts into signing bonus.
+   *
+   * It belongs to the panel and not to the screen because it is only
+   * meaningful on a deal that APPENDS, and `appending` is the panel's own read
+   * of the session (`ctx.currentContract` plus `controlYears`) rather than a
+   * fact about which form is mounted — a walk-year re-sign appends too. A
+   * screen that does not pass this still gets the before-and-after figures,
+   * just not the slider; nothing is hidden by its absence.
+   */
+  onStructure?: (next: DealStructure) => void;
   /**
    * Evidence this SCREEN has and the session does not. Not the place for
    * anything about exclusivity, loyalty or appending years — those are facts
@@ -485,6 +499,47 @@ export function NegotiationPanel({
           />
         </div>
 
+        {/* ==================================================================
+            THE HALF OF AN EXTENSION THAT LOWERS THIS YEAR'S CAP HIT
+            ==================================================================
+            A beta tester extended a player to create room and watched his cap
+            hit go UP: *"in many instances, it should actually lower the cap
+            hit in the current season that you extend him"*. He was right about
+            the football and the builder was doing only half the move — adding
+            years, never converting the salary the club already owed him this
+            season into the bonus those new years exist to spread (see
+            buildExtension in lib/cap.ts, and `convertPct`).
+
+            SO THE PAIR IS ON SCREEN AT THE CONTROL THAT MOVES IT, before
+            anything is signed. That is the whole complaint: he committed and
+            found out afterwards. The rule this panel already follows — a
+            figure lives at the control that changes it — is what puts the
+            before-and-after here rather than in the ledger below, where it
+            would sit a screen away from the slider it answers to.
+
+            AND IT IS HIS CAP HIT, NOT `gate.capSpace`. The gate's room has the
+            incumbent's own hit added back (see the note at the top of this
+            file); a before/after built out of that would be the lying metric
+            that note warns about. `currentYearHitBefore` and `year1CapHit` are
+            the same `capHit` function on the two contract rows, so this
+            subtraction is a real one.
+
+            WHEN THERE IS NOTHING TO CONVERT the block does not disappear — it
+            says so, and says the hit is going up. A man in the last year of a
+            minimum deal has no salary above the league minimum to move, and
+            "this costs you room this season and here is why" is an answer a GM
+            can act on. Silence is what produced the bug report. */}
+        {appending && capOn && (
+          <ThisSeasonBlock
+            decision={decision}
+            /* The same `??` the meter and the write both apply, so the slider
+               opens where the priced contract actually sits. */
+            convertPct={structure.convertPct ?? DEFAULT_CONVERT_PCT}
+            onConvertPct={onStructure ? (v) => onStructure({ ...structure, convertPct: v }) : undefined}
+            disabled={over}
+          />
+        )}
+
         {structureSlot?.(totalTerm)}
 
         {ev.demands.length > 0 && !over && (
@@ -723,6 +778,101 @@ function EdgeLine({ session }: { session: NegotiationSession }) {
     <div className={`text-xs px-3 py-2 rounded-lg border ${finalCall ? 'border-line bg-raised text-muted' : 'border-accent/30 bg-accent/10 text-accent'}`}>
       <span className="font-semibold">{worth}</span> {clock}
     </div>
+  );
+}
+
+/**
+ * ===========================================================================
+ * WHAT THIS SEASON COSTS, BEFORE AND AFTER — and the one control that moves it
+ * ===========================================================================
+ * Drawn on every deal that appends onto a contract he is already on, which is
+ * an extension and a walk-year re-sign alike.
+ *
+ * Both figures come off the DECISION — one `capHit` call on the row he is on,
+ * one on the row this offer would write — so the delta printed here is the
+ * delta the club's books actually take, and it moves live with every slider
+ * above it.
+ *
+ * THE CONTROL IS NOT THE GUARANTEE SLIDER, and the note says so, because they
+ * look alike from a distance: both end up moving money into a signing bonus.
+ * The guarantee splits the NEW money he is being promised; this moves salary
+ * the club ALREADY OWES HIM THIS SEASON out of a year it cannot afford.
+ */
+function ThisSeasonBlock({ decision, convertPct, onConvertPct, disabled }: {
+  decision: OfferDecision;
+  convertPct: number;
+  /** Absent on a screen that does not own the structure — then this is read-only. */
+  onConvertPct?: (v: number) => void;
+  disabled?: boolean;
+}) {
+  const before = decision.currentYearHitBefore;
+  const after = decision.year1CapHit;
+  // Nothing to compare against is not the same as no change. Without a stored
+  // contract there is no "before" at all, and inventing one would be worse
+  // than drawing nothing.
+  if (before === null) return null;
+  const saved = before - after;
+
+  const pair = (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-muted text-xs">This season on the cap</span>
+      <span className="text-sm font-mono">
+        {formatMoney(before)} <span className="text-muted">→</span>{' '}
+        <span className={saved > 0 ? 'text-accent' : saved < 0 ? 'text-bad' : 'text-chalk'}>{formatMoney(after)}</span>
+        {saved !== 0 && (
+          <span className={`ml-1.5 text-xs ${saved > 0 ? 'text-accent' : 'text-bad'}`}>
+            ({saved > 0 ? `${formatMoney(saved)} freed` : `${formatMoney(-saved)} more`})
+          </span>
+        )}
+      </span>
+    </div>
+  );
+
+  if (decision.convertibleBase <= 0 || !onConvertPct) {
+    return (
+      <div className="rounded-lg border border-line bg-raised/40 px-3 py-2 space-y-1">
+        {pair}
+        <p className="text-[11px] text-muted">
+          {decision.convertibleBase <= 0
+            // The honest answer, and the one this screen owed him. Grimaldi in
+            // the measurement — a linebacker on the league minimum in his last
+            // year — has no salary above the minimum to move, so the new
+            // bonus lands on top of a season that cannot be lightened.
+            ? 'He is already down to the league minimum in salary this season, so there is nothing left to push into a bonus. The new money starts costing you the day he signs.'
+            : `${formatMoney(decision.salaryConverted)} of the salary he is owed this season goes into the signing bonus, spread across the years you are adding.`}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <Control
+      label="Salary converted this year"
+      tipText={tip('salaryConversion')}
+      display={`${Math.round(convertPct * 100)}%`}
+      hint={
+        <>
+          <div>{formatMoney(decision.salaryConverted)} of {formatMoney(decision.convertibleBase)} moved into the bonus</div>
+          {/* The delta spelled out, not left as a subtraction to do while
+              dragging. It is the figure the whole control exists to move. */}
+          <div className={saved > 0 ? 'text-accent' : saved < 0 ? 'text-bad' : ''}>
+            This season {formatMoney(before)} → {formatMoney(after)}
+            {saved > 0 ? ` (${formatMoney(saved)} freed)` : saved < 0 ? ` (${formatMoney(-saved)} more)` : ''}
+          </div>
+        </>
+      }
+      note={{
+        tone: 'muted' as const,
+        text: 'Not new money to him and not the guarantee slider: it is salary he was already owed this season, paid now as bonus so it spreads across the years you are adding. Every one of those years carries a share of it, and all of it is dead money if you cut him.',
+      }}
+      min={0}
+      max={100}
+      step={5}
+      value={Math.round(convertPct * 100)}
+      onChange={(v) => onConvertPct(v / 100)}
+      disabled={disabled}
+      field={PERCENT_FIELD}
+    />
   );
 }
 

@@ -100,10 +100,24 @@ export const GLOSSARY = {
     definition: 'The cap ceiling minus everything already committed: salaries, bonus charges and dead money.',
     why: 'What you can spend today without clearing something first. Going negative is not a state you are allowed to sit in — the new league year will not open while you are over.',
   },
+  /*
+   * "ABOUT 7% A YEAR" WAS TRUE OF EVERY LEAGUE UNTIL 6fa1ccd, AND OF ALMOST
+   * NONE OF THEM AFTER IT. That commit made cap growth a per-league setting —
+   * three rungs, CAP_GROWTH_MODES in lib/settings.ts — so 7% is now one rung
+   * of three, it is not the one a new league is created on, and on a FLAT
+   * league the ceiling never moves at all. This entry renders on the cap
+   * page's Cap Limit tile, which is precisely where a GM goes to find out what
+   * his ceiling does, so the sentence was wrong in the one place it mattered.
+   *
+   * NO PERCENTAGE IN THE REPLACEMENT, deliberately, and it is the same rule
+   * CAP_GROWTH_MODES already states about its own blurbs: one string is shared
+   * by every save, so any figure in it is wrong for two of the three rungs.
+   * The real rate belongs beside the tile, where the league is in scope.
+   */
   capLimit: {
     term: 'Cap limit',
     definition: 'The ceiling every club has to fit its spending under this season. The same figure for all 32 teams.',
-    why: 'It rises about 7% a year, so a contract that looks heavy today is quietly getting lighter every season it survives.',
+    why: 'How fast it climbs was set when the league was created — flat, slow or fast. On a rising ceiling a contract that looks heavy today is quietly getting lighter every season it survives; on a flat one it costs exactly what it costs, forever.',
   },
   committedCap: {
     term: 'Committed',
@@ -138,6 +152,21 @@ export const GLOSSARY = {
     term: 'Restructure',
     definition: 'Converting salary a player is owed this year into signing bonus, which spreads it over the remaining seasons and drops this year\'s charge.',
     why: 'The standard way to fit a signing you cannot otherwise afford — but every dollar you move is a dollar of future dead money. Only restructure a player you intend to keep.',
+  },
+  /*
+   * A SEPARATE TERM FROM `restructure`, deliberately, and not a second
+   * definition of it. The mechanic is the same one — salary owed this year
+   * turned into signing bonus — but a GM meets it in two different places
+   * with two different decisions attached: a restructure buys room out of a
+   * deal you are keeping as it is, while this is the reason an extension
+   * lowers a cap hit at all, and the years being added are what make it cheap.
+   * The wording keeps them plainly the same move so nobody has to learn it
+   * twice.
+   */
+  salaryConversion: {
+    term: 'Converted salary',
+    definition: 'Salary he is already owed THIS season, handed to him now as signing bonus instead. It then spreads across every year of the deal — including the ones you are adding — so this season\'s charge falls.',
+    why: 'It is the reason clubs extend a man they could have left alone: the added years are what there is to spread it over. The money does not go away. Every later season carries a share of it, and all of it is dead money if you ever release him.',
   },
   dealShape: {
     term: 'Front-loaded / back-loaded',

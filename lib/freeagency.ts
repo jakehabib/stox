@@ -8,7 +8,7 @@ import { buildScoutedView } from './scouting';
 import { loadDynastyProfile, parseSkills, scoutingModsFor, signBandMultFor } from './dynasty';
 import {
   buildNegotiationContext, contractShapeFor, decideOffer, sessionFingerprint,
-  DEFAULT_STRUCTURE, RESIGN_LEVERAGE, extensionLeverage, clampOffer,
+  DEFAULT_STRUCTURE, DEFAULT_CONVERT_PCT, RESIGN_LEVERAGE, extensionLeverage, clampOffer,
   evaluateOffer, rivalView, winsContest, leastAcceptableApy,
   type DealStructure, type NegotiationContext, type NegotiationGate, type NegotiationMode,
   type NegotiationOutcome, type NegotiationSession, type Offer, type ResignWindow, type Suitor,
@@ -464,6 +464,14 @@ export async function extendContract(opts: {
   bonusPct?: number;
   guaranteedPct?: number;
   /**
+   * Passed straight through to `signExtension` on the APPEND branch, where it
+   * decides how much of this season's owed salary becomes signing bonus. The
+   * REPLACE branch ignores it and must: that deal has expired, there is no
+   * salary still owed for this season to convert, and `buildContract` writes
+   * the new one from scratch.
+   */
+  convertPct?: number;
+  /**
    * True when this is a team keeping its OWN expiring player rather than
    * tearing up a deal with years left on it. Writes a RESIGN transaction
    * instead of a SIGN one — both the news-wire type filter
@@ -504,6 +512,7 @@ export async function extendContract(opts: {
       newMoneyApy: apy, addYears: years,
       escalation: opts.escalation, voidYears: opts.voidYears,
       bonusPct: opts.bonusPct, guaranteedPct: opts.guaranteedPct,
+      convertPct: opts.convertPct,
       // One implementation of appending, not two. `signExtension` already
       // carries the unamortized bonus, credits the old hit back at the cap
       // gate and writes the row; all this branch decides is which wire type
@@ -664,6 +673,21 @@ export async function signExtension(opts: {
   bonusPct?: number;
   guaranteedPct?: number;
   /**
+   * How much of the salary he is already owed THIS SEASON is turned into
+   * signing bonus, 0..1 of what may legally be moved — the real-football
+   * reason a club extends a man at all. Undefined converts NOTHING, which is
+   * `buildExtension`'s own default and the behaviour every caller had before
+   * the option existed; a deal a GM negotiates arrives here carrying
+   * `DEFAULT_CONVERT_PCT` from `negotiateOffer` instead. See the conversion
+   * block above `buildExtension` in lib/cap.ts for the sim-health measurement
+   * that split those two defaults apart.
+   *
+   * It rides through to `buildExtension` and nowhere else: the cap gate below
+   * measures the row this produces, so the check and the write cannot disagree
+   * about what the extension costs this year however this is set.
+   */
+  convertPct?: number;
+  /**
    * True when this append is a club KEEPING ITS OWN EXPIRING PLAYER rather
    * than adding years to a deal that still had a future. Writes a RESIGN row
    * on the wire instead of a SIGN one, exactly as `extendContract`'s own flag
@@ -691,6 +715,7 @@ export async function signExtension(opts: {
     bonusPct: opts.bonusPct,
     guaranteedPct: opts.guaranteedPct,
     voidYears: opts.voidYears,
+    convertPct: opts.convertPct,
   });
   const newHit = capHit({ ...next, baseSalaries: writeJson(next.baseSalaries) }, capMode);
   await assertCapRoom({
@@ -2569,11 +2594,23 @@ export async function negotiateOffer(opts: {
           leagueId, playerId, newMoneyApy: offer.apy, addYears: offer.years, seasonYear,
           capMode: settings.capMode, week, escalation: structure.escalation, voidYears: structure.voidYears,
           bonusPct: shape.bonusPct, guaranteedPct: shape.guaranteedPct,
+          // THE SETTING THE METER WAS DRAWN FROM, resolved the identical way.
+          // `decideOffer` above priced this exact offer with
+          // `structure.convertPct ?? DEFAULT_CONVERT_PCT`; handing the write a
+          // different figure would make the year-1 number on the panel a
+          // number about a contract nobody signed.
+          convertPct: structure.convertPct ?? DEFAULT_CONVERT_PCT,
         });
       } else if (incumbent) {
         await extendContract({
           leagueId, playerId, apy: offer.apy, years: offer.years, seasonYear,
           capMode: settings.capMode, week, escalation: structure.escalation, voidYears: structure.voidYears,
+          // Same figure the meter used, resolved the same way. A walk-year
+          // re-sign APPENDS (see extendContract), so this reaches
+          // `signExtension` on that path too — and the re-sign screen does not
+          // set the field at all, which is precisely why the default is
+          // applied here rather than left to the builder.
+          convertPct: structure.convertPct ?? DEFAULT_CONVERT_PCT,
           // An EXTENSION is not a re-sign and must not report as one on the
           // wire: he was never going to be a free agent, and "Re-signed" over
           // a man with three years left is a small lie in the news feed.

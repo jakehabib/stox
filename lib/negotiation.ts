@@ -1,6 +1,6 @@
 import { Rng } from './rng';
 import {
-  buildContract, buildExtension, capHitSchedule, deadMoneyOnCut, formatMoney,
+  buildContract, buildExtension, capHit, capHitSchedule, deadMoneyOnCut, formatMoney,
   guaranteedMoney as totalGuaranteed,
   willingnessHorizon, prorationYears as capProrationYears, TERM, type ContractLike,
 } from './cap';
@@ -1746,9 +1746,47 @@ export interface DealStructure {
   /** <1 front-loaded, 1 flat, >1 back-loaded. */
   escalation: number;
   voidYears: number;
+  /**
+   * ON A DEAL THAT APPENDS: how much of the salary he is ALREADY OWED this
+   * season is turned into signing bonus, 0..1 of what may legally be moved
+   * (`convertibleBase` — everything above the league minimum). Ignored
+   * entirely on a fresh contract, where there is no owed salary to convert.
+   *
+   * THIS IS NOT THE GUARANTEE SLIDER, though both end up moving money into a
+   * signing bonus. `contractShapeFor(offer).bonusPct` splits the NEW money he
+   * is being promised; this moves money the club already owes him THIS SEASON
+   * out of a year it cannot afford and into a bonus that prorates across the
+   * years just added. Different money, different season, and only one of them
+   * is why a club extends a man in the first place.
+   *
+   * OPTIONAL, and where it is absent `DEFAULT_CONVERT_PCT` applies — read in
+   * exactly two places, `decideOffer` and `negotiateOffer`, which are the
+   * meter and the write. Optional rather than required so the two screens that
+   * build their own structure without knowing this exists (SignOfferForm,
+   * ResignRow) keep compiling AND keep getting the same arithmetic on both
+   * sides of the submit button.
+   */
+  convertPct?: number;
 }
 
-export const DEFAULT_STRUCTURE: DealStructure = { escalation: 1.12, voidYears: 0 };
+/**
+ * WHAT A NEGOTIATED EXTENSION CONVERTS WHEN NOBODY SAYS OTHERWISE: all of it.
+ *
+ * This is the fix to the reported bug, and it is a constant rather than
+ * `buildExtension`'s own default for a reason measured in sim:health — see the
+ * conversion block above `buildExtension` in lib/cap.ts. The short version:
+ * this default belongs to deals a GM negotiates on a screen that shows him the
+ * later years and the dead money, not to the AI's re-sign budgeter, which
+ * prices year one and nothing else and ran its clubs $21.5M over the cap two
+ * seasons later when it was handed the same instrument.
+ *
+ * Read by `decideOffer` (the meter) and by `negotiateOffer` (the write). Those
+ * two and no others, so a screen that has never heard of this — the re-sign
+ * list, free agency — cannot end up drawing one contract and signing another.
+ */
+export const DEFAULT_CONVERT_PCT = 1;
+
+export const DEFAULT_STRUCTURE: DealStructure = { escalation: 1.12, voidYears: 0, convertPct: DEFAULT_CONVERT_PCT };
 
 /**
  * Force an offer into the legal range, whatever it arrived as.
@@ -1845,6 +1883,36 @@ export interface OfferDecision {
    */
   firstNewYearIndex: number;
   guaranteedMoney: number;
+  /**
+   * ===========================================================================
+   * WHAT THIS SEASON COSTS TODAY, SO THE PANEL CAN SHOW BEFORE AND AFTER
+   * ===========================================================================
+   * The cap hit the club is ALREADY carrying for him this year, off the
+   * contract he is on — null when he is not on one (free agency, where there
+   * is no "before" and the only honest figure is what the deal costs).
+   *
+   * It is on the decision rather than computed by the panel from
+   * `ctx.currentContract` because `year1CapHit` beside it is computed here,
+   * and a before/after pair assembled from two different places is how this
+   * screen ships a delta that does not subtract. The pair is the whole point:
+   * a beta tester extended a man to lower his cap hit, watched it rise, and
+   * only found out after he had committed.
+   *
+   * NOT `gate.capSpace`, which is not the club's cap room — it adds the
+   * incumbent's hit back because the signing replaces his deal (see
+   * resolveNegotiationSession). This is his HIT, which that credit is made of,
+   * and it is the same number `assertCapRoom` credits back on the way in.
+   */
+  currentYearHitBefore: number | null;
+  /**
+   * Base salary this deal moves out of THIS season and into the signing bonus,
+   * and the most it could have moved. Both zero on a fresh contract and on a
+   * man already on a league-minimum base — which is exactly the case where an
+   * extension raises his hit and cannot lower it, and the case the panel has
+   * to be able to explain BEFORE he signs.
+   */
+  salaryConverted: number;
+  convertibleBase: number;
   /** What releasing him in year 1 would leave on the books. */
   deadMoneyIfCut: number;
   /** Bonus proration void years push past the end of the deal. */
@@ -1944,6 +2012,12 @@ export function decideOffer(
         bonusPct: shape.bonusPct,
         guaranteedPct: shape.guaranteedPct,
         voidYears: structure.voidYears,
+        // THE HALF OF AN EXTENSION THAT LOWERS THIS YEAR. The `??` is the
+        // rule, not a fallback: a structure that never heard of this field
+        // still gets the negotiated default, and `negotiateOffer` resolves it
+        // the same way on submit, so the meter and the row written agree on
+        // every table.
+        convertPct: structure.convertPct ?? DEFAULT_CONVERT_PCT,
       })
     : null;
   const c = ext ?? buildContract({
@@ -2012,9 +2086,19 @@ export function decideOffer(
     blocked = 'CAP';
     // "or lower the deal" is not advice when the deal is already at the league
     // minimum — there is nothing left to lower, and the only route is room.
+    // THE THIRD WAY OUT, WHERE THERE IS ONE. "Clear space or lower the deal"
+    // is incomplete advice on a deal that appends: salary he is already owed
+    // this season can still be pushed into the bonus, the control for it is on
+    // the same screen, and it moves year 1 without changing a dollar of what
+    // he is being offered. Named only while there is genuinely room left to
+    // convert — an offer already at 100% has no third option and being told it
+    // had one would be worse than the shorter sentence.
+    const leftToConvert = ext ? Math.max(0, ext.convertibleBase - ext.converted) : 0;
     reason = offer.apy <= gate.minSalary
       ? `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room, and this is already the league minimum — the only way to sign him is to clear space.`
-      : `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room — clear space or lower the deal.`;
+      : leftToConvert > 0
+        ? `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room — clear space, lower the deal, or push more of the ${formatMoney(leftToConvert)} he is still owed this season into the bonus.`
+        : `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room — clear space or lower the deal.`;
   }
 
   // THE CONTEST. One comparison, on one scale, against the same evaluation
@@ -2098,6 +2182,12 @@ export function decideOffer(
     // signed today it is exactly `deadMoneyIfCut` below, and those two sitting
     // side by side in the panel disagreeing is the bug this closes.
     guaranteedMoney: totalGuaranteed(priced),
+    // The same `capHit` the ledger, the cap page and `assertCapRoom` read, on
+    // the row he is on right now. `year1CapHit` above is the same function on
+    // the row this offer would write, so the pair really is one subtraction.
+    currentYearHitBefore: ctx.currentContract ? capHit(ctx.currentContract, gate.capMode) : null,
+    salaryConverted: ext ? ext.converted : 0,
+    convertibleBase: ext ? ext.convertibleBase : 0,
     deadMoneyIfCut: deadMoneyOnCut(priced, gate.capMode),
     strandedVoidMoney,
     blocked,
