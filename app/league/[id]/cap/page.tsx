@@ -63,7 +63,11 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
     // this year's rows at the foot of the page. Same rows, four years wide and
     // with the year on them — see DeadMoneyRunwayPanel for why that list is
     // gone rather than kept alongside this.
-    deadMoneyRunway(team.id, league, settings.capMode),
+    //
+    // Only fetched for the view that renders it. It reads the ledger and then
+    // walks every live contract looking for void years, so paying for it on a
+    // Basic view that will not show it is a query and a walk for nothing.
+    advanced ? deadMoneyRunway(team.id, league, settings.capMode) : Promise.resolve(null),
     capComplianceReport(team.id, league.seasonYear, settings.capMode),
   ]);
 
@@ -355,9 +359,22 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       {/* Directly under the usage bar, because it is that bar's dead slice
           told forward in time — and above the contract table, because
           "when does this end" is a decision and a 53-row table is a
-          reference. Basic view as well as Advanced: the app owner asked for
-          it on the cap page, not behind a toggle. */}
-      <DeadMoneyRunwayPanel runway={runway} leagueId={league.id} seasonYear={league.seasonYear} />
+          reference.
+          ADVANCED ONLY. It shipped on both views, and the comment here used to
+          say so in as many words: the ask had been for it "on the cap page,
+          not behind a toggle". The app owner has since moved it himself —
+          *"lets move the dead money graphic and runway to the advanced tab of
+          the Cap"* — which is what the two views are for. Basic keeps the one
+          number every GM checks, the masthead's Dead Money tile; the four-year
+          shape and the names behind it are a reading, and readings live on
+          Advanced beside the concentration and contract-value panels.
+          What Basic loses is the itemisation: with the old foot-of-page list
+          replaced by this panel, a Basic view now carries a dead-money TOTAL
+          and no breakdown at all. That is the trade, it is one click, and it
+          is stated here so nobody re-adds a second list to fill the gap. */}
+      {advanced && runway && (
+        <DeadMoneyRunwayPanel runway={runway} leagueId={league.id} seasonYear={league.seasonYear} />
+      )}
 
       {advanced && health && (
         <MetricTiles
