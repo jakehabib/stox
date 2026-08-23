@@ -400,7 +400,12 @@ export const GLOSSARY = {
   yardsPerAttempt: {
     term: 'Yards per attempt (Y/A)',
     definition: 'Passing yards divided by passes thrown — how much ground a throw is worth on average, whether or not it is caught.',
-    why: 'Around 5.4 is the middle of the league. Close to 6 is a genuinely dangerous passing game; under 5 usually means a lot of short, safe throws that never threaten anybody.',
+    // MEASURED, 6.26, over a full season of qualified passers. It said 5.4,
+    // which filed most of the league under "short, safe throws". Same defect
+    // as yardsPerCarry below and from the same cause: these bands were
+    // written before the drive sim was calibrated (137a1e2) and never
+    // re-anchored to what the engine actually produces.
+    why: 'Around 6.3 is the middle of the league. Past 7 is a genuinely dangerous passing game; under 5.5 usually means a lot of short, safe throws that never threaten anybody.',
   },
   tdRate: {
     term: 'TD %',
@@ -415,7 +420,14 @@ export const GLOSSARY = {
   yardsPerCarry: {
     term: 'Yards per carry (YPC)',
     definition: 'Rushing yards divided by carries.',
-    why: 'Around 5.4 is the middle of the pack. Approaching 6 is a real running game; under 5 and the run is costing you more than it gains.',
+    // MEASURED, 4.35, over a full season of qualified backs — and that is
+    // almost exactly the real NFL's 4.3, so the ENGINE is right and this
+    // sentence was the thing that was wrong. It claimed 5.4 was the middle,
+    // which filed most of the league as a failing running game and told a
+    // GM his best back was below average. Found while the Stats page was
+    // being rebuilt: a 90-overall back at 4.8 ranked T-27th of 88 and read
+    // as a problem.
+    why: 'Around 4.35 is the middle of the pack, the same as the real thing. Past 5 is a real running game; under 4 and the run is costing you more than it gains.',
   },
   catchRate: {
     term: 'Catch %',
@@ -425,7 +437,9 @@ export const GLOSSARY = {
   yardsPerReception: {
     term: 'Yards per reception (Y/R)',
     definition: 'Receiving yards divided by catches — how far he goes with each ball he holds on to.',
-    why: 'Around 8.5 is the usual mark for a receiver. Past 10 is a genuine deep threat; a back or a slot man catching everything underneath sits well below it and is not worse for it.',
+    // MEASURED, 10.11, over a full season of qualified receivers. It said
+    // 8.5, which made an ordinary season read as a deep threat.
+    why: 'Around 10.1 is the usual mark for a receiver. Past 12 is a genuine deep threat; a back or a slot man catching everything underneath sits well below it and is not worse for it.',
   },
   yardsPerTarget: {
     term: 'Yards per target',

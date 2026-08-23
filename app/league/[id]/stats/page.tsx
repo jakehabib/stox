@@ -14,8 +14,8 @@ import { buildPythagoreanTable, type PythagoreanRow } from '@/lib/analytics';
 import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/ds/StatScopeToggle';
 // One definition of the passer rating formula, shared with the career table's
 // Rate column. The two used to be separate copies that agreed only by luck.
-import { passerRating, careerColumns, formatColumn, isDerived, type StatColumn } from '@/lib/statLabels';
-import { buildRankBook, isRankableColumn, type StatRank } from '@/lib/statRanks';
+import { passerRating, careerColumns, formatColumn, isDerived, statLabel, type StatColumn } from '@/lib/statLabels';
+import { buildRankBook, columnValue, isRankableColumn } from '@/lib/statRanks';
 import { StatsTabs } from '@/components/ds/StatsTabs';
 import { RankChip } from '@/components/ds/RankChip';
 import { PositionVerdictStrip, type PositionVerdictCard, type VerdictStatLine } from '@/components/ds/PositionVerdictStrip';
@@ -57,7 +57,7 @@ import { tip, type GlossaryKey } from '@/lib/glossary';
  *      Team Stats", the Advanced view rendered a 32-row Pythagorean luck
  *      table and a 32-point offense/defense scatter.
  *
- * WHAT REPLACED IT: a verdict strip of six fixed positions across the top
+ * WHAT REPLACED IT: a strip of six fixed positions across the top
  * (PositionVerdictStrip), then one sortable table per position with the
  * columns CAREER_COLUMNS already says define it, every name a link to the
  * man's card, and a league standing beside each line.
@@ -88,23 +88,83 @@ const CATEGORIES: LeaderCategory[] = [
 ];
 
 /**
- * Glossary text for the rate columns, hung on the TABLE HEADER rather than on
- * every cell. The old roster table printed its rate labels inside the cells,
- * once per player, which is why its explanations had to be collected into a
- * separate legend panel above it — forty "?" marks on one screen is noise.
- * One table per position means each rate has exactly one header, so the
- * explanation goes where the label is and the legend panel is gone.
+ * ===========================================================================
+ * THE COLUMNS THAT NAME THEMSELVES, AND THE ONE TOOLTIP LEFT ON THE PAGE
+ * ===========================================================================
+ * The app owner, on the Advanced view of the running backs' table:
+ *
+ *   *"ON the tooltip for avg - the text is waaay too long. it should title
+ *   'yards/carry' and be self explanatory. Same for WRs and TEs, just
+ *   'yards/rec'"*
+ *
+ * lib/statLabels.ts is the one definition of WHICH columns a position has, and
+ * its `short` is sized for the career table on a player's card, where the
+ * position is the whole context. On a page that stacks nine positions it is
+ * not enough: `Avg` is the header at RB, WR, TE, QB and P and means five
+ * different things — the same "one label, four meanings" defect that made the
+ * old single roster table incoherent, surviving in the header row. So this
+ * page renames those columns where it prints them. It does NOT rename them in
+ * statLabels: the career table on a player's own card has his position at the
+ * top of it and `Avg` is right there.
+ *
+ * AND THE TOOLTIPS CAME OFF WITH THE RENAME. `glossary.yardsPerCarry` is
+ * "Rushing yards divided by carries" plus a sentence of interpretation — a
+ * paragraph explaining a phrase that explains itself, hung off forty header
+ * cells. Two further reasons it had to go rather than merely shrink:
+ *
+ *   1. EVERY `?` INSIDE A TABLE WAS A SCROLLBAR. Measured: the bubble is
+ *      absolutely positioned inside the table's scroll container and Chrome
+ *      counts it into scrollWidth whatever its size, so two of them added
+ *      530px of empty scroll to a table that fit. See RosterStatTable.
+ *   2. IT WAS WRONG. Measured across a full 17-game save, the median qualified
+ *      back runs 4.35 yards a carry; the glossary says "around 5.4 is the
+ *      middle of the pack ... under 5 and the run is costing you more than it
+ *      gains", which files most of the league under failing. (Same shape at
+ *      the other two: yards/rec claims 8.5 against a measured 10.11, yards per
+ *      attempt claims 5.4 against 6.26.) lib/glossary.ts is not this page's to
+ *      edit and other screens still read those entries, so the fix here is to
+ *      stop repeating the claim; the entry itself is reported upstream.
  */
-const COLUMN_TIP: Record<string, GlossaryKey> = {
-  cmpPct: 'completionPct',
-  passYpa: 'yardsPerAttempt',
+const PLAIN_LABEL: Record<string, string> = {
+  passYpa: 'yards/att',
+  cmpPct: 'comp %',
+  passerRating: 'rating',
+  rushYpc: 'yards/carry',
+  catchPct: 'catch %',
+  recYpr: 'yards/rec',
+  tklPerG: 'tackles/g',
+  puntAvg: 'yards/punt',
+  // Not rates, but the same test: 'PD' and 'FF' are initials, and initials are
+  // what a tooltip was there to expand. Spelt out, they need no bubble — which
+  // is what gets them out of the scroll container.
+  pd: 'pass def',
+  ff: 'forced fum',
+};
+
+/** The column header this page prints, which is not always statLabels' `short`. */
+const labelFor = (c: StatColumn): string => PLAIN_LABEL[c.key] ?? c.short;
+
+/**
+ * The same column named inside a SENTENCE rather than at the top of a column.
+ * "league standing on Yds" reads like a header that wandered into prose, so a
+ * stored column takes its long STAT_LABELS name ("pass yds") and a rate keeps
+ * its already-plain one ("yards/carry").
+ */
+const standingLabel = (c: StatColumn): string => (PLAIN_LABEL[c.key] ?? statLabel(c.key)).toLowerCase();
+
+/**
+ * THE ONE SURVIVING TOOLTIP, and it is on a card, not in a table.
+ *
+ * Passer rating is the only number on this page whose header cannot say what
+ * it is: "rating" names it, but nothing in the label tells a reader that 158.3
+ * is the ceiling and 100 is a good year. Every other rate here is a division
+ * the header now spells out. It hangs on the hero card, where it is outside
+ * every scroll container — the same tip is also on the League tab's Passer
+ * Rating panel, and that is the whole of the page's glossary now, down from
+ * nine.
+ */
+const CARD_TIP: Record<string, GlossaryKey> = {
   passerRating: 'passerRating',
-  rushYpc: 'yardsPerCarry',
-  catchPct: 'catchRate',
-  recYpr: 'yardsPerReception',
-  fgPct: 'fieldGoalPct',
-  pd: 'passesDefensed',
-  ff: 'forcedFumbles',
 };
 
 /**
@@ -114,45 +174,45 @@ const COLUMN_TIP: Record<string, GlossaryKey> = {
  * re-ranked: *"It should be the most important positions, not your best
  * player. It should be QB, RB, WR, TE, EDGE, CB if there's room"*.
  *
- * WHICH NUMBERS, AND THE VOLUME TRAP. A counting-stat rank rewards volume, and
- * on OFFENSE this engine really does hand volume out by game plan rather than
- * by merit: `allocateStats()` sets a passer's attempts from `plays * passRate`
- * where the rate is a property of the club's SCHEME, and splits his yards off
- * the drive sim's team total. A quarterback 3rd in passing yards on a
- * pass-first club is busy, not necessarily good. So every offensive card pairs
- * its two counting stats with the position's own efficiency column, and the
- * card's VERDICT is taken from that rate.
+ * WHICH THREE NUMBERS. His correction, after using the page: *"For QB's, the
+ * stats are fine but for RB it should say yards/carry....for WR, and TE
+ * instead of avg it should show touchdowns."* So:
  *
- * On DEFENCE the trap does not exist in this simulation, and the engine is
- * explicit about why: a defence's tackles, passes defensed and forced fumbles
- * per game are fixed draws (`DEFENDER_TACKLES_PER_GAME = 46`,
- * `PASSES_DEFENSED_PER_GAME = 3.6`, `FORCED_FUMBLES_PER_GAME = 0.55`) shared
- * out by rating and depth slot, and sacks and interceptions are the opposing
- * offense's real sacks-taken and picks-thrown, again allocated by rating.
- * There is no snap-count inflation to correct for, which is also why
- * CAREER_COLUMNS defines no rate at EDGE or CB — and this file will not invent
- * one to fill a slot. Their third number is the position's third defining
- * stat instead, and their verdict comes off the counting stat that carries the
- * most resolution.
+ *   * QB is untouched — yards, touchdowns, rating.
+ *   * RB keeps yards per carry and finally SAYS "yards/carry" (see
+ *     PLAIN_LABEL); the number never changed, the header lied by abbreviation.
+ *   * WR and TE trade the rate for the touchdown. A receiving line reads
+ *     yards / catches / touchdowns on every stat page there has ever been,
+ *     and yards-per-catch is still one column away in the table below.
+ *
+ * The two defensive cards were audited against the same test and left alone:
+ * EDGE reads Sk / Tkl / FF and CB reads Int / PD / Tkl, and not one of those
+ * five initials means a second thing anywhere on this page. PD and FF are
+ * spelt out in the tables (PLAIN_LABEL) where they sit beside eight other
+ * columns; on a card, under a position badge, three stats to a frame, they are
+ * already unambiguous.
  *
  * NOTHING HERE IS RANKED THAT THE ENGINE DEALS AS DICE — see lib/statRanks.ts,
  * which keeps that list (the punter, opportunity columns, interceptions
  * thrown) in one place.
+ *
+ * THERE IS NO VERDICT KEY ANY MORE. Each spec used to name the column its
+ * card's graded word was computed from; the word is gone (see
+ * PositionVerdictStrip) and the per-stat ranks it was collapsing are the whole
+ * answer now.
  */
-const CARD_SPEC: { position: string; stats: string[]; verdictKey: string; basis: string }[] = [
-  { position: 'QB', stats: ['passYds', 'passTd', 'passerRating'], verdictKey: 'passerRating', basis: 'passer rating' },
-  { position: 'RB', stats: ['rushYds', 'rushTd', 'rushYpc'], verdictKey: 'rushYpc', basis: 'yards per carry' },
-  { position: 'WR', stats: ['recYds', 'rec', 'recYpr'], verdictKey: 'recYpr', basis: 'yards per catch' },
-  { position: 'TE', stats: ['recYds', 'rec', 'recYpr'], verdictKey: 'recYpr', basis: 'yards per catch' },
-  { position: 'EDGE', stats: ['sacks', 'tackles', 'ff'], verdictKey: 'sacks', basis: 'sacks' },
-  // The corner's headline is the interception, but the VERDICT is passes
-  // defensed: picks run 0-6 across a whole league of corners, so half the
-  // position ties on the same number and the grade collapses to two steps.
-  // Passes defensed is the same kind of number — rating's share of a fixed
-  // per-game pie — with the resolution to separate a cover corner from a
-  // liability. The card names the basis, so it cannot be mistaken for a
-  // verdict on the interception column above it.
-  { position: 'CB', stats: ['defInt', 'pd', 'tackles'], verdictKey: 'pd', basis: 'passes defensed' },
+const CARD_SPEC: { position: string; stats: string[] }[] = [
+  { position: 'QB', stats: ['passYds', 'passTd', 'passerRating'] },
+  { position: 'RB', stats: ['rushYds', 'rushTd', 'rushYpc'] },
+  { position: 'WR', stats: ['recYds', 'rec', 'recTd'] },
+  { position: 'TE', stats: ['recYds', 'rec', 'recTd'] },
+  { position: 'EDGE', stats: ['sacks', 'tackles', 'ff'] },
+  // The corner leads on the interception because that is the number a corner
+  // is known by, and passes defensed rides second because picks run 0-6 across
+  // a whole league of corners — half the position ties on the same number, so
+  // the pick alone cannot separate a cover corner from a liability. Both are
+  // printed with their own standing rather than one being folded into a grade.
+  { position: 'CB', stats: ['defInt', 'pd', 'tackles'] },
 ];
 
 /** The unit headings the roster tables sit under, in lineup-card order. */
@@ -314,7 +374,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
 
   // The whole roster, not only the men with a stat line: a starting slot with
   // nobody in it and a starter who has not taken a snap are both answers the
-  // verdict strip has to be able to give.
+  // position strip has to be able to give.
   const roster = myTeam && userTeam
     ? await prisma.player.findMany({
         where: { teamId: userTeam.id },
@@ -356,10 +416,64 @@ export default async function StatsPage({ params, searchParams }: { params: { id
     careerColumns(canonicalPosition(position)).find((c) => c.key === key);
 
   const myClubPlayedPostseason = !!userTeam && playoffRecord.has(userTeam.id);
-  const teamAccent = userTeam ? generateTeamLogoParams(userTeam.abbr).primary : '#38bdf8';
 
-  // ---- The six verdict cards ----------------------------------------------
-  const verdictCards: PositionVerdictCard[] = !myTeam ? [] : CARD_SPEC.map((spec) => {
+  /**
+   * ONE CARD BUILDER, TWO TABS. A card is a man, a club and three stat lines
+   * with their standings; who the man is differs (your starter / the league's
+   * leader) and nothing else does, so the two tabs differ by which player they
+   * hand this function and nothing else.
+   */
+  const buildCard = (
+    spec: (typeof CARD_SPEC)[number],
+    man: { id: string; firstName: string; lastName: string; age: number; trueOvr: number; weightLb: number | null; heightIn: number | null } | null,
+    stats: SeasonStats | undefined,
+    club: { id: string; abbr: string } | null,
+    clubLabel: string | undefined,
+    slotLabel: string,
+    emptyNote: string,
+  ): PositionVerdictCard => {
+    const lines: VerdictStatLine[] = spec.stats.map((key) => {
+      const col = columnFor(spec.position, key);
+      if (!col || !stats) return { label: col ? labelFor(col) : key, value: '—', rank: null };
+      return {
+        label: labelFor(col),
+        value: formatColumn(col, stats) ?? '—',
+        rank: isRankableColumn(spec.position, col) ? rankBook.rank(spec.position, col, stats) : null,
+        tip: CARD_TIP[col.key] ? tip(CARD_TIP[col.key]) : undefined,
+      };
+    });
+
+    // WHY A CARD HAS NO ROSETTES, in the card's own words. The note used to be
+    // computed off the verdict's rank; with the verdict gone it answers for
+    // the chips that are actually on the card — and the last case is a RATE
+    // that has not qualified while the counting stats beside it are ranked.
+    const rateUnranked = !!stats && ranksOpen && spec.stats.some((key) => {
+      const col = columnFor(spec.position, key);
+      return !!col && isDerived(col) && isRankableColumn(spec.position, col) && !rankBook.rank(spec.position, col, stats);
+    });
+    let note: string | null = null;
+    if (!man) note = emptyNote;
+    else if (!stats) note = playoffs ? 'no postseason snaps' : 'no production recorded yet';
+    else if (!ranksOpen) note = 'ranks open after four games';
+    else if (rateUnranked) note = 'rate not yet qualified';
+
+    return {
+      position: spec.position,
+      slotLabel,
+      player: man ? { id: man.id, firstName: man.firstName, lastName: man.lastName, age: man.age, ovr: man.trueOvr, weightLb: man.weightLb, heightIn: man.heightIn } : null,
+      href: man ? `/league/${league.id}/player/${man.id}` : null,
+      games: stats?.gp ?? 0,
+      stats: lines,
+      note,
+      club,
+      clubLabel,
+      accent: club ? generateTeamLogoParams(club.abbr).primary : '#38bdf8',
+    };
+  };
+
+  // ---- My Team: the six men your depth chart has on the field --------------
+  const myClub = userTeam ? { id: userTeam.id, abbr: userTeam.abbr } : null;
+  const myTeamCards: PositionVerdictCard[] = !myTeam ? [] : CARD_SPEC.map((spec) => {
     const ordered = depthOrder(spec.position);
     const { starters } = splitStarters(spec.position, ordered);
     // WR1, EDGE1, CB1 — the first slot on the depth chart, never "whoever has
@@ -367,42 +481,65 @@ export default async function StatsPage({ params, searchParams }: { params: { id
     // stop being comparable to last week's, which is the whole reason the row
     // is a fixed six in the first place.
     const man = starters[0] ?? null;
-    const label = splitStarters(spec.position, ordered).starters.length > 1 || (spec.position === 'WR' || spec.position === 'CB' || spec.position === 'EDGE')
+    const label = starters.length > 1 || (spec.position === 'WR' || spec.position === 'CB' || spec.position === 'EDGE')
       ? `${spec.position}1`
       : spec.position;
-    const stats = man ? myStatsById.get(man.id) : undefined;
+    return buildCard(spec, man, man ? myStatsById.get(man.id) : undefined, myClub, undefined, label, 'nobody to start here');
+  });
 
-    const lines: VerdictStatLine[] = spec.stats.map((key) => {
-      const col = columnFor(spec.position, key);
-      if (!col || !stats) return { label: col?.short ?? key, value: '—', rank: null };
-      const text = formatColumn(col, stats);
-      return {
-        label: col.short,
-        value: text ?? '—',
-        rank: isRankableColumn(spec.position, col) ? rankBook.rank(spec.position, col, stats) : null,
-        tip: COLUMN_TIP[col.key] ? tip(COLUMN_TIP[col.key]) : undefined,
-      };
-    });
-
-    const verdictCol = columnFor(spec.position, spec.verdictKey);
-    const verdictRank: StatRank | null = verdictCol && stats ? rankBook.rank(spec.position, verdictCol, stats) : null;
-
-    let note: string | null = null;
-    if (!man) note = 'nobody to start here';
-    else if (!stats) note = playoffs ? 'no postseason snaps' : 'no production recorded yet';
-    else if (!ranksOpen) note = 'ranks open after four games';
-    else if (!verdictRank) note = `not yet qualified — ${minGamesForRate} games needed`;
-
-    return {
-      position: spec.position,
-      slotLabel: label,
-      player: man ? { id: man.id, firstName: man.firstName, lastName: man.lastName, age: man.age, ovr: man.trueOvr, weightLb: man.weightLb, heightIn: man.heightIn } : null,
-      href: man ? `/league/${league.id}/player/${man.id}` : null,
-      games: stats?.gp ?? 0,
-      stats: lines,
-      verdict: verdictRank ? { rank: verdictRank, basis: spec.basis } : null,
-      note,
-    };
+  /**
+   * ---- League: the six men leading those positions -------------------------
+   *
+   * The owner: *"we could also add hero cards for the 'league' too showing the
+   * leaders"*.
+   *
+   * THE DUPLICATION QUESTION, MEASURED RATHER THAN ARGUED. This tab already
+   * carries seven leader boards, and six more panels that reprint six names
+   * off the top of them would be the exact defect the My Team rework removed.
+   * The boards cut the league BY STAT (passing touchdowns, sacks); these cards
+   * cut it BY POSITION (the best tight end), and those are different questions
+   * — but only if the answers differ. Counted on a finished 17-game save: 3 of
+   * the 6 cards name a man who is also row 1 of a board (the passing-yards,
+   * rushing-yards and receiving-yards leaders), and 3 do not. The tight end
+   * leads no board at all, because the receiving board is every position at
+   * once; the edge rusher and the corner lead none because the sack board's
+   * row 1 was a tie broken the other way and the interception board's row 1 is
+   * a safety. And what the three overlapping cards duplicate is the NAME: the
+   * board gives that man one number, the card gives three with a standing on
+   * each, his age, his overall and his club.
+   *
+   * WHO GETS THE CARD, AND THE TIE. The lead stat of the position, then the
+   * card's second stat, then its third, then the player id so a reload cannot
+   * reorder a tie. Sacks really do tie at the top — two edge rushers on 19 in
+   * the save above — and the board and the card break that tie differently,
+   * which is why both print "T-1st" rather than either claiming sole
+   * possession of it.
+   *
+   * THE COLOUR RULE STILL MEANS SOMETHING HERE, and this is the part that had
+   * to be thought about: every one of these men is 1st at his lead stat by
+   * construction, so the top chip on all six cards is gold and starred. That
+   * is not the colour going quiet — it is the card's reason for existing,
+   * stated in the same language the rest of the page uses. The information is
+   * in the other two chips, which are NOT rank 1 for most of them: a receiver
+   * who leads the league in yards can be 14th in catches, and that is the sort
+   * of thing this row is for. Suppressing the lead chip because it is
+   * predictable was the alternative, and it was rejected — a blank where every
+   * other card on the site prints a standing reads as missing data.
+   */
+  const leagueCards: PositionVerdictCard[] = myTeam || withStats.length === 0 ? [] : CARD_SPEC.map((spec) => {
+    const cols = spec.stats.map((k) => columnFor(spec.position, k)).filter((c): c is StatColumn => !!c);
+    const pool = withStats.filter(({ p }) => p.position === spec.position);
+    const best = [...pool].sort((a, b) => {
+      for (const c of cols) {
+        const av = columnValue(c, a.stats) ?? -1;
+        const bv = columnValue(c, b.stats) ?? -1;
+        if (av !== bv) return bv - av;
+      }
+      return a.p.id < b.p.id ? -1 : 1;
+    })[0];
+    const club = best?.p.team ? { id: best.p.team.id, abbr: best.p.team.abbr } : null;
+    const man = best ? { ...best.p, trueOvr: best.p.trueOvr } : null;
+    return buildCard(spec, man, best?.stats, club, club?.abbr, spec.position, 'nobody at this position has a stat line yet');
   });
 
   // ---- One sortable table per position ------------------------------------
@@ -425,17 +562,19 @@ export default async function StatsPage({ params, searchParams }: { params: { id
       // quarterback's season on completion percentage, which is the least
       // interesting rate on his row.
       const rateCol = [...all].reverse().find((c) => isDerived(c) && isRankableColumn(position, c));
-      // The rank column follows the view: volume standing in Basic, efficiency
-      // standing in Advanced. Its header NAMES the column it ranks, because a
-      // rank whose subject is ambiguous is a rank that can be read as a lie.
+      // WHICH COLUMN CARRIES THE STANDING, and it follows the view: the volume
+      // in Basic, the efficiency in Advanced. It used to be a column of its own
+      // at the end of every row, headed "Lg Rank · Avg", which is where the
+      // ambiguity had to be spelt out. The paint now rides on the figure
+      // itself (RosterStatTable), so the subject of the rank is the number it
+      // is painted on and cannot be misread.
       const rankCol = (advanced ? rateCol ?? leadCol : leadCol);
       const rankable = isRankableColumn(position, rankCol);
 
       const columns: RosterStatColumn[] = cols.map((c) => ({
         key: c.key,
-        short: c.short,
+        short: labelFor(c),
         lead: c.key === leadCol.key,
-        tip: COLUMN_TIP[c.key] ? tip(COLUMN_TIP[c.key]) : undefined,
       }));
 
       const rows: RosterStatRow[] = men.map((p) => {
@@ -464,11 +603,45 @@ export default async function StatsPage({ params, searchParams }: { params: { id
         };
       });
 
-      return { position, columns, rows, rankable, rankKey: rankCol.key, rankLabel: rankable ? rankCol.short : null, defaultSortKey: leadCol.key };
+      return { position, columns, rows, rankable, rankedLabel: rankable ? standingLabel(rankCol) : null, defaultSortKey: leadCol.key };
     }).filter((t): t is NonNullable<typeof t> => !!t);
 
     return { ...section, tables };
   }).filter((s) => s.tables.length > 0);
+
+  /**
+   * ===========================================================================
+   * THE LINE UNDER THE CARDS — HIS SENTENCE, WITH THE NUMBER TAKEN FROM THE GATE
+   * ===========================================================================
+   * The owner wrote the replacement copy himself: *"The text below the hero
+   * cards can be truncated."* → *"Every stat is against other men at the same
+   * position. Minimum 9 games played to qualify."* Two paragraphs of pool
+   * mechanics went; his two sentences stayed.
+   *
+   * BUT THE 9 WAS NOT A CONSTANT, AND WAS NOT ALWAYS 9. `minGamesForRate` is
+   * `ceil(maxGp / 2)` — half the longest season on the books — so it is 9 only
+   * at the end of a finished 17-game year, which is where he read it. At week
+   * 17 it is 8; at week 9 it is 4; and the postseason gates at 1, because the
+   * bracket is one to four games and a nine-game bar over it would be a rule
+   * no man in the league could clear. He asked for that too: *"for playoffs, we
+   * can adjust the text accordingly below the hero cards."* So the sentence
+   * interpolates the SAME binding the rank book was built with. It cannot
+   * drift, because there is nothing to drift from.
+   *
+   * Measured in every state this text can reach: regular season week 18 → 9;
+   * week 17 → 8; week 5 → 2; weeks 1-4 → ranks are not open at all and the
+   * sentence says so instead; postseason → 1. A club with no games played
+   * never reaches this line — the tab shows "no stats recorded yet" above it.
+   */
+  const qualifierLine = !ranksOpen
+    ? 'Ranks open once a club has four games on the books.'
+    : minGamesForRate <= 1
+      // One game is not a bar, and printing "minimum 1 game played to qualify"
+      // reads as a rule where there is none. The postseason gets the fact that
+      // makes it true instead.
+      ? 'Every man who has played in the bracket qualifies.'
+      : `Minimum ${minGamesForRate} games played to qualify.`;
+  const cardFootnote = <>Every stat is against other men at the same position. {qualifierLine}</>;
 
   const myLineCount = myStatsById.size;
 
@@ -545,21 +718,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
           </div>
         ) : (
           <>
-            <PositionVerdictStrip
-              cards={verdictCards}
-              leagueId={league.id}
-              teamId={userTeam!.id}
-              teamAbbr={userTeam!.abbr}
-              accent={teamAccent}
-              footnote={
-                <>
-                  Every standing is against other men at the same position, out of {withStats.length.toLocaleString()} stat
-                  lines league-wide. Counting stats rank against everyone at the position; rates rank against qualifiers
-                  only — {minGamesForRate} game{minGamesForRate === 1 ? '' : 's'} played
-                  {playoffs ? ' in the bracket' : ''}. {ranksOpen ? '' : 'Ranks open once a club has four games on the books.'}
-                </>
-              }
-            />
+            <PositionVerdictStrip cards={myTeamCards} footnote={cardFootnote} />
 
             {rosterTables.map((section) => (
               <section key={section.title} className="space-y-3">
@@ -572,11 +731,10 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                 </div>
                 {/* ONE TABLE PER ROW. Two-up fitted the short defensive
                     tables and clipped everything else: a quarterback's
-                    Advanced line is thirteen columns and simply does not go
-                    into half a screen, so the rank column — the whole reason
-                    the table is here — was the part that fell off the right
-                    edge. Full width, and the widest table in the app still
-                    has room for its standing. */}
+                    Advanced line is eleven columns and simply does not go into
+                    half a screen. Full width, and the widest table in the app
+                    fits its container exactly — measured at 1,230px of table
+                    in a 1,230px box at both 1600 and 1280. */}
                 <div className="grid gap-4">
                   {section.tables.map((t) => (
                     <div key={t.position} className="panel overflow-hidden">
@@ -584,18 +742,17 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                         <span className={`font-display font-bold text-sm uppercase tracking-wide ${positionBadgeClass(t.position)}`}>
                           {t.position}
                         </span>
+                        {/* WHICH NUMBER IS PAINTED, said once per table rather
+                            than in a column header on every row. This is the
+                            job the deleted "Lg Rank · Avg" column was doing —
+                            naming the subject of the standing — at one
+                            fifteenth of the ink. */}
                         <span className="font-mono text-[10px] text-muted">
                           {t.rows.length} {t.rows.length === 1 ? 'man' : 'men'}
-                          {t.rankable ? '' : ' · not ranked, this game deals the numbers'}
+                          {t.rankable ? ` · league standing on ${t.rankedLabel}` : ' · not ranked, this game deals the numbers'}
                         </span>
                       </div>
-                      <RosterStatTable
-                        columns={t.columns}
-                        rows={t.rows}
-                        defaultSortKey={t.defaultSortKey}
-                        rankKey={t.rankKey}
-                        rankLabel={t.rankLabel}
-                      />
+                      <RosterStatTable columns={t.columns} rows={t.rows} defaultSortKey={t.defaultSortKey} />
                     </div>
                   ))}
                 </div>
@@ -620,6 +777,12 @@ export default async function StatsPage({ params, searchParams }: { params: { id
             </div>
           ) : (
             <>
+              {/* THE LEADERS, BY POSITION — the same six cards the My Team tab
+                  opens with, so the two tabs can be read against each other.
+                  See `leagueCards` for what was measured before adding six
+                  panels to a tab that already has seven boards. */}
+              <PositionVerdictStrip cards={leagueCards} footnote={cardFootnote} />
+
               {advanced && pythagorean.length > 0 && (
                 <div className="panel overflow-hidden">
                   <div className="px-4 py-3 border-b border-line/70">
@@ -715,7 +878,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                             // COMPETITION RANKING, not the array index — the same
                             // rule lib/statRanks.ts applies everywhere else on this
                             // page, so two men on 27 touchdowns are both 3rd here
-                            // AND on the verdict card. Printing i+1 gave one of
+                            // AND on the position card. Printing i+1 gave one of
                             // them 4th purely from where the sort dropped him,
                             // which is how a card and a board come to disagree
                             // about the same player.

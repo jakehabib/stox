@@ -1,56 +1,37 @@
-import { ordinalRank, rankTier, type RankTier, type StatRank } from '@/lib/statRanks';
+import { ordinalRank, rankHighlight, type RankHighlight, type StatRank } from '@/lib/statRanks';
 
 /**
- * WHERE HE STANDS, READ BEFORE THE DIGITS ARE READ.
+ * WHERE HE STANDS, IN TWO COLOURS AND A STAR.
  *
- * The app owner's ask for the stats page was *"WE want to see if our QB is
- * doing good or bad vs the league"* — so a standing has to answer good-or-bad
- * across the room, and only then let you read the place. This chip is that
- * answer wherever a rank appears: on a verdict card, in a roster table's rank
- * column, down the side of a leader board.
+ * The app owner's rule, in his words: *"Instead of all the colors everywhere,
+ * lets just highlight blue if they are top 10, or gold with a star if they are
+ * a league leader."* The five-step percentile ramp this replaces — and the
+ * receiver it called BELOW on a 1,328-yard season — is written up in
+ * lib/statRanks.ts, which owns the rule so the cards and the tables cannot
+ * paint the same standing two different ways.
  *
- * THREE CHANNELS, NEVER ONE (README design principle 4). Colour is the
- * fastest, so it is here — but every step also carries its own SHAPE, and the
- * ordinal itself is always printed. A reader who cannot separate the orange
- * from the red still has ▼ against ✕, and still has "27th of 34" in words.
- * The shapes are deliberately five different silhouettes rather than a size
- * ramp of one, because a ramp is a colour channel wearing a second coat.
- *
- * THE COLOURS WERE MEASURED, NOT PICKED. Run through the dataviz skill's
- * `validate_palette.js` against this app's card surface (#18181b, dark), the
- * five steps pass CVD separation, the normal-vision floor and 3:1 contrast on
- * every ADJACENT pair — which is the pair a reader of an ordinal scale
- * actually compares, and what principle 4 demands.
- *
- * The first version of this ramp used the app's `warn` amber (#fbbf24) for
- * "below". It measured at ΔE 4.2 against the gold above it WITH FULL COLOUR
- * VISION — an elite card and a below-average card were the same colour at a
- * glance, which is the exact failure the check exists to catch and is not
- * something eyeballing would have found. Burnt orange (#c2410c) clears gold by
- * ΔE 17.5 and the red below it by 16.5.
+ * Gold #eab308 and blue #38bdf8 are the app's own `gold` and `accent2`, not new
+ * colours. The measurements that let two colours carry a scale at all are in
+ * lib/statRanks.ts's block: the star is a second channel on the only step that
+ * needs one, and the ordinal is always printed.
  *
  * The pool size rides along, because 6th of 12 and 6th of 64 are opposite
  * answers to the same question and a bare "6th" is neither.
  */
-const TIER: Record<RankTier, { glyph: string; hex: string; label: string }> = {
-  elite:   { glyph: '★', hex: '#eab308', label: 'Elite' },
-  strong:  { glyph: '▲', hex: '#4ade80', label: 'Strong' },
-  average: { glyph: '●', hex: '#38bdf8', label: 'Average' },
-  below:   { glyph: '▼', hex: '#c2410c', label: 'Below' },
-  bottom:  { glyph: '✕', hex: '#f87171', label: 'Bottom' },
+const PAINT: Record<RankHighlight, { hex: string | null; star: boolean }> = {
+  leader: { hex: '#eab308', star: true },
+  topTen: { hex: '#38bdf8', star: false },
+  field: { hex: null, star: false },
 };
 
-export function rankTierLabel(rank: StatRank): string {
-  return TIER[rankTier(rank)].label;
+/** The paint for a standing — one definition, read by the chip and by the tables. */
+export function rankPaint(rank: StatRank | null): { hex: string | null; star: boolean } {
+  return rank ? PAINT[rankHighlight(rank)] : PAINT.field;
 }
 
-export function rankTierGlyph(rank: StatRank): string {
-  return TIER[rankTier(rank)].glyph;
-}
-
-/** The literal colour, for the places that cannot use a class — the card's corner flag. */
-export function rankTierHex(rank: StatRank): string {
-  return TIER[rankTier(rank)].hex;
+/** "9th of 159 at the position" — the hover text every painted number carries. */
+export function rankTitle(rank: StatRank): string {
+  return `${ordinalRank(rank)} of ${rank.of}${rank.qualified ? ' qualified' : ''} at the position`;
 }
 
 /**
@@ -70,18 +51,24 @@ export function RankChip({ rank, size = 'sm' }: { rank: StatRank | null; size?: 
       </span>
     );
   }
-  const t = TIER[rankTier(rank)];
+  const { hex, star } = rankPaint(rank);
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded border font-mono whitespace-nowrap ${pad}`}
-      style={{
-        color: t.hex,
-        borderColor: `color-mix(in srgb, ${t.hex} 45%, transparent)`,
-        background: `color-mix(in srgb, ${t.hex} 12%, transparent)`,
-      }}
-      title={`${ordinalRank(rank)} of ${rank.of}${rank.qualified ? ' qualified' : ''} at the position`}
+      className={`inline-flex items-center gap-1 rounded border font-mono whitespace-nowrap ${pad} ${
+        // THE FIELD IS NOT A COLOUR. Ranks 11 and 140 are both "not top ten",
+        // and tinting them at all is the thing he asked to stop — so the
+        // unhighlighted chip wears the same line and muted ink as every other
+        // quiet figure on the page.
+        hex ? '' : 'border-line/60 text-muted'
+      }`}
+      style={hex ? {
+        color: hex,
+        borderColor: `color-mix(in srgb, ${hex} 45%, transparent)`,
+        background: `color-mix(in srgb, ${hex} 12%, transparent)`,
+      } : undefined}
+      title={rankTitle(rank)}
     >
-      <span aria-hidden className="text-[0.85em] leading-none">{t.glyph}</span>
+      {star && <span aria-hidden className="text-[0.85em] leading-none">★</span>}
       <span className="font-semibold">{ordinalRank(rank)}</span>
       <span className="opacity-60">/{rank.of}</span>
     </span>

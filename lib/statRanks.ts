@@ -6,11 +6,12 @@ import type { SeasonStats } from './types';
  * ===========================================================================
  * WHERE A MAN STANDS AT HIS POSITION — ONE DEFINITION OF "RANKED Nth"
  * ===========================================================================
- * The stats page shows a rank in three places now: the verdict card at the top
- * of the My Team tab, the rank column on every roster stat table, and the
- * position number down the left of the League tab's leader boards. They must
- * agree, because the failure this project keeps having is a displayed value
- * that is not the value the system used (README design principle 6).
+ * The stats page shows a rank in three places: the chips on the six position
+ * cards at the top of BOTH tabs, the paint on the ranked figure in every
+ * roster stat table, and the position number down the left of the League tab's
+ * leader boards. They must agree, because the failure this project keeps
+ * having is a displayed value that is not the value the system used (README
+ * design principle 6).
  *
  * So all three read this file, and this file enforces three rules.
  *
@@ -31,7 +32,7 @@ import type { SeasonStats } from './types';
  * League tab's leader boards no longer print their array index. Two men on 27
  * touchdowns are both 3rd; printing one of them 4th because the sort happened
  * to put him second is a lie about a tie, and it is the exact thing that would
- * make a verdict card and a leader board disagree about the same player.
+ * make a position card and a leader board disagree about the same player.
  *
  * ---------------------------------------------------------------------------
  * 3. TWO POOLS, BOTH NAMED OUT LOUD WHEREVER THEY ARE SHOWN
@@ -198,35 +199,58 @@ export function buildRankBook(
 }
 
 /**
- * The five steps a standing is read in. Tiers, not raw places, because the
- * question the card answers is "is he good", and 6th of 12 and 6th of 64 are
- * opposite answers to it.
+ * ===========================================================================
+ * TWO PAINTS, AND EACH ONE MEANS EXACTLY ONE THING
+ * ===========================================================================
+ * The app owner, after a week on the rebuilt page: *"Instead of all the colors
+ * everywhere, lets just highlight blue if they are top 10, or gold with a star
+ * if they are a league leader."*
+ *
+ * WHAT THIS REPLACES AND WHY THE OLD RAMP HAD TO GO. Ranks used to resolve to
+ * five percentile tiers — elite / strong / average / below / bottom — each with
+ * its own colour, glyph and word. It was measured, CVD-checked and internally
+ * consistent, and it still failed the only test that matters: his receiver
+ * caught 1,328 yards, T-9th of 148 at the position, and his card said BELOW.
+ * Arithmetically true — the card graded the RATE, 10.1 yards a catch, T-108th
+ * of 127 qualifiers — and unreadable as a summary of a 1,328-yard season. A
+ * scale with five steps has to be explained before it can be read, and a label
+ * that needs a paragraph to defend is not a label.
+ *
+ * These two need no explaining. First is first. Top ten is top ten. Everything
+ * else prints its ordinal in ordinary ink and lets the reader judge, which is
+ * what he was doing with the numbers anyway.
+ *
+ * COLOUR IS NEVER THE ONLY CHANNEL (README design principle 4). The leader
+ * carries a ★ as well as the gold, and every standing still prints its own
+ * ordinal and pool size — "T-9th /148" — so the three states are separable
+ * with no colour vision at all. Measured against the card surface #18181b in
+ * dark mode with the dataviz skill's validate_palette.js: gold #eab308 against
+ * blue #38bdf8 is ΔE 25.5 under protan and 29.1 with normal vision; gold
+ * against the neutral ink #93939c is 19.7 / 21.7; blue against that ink is
+ * 13.1 under deutan and 15.8 normal. All three clear the CVD floor of 8 and
+ * the normal-vision gate of 15, and all three clear 3:1 on the surface
+ * (9.24, 8.27 and 5.82 respectively).
  */
-export type RankTier = 'elite' | 'strong' | 'average' | 'below' | 'bottom';
+export type RankHighlight = 'leader' | 'topTen' | 'field';
 
-export function rankTier(r: StatRank): RankTier {
-  // Share of the field he is ahead of. A one-man pool is not a standing, and
-  // falls to 'average' rather than crowning him.
-  if (r.of <= 1) return 'average';
-  /*
-   * THE MIDDLE OF A TIE, NOT THE TOP OF IT — the same flat-run rule
-   * lib/coachRoom.ts's `ladderPercentile` already applies, for the same
-   * reason. Competition ranking gives everybody on a tied number the BEST
-   * place on it, which is the right thing to print and the wrong thing to
-   * grade: a corner with no interceptions in a postseason where twenty-six of
-   * thirty-seven also have none is truthfully "T-8th of 37", and painting him
-   * green for it is praise for nothing. The mid-rank is where a full sort of
-   * the pool would actually put him, so a man buried in a flat run reads as
-   * the middle of the field — while the ordinal beside the colour still says
-   * T-8th, which is the honest place.
-   */
-  const midRank = r.rank + (r.tiedWith - 1) / 2;
-  const pct = (midRank - 1) / (r.of - 1);
-  if (pct <= 0.10) return 'elite';
-  if (pct <= 0.33) return 'strong';
-  if (pct <= 0.66) return 'average';
-  if (pct <= 0.90) return 'below';
-  return 'bottom';
+/** Where the blue stops. Ten, because that is the number he said. */
+const TOP_TEN = 10;
+
+export function rankHighlight(r: StatRank): RankHighlight {
+  // A pool of one is not a standing. Carried over from the tier ramp this
+  // replaces: crowning the only man at a position is a rosette for turning up.
+  if (r.of <= 1) return 'field';
+  // A TIE FOR FIRST IS STILL FIRST, and gets the star — competition ranking
+  // already gives every man on the number the same 1, and `ordinalRank` prints
+  // it "T-1st" so nobody is told he owns it alone.
+  if (r.rank === 1) return 'leader';
+  // In a pool of ten, "top ten" is everybody, and a badge everybody wears says
+  // nothing. Real pools here run 32 (one kicker a club) to 159 (receivers with
+  // a stat line in a full season), so this only ever bites a thin postseason
+  // split — measured on a live save, the smallest regular-season pool this page
+  // ranks is 32.
+  if (r.rank <= TOP_TEN && r.of > TOP_TEN) return 'topTen';
+  return 'field';
 }
 
 /** "3rd", "T-3rd" — the ordinal, with the tie said out loud. */

@@ -15,7 +15,7 @@ import Link from 'next/link';
  * switching is a re-reveal and a navigation would only cost the reader his
  * scroll position. These two are genuinely different work — the League tab
  * ranks a whole league's stat lines, the My Team tab builds a depth chart, a
- * rank book and six verdict cards — and rendering both on every paint to save
+ * rank book and six position cards — and rendering both on every paint to save
  * a navigation would be the wrong trade twice over. Keeping it on the URL also
  * makes a view linkable, which is the same reason free agency's filters and
  * the Regular/Playoffs split live there.
@@ -24,7 +24,20 @@ export function StatsTabs({ tabs }: {
   tabs: { id: string; label: string; hint?: string; href: string; active: boolean }[];
 }) {
   return (
-    <div className="flex items-stretch gap-1 border-b border-line/70 -mb-px overflow-x-auto">
+    /* NO SCROLL CONTAINER HERE, AND THE BAR IT PRODUCED WAS VERTICAL.
+       This row carried `overflow-x-auto`. It has at most two items and cannot
+       overflow sideways — measured at 1600, 1280 and 390 the row's scrollWidth
+       equals its clientWidth exactly, 342px of content in 342px at the
+       narrowest. But `overflow-x: auto` makes the OTHER axis compute to `auto`
+       too (CSS overflow, §3: neither axis may be `visible` when the other is
+       not), and the active-tab underline below draws at `-bottom-px` — one
+       pixel outside the box. scrollHeight 43 against clientHeight 42, so the
+       browser hung a vertical scrollbar in the top-right corner of the tab
+       row for one pixel of a decoration this component draws itself. The app
+       owner: *"There is a scroller wheel in the top right that shouldnt be
+       there."* Deleting the underline would have hidden it too and cost the
+       active-tab marker; deleting the scroll container is the actual cause. */
+    <div className="flex items-stretch gap-1 border-b border-line/70 -mb-px">
       {tabs.map((t) => (
         <Link
           key={t.id}
