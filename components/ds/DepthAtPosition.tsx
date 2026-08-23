@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { formatMoney } from '@/lib/cap';
+import { capCommitted, formatMoney } from '@/lib/cap';
 import { ratingColor } from '@/lib/ratings';
 import { splitStarters, startersAt } from '@/lib/lineup';
 import { PlayerAvatar } from '../PlayerAvatar';
@@ -29,11 +29,6 @@ export interface DepthEntry {
   href?: string;
 }
 
-/** What the position already costs you this year. Men with no deal charge nothing. */
-export function capCommitted(depth: DepthEntry[]): number {
-  return depth.reduce((n, d) => n + (d.capHit ?? 0), 0);
-}
-
 /**
  * THE DEPTH ROWS. One renderer, because there used to be two.
  *
@@ -45,6 +40,16 @@ export function capCommitted(depth: DepthEntry[]): number {
  * draw it; what genuinely differs between them — the heading, the sentence
  * over the list, whether a row navigates — is passed in or stays with the
  * caller.
+ *
+ * THE DEPTH CHART SCREEN IS NOT A CALLER, deliberately. Its rows
+ * (components/DepthChartGroup.tsx) are an editor — two reorder buttons that
+ * have to stay clickable, an injury flag, a name that is a link inside a row
+ * that is not one — in cards half this panel's width. Taking it as a third
+ * caller means a prop per difference, which is the same trade refused above.
+ * What it takes instead is the part that could drift: `formatMoney` and
+ * `capCommitted` out of lib/cap.ts, the em dash for a man with no contract, and
+ * the hidden column when the cap is off. The rows are two components; the rules
+ * are one.
  *
  * The order is the depth chart's own, passed in by the page from
  * `DepthChartSlot`, and `startersAt` (lib/lineup.ts) decides where the lineup

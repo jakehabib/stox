@@ -121,6 +121,27 @@ export function capHit(c: ContractLike | null | undefined, mode: CapMode): numbe
   return base + (yearIdx < prorationYears(c) ? proration(c) : 0);
 }
 
+/**
+ * What a group of men costs the club this year — the "$X committed here" figure
+ * over a position's depth. A man with no contract row charges nothing, which is
+ * why the rows that feed this carry `null` rather than 0 for him: null is "no
+ * deal on file", 0 is a claim about a deal.
+ *
+ * It lives HERE, beside `capHit`, and not in the component that first needed it.
+ * It was declared in components/ds/DepthAtPosition.tsx, which is a `'use client'`
+ * module — and every export of a client module reaches a Server Component as a
+ * client reference, not as the function itself. The player card imported it and
+ * called it while rendering on the server, so that page threw
+ * `capCommitted is not a function` and returned a 500 the moment the panel had
+ * a man to price. `next build` cannot catch it (every league page is
+ * force-dynamic, so nothing renders at build time) and neither can tsc, which
+ * sees a perfectly good function. Cap arithmetic in lib/cap.ts is callable from
+ * both sides, which is the only version of this that stays fixed.
+ */
+export function capCommitted(rows: readonly { capHit: number | null }[]): number {
+  return rows.reduce((n, r) => n + (r.capHit ?? 0), 0);
+}
+
 /** Total contract value across all remaining years. */
 export function remainingValue(c: ContractLike, mode: CapMode): number {
   if (mode === 'OFF') return 0;

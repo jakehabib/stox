@@ -5,11 +5,27 @@ import { useEffect, useState, useTransition } from 'react';
 import { setDepthChartAction } from '@/app/actions/roster';
 import { ratingColor } from '@/lib/ratings';
 import { startersAt } from '@/lib/lineup';
+import { capCommitted, formatMoney } from '@/lib/cap';
 import { PlayerAvatar } from './PlayerAvatar';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { positionBadgeClass } from './ds/positionColor';
 
-interface P { id: string; name: string; ovr: number; age: number; injured: boolean; weightLb?: number; heightIn?: number }
+interface P {
+  id: string;
+  name: string;
+  ovr: number;
+  age: number;
+  injured: boolean;
+  weightLb?: number;
+  heightIn?: number;
+  /**
+   * His cap hit this year, from `capHit()` — the page resolves it, so this is
+   * the club's own figure and not a second opinion about it. Null when there is
+   * no contract row at all, which is a different fact from a deal that charges
+   * nothing and is drawn differently. Ignored entirely when `capOn` is false.
+   */
+  capHit: number | null;
+}
 
 /**
  * One position's depth chart, in the order the sim engine reads it.
@@ -31,8 +47,29 @@ interface P { id: string; name: string; ovr: number; age: number; injured: boole
  * group two deep at a three-starter position is not "fully manned with a
  * short bench", it is a hole in the lineup, and a list that simply stops
  * after two rows shows those two cases identically.
+ *
+ * THE MONEY, AND WHY THESE ROWS ARE NOT `DepthList`'S ROWS.
+ * The app owner asked for cap hits beside his depth, twice, and both times the
+ * fix landed on a panel elsewhere — the screen actually called Depth Chart went
+ * on showing a roster with no price on any of it. It shows one now.
+ *
+ * The row itself stays here rather than becoming another caller of `DepthList`
+ * (components/ds/DepthAtPosition.tsx). That component draws a STATIC row: the
+ * whole thing is one link, and its columns — age, cap hit, term, rating — are
+ * sized for a half-page panel. This row is an EDITOR. It carries two reorder
+ * buttons that must stay clickable, an injury flag, and a name that is a link
+ * inside a row that is not one, and it lives in a multi-column card ~350px
+ * wide. Merging them needs a "which caller am I" prop for every one of those
+ * differences, which is the trade 4ee40eb weighed and refused on the panel
+ * side; the honest shared thing is smaller than a component.
+ *
+ * So what IS shared is the part that could disagree: `formatMoney` and
+ * `capCommitted` from lib/cap.ts, the em dash for a man with no contract, and
+ * hiding the column outright when the cap is off — imported or copied verbatim
+ * from DepthList, never restated in its own words. Same man, same number, same
+ * shape, on both screens.
  */
-export function DepthChartGroup({ leagueId, teamId, position, players, order }: { leagueId: string; teamId: string; position: string; players: P[]; order: string[] }) {
+export function DepthChartGroup({ leagueId, teamId, position, players, order, capOn }: { leagueId: string; teamId: string; position: string; players: P[]; order: string[]; capOn: boolean }) {
   const byId = new Map(players.map((p) => [p.id, p]));
   const teamColor = generateTeamLogoParams(teamId).primary;
   const [localOrder, setLocalOrder] = useState(order);
@@ -61,10 +98,25 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order }: 
 
   return (
     <div className="panel p-4">
-      <div className="flex items-center justify-between gap-2 mb-2">
+      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
         <h3 className={`font-display font-bold text-sm uppercase tracking-wide ${positionBadgeClass(position)}`}>{position}</h3>
-        <div className="flex items-center gap-2">
-          {pending && <span className="text-xs text-muted">Saving…</span>}
+        <div className="flex items-center gap-2 text-xs text-muted">
+          {pending && <span>Saving…</span>}
+          {/* What the group costs, in the same words and the same order as the
+              re-sign panel and free agency: "$X committed here". A per-row
+              column answers "is he worth his money"; only the total answers
+              "what is this position costing me", which is the question you ask
+              standing in front of the whole group. No starters/bench split on
+              top of it — the tint and the bench rule already sort the rows into
+              those two piles, and a second figure per card across sixteen cards
+              buys a reading nobody was missing. */}
+          {capOn && players.length > 0 && (
+            <>
+              <span className="font-mono text-chalk">{formatMoney(capCommitted(players))}</span>
+              <span>committed here</span>
+              <span className="text-line">·</span>
+            </>
+          )}
           <span className="label-sm">
             {starterCount === 0
               ? 'no base starter'
@@ -111,6 +163,22 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order }: 
                   {p.name}
                 </Link>
                 {p.injured && <span className="text-[10px] text-bad">INJ</span>}
+                {/* Cap off means every one of these is 0 league-wide, so the
+                    column is not drawn at all rather than filled with $0.0M.
+                    No contract row — an undrafted man, or a fantasy roster
+                    filled before contracts exist — gets a dash: "$0.0M" is a
+                    claim about a deal and there is no deal here to claim it
+                    about, and capHit(null) returns 0, which is exactly the
+                    collision the dash avoids. Same rules, same formatter, as
+                    the rows in DepthList — w-14 rather than its w-16 only
+                    because these cards are half its width; the widest string
+                    formatMoney can hand back here is "$100.0M" at 50px, so the
+                    column still never clips what it is given. */}
+                {capOn && (
+                  <span className={`text-xs w-14 text-right font-mono shrink-0 ${p.capHit === null ? 'text-muted/50' : 'text-muted'}`}>
+                    {p.capHit === null ? '—' : formatMoney(p.capHit)}
+                  </span>
+                )}
                 <div className="flex flex-col">
                   <button onClick={() => move(idx, -1)} disabled={idx === 0} className="text-muted hover:text-chalk disabled:opacity-20 leading-none text-xs px-1" aria-label={`Move ${p.name} up`}>▲</button>
                   <button onClick={() => move(idx, 1)} disabled={idx === localOrder.length - 1} className="text-muted hover:text-chalk disabled:opacity-20 leading-none text-xs px-1" aria-label={`Move ${p.name} down`}>▼</button>

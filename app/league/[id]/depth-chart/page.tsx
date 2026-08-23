@@ -2,17 +2,24 @@ import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
 import { POSITIONS } from '@/lib/tuning';
 import { startersAt, splitStarters, OFFENSE_STARTERS, DEFENSE_STARTERS } from '@/lib/lineup';
+import { capHit } from '@/lib/cap';
 import { DepthChartGroup } from '@/components/DepthChartGroup';
 import { AutoSortButton } from '@/components/AutoSortButton';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { tip } from '@/lib/glossary';
 
 export default async function DepthChartPage({ params }: { params: { id: string } }) {
-  const { userTeam } = await getLeagueContext(params.id);
+  const { settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
 
   const [players, slots] = await Promise.all([
-    prisma.player.findMany({ where: { teamId: team.id }, orderBy: { trueOvr: 'desc' } }),
+    // Contracts come with the players because the chart now prices each man.
+    // The app owner asked for cap hits beside his depth twice — *"it also still
+    // doesnt show the salaries of the players ... sorry, the cap hit"* — and
+    // this screen, the one actually named Depth Chart, could not have shown
+    // them: its query did not fetch a contract and its row type had nowhere to
+    // put one.
+    prisma.player.findMany({ where: { teamId: team.id }, orderBy: { trueOvr: 'desc' }, include: { contract: true } }),
     prisma.depthChartSlot.findMany({ where: { teamId: team.id }, orderBy: { rank: 'asc' } }),
   ]);
 
@@ -121,16 +128,40 @@ export default async function DepthChartPage({ params }: { params: { id: string 
           beside it and the page ran close to half empty. Columns pack each
           card against the previous one instead. Reading order becomes
           top-to-bottom then across, which is fine here because every card
-          names its own position. */}
-      <div className="columns-1 md:columns-2 xl:columns-3 gap-4 [&>*]:mb-4 [&>*]:break-inside-avoid">
+          names its own position.
+
+          Two up only from lg. The rows carry a cap hit now, and in a
+          two-column card at 768px that left the name 105px — every man on the
+          page truncated to a first name and three letters. At lg the cards are
+          480px wide and the name gets 233px, at xl three-up it gets 153px, and
+          below lg a single full-width column gives it the whole card. Measured,
+          not assumed: the panel this figure came from shipped with eight pixels
+          for a name the first time it was tried.
+
+          On a phone the card is only ~342px and long surnames do truncate —
+          there is no arrangement of rank, rating, name, money and two reorder
+          buttons that fits one. Truncating is the side to give: the name is a
+          link to his card, and a price he cannot see anywhere on this screen is
+          the thing that has been reported three times. */}
+      <div className="columns-1 lg:columns-2 xl:columns-3 gap-4 [&>*]:mb-4 [&>*]:break-inside-avoid">
         {POSITIONS.filter((pos) => byPosition[pos].length > 0).map((pos) => (
           <DepthChartGroup
             key={pos}
             leagueId={params.id}
             teamId={team.id}
             position={pos}
-            players={byPosition[pos].map((p) => ({ id: p.id, name: `${p.firstName} ${p.lastName}`, ovr: p.trueOvr, age: p.age, injured: p.injuryWeeks > 0, weightLb: p.weightLb, heightIn: p.heightIn }))}
+            players={byPosition[pos].map((p) => ({
+              id: p.id, name: `${p.firstName} ${p.lastName}`, ovr: p.trueOvr, age: p.age,
+              injured: p.injuryWeeks > 0, weightLb: p.weightLb, heightIn: p.heightIn,
+              // `capHit()` — the same function the cap page, the player card
+              // and the trade board run — so the figure beside a man here is
+              // the figure the club is charged for him. Null, not zero, when
+              // he has no contract row: capHit(null) is 0, and a man with no
+              // deal is not a man on a free one.
+              capHit: p.contract ? capHit(p.contract, settings.capMode) : null,
+            }))}
             order={orderByPosition[pos]}
+            capOn={settings.capMode !== 'OFF'}
           />
         ))}
       </div>

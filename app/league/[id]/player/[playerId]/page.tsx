@@ -6,7 +6,7 @@ import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
 import { ratingColor, playerLabel, positionMoves, relatedPositions, POSITION_WEIGHTS, ATTRIBUTE_BY_KEY, AttrMap } from '@/lib/ratings';
 import { rankProspectCombine, ordinal, CombineMeasurable } from '@/lib/combineRank';
-import { formatMoney, capHit, askingPrice, marketValue, proration, prorationYears, restructureContract } from '@/lib/cap';
+import { formatMoney, capHit, capCommitted, askingPrice, marketValue, proration, prorationYears, restructureContract } from '@/lib/cap';
 import { classifyContractValue } from '@/lib/analytics';
 import { generateScoutingReport } from '@/lib/scoutingProse';
 import { teamCapSummary } from '@/lib/cap-summary';
@@ -46,7 +46,7 @@ import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/
 import { ringYearsFor } from '@/lib/gen/leagueHistory';
 import { allStarYearsFor } from '@/lib/allStars';
 import { slotVerdict } from '@/components/ds/DepthCompare';
-import { DepthList, capCommitted, type DepthEntry } from '@/components/ds/DepthAtPosition';
+import { DepthList, type DepthEntry } from '@/components/ds/DepthAtPosition';
 import { PositionChangeCard, PositionOption } from '@/components/PositionChangeCard';
 /**
  * Every season-award transaction type, and its full name. Imported, not
