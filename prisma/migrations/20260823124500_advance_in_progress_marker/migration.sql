@@ -1,0 +1,13 @@
+-- ONE PRESS OF ADVANCE AT A TIME.
+--
+-- `League.advanceStartedAt` holds the instant the advance currently running
+-- took the league, and NULL when none is. `advanceWeek` (lib/season.ts) takes
+-- it with a compare-and-set and releases it in a `finally`; a press that finds
+-- it already held is refused instead of racing the one that holds it.
+--
+-- Nullable, and NULL is the correct value for every row that already exists:
+-- nobody is mid-advance at the moment this runs. The column is a LEASE rather
+-- than a flag precisely so that a request killed between the claim and the
+-- release cannot lock a save out of its own clock forever — see the comment
+-- above takeAdvanceLease in lib/season.ts.
+ALTER TABLE "League" ADD COLUMN     "advanceStartedAt" TIMESTAMP(3);

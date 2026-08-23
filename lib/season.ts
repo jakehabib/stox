@@ -49,17 +49,120 @@ import {
  */
 
 /**
+ * ===========================================================================
+ * ONE PRESS OF ADVANCE AT A TIME, AND WHY THE CLAIMS BELOW ARE NOT ENOUGH
+ * ===========================================================================
+ * Every transition in the phase machine claims itself before it does work —
+ * the offseason advance compare-and-sets League.week, the way out of RESIGN
+ * compare-and-sets League.phase, a playoff round takes withRoundLock, a
+ * regular-season week claims the week and each of its games. Every one of
+ * those is correct and every one of them stays.
+ *
+ * WHAT THEY GUARANTEE IS "THIS ADVANCE RUNS ONCE". WHAT THEY DO NOT GUARANTEE
+ * IS "ONLY ONE ADVANCE IS RUNNING". A claim writes the new week at the very
+ * top of the work, so a second press arriving a few milliseconds later reads
+ * the week the first one already moved, matches the claim for the NEXT
+ * advance, and runs it alongside the first. Measured on a scratch league at
+ * the offseason boundary, on a clone of a save taken at OFFSEASON week 1: the
+ * first press claimed at +6ms and ran until +2628ms, the second was pressed at
+ * +7ms and ran ADD_DRAFT_CLASS and RESIGN through to +5853ms, on top of a
+ * league whose players were still being aged and retired underneath it. One
+ * click's worth of intent, two league years' worth of bookkeeping, overlapping
+ * for two and a half seconds. The league came out at RESIGN week 1 where a
+ * single clean press leaves it at OFFSEASON week 4.
+ *
+ * This is not new and it is not the collapse's fault — before the offseason
+ * advances were grouped the same door was open four times instead of once. It
+ * was left open because closing it properly needs a column, and adding one
+ * silently is worse than naming the race.
+ *
+ * SO: A PRESS TAKES A LEASE ON THE LEAGUE AND HOLDS IT FOR THE WHOLE ADVANCE.
+ * A press that finds the lease held is refused. That is the guarantee; the
+ * button in front of it is only an optimisation (see runSingle in
+ * components/AdvanceWeekButton.tsx, which now also refuses to fire twice — but
+ * the client cannot speak for a second tab, a phone, or a stale page).
+ *
+ * A LEASE, NOT A FLAG, AND THAT IS THE WHOLE DESIGN. A boolean "advancing"
+ * column is one hard kill away from a save nobody can ever advance again: the
+ * request dies between the claim and the release, the flag stays true forever,
+ * and there is no move left inside the game that clears it. The failure mode
+ * of a mutex must never be worse than the race it prevents. A TIMESTAMP says
+ * both "held" and "since when", so the lease expires on its own and the league
+ * heals with no intervention, no support ticket and no SQL.
+ *
+ * ADVANCE_LEASE_MS IS DELIBERATELY LONGER THAN ANY ADVANCE THAT CAN FINISH.
+ * This app runs entirely on serverless functions (docs/deployment.md); the
+ * longest `maxDuration` anything here asks for is 60 seconds, so a request
+ * still alive at 90 has already been killed by the platform. Measured, the
+ * heaviest single advance in a sim-health league is a few seconds. So a lease
+ * is only ever stolen from a request that is already dead — and on the day
+ * that reasoning is wrong, the per-step claims listed at the top of this
+ * comment are still there, doing exactly what they did before this column
+ * existed. The lease is a door; they are the lock.
+ *
+ * A pg advisory lock would be the textbook answer and is the wrong tool here:
+ * a session-level one lives on a POOLED connection nobody owns for the length
+ * of a request, and a transaction-level one would mean holding a transaction
+ * open across the entire advance — including withRoundLock, which opens its
+ * own.
+ * ===========================================================================
+ */
+const ADVANCE_LEASE_MS = 90_000;
+
+/**
+ * Player-facing, and it is a busy signal rather than a decision: there is
+ * nothing for the user to fix and nowhere to send him, so it carries no
+ * `block` shape and the button shows it as a toast that gets out of the way.
+ */
+const ADVANCE_IN_PROGRESS = 'The last advance is still being played out. '
+  + 'Give it a moment — it will report back the moment it lands.';
+
+/**
  * Public entrypoint. Wraps the phase machine and nothing else — there is no
  * per-period scouting allowance to top up any more. The scouting that happens
  * when time moves is applyShortlistAttention, on the regular-season week tick
  * below: free, automatic, and impossible to forget to spend.
+ *
+ * The lease around it is the subject of the comment above.
  */
 export async function advanceWeek(leagueId: string): Promise<AdvanceResult> {
-  const before = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
-  const blocked = await capComplianceBlock(leagueId, parseSettings(before.settings), before.phase);
-  if (blocked) return blocked; // time does not move while the user is over the cap
+  const heldSince = new Date();
+  const expired = new Date(heldSince.getTime() - ADVANCE_LEASE_MS);
+  // Compare-and-set, same shape as every other claim in this file: free, or
+  // held by something that cannot still be alive. `updateMany` rather than
+  // `update` because "no row matched" is the answer, not an exception.
+  const took = await prisma.league.updateMany({
+    where: {
+      id: leagueId,
+      OR: [{ advanceStartedAt: null }, { advanceStartedAt: { lt: expired } }],
+    },
+    data: { advanceStartedAt: heldSince },
+  });
+  if (took.count === 0) {
+    // `updateMany` answers 0 to "somebody holds it" AND to "there is no such
+    // league", and those are not the same answer. Telling a caller with a bad
+    // id to wait for an advance that will never finish is a worse lie than the
+    // P2025 this used to throw, so the missing-row case still throws it.
+    await prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { id: true } });
+    return { summary: ADVANCE_IN_PROGRESS, blocked: true };
+  }
 
-  return advanceWeekStep(leagueId);
+  try {
+    const before = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+    const blocked = await capComplianceBlock(leagueId, parseSettings(before.settings), before.phase);
+    if (blocked) return blocked; // time does not move while the user is over the cap
+
+    return await advanceWeekStep(leagueId);
+  } finally {
+    // ONLY IF IT IS STILL OURS. If this advance ran long enough for its lease
+    // to expire and another press to take it, that press owns the column now
+    // and clearing it would hand a third press the door while two advances are
+    // running — which is the bug this whole thing exists to stop.
+    await prisma.league.updateMany({
+      where: { id: leagueId, advanceStartedAt: heldSince },
+      data: { advanceStartedAt: null },
+    });
+  }
 }
 
 /**

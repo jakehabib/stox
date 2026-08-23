@@ -174,17 +174,25 @@ async function makeHeadless(leagueId: string) {
 }
 
 /**
- * `CapCharge` is keyed on `teamId` alone — no `leagueId`, and no foreign key to
- * `League` — so deleting a league leaves its dead-money rows behind pointing at
- * teams that no longer exist. Measured on the dev database: 18,028 such rows
- * against 21,443 total, i.e. five of every six cap charges in it belong to a
- * league nobody can open. Every throwaway league in `scripts/` contributes,
- * this harness among them: it books cut-down dead money in every league it
- * builds and then deleted only the league. Rows first, league second.
+ * `CapCharge` used to be keyed on `teamId` alone — no `leagueId`, and no
+ * foreign key to anything — so deleting a league left its dead-money rows
+ * behind pointing at teams that no longer existed. Every throwaway league in
+ * `scripts/` contributed, this harness worst of all: it books cut-down dead
+ * money in every league it builds, and for a long time it deleted only the
+ * league. Measured on the dev database before it was fixed, 18,247 orphans
+ * against 22,203 rows — five of every six cap charges in it belonged to a
+ * league nobody could open.
+ *
+ * THE SCHEMA IS THE FIX, NOT THIS FUNCTION. `CapCharge.teamId` is a real
+ * foreign key with `onDelete: Cascade` now (migration
+ * 20260823124600_cap_charge_team_cascade), and Team already cascades from
+ * League, so the delete below takes the charges with it whoever calls it —
+ * this harness, `deleteLeagueAction`, a probe, or somebody in psql. A sweep
+ * here would only have covered this one file.
+ * scripts/pruneOrphanCapCharges.ts cleared the rows that predate the
+ * constraint.
  */
 async function destroyLeague(leagueId: string) {
-  const teams = await prisma.team.findMany({ where: { leagueId }, select: { id: true } });
-  await prisma.capCharge.deleteMany({ where: { teamId: { in: teams.map((t) => t.id) } } });
   // deleteMany, not delete: this also runs against a league `createLeague`
   // only half-built before throwing, and a missing row there is the normal
   // case rather than a second failure to report on top of the first.

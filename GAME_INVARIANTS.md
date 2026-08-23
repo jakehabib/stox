@@ -247,6 +247,30 @@ other — `lib/invariants.ts` reports violations by ID.
   bonus to hold the per-year figure steady — that is exactly the double-charge
   above.
 
+- **INV-23 — every `CapCharge` belongs to a club that still exists.**
+  Structural rather than checked: `CapCharge.teamId` is a foreign key with
+  `onDelete: Cascade` (migration `20260823124600_cap_charge_team_cascade`), so
+  a charge whose team is gone can no longer be written or left behind. It used
+  to be a bare string with no key to anything, and deleting a league orphaned
+  every dead-money row it held — 18,247 out of 22,203 on the dev database, five
+  of every six charges in it. This is deliberately NOT a rule in
+  `lib/invariants.ts`: that file checks one league at a time, and an orphan is
+  by definition unreachable from any league. `scripts/pruneOrphanCapCharges.ts`
+  cleared the rows that predated the constraint and re-running it is the
+  assertion that nothing is producing new ones.
+
+  **The cascade hangs off `Team`, not off `Contract` or `Player`, and that is
+  the whole decision.** Dead money is *meant* to outlive the deal that created
+  it — `cutPlayer` deletes the contract and books the charge in the same
+  transaction — so a cascade from either of those would delete the bill along
+  with the reason for it. A club's charges die only when the club does, and
+  nothing in this game deletes a single team; only a whole league, which
+  cascades into `Team` already. Expiry is unchanged and stays where it was:
+  `expireStaleCapCharges` deletes by YEAR, once
+  `settleClosingYearCapOverage` has rewritten whatever the closing year could
+  not fund, and remains the only thing entitled to decide a charge has been
+  paid.
+
 ## Games
 
 - **INV-15** — A `Game` with `played === true` has `homeScore >= 0`,
@@ -413,6 +437,36 @@ seasons deep each, landing at **0 violations**.
    "the week is still allowed to advance" and stopped there — three sentences
    that were true and read as *"and nothing happens"*. All three name the
    price now.
+8. **Two presses of Advance could run two CONSECUTIVE advances at once.**
+   Every transition claims itself before it works — the offseason advance
+   compare-and-sets `League.week`, the way out of `RESIGN` compare-and-sets
+   `League.phase`, a playoff round takes `withRoundLock` — and all of that is
+   correct. It guarantees *this advance runs once*; it never guaranteed *only
+   one advance is running*. A claim writes the new week at the top of the
+   work, so a second press arriving milliseconds later read the week the first
+   had already moved, matched the claim for the NEXT advance, and ran it
+   alongside. Reproduced on a clone of a save taken at `OFFSEASON` week 1 (so
+   control and subject started byte-identical): press one claimed at +6ms and
+   ran to +2,628ms, press two was made at +7ms and ran `ADD_DRAFT_CLASS` and
+   `RESIGN` through to +5,853ms on top of a league whose players were still
+   being aged and retired underneath it. The league came out at `RESIGN` week
+   1 where one clean press leaves it at `OFFSEASON` week 4; 115 retirements
+   became 102, and 663 transactions became 968. Not a regression from
+   collapsing the offseason — before the collapse the same door was open four
+   times instead of once.
+   `advanceWeek` now takes a LEASE on the league for the whole advance
+   (`League.advanceStartedAt`, migration
+   `20260823124500_advance_in_progress_marker`) and a press that finds it held
+   is refused. A timestamp rather than a boolean because the failure mode of a
+   mutex must never be worse than the race: a flag left set by a request that
+   was killed mid-advance is a save nobody can ever advance again, with no move
+   inside the game that clears it. The lease is 90s — longer than any advance
+   that can finish, since nothing here asks for a `maxDuration` above 60 and
+   the heaviest measured single advance is under two seconds — so it is only
+   ever stolen from a request that is already dead, and the per-step claims
+   remain underneath it as the real lock. Re-measured after the fix: the second
+   press is refused at +13ms, and the end state matches one clean press on
+   every field.
 
 ### Still open, not yet fixed
 

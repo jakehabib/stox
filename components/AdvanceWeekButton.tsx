@@ -168,6 +168,26 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
+  /**
+   * IS AN ADVANCE ALREADY IN FLIGHT FROM THIS BUTTON?
+   *
+   * `disabled={pending}` looks like it answers that and does not. `pending`
+   * comes from useTransition, and on React 18.3 it goes false at the FIRST
+   * `await` inside the transition — so the button re-enables the instant the
+   * server action is dispatched and stays enabled for the whole two or three
+   * seconds the advance actually takes. A double click sends two.
+   *
+   * A ref, not state: it has to be readable and writable synchronously inside
+   * the same click handler, and a state update would not be visible until the
+   * next render — which is exactly the window being closed.
+   *
+   * THIS IS THE OPTIMISATION, NOT THE GUARANTEE. It saves a wasted round trip
+   * and a refusal the user did not need to see. It cannot speak for a second
+   * tab, a phone, or a page left open since yesterday, so the server takes a
+   * lease of its own and refuses the second press outright — see advanceWeek
+   * in lib/season.ts. Never one instead of the other.
+   */
+  const inFlight = useRef(false);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -179,69 +199,103 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
 
   const runSingle = () => {
     setMenuOpen(false);
+    if (inFlight.current) return;
+    inFlight.current = true;
     startTransition(async () => {
-      setProgress('Working…');
-      const result = await advanceWeekAction(leagueId);
-      setProgress(null);
-      if (result.blocked) { showBlock(result.summary, blockShape(result)); return; }
-      finish(result.summary, result.report ? [result.report] : [], result.trophy ?? null);
+      try {
+        setProgress('Working…');
+        const result = await advanceWeekAction(leagueId);
+        setProgress(null);
+        if (result.blocked) { refuse(result); return; }
+        finish(result.summary, result.report ? [result.report] : [], result.trophy ?? null);
+      } finally {
+        // In a finally so a server action that throws does not leave the
+        // button dead for the rest of the page's life.
+        inFlight.current = false;
+      }
     });
   };
 
   const runMultiple = (mode: AdvanceMode) => {
     setMenuOpen(false);
+    // AFTER the delegation, never before: runSingle takes the flag itself, and
+    // taking it here first would make it refuse the click it was handed.
     if (mode === 'week') return runSingle();
+    if (inFlight.current) return;
+    inFlight.current = true;
     startTransition(async () => {
-      const initial = await getLeaguePhaseAction(leagueId);
-      const midseasonWeek = Math.ceil(initial.seasonLength / 2);
-      const startPhase = initial.phase;
+      try {
+        const initial = await getLeaguePhaseAction(leagueId);
+        const midseasonWeek = Math.ceil(initial.seasonLength / 2);
+        const startPhase = initial.phase;
 
-      if (stopBefore(initial.phase, initial.week, mode, midseasonWeek)) {
-        showToast('Nothing to advance right now — handle what\'s in front of you first.');
-        return;
-      }
-
-      let iterations = 0;
-      let lastSummary = '';
-      let phase = initial.phase;
-      let week = initial.week;
-      // Every week's report is collected and NONE of them are shown as they
-      // arrive — the interruption budget's hardest rule. One report at the
-      // end, covering the span.
-      const reports: WeekReport[] = [];
-      let earnedTrophy: TrophyData | null = null;
-      // Driving this one week at a time from the client (instead of one
-      // opaque server-side loop) is what makes real progress visible —
-      // "Working through week 3…" — instead of a single static spinner label
-      // for however long the whole batch takes.
-      while (iterations < MAX_ITERATIONS) {
-        setProgress(`Working through ${PHASE_NOUN[phase] ?? 'step'} ${week}…`);
-        const result = await advanceWeekAction(leagueId);
-        // The cap gate refused to move time — stop the batch immediately
-        // rather than spinning MAX_ITERATIONS times against a closed door.
-        if (result.blocked) {
-          setProgress(null);
-          showBlock(result.summary, blockShape(result));
+        if (stopBefore(initial.phase, initial.week, mode, midseasonWeek)) {
+          showToast('Nothing to advance right now — handle what\'s in front of you first.');
           return;
         }
-        lastSummary = result.summary;
-        if (result.report) reports.push(result.report);
-        // A season can only end once, so the first Tier-0 in the span is the
-        // one — a run that passes through a title game and keeps going into
-        // the offseason still shows exactly one.
-        if (result.trophy && !earnedTrophy) earnedTrophy = result.trophy;
-        phase = result.phase;
-        week = result.week;
-        iterations++;
-        if (stopAfter(phase, week, mode, midseasonWeek, startPhase, iterations)) break;
+
+        let iterations = 0;
+        let lastSummary = '';
+        let phase = initial.phase;
+        let week = initial.week;
+        // Every week's report is collected and NONE of them are shown as they
+        // arrive — the interruption budget's hardest rule. One report at the
+        // end, covering the span.
+        const reports: WeekReport[] = [];
+        let earnedTrophy: TrophyData | null = null;
+        // Driving this one week at a time from the client (instead of one
+        // opaque server-side loop) is what makes real progress visible —
+        // "Working through week 3…" — instead of a single static spinner label
+        // for however long the whole batch takes.
+        while (iterations < MAX_ITERATIONS) {
+          setProgress(`Working through ${PHASE_NOUN[phase] ?? 'step'} ${week}…`);
+          const result = await advanceWeekAction(leagueId);
+          // The cap gate refused to move time — stop the batch immediately
+          // rather than spinning MAX_ITERATIONS times against a closed door.
+          if (result.blocked) {
+            setProgress(null);
+            refuse(result);
+            return;
+          }
+          lastSummary = result.summary;
+          if (result.report) reports.push(result.report);
+          // A season can only end once, so the first Tier-0 in the span is the
+          // one — a run that passes through a title game and keeps going into
+          // the offseason still shows exactly one.
+          if (result.trophy && !earnedTrophy) earnedTrophy = result.trophy;
+          phase = result.phase;
+          week = result.week;
+          iterations++;
+          if (stopAfter(phase, week, mode, midseasonWeek, startPhase, iterations)) break;
+        }
+        setProgress(null);
+        finish(
+          iterations > 1 ? `Advanced ${iterations} week${iterations === 1 ? '' : 's'}. ${lastSummary}` : lastSummary,
+          reports,
+          earnedTrophy,
+        );
+      } finally {
+        inFlight.current = false;
       }
-      setProgress(null);
-      finish(
-        iterations > 1 ? `Advanced ${iterations} week${iterations === 1 ? '' : 's'}. ${lastSummary}` : lastSummary,
-        reports,
-        earnedTrophy,
-      );
     });
+  };
+
+  /**
+   * A refusal to advance. Two shapes, and the difference is whether there is
+   * anything for the user to DO about it.
+   *
+   * The cap gate and the roster-limit gate are standing conditions with a
+   * screen behind them, so they get the sticky panel and its link. "The last
+   * advance is still being played out" is neither — it is a busy signal that
+   * clears itself, with nowhere to send anybody — so it gets a toast, the same
+   * as any other passing sentence. Rendering it in the block panel would put a
+   * red heading and an "Open Cap Sheet" button on a league with nothing wrong
+   * with it.
+   */
+  const refuse = (result: { summary: string } & Parameters<typeof blockShape>[0]) => {
+    const shape = blockShape(result);
+    if (shape) showBlock(result.summary, shape);
+    else showToast(result.summary);
   };
 
   /**

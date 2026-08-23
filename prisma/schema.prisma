@@ -14,7 +14,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // Runtime queries go through the POOLED connection. Serverless opens a
   // connection per invocation, and an unpooled endpoint runs out of them
   // under very light concurrency.
@@ -76,6 +76,21 @@ model League {
   // is a legitimate choice, losing two thirds of a roster without being told
   // is not. Nullable for the same `prisma db push` reason as the column above.
   resignWarnedYear  Int?
+
+  // ONE PRESS OF ADVANCE AT A TIME, ACROSS THE WHOLE LEAGUE.
+  //
+  // When an advance is running this holds the instant it started; otherwise
+  // null. Taken and released by `advanceWeek` (lib/season.ts) — the long
+  // comment there is the argument for why it exists at all and why it is a
+  // TIMESTAMP rather than a boolean: a boolean left set by a request that was
+  // killed mid-advance is a league nobody can ever advance again, and there is
+  // no way out of that from inside the game. A timestamp says both "held" and
+  // "since when", so a press arriving after the lease has expired can take it.
+  //
+  // Nullable for the same reason as the three columns above: `migrate deploy`
+  // runs against a database with live rows in it, and null is exactly the
+  // right value for every one of them — nobody is mid-advance.
+  advanceStartedAt DateTime?
 
   userTeamId String?
 
@@ -206,6 +221,7 @@ model Team {
   shortlist       ShortlistEntry[]
   negotiations    NegotiationTalks[]
   powerSnapshots  PowerRankingSnapshot[]
+  capCharges      CapCharge[]
 
   @@index([leagueId])
 }
@@ -353,12 +369,12 @@ model Player {
   negotiations  NegotiationTalks[]
   seasons       PlayerSeason[]
 
+  /// Every league-wire row about him — signings, releases, draft day, awards.
+  transactions Transaction[]
+
   @@index([leagueId])
   @@index([teamId])
   @@index([position])
-
-  /// Every league-wire row about him — signings, releases, draft day, awards.
-  transactions Transaction[]
 }
 
 // ---------------------------------------------------------------------------
@@ -466,8 +482,33 @@ model Contract {
 
 // Dead money left behind by cuts/trades, tracked per team-year.
 model CapCharge {
-  id     String @id @default(cuid())
+  id String @id @default(cuid())
+
+  // THE RELATION THAT WAS MISSING, AND WHAT IT COST.
+  //
+  // This table used to carry a bare `teamId` string with no foreign key to
+  // anything. Deleting a league cascaded through Team, Player, Contract and
+  // every other table here and left the dead money behind, pointing at a team
+  // id that no longer resolved. Nothing could read those rows again and
+  // nothing ever deleted them, so they piled up for as long as leagues were
+  // being made and thrown away: 18,247 orphans out of 22,203 rows on the dev
+  // database, five of every six cap charges in it. Two separate agents had to
+  // work around it and one deleted charges by hand before every teardown.
+  //
+  // CASCADE FROM **TEAM**, WHICH IS NOT THE SAME AS CASCADING FROM A CONTRACT.
+  // Dead money is meant to outlive the deal that created it — that is the
+  // whole point of it — and nothing here touches Contract or Player. A charge
+  // dies only when the club it is charged to dies, and a club dies only when
+  // its league does (nothing in this game deletes a single team). So the
+  // cascade fires on exactly one event: a save being deleted, where these rows
+  // are unreachable by definition.
+  //
+  // Expiry stays where it was. expireStaleCapCharges (lib/season.ts) deletes
+  // by YEAR once the bill has been settled, and that is still the only thing
+  // entitled to decide a charge has been paid.
   teamId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
   year   Int
   amount Int
   label  String
@@ -582,12 +623,12 @@ model Transaction {
   /// SetNull rather than Cascade, deliberately: a transaction is a historical
   /// record and must survive the player being deleted. Losing the link is
   /// acceptable; losing the fact that the signing happened is not.
-  playerId   String?
-  player     Player?  @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  playerId String?
+  player   Player? @relation(fields: [playerId], references: [id], onDelete: SetNull)
 
-  headline   String
-  detail     String   @default("")
-  createdAt  DateTime @default(now())
+  headline  String
+  detail    String   @default("")
+  createdAt DateTime @default(now())
 
   @@index([leagueId, seasonYear, week])
   /// "Everything that ever happened to this man", which is the read the column
