@@ -9,7 +9,7 @@ import { ratingColor, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE } from '@/lib/tuning';
 import { bandCutoffs, consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
-import { draftOrderContext, pickNumbers, projectionAppliesTo, draftIsStarted } from '@/lib/draft';
+import { draftOrderContext, pickNumbers, projectionAppliesTo, draftIsStarted, rookieCapOutlook } from '@/lib/draft';
 import { needSeverity, teamNeeds } from '@/lib/ai/gm';
 import { loadWorkoutSlots } from '@/lib/workouts';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -37,6 +37,7 @@ import { BoardDepletion, RunWatch, WarRoomPanel } from '@/components/draft/Draft
 import type { PositionStock, RunEntry, WarRoomPick } from '@/components/draft/DraftIntel';
 import { BestAvailable } from '@/components/draft/BestAvailable';
 import { DraftViewToggle } from '@/components/draft/DraftViewToggle';
+import { RookieCapWarning } from '@/components/draft/RookieCapWarning';
 import { ProspectSearch } from '@/components/draft/ProspectSearch';
 import type { AvailableRow } from '@/components/draft/BestAvailable';
 import { positionBadgeClass } from '@/components/ds/positionColor';
@@ -960,6 +961,15 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     ? `Round ${firstPick.round}, #${firstPick.overall} overall`
     : null;
 
+  // WHAT HIS OWN CLASS COSTS, PRICED OFF THE SCALE THE DRAFT REALLY CHARGES.
+  // Read only in the war room: draftPlayer blocks the user at the podium and
+  // this is the last screen before it, so this is where he can still do
+  // something about it. Null whenever there is nothing to say — no picks, the
+  // cap switched off, or a club with room to spare (see rookieCapOutlook).
+  const rookieCap = warRoom
+    ? await rookieCapOutlook({ leagueId: league.id, teamId: team.id, seasonYear: league.seasonYear, capMode: settings.capMode })
+    : null;
+
   // ===========================================================================
   // THE BROADCAST
   // ===========================================================================
@@ -1868,6 +1878,12 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 the window closes when this draft opens.
               </p>
             )}
+
+            {/* And what the class itself costs. Above the button, never inside
+                its confirm: the workout confirm is one question asked once and
+                vanishes when there are none left, this is the state of the
+                books and is true whether he clicks anything or not. */}
+            {rookieCap && <RookieCapWarning leagueId={league.id} outlook={rookieCap} />}
 
             <div className="flex flex-wrap items-start gap-3">
               <StartDraftButton

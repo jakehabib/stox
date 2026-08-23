@@ -4,8 +4,12 @@ import { readJson, writeJson } from './json';
 import { buildContract, rookieScaleApy, marketValue, suggestedYears, capHit } from './cap';
 import { parseGmProfile, playerValue, teamNeeds, RosterPlayer, defaultGmProfile } from './ai/gm';
 import { AI, CAP, CONSENSUS, LEAGUE, Position } from './tuning';
+// Type only. The runtime import stays dynamic, inside the two functions that
+// need it, exactly as draftPlayer does it — capEnforcement pulls the whole cap
+// sheet in behind it and this module is imported by every draft screen.
+import type { ReliefOption } from './capEnforcement';
 import { consensusBoardMap, CONSENSUS_EVAL, type ConsensusRead } from './consensus';
-import type { GmProfile } from './types';
+import type { CapMode, GmProfile } from './types';
 import { reconcileDepthChart, rosterCapTarget } from './gen/league';
 import { runAiPositionConversions } from './ai/positionChange';
 
@@ -113,12 +117,7 @@ export async function draftPlayer(opts: {
     if (capMode !== 'OFF') {
       const { assertCapRoom, autoClearCapRoom } = await import('./capEnforcement');
       const { teamCapSummary } = await import('./cap-summary');
-      const overall = (pickInfo.pick.round - 1) * LEAGUE.TEAM_COUNT + pickInfo.pick.slot;
-      const rookie = buildContract({
-        apy: rookieScaleApy(overall, LEAGUE.TEAM_COUNT * 7),
-        years: 4, signedYear: opts.seasonYear, isRookieDeal: true, bonusPct: 0.4,
-      });
-      const hit = capHit({ ...rookie, baseSalaries: writeJson(rookie.baseSalaries) }, capMode);
+      const hit = rookieCapHitForPick(pickInfo.pick, opts.seasonYear, capMode);
       const team = await prisma.team.findUniqueOrThrow({ where: { id: opts.teamId }, select: { isUser: true } });
 
       if (team.isUser) {
@@ -172,9 +171,8 @@ export async function draftPlayer(opts: {
       // pick than the one actually on the clock once trades are involved).
       const pick = pickInfo.pick;
       const player = await tx.player.findUniqueOrThrow({ where: { id: opts.playerId } });
-      const overall = (pick.round - 1) * LEAGUE.TEAM_COUNT + pick.slot;
-      const apy = rookieScaleApy(overall, LEAGUE.TEAM_COUNT * 7);
-      const contract = buildContract({ apy, years: 4, signedYear: opts.seasonYear, isRookieDeal: true, bonusPct: 0.4 });
+      const overall = overallPickNumber(pick);
+      const contract = rookieDealForPick(pick, opts.seasonYear);
       await tx.draftPick.update({ where: { id: pick.id }, data: { used: true, playerId: opts.playerId } });
       await tx.contract.deleteMany({ where: { playerId: opts.playerId } });
       await tx.contract.create({
@@ -230,6 +228,205 @@ export async function draftPlayer(opts: {
    * order on every single pick they made.
    */
   await reconcileDepthChart(opts.teamId);
+}
+
+/**
+ * ===========================================================================
+ * WHAT A ROOKIE COSTS — ONE FUNCTION, EVERY CALLER
+ * ===========================================================================
+ * The slot price was written out twice inside draftPlayer: once to price the
+ * cap check, once to build the contract that actually gets written. Two copies
+ * ten lines apart is survivable. It stopped being survivable when the war room
+ * started quoting the same figure to a GM BEFORE he opens the draft (see
+ * rookieCapOutlook below) — the recurring bug in this codebase is a displayed
+ * number that is not the number the system used, and a warning that prices his
+ * class off a second formula is worse than no warning at all, because he will
+ * trust it and be blocked at the podium anyway.
+ *
+ * THE SCALE IS STRETCHED ACROSS SEVEN ROUNDS, NOT ACROSS settings.draftRounds,
+ * and that was already true of both copies — it is preserved here rather than
+ * "fixed". The denominator is what makes pick 100 cost the same money in a
+ * five-round league as in a seven-round one; feeding it the league's own round
+ * count would instead re-price the whole board every time that setting moved,
+ * so a club's last pick was always dead-last money whatever round it fell in.
+ */
+const ROOKIE_SCALE_ROUNDS = 7;
+
+/** Overall selection number for a stored pick. The draft's own arithmetic. */
+export function overallPickNumber(pick: { round: number; slot: number }): number {
+  return (pick.round - 1) * LEAGUE.TEAM_COUNT + pick.slot;
+}
+
+/** The deal the man taken at this pick signs, before it is written anywhere. */
+export function rookieDealForPick(pick: { round: number; slot: number }, seasonYear: number) {
+  return buildContract({
+    apy: rookieScaleApy(overallPickNumber(pick), LEAGUE.TEAM_COUNT * ROOKIE_SCALE_ROUNDS),
+    years: 4, signedYear: seasonYear, isRookieDeal: true, bonusPct: 0.4,
+  });
+}
+
+/** What that deal charges THIS season — the figure assertCapRoom is handed. */
+export function rookieCapHitForPick(
+  pick: { round: number; slot: number }, seasonYear: number, capMode: CapMode,
+): number {
+  const c = rookieDealForPick(pick, seasonYear);
+  return capHit({ ...c, baseSalaries: writeJson(c.baseSalaries) }, capMode);
+}
+
+/**
+ * ===========================================================================
+ * CAN HE AFFORD HIS OWN DRAFT?  [TUNE]
+ * ===========================================================================
+ * A rookie deal is real cap money and draftPlayer above BLOCKS the user on it:
+ * he is on the clock, the short clock is running, and that is when he finds
+ * out he cannot pay the man he just picked. An AI club never has that moment —
+ * it quietly releases veterans to fit its own pool and the room moves on. So
+ * the asymmetry is not "the user is treated worse", it is "the user has to be
+ * TOLD FIRST", and the only place that can happen is the war room, before he
+ * sends the first card.
+ *
+ * THE WALK IS THE POINT, NOT THE TOTAL. draftPlayer charges one pick at a
+ * time against the room left at that moment, so the honest question is not
+ * "does the class fit" but "which card is the one that stops". Seven picks of
+ * dead-last money is still ~$7M, and the gate fires on the last of them as
+ * readily as the first. Walking the picks in selection order and decrementing
+ * reproduces exactly the sequence of checks the draft will run.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT KNOW. Cap space is read tonight. He may cut,
+ * restructure or trade before the podium; an AI club may hand him a deal. That
+ * is why every figure here is "as the roster stands" and none of it is a
+ * verdict — see the copy on the draft page. It also cannot see the rookies it
+ * has not signed yet becoming cuttable themselves, which is the one direction
+ * this errs pessimistic in, and the smaller error of the two.
+ */
+
+/** One held selection, priced at the slot it will actually be made from. */
+export interface RookiePoolPick {
+  round: number;
+  slot: number;
+  overall: number;
+  /** This season's cap charge for the man taken here. */
+  hit: number;
+}
+
+export interface RookieCapOutlook {
+  /** The draft these picks belong to. */
+  year: number;
+  /** Unused picks he holds, in selection order. */
+  picks: RookiePoolPick[];
+  /** All of them added up: the whole class on this season's books. */
+  pool: number;
+  /** Room under the ceiling as the roster stands right now. */
+  capSpace: number;
+  /** What is left once the class is signed. Negative means it does not fit. */
+  cushion: number;
+  /**
+   * The first pick the books cannot cover, walking them in order — the exact
+   * selection draftPlayer would throw on. Null when every card is payable.
+   */
+  stopsAt: RookiePoolPick | null;
+  /** Dollars short at that pick. 0 when nothing stops. */
+  shortfall: number;
+  /**
+   * Whether cuts alone could still cover that shortfall. draftPlayer only
+   * blocks while this is true: a club with no way out at all is let through
+   * rather than deadlocked on the clock, so a warning that promised a block
+   * here would be describing a rule the code does not follow.
+   */
+  clearable: boolean;
+  /** Cuts and restructures that would cover it, best first. */
+  relief: ReliefOption[];
+}
+
+/**
+ * [TUNE] How thin a club has to be left before the war room says anything.
+ *
+ * A warning that fires every year is furniture and a GM stops reading
+ * furniture, so the loud case is not "mind the cap" — it is the walk above
+ * finding a card he cannot pay for, which is a fact and needs no threshold at
+ * all. This constant only governs the quiet case: the class fits, and leaves
+ * him this thin. One league-minimum contract, because below that he cannot add
+ * a single body after the draft — an undrafted free agent, a week-two
+ * replacement — without cutting somebody, and the last deal on the rookie
+ * scale is itself about a minimum salary, so a club inside this band is one
+ * slot-price step from being stopped at the podium.
+ *
+ * MEASURED across every save in the dev database (scripts/_draftcap.ts): of
+ * the 42 user clubs sitting in or approaching a draft with picks to spend and
+ * the cap switched on, ONE trips this warning — a club $23.9M over the ceiling
+ * on $56.0M of dead money, stopped at its own first pick. The next tightest
+ * club in the league finishes its draft with $26.9M still standing. So every
+ * cushion between $0 and $26.9M gives the identical answer on real data, and
+ * the smallest value with a meaning in the game is the honest choice: a bigger
+ * one buys nothing today and is an arbitrary number waiting to start firing on
+ * clubs that are fine.
+ */
+const ROOKIE_POOL_WARN_CUSHION = CAP.MIN_SALARY;
+
+/**
+ * Prices the picks a club actually holds in the imminent draft against the
+ * room it actually has. Null when there is nothing to price — no picks, or a
+ * league with the cap switched off, where none of this is a constraint.
+ */
+export async function rookieCapOutlook(opts: {
+  leagueId: string; teamId: string; seasonYear: number; capMode: CapMode;
+}): Promise<RookieCapOutlook | null> {
+  if (opts.capMode === 'OFF') return null;
+
+  // The same rows currentPick() resolves the clock from, filtered to the ones
+  // he still has to spend. Reading DraftPick directly rather than taking the
+  // page's capital list means the warning is priced off pick ownership as the
+  // draft will read it, not off a projection built for a different panel.
+  const rows = await prisma.draftPick.findMany({
+    where: { leagueId: opts.leagueId, ownerTeamId: opts.teamId, year: opts.seasonYear, used: false },
+    select: { round: true, slot: true },
+    orderBy: [{ round: 'asc' }, { slot: 'asc' }],
+  });
+  if (rows.length === 0) return null;
+
+  const picks: RookiePoolPick[] = rows.map((r) => ({
+    round: r.round,
+    slot: r.slot,
+    overall: overallPickNumber(r),
+    hit: rookieCapHitForPick(r, opts.seasonYear, opts.capMode),
+  }));
+  const pool = picks.reduce((sum, p) => sum + p.hit, 0);
+
+  const { teamCapSummary } = await import('./cap-summary');
+  const summary = await teamCapSummary(opts.teamId, opts.seasonYear, opts.capMode);
+  const capSpace = summary.capSpace;
+  const cushion = capSpace - pool;
+
+  // One pick at a time against the room left at that moment — draftPlayer's
+  // own check, run forward.
+  let room = capSpace;
+  let stopsAt: RookiePoolPick | null = null;
+  let shortfall = 0;
+  for (const p of picks) {
+    if (p.hit > room) { stopsAt = p; shortfall = p.hit - room; break; }
+    room -= p.hit;
+  }
+
+  // Nothing to say is said by returning nothing: there is no "warn: false"
+  // outlook for a caller to render by accident.
+  if (stopsAt === null && cushion >= ROOKIE_POOL_WARN_CUSHION) return null;
+
+  // Only scanned once the warning is going to be shown — a compliant club with
+  // room to spare has nothing to suggest and this is a whole-roster read.
+  const { capComplianceReport } = await import('./capEnforcement');
+  const report = await capComplianceReport(opts.teamId, opts.seasonYear, opts.capMode, { alwaysRelief: true });
+
+  return {
+    year: opts.seasonYear,
+    picks,
+    pool,
+    capSpace,
+    cushion,
+    stopsAt,
+    shortfall,
+    clearable: report.maxCutRelief >= shortfall,
+    relief: report.relief,
+  };
 }
 
 /**
