@@ -1079,6 +1079,23 @@ function standingsOrder<T extends { id: string; wins: number; losses: number; ti
 }
 
 /**
+ * The 1-based draft slot a club would hold if the season ended on the rows
+ * handed in — the same worst-first rule reseedDraftOrder runs for real.
+ *
+ * Exported as a PURE function, deliberately. The caller that needs it (the
+ * week report's "what it changed" band) is already holding the standings from
+ * BOTH sides of the week it is describing and wants the delta between them.
+ * draftOrderProjection can only answer for "now", and a second database read
+ * cannot recover a snapshot the caller has in hand.
+ */
+export function draftSlotAmong<T extends { id: string; wins: number; losses: number; ties: number; pointsFor: number; pointsAgnst: number }>(
+  teamId: string,
+  teams: T[],
+): number {
+  return standingsOrder(teams).findIndex((t) => t.id === teamId) + 1;
+}
+
+/**
  * Reseed every round's pick slots from the finished season's standings, worst
  * first.
  *

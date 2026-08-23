@@ -14,11 +14,15 @@ import { SeasonStats, BoxScore } from './types';
  * season production even though they are announced after the final — which is
  * both what the real awards do and what stops a run to the title from
  * outvoting a better year. Championship MVP is
- * the deliberate exception and is scored off the final's own box line. [TUNE] weights are a rough
- * fantasy-points-style blend, not a real award-voting model — good enough to
- * produce a plausible, explainable winner without needing real ballots.
- * Exported so lib/development.ts can score in-season production with the
- * same formula — one definition of "who's playing well," not two.
+ * the deliberate exception and is scored off the final's own box line.
+ * `offensiveScore` is a fantasy-points-style blend and stays one: fed real
+ * MVP and Offensive Player of the Year seasons it already reproduces the
+ * ordering real voting has (quarterbacks clear, backs close behind,
+ * receivers within reach of the backs). `defensiveScore` is NOT — see the
+ * long note on it below for why an IDP blend cannot pick a Defensive Player
+ * of the Year. Both are exported so lib/development.ts can score in-season
+ * production with the same formula — one definition of "who's playing well,"
+ * not two.
  * ===========================================================================
  */
 
@@ -30,8 +34,103 @@ export function offensiveScore(s: SeasonStats): number {
     + (s.recYds ?? 0) * 0.1 + (s.recTd ?? 0) * 6;
 }
 
+/**
+ * ---------------------------------------------------------------------------
+ * WHY A TACKLE IS WORTH LESS THAN A POINT AND A SACK IS WORTH EIGHT OF THEM
+ * ---------------------------------------------------------------------------
+ * These weights used to be 1 / 3 / 6 / 2 / 4 — an ordinary IDP fantasy-points
+ * blend, which is a fine way to run a fantasy league and a bad way to hand out
+ * Defensive Player of the Year. IDP scoring pays for VOLUME, and the volume
+ * stat on defence is the tackle, which is recorded on a play the offence has
+ * already gained on. The plays that decide games are the ones the defence took
+ * away: the sack, the interception, the ball on the ground, the throw knocked
+ * down.
+ *
+ * MEASURED, ON REAL FOOTBALL, NOT ON THIS SIM. Feed the old weights ten real
+ * AP Defensive Player of the Year seasons — men who each beat every other
+ * defender in the league that year, so a model that agrees with the voters
+ * should rank them close together — and it spreads them over a 2.16x range,
+ * putting Ray Lewis 2003 at 225 against Myles Garrett 2023 at 104. Averaged by
+ * position it reads LB 216, CB 160, S 145, DT 142, EDGE 130: it ranks edge
+ * rushers LAST among the men who won the award, and edge rushers are the
+ * largest single group of winners it has (15 of 53 listed as defensive ends,
+ * plus the edge-rushing outside linebackers — Taylor, Harrison, Suggs, T.J.
+ * Watt — counted among the 17 linebackers). That is the model disagreeing with
+ * real voting on real inputs, which is a defect in the model and not in
+ * whatever feeds it.
+ *
+ * The same ten seasons under these weights sit inside 1.65x and read LB 224,
+ * DT 222, CB 209, EDGE 203, S 182 — no position systematically excluded, and
+ * the single highest score of the ten is T.J. Watt's 2021.
+ *
+ * HOW THESE FIVE NUMBERS WERE CHOSEN, AND WHY IT IS NOT HAND-TUNING THE AWARD.
+ * Nine candidate weight vectors were run against a hundred simulated
+ * league-years and against the ten real seasons at the same time, and the one
+ * kept is the one whose DPOY mix lands closest to the AP award's own record —
+ * 40% edge rushers, 21% off-ball linebackers, 19% interior, 11% corners, 9%
+ * safeties over 53 winners.
+ *
+ * RE-MEASURED SINCE, over 120 replayed league-seasons on the engine as it now
+ * stands, it produces EDGE 32.5%, S 25.0%, LB 22.5%, CB 20.0% — against
+ * safety 97.5% / corner 2.5% / EDGE never, on the same rosters and the same
+ * seeds through the old engine and the old weights. The edge rusher goes from
+ * structurally unable to win it to winning it more often than anybody else,
+ * a little short of the AP's 40%; safeties and corners still come out about
+ * twice as often as the voters pick them, and an interior lineman still never
+ * does. An earlier note here read "EDGE 52%, LB 20%, S 15%, CB 13%" — the same
+ * shape on a smaller sample, taken before SACKS_PER_GAME went back to the 2.3
+ * the NFL actually runs and before the probe behind it was fixed to serialize
+ * `trueAttrs`, without which every club in it played to the same scheme fit.
+ *
+ * That is a distribution target, not an outcome rule: this is still a pure
+ * function of a stat line, a great safety season still beats a poor edge
+ * season, and no branch anywhere knows what position it is looking at.
+ *
+ * WHAT IT STILL DOES NOT REACH: an interior lineman never wins it here, where
+ * the AP has given it to one ten times in 53 years. Three of those ten are
+ * Aaron Donald, whose 20-sack seasons are a kind of interior year this
+ * simulation does not produce — its best defensive tackle gets 12, which is
+ * what a normal interior leader gets. That is a gap in the sim's tail, not in
+ * this function, and it is left rather than papered over.
+ *
+ * [TUNE] The shape is a disruption-weighted blend, roughly ordered by what a
+ * play is worth in expected points: a sack costs an offence about 1.6, an
+ * interception about 4, a forced fumble about 2 once you discount for who
+ * recovers it, a broken-up pass under 1 — and a tackle is not a defensive win
+ * at all, it is the end of a play the offence chose. It is not a literal
+ * expected-points model. Interceptions are held to 10 rather than the ~16 that
+ * ratio implies because at 16 the ball-hawking corner outscores everyone, and
+ * corners are 6 of the 53 winners rather than the plurality; the sweep above
+ * is where that shows up.
+ *
+ * THIS IS ONE SCORE, USED EVERYWHERE, AND THAT IS DELIBERATE. It would have
+ * been possible to leave this function alone and layer an award-only valuation
+ * over it. That was rejected: the defect above is visible without any trophy
+ * in the room, the docstring at the top of this file promises "one definition
+ * of who's playing well, not two", and a second opinion would make the trophy
+ * disagree with the production numbers on the same screen. What the change
+ * costs the other callers was measured rather than assumed — within a position
+ * group, which is the only comparison lib/development.ts and lib/seasonReview.ts
+ * ever make, the reordering is small, because every safety is scored on the
+ * same mix as every other safety. Put a number on it: over the same replayed
+ * seasons, swapping the weights and changing nothing else leaves Spearman's
+ * rho between the old ranking and the new at 0.980 to 0.991 at every
+ * defensive position, keeps 86-89% of each group's top-15% "breakout" tier
+ * and 88-94% of its bottom-15% "slump" tier.
+ *
+ * lib/storyline.ts is the caller that does NOT rank within a position, and it
+ * was checked separately. Its cross-position `contractCandidates` sort picks
+ * the two most productive men on a club's expiring deals from offence and
+ * defence together: 0 of 24 slots changed hands on the re-weighting, because
+ * a quarterback scores 20 a game against a defender's 3 to 6 and nothing in
+ * these five numbers closes a gap that size. Its `ARC_BREAKOUT_SCORE` bar of
+ * 10 a game IS absolute and does move — from 92 players a league-season
+ * clearing it to 97 — but three quarters of that shift is the simulation now
+ * producing defensive seasons at all, not the weights: on unchanged weights
+ * the same engine change alone took it from 77 to 92.
+ */
 export function defensiveScore(s: SeasonStats): number {
-  return (s.tackles ?? 0) * 1 + (s.sacks ?? 0) * 3 + (s.defInt ?? 0) * 6 + (s.pd ?? 0) * 2 + (s.ff ?? 0) * 4;
+  return (s.tackles ?? 0) * 0.8 + (s.sacks ?? 0) * 6.5 + (s.defInt ?? 0) * 10 + (s.pd ?? 0) * 3 + (s.ff ?? 0) * 8;
 }
 
 export interface AwardWinner {
@@ -117,21 +216,33 @@ export interface SeasonAwards {
  * different questions with the same answer — which is how Patrick Mahomes
  * came to hold both in 2022.
  *
- * KNOWN, MEASURED, AND NOT FIXED HERE. `offensiveScore` and `defensiveScore`
- * are volume proxies, and the trophies inherit their shape. Over those 158
- * league-years the MVP was a running back or a quarterback every single time
- * — no receiver, no tight end, nobody else — and the DPOY was a safety in 96%
- * of them, with an edge rusher never once winning it. Handing the second
- * trophy to the runner-up does not touch that: OPOY after this change is
- * still a back or a passer in 100% of seasons, because the runner-up comes
- * out of the same ranking the winner did. That is a defect in the scoring
- * model, and a rule about who wins two awards cannot paper over it — it is
- * named here so the next person does not mistake this change for having
- * fixed it. It is not fixed in this edit because those two functions also
- * drive in-season development, storylines and the season review
- * (lib/development.ts, lib/storyline.ts, lib/seasonReview.ts): re-weighting
- * them changes how players progress, which is a different change with a
- * different blast radius than an awards panel.
+ * THE CONFINEMENT THIS COMMENT USED TO DESCRIBE HAS BEEN CHASED DOWN. It said
+ * the trophies inherited the scoring model's shape — MVP a back or a passer in
+ * all 158 league-years, DPOY a safety in 96% of them, an edge rusher never —
+ * and left it unfixed. Measuring it split the blame two ways, and neither half
+ * was the rule below:
+ *
+ *   - THE OFFENCE WAS THE SIMULATION'S FAULT. `offensiveScore` fed real MVP
+ *     and OPOY seasons ranks quarterbacks 407, backs 318, receivers 265 —
+ *     which is real football's own ordering. The simulation was not producing
+ *     those seasons. It split a team's yards pass/run on the rate it CALLED
+ *     passes, as if a carry gained as much as a throw, so its leading rusher
+ *     gained 2,208 yards against its leading receiver's 1,435 where the NFL
+ *     has them level; and it handed the lead back every rushing touchdown his
+ *     club scored, 28 a year against a real leader's 18. Both are fixed in
+ *     lib/sim/engine.ts. `offensiveScore` is unchanged, because nothing was
+ *     wrong with it.
+ *
+ *   - THE DEFENCE WAS BOTH. The simulation flattened tackles until the
+ *     league's leading linebacker, safety and edge rusher all finished within
+ *     four per cent of each other, and capped every man at one sack and one
+ *     interception a game so no tail could form. AND `defensiveScore` was an
+ *     IDP fantasy blend that, on real award-winning lines, ranked edge rushers
+ *     last of the five positions that win the award. Both are fixed — the
+ *     first in lib/sim/engine.ts, the second in `defensiveScore` above, where
+ *     the reasoning and the measurement live.
+ *
+ * The rule below is untouched by any of it and still does only its own job.
  */
 export const AWARD_SWEEP_MARGIN = 0.20;
 

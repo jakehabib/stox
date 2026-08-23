@@ -74,9 +74,10 @@ import { positionRelativeScore, isRankablePosition, PositionDistribution } from 
  *    and is never quoted.
  *  - `teamStats.penalties` is `plays/12`. Also not real, also never quoted,
  *    and never attributed to a player.
- *  - `teamStats.passYards`/`rushYards` are a flat 60/40 split of total yards;
- *    the player lines carry the real split, so unit yardage is summed from
- *    the lines.
+ *  - `teamStats.passYards`/`rushYards` WERE a flat 60/40 split of total yards
+ *    unrelated to the men in the box score. toTeamStats now sums them off the
+ *    player lines, so they are safe to quote; unit yardage is still summed
+ *    from the lines here, which is the same number by construction.
  *  - A punter's yards are `punts * rng.int(40, 50)` — pure dice, with no input
  *    from his rating. Praising a punt average would be praising a coin flip,
  *    so P is left out of `UNIT_OF` and can never be mentioned.

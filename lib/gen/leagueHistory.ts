@@ -189,26 +189,44 @@ export const HISTORY = {
 
 /**
  * Target bands for the seeded records — the whole reason this file cares
- * about calibration at all. Measured against real completed seasons already
- * in this codebase's own database: across nine finished league-seasons the
- * BEST single season anyone posted averaged 5,791 passing yards (max 6,639),
- * 2,609 rushing (max 2,863), 1,614 receiving (max 1,856), 96 tackles (max
- * 99), 12 sacks (max 14) and 9 interceptions (max 10).
+ * about calibration at all. A record has to be beatable but not trivially so,
+ * so these sit just above the best season the sim has ever actually produced:
+ * a strong year gets within ~10% of it, an all-time year takes it down.
  *
- * A record has to be beatable but not trivially so. These bands sit just
- * above the best season the sim has ever actually produced, which is exactly
- * what a twenty-year-old record should be: a strong year gets within ~10% of
- * it, an all-time year on a team that goes deep into the playoffs (playoff
- * box scores accumulate into the same season line) takes it down.
+ * RECALIBRATED, BECAUSE THE SIM'S BOX SCORE CHANGED UNDER THEM. The old
+ * numbers were measured off nine finished league-seasons played by the old
+ * stat allocator, which could credit no player more than one sack or one
+ * touchdown catch in a game. Re-measured over 100 simulated league-years on
+ * the allocator in lib/sim/engine.ts today, the best single season is 7,079
+ * passing yards, 2,385 rushing, 2,312 receiving, 161 tackles, 25 sacks and 13
+ * interceptions. Left alone, a seeded twenty-year-old sack record of 13 would
+ * have been broken in week fourteen of the first season of every save ever
+ * started — a record nobody had to earn is worse than no record at all.
+ *
+ * The rushing band came DOWN, and that is not a mistake: the old allocator
+ * split a team's yards pass/run on how often it CALLED a pass rather than on
+ * what a pass gains, which inflated every rusher in the league.
+ *
+ * TRIMMED AGAIN AFTERWARDS, by the two measured ratios and nothing else. Two
+ * later corrections in lib/sim/engine.ts moved two of these six numbers and
+ * left the other four alone: the quarterback's carries stopped being conjured
+ * beside the team's rushing total and started coming out of it (leading rusher
+ * 1,925 -> 1,811 over 120 replayed league-seasons, x0.94), and SACKS_PER_GAME
+ * went back to the 2.3 the NFL actually runs (sack leader 19.6 -> 18.1,
+ * x0.93). Only `rushYds` and `sacks` are scaled by those ratios, here and in
+ * the career band below. Scaling the measurement rather than re-measuring
+ * keeps whatever the original calibration knew — it was taken with playoff
+ * box scores in it, which accumulate into the same season line and which a
+ * regular-season replay cannot see.
  */
 export const SEASON_RECORD_BAND: Record<RecordCategory, { lo: number; hi: number }> = {
-  passYds: { lo: 6450, hi: 6900 },
+  passYds: { lo: 6900, hi: 7400 },
   passTd:  { lo: 58,   hi: 63 },
-  rushYds: { lo: 2850, hi: 3050 },
-  recYds:  { lo: 1860, hi: 1980 },
-  tackles: { lo: 103,  hi: 108 },
-  sacks:   { lo: 13,   hi: 15 },
-  defInt:  { lo: 10,   hi: 12 },
+  rushYds: { lo: 2250, hi: 2450 },
+  recYds:  { lo: 2350, hi: 2500 },
+  tackles: { lo: 168,  hi: 178 },
+  sacks:   { lo: 24,   hi: 27 },
+  defInt:  { lo: 13,   hi: 15 },
 };
 
 /**
@@ -218,13 +236,16 @@ export const SEASON_RECORD_BAND: Record<RecordCategory, { lo: number; hi: number
  * a franchise cornerstone late in his career, out of reach for anybody else.
  */
 export const CAREER_RECORD_BAND: Record<RecordCategory, { lo: number; hi: number }> = {
-  passYds: { lo: 51000, hi: 62000 },
+  // Moved with the season bands above and by the same ratios, so a career
+  // record still reads as "twelve to fourteen years of near-elite production"
+  // in the units this sim now actually produces.
+  passYds: { lo: 54000, hi: 66000 },
   passTd:  { lo: 400,   hi: 520 },
-  rushYds: { lo: 14500, hi: 18500 },
-  recYds:  { lo: 12500, hi: 16500 },
-  tackles: { lo: 950,   hi: 1200 },
-  sacks:   { lo: 84,    hi: 110 },
-  defInt:  { lo: 36,    hi: 50 },
+  rushYds: { lo: 11300, hi: 14600 },
+  recYds:  { lo: 15500, hi: 20500 },
+  tackles: { lo: 1550,  hi: 1950 },
+  sacks:   { lo: 139,   hi: 181 },
+  defInt:  { lo: 47,    hi: 65 },
 };
 
 /**
@@ -883,9 +904,14 @@ function coreSeason(
   const n = (mean: number, sd: number) => Math.max(0, rng.normal(mean, sd));
   const cap = (cat: RecordCategory, v: number) => Math.min(SEASON_RECORD_BAND[cat].hi, Math.round(v));
 
+  // The per-position means below were re-fitted alongside SEASON_RECORD_BAND
+  // when lib/sim/engine.ts's stat allocator changed. A fabricated backstory
+  // whose great seasons do not look like the great seasons the live league
+  // produces is worse than no backstory: the Ring of Honour and the record
+  // book sit on the same screen as this year's leaders.
   switch (position) {
     case 'QB': {
-      const passYds = cap('passYds', n(2500 + q * 3000, 380) * vol);
+      const passYds = cap('passYds', n(2700 + q * 3300, 400) * vol);
       const passAtt = Math.round(passYds / rng.float(5.5, 6.5));
       return {
         gp, passAtt, passCmp: Math.round(passAtt * clamp(0.56 + q * 0.10 + rng.normal(0, 0.02), 0.5, 0.72)),
@@ -894,17 +920,25 @@ function coreSeason(
         rushAtt: Math.round(rng.int(28, 62) * vol), rushYds: Math.round(rng.int(20, 260) * vol),
       };
     }
+    // THE ONE POSITION THE RECALIBRATION ABOVE MISSED. Every other branch in
+    // this switch was re-fitted when the stat allocator changed; this one was
+    // left on its old numbers while SEASON_RECORD_BAND.rushYds came down
+    // around it. The result was a seeded back whose elite season averaged
+    // 2,120 yards at 5.3 a carry, in a league whose live leading rusher gains
+    // 1,811 at 4.76 — a Ring of Honour nobody currently playing could join,
+    // sitting on the same screen as this year's rushing table. Both numbers
+    // are now the live league's, measured over 120 replayed league-seasons.
     case 'RB': {
-      const rushYds = cap('rushYds', n(560 + q * 1560, 220) * vol);
+      const rushYds = cap('rushYds', n(470 + q * 1310, 190) * vol);
       const rec = Math.round(rng.int(8, 55) * vol);
       return {
-        gp, rushAtt: Math.round(rushYds / rng.float(4.6, 6.1)), rushYds,
+        gp, rushAtt: Math.round(rushYds / rng.float(4.1, 5.2)), rushYds,
         rushTd: Math.round(rushYds / rng.float(85, 155)),
         rec, recYds: Math.round(rec * rng.float(2.4, 5.6)),
       };
     }
     case 'WR': case 'TE': {
-      const base = position === 'WR' ? 470 + q * 1200 : 290 + q * 660;
+      const base = position === 'WR' ? 500 + q * 1320 : 280 + q * 600;
       const recYds = cap('recYds', n(base, 150) * vol);
       const rec = Math.round(recYds / rng.float(8.2, 10.8));
       return {
@@ -912,27 +946,39 @@ function coreSeason(
         recTd: Math.round(recYds / rng.float(115, 210)),
       };
     }
+    // A pass rusher's line used to read 88 tackles, 12 sacks and nothing else:
+    // no passes defensed at all, which is not a thing that happens to a man who
+    // spends the season in the quarterback's lap. It mattered, because a stat
+    // line with two live categories in it cannot compete for a defensive award
+    // against a safety's four.
     case 'EDGE': case 'DT': {
-      const sackBase = position === 'EDGE' ? 2 + q * 10 : 1 + q * 6.5;
+      // Trimmed with SACKS_PER_GAME (see SEASON_RECORD_BAND): an elite seeded
+      // rusher lands on 18, which is what the live league's sack leader gets.
+      const sackBase = position === 'EDGE' ? 3 + q * 15 : 1 + q * 10;
       return {
-        gp, tackles: cap('tackles', n(52 + q * 36, 6) * vol),
-        sacks: cap('sacks', Math.max(0, rng.normal(sackBase, 1.4)) * vol),
-        defInt: 0, pd: 0, ff: Math.round(rng.int(0, 3) * vol),
+        gp, tackles: cap('tackles', n(position === 'EDGE' ? 30 + q * 30 : 26 + q * 26, 5) * vol),
+        sacks: cap('sacks', Math.max(0, rng.normal(sackBase, 1.8)) * vol),
+        defInt: 0,
+        pd: Math.round(Math.max(0, rng.normal(1 + q * 4, 1.2)) * vol),
+        ff: Math.round(rng.int(0, 4) * vol),
       };
     }
     case 'LB': {
       return {
-        gp, tackles: cap('tackles', n(60 + q * 38, 6) * vol),
-        sacks: 0, defInt: 0, pd: 0, ff: Math.round(rng.int(0, 3) * vol),
+        gp, tackles: cap('tackles', n(70 + q * 80, 9) * vol),
+        sacks: cap('sacks', Math.max(0, rng.normal(0.5 + q * 3, 1)) * vol),
+        defInt: cap('defInt', Math.max(0, rng.normal(0.5 + q * 2.5, 0.9)) * vol),
+        pd: Math.round(Math.max(0, rng.normal(2 + q * 6, 1.6)) * vol),
+        ff: Math.round(rng.int(0, 3) * vol),
       };
     }
     case 'CB': case 'S': {
-      const intBase = position === 'CB' ? 1 + q * 4 : 1 + q * 3.6;
+      const intBase = position === 'CB' ? 1 + q * 6 : 1 + q * 5;
       return {
-        gp, tackles: cap('tackles', n(position === 'CB' ? 54 + q * 36 : 58 + q * 36, 6) * vol),
+        gp, tackles: cap('tackles', n(position === 'CB' ? 40 + q * 40 : 55 + q * 62, 6) * vol),
         sacks: 0,
-        defInt: cap('defInt', Math.max(0, rng.normal(intBase, 1.1)) * vol),
-        pd: Math.round(Math.max(0, rng.normal(6 + q * 12, 2.4)) * vol),
+        defInt: cap('defInt', Math.max(0, rng.normal(intBase, 1.3)) * vol),
+        pd: Math.round(Math.max(0, rng.normal(position === 'CB' ? 6 + q * 17 : 4 + q * 10, 2.4)) * vol),
         ff: rng.bool(0.35 * vol) ? 1 : 0,
       };
     }
