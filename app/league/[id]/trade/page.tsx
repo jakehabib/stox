@@ -13,6 +13,7 @@ import type { TradeAsset } from '@/lib/trade';
 import { buildTradeRetrospectives, type TradeAssetSnapshot } from '@/lib/tradeRetro';
 import { TradeRetrospectives } from '@/components/TradeRetrospectives';
 import { PageMasthead } from '@/components/ds/PageMasthead';
+import Link from 'next/link';
 import type { TradeRecapAsset, TradeRecapData } from '@/components/ds/TradeRecapCard';
 
 export default async function TradePage({ params, searchParams }: { params: { id: string }; searchParams: { with?: string; reviewOffer?: string; pos?: string } }) {
@@ -47,7 +48,7 @@ export default async function TradePage({ params, searchParams }: { params: { id
   const draftOrder = await draftOrderContext(league.id);
   const imminentYear = draftOrder.imminentYear;
 
-  const [myRoster, myPicks, partnerRoster, partnerPicks, pendingOffers, capSummary, partnerCapSummary, retrospectives] = await Promise.all([
+  const [myRoster, myPicks, partnerRoster, partnerPicks, pendingOffers, capSummary, partnerCapSummary, retrospectives, tradesMade] = await Promise.all([
     prisma.player.findMany({ where: { teamId: team.id }, include: { contract: true }, orderBy: { trueOvr: 'desc' } }),
     prisma.draftPick.findMany({ where: { ownerTeamId: team.id, used: false }, orderBy: [{ year: 'asc' }, { round: 'asc' }] }),
     partnerId ? prisma.player.findMany({ where: { teamId: partnerId }, include: { contract: true }, orderBy: { trueOvr: 'desc' } }) : Promise.resolve([]),
@@ -60,7 +61,34 @@ export default async function TradePage({ params, searchParams }: { params: { id
     // far too late to learn it. Cap space is public in this game exactly as it
     // is in the sport; nothing else about the partner is exposed here.
     settings.capMode === 'OFF' || !partnerId ? Promise.resolve(null) : teamCapSummary(partnerId, league.seasonYear, settings.capMode),
-    buildTradeRetrospectives(league.id, team.id, settings.capMode, league.seasonYear),
+    /**
+     * ONLY THE CLUB YOU ARE SITTING ACROSS FROM.
+     *
+     * This screen used to fetch and render the whole graded history of every
+     * deal this GM has ever made, underneath the deal sheet he was in the
+     * middle of building. The app owner: *"It seems like a lot of noise to have
+     * the trade retrospectives on the trade tab."* He is right about the
+     * screen: building a trade and auditing your back catalogue are two
+     * different jobs, and the full list now lives on the GM career page where
+     * reading it is the reason you came.
+     *
+     * But a retrospective is NOT noise when it is about the club on the other
+     * end of the phone — "the last time I dealt with these people I lost
+     * badly" is exactly the context a GM wants before he offers again, and it
+     * exists nowhere else on this page (the acceptance meter prices the deal
+     * the way that club sees it TODAY; it has no memory). So the history stays,
+     * scoped to the partner, and moves with the partner selector. Nothing is
+     * fetched at all before a partner is chosen, and the grade only prices that
+     * club's deals rather than the whole tenure — see buildTradeRetrospectives.
+     */
+    partnerId
+      ? buildTradeRetrospectives(league.id, team.id, settings.capMode, league.seasonYear, { partnerTeamId: partnerId })
+      : Promise.resolve([]),
+    // The masthead's career trade count, which is a COUNT and does not need a
+    // grade behind it. Kept separate from the graded rows above so the tile can
+    // still say how many deals a GM has made without the page paying to price
+    // every one of them.
+    prisma.tradeRecord.count({ where: { leagueId: league.id, OR: [{ teamAId: team.id }, { teamBId: team.id }] } }),
   ]);
 
   // Trading a player accelerates his remaining bonus onto the team giving him
@@ -114,6 +142,8 @@ export default async function TradePage({ params, searchParams }: { params: { id
     via: p.originalTeamId === p.ownerTeamId ? undefined : clubById.get(p.originalTeamId)?.abbr,
   });
 
+  const partner = partnerId ? otherTeams.find((t) => t.id === partnerId) ?? null : null;
+
   const lastTrade = await buildTradeRecap({
     leagueId: league.id, myTeamId: team.id, myRoster, seasonYear: league.seasonYear, clubById,
     draftOrder,
@@ -147,7 +177,15 @@ export default async function TradePage({ params, searchParams }: { params: { id
             detail: deadlinePassed ? 'reopens in free agency' : settings.tradeDeadlineEnabled ? 'trades close after this' : 'trade year-round',
             color: deadlinePassed ? 'text-bad' : undefined,
           },
-          { label: 'Trades Made', value: String(retrospectives.length), detail: 'graded below' },
+          // "graded below" was true only while the full history was rendered on
+          // this page. It is on the GM career page now, and the tile says so
+          // and goes there, rather than pointing at something that has moved.
+          {
+            label: 'Trades Made',
+            value: String(tradesMade),
+            detail: 'graded on your GM page',
+            href: `/league/${league.id}/gm`,
+          },
         ]}
       />
 
@@ -178,7 +216,21 @@ export default async function TradePage({ params, searchParams }: { params: { id
         lastTrade={lastTrade}
       />
 
-      <TradeRetrospectives myAbbr={team.abbr} retrospectives={retrospectives} />
+      {/* Only when there IS a shared history — an empty panel headed "your
+          deals with CLE" over nothing is worse than no panel. */}
+      {partner && retrospectives.length > 0 && (
+        <TradeRetrospectives
+          myAbbr={team.abbr}
+          retrospectives={retrospectives}
+          title={`Your History With ${partner.city} ${partner.nickname}`}
+          lede={`The ${retrospectives.length} deal${retrospectives.length === 1 ? '' : 's'} you have made with ${partner.abbr}, graded by how the return has held up since.`}
+          action={
+            <Link href={`/league/${league.id}/gm`} className="text-xs text-accent2 hover:underline shrink-0">
+              Every deal you have made →
+            </Link>
+          }
+        />
+      )}
     </div>
   );
 }

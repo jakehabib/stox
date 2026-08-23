@@ -122,9 +122,16 @@ const RESULT_RANK: Record<string, number> = {
   CHAMPION: 6, RUNNER_UP: 5, CONFERENCE: 4, DIVISIONAL: 3, WILDCARD: 2, MISSED: 1,
 };
 
-// Draft-pick "hit" bar scales down by round — a 68 OVR day-3 pick starting
-// for you is a win; a 68 OVR first-rounder is a bust.
-function hitThreshold(round: number): number {
+/**
+ * Draft-pick "hit" bar scales down by round — a 68 OVR day-3 pick starting
+ * for you is a win; a 68 OVR first-rounder is a bust.
+ *
+ * EXPORTED because the career page's draft tab prints the bar next to every
+ * selection and marks each one hit or miss (lib/gmTenure.ts). A second copy of
+ * these four numbers over there is how a table saying "miss" ends up under a
+ * headline saying 46% hit rate.
+ */
+export function draftHitThreshold(round: number): number {
   if (round === 1) return 78;
   if (round <= 3) return 73;
   if (round <= 5) return 68;
@@ -201,7 +208,7 @@ export async function buildGmCareerSummary(
 
   let draftHits = 0;
   for (const dp of draftPicks) {
-    if (dp.player && dp.player.trueOvr >= hitThreshold(dp.round)) draftHits++;
+    if (dp.player && dp.player.trueOvr >= draftHitThreshold(dp.round)) draftHits++;
   }
   const draftPicksMade = draftPicks.length;
 

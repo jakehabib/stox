@@ -25,18 +25,25 @@ function ValueDelta({ then, now }: { then: number; now: number | null }) {
 }
 
 /**
- * One renderer, two homes. The trade screen shows every deal in the order they
- * were made; the GM career page shows the two ends of the same graded list.
+ * One renderer, two homes, two different cuts of the same rows.
+ *
+ * The GM career page's Moves tab shows EVERY deal this GM has made, newest
+ * first, with the best and the worst of them tagged. The trade screen shows
+ * only the deals made with the club currently selected as a partner — the
+ * history that is actually context for the offer being built, rather than a
+ * back catalogue under a deal sheet (the app owner: *"It seems like a lot of
+ * noise to have the trade retrospectives on the trade tab"*).
+ *
  * Both read the SAME `TradeRetrospective` rows and print the SAME `verdict`
  * string off them — the career page's ranking comes from `retroEdgeFor`, which
- * is the very number that verdict is written from, so a card headed "Best of
- * seven" can never sit above a sentence naming the other club. That is exactly
+ * is the very number that verdict is written from, so a row tagged "Best of
+ * seven" can never sit beside a sentence naming the other club. That is exactly
  * what a second renderer here would eventually get wrong, hence the props.
  */
 export function TradeRetrospectives({ myAbbr, retrospectives, title = 'Trade Retrospectives', lede, labels, action }: {
   myAbbr: string;
   retrospectives: TradeRetrospective[];
-  /** Panel heading. The career page names its cut ("Best & Worst Deals"). */
+  /** Panel heading. Each home names its own cut ("Your History With Cleveland"). */
   title?: string;
   /** Replaces the first sentence of the standfirst only. The second sentence
    *  — what these figures are priced against — is not optional anywhere. */

@@ -212,9 +212,32 @@ export function retroOutcomeFor(
   return edge > 0 ? 'WON' : 'LOST';
 }
 
-export async function buildTradeRetrospectives(leagueId: string, teamId: string, capMode: CapMode, currentYear: number): Promise<TradeRetrospective[]> {
+/**
+ * Every deal this club has made, graded — or, with `partnerTeamId`, only the
+ * ones it made with one particular club.
+ *
+ * THE FILTER IS ON THE QUERY, NOT ON THE RESULT, and that is the whole point of
+ * it. Grading is not cheap: each record re-prices every asset that moved with
+ * its own read, so a tenure's worth of trades is dozens of queries on top of a
+ * league-wide scarcity scan. The trade screen used to run the full grade and
+ * render all of it under the deal sheet; it now asks only about the club a GM
+ * is actually sitting across from, and asking narrowly is what makes that
+ * affordable on the tallest page in the app. The full history is the GM career
+ * page's job (app/league/[id]/gm/page.tsx), which is the one screen where
+ * reading it is the reason you came.
+ */
+export async function buildTradeRetrospectives(
+  leagueId: string,
+  teamId: string,
+  capMode: CapMode,
+  currentYear: number,
+  opts: { partnerTeamId?: string } = {},
+): Promise<TradeRetrospective[]> {
+  const mine = { OR: [{ teamAId: teamId }, { teamBId: teamId }] };
   const records = await prisma.tradeRecord.findMany({
-    where: { leagueId, OR: [{ teamAId: teamId }, { teamBId: teamId }] },
+    where: opts.partnerTeamId
+      ? { leagueId, AND: [mine, { OR: [{ teamAId: opts.partnerTeamId }, { teamBId: opts.partnerTeamId }] }] }
+      : { leagueId, ...mine },
     orderBy: { createdAt: 'desc' },
   });
   if (records.length === 0) return [];

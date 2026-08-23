@@ -1,12 +1,16 @@
 import { getLeagueContext } from '@/lib/league-data';
 import { buildGmCareerSummary, tradeInvolves, PLAYOFF_RESULT_LABEL as RESULT_LABEL } from '@/lib/gmCareer';
 import { buildTradeRetrospectives, retroEdgeFor, retroOutcomeFor, type TradeRetrospective } from '@/lib/tradeRetro';
+import { buildGmDraftRecord, buildGmHeadToHead, buildGmTenureMen, buildGmDeadMoneyLedger } from '@/lib/gmTenure';
 import { buildDynastyState } from '@/lib/dynasty';
-import { formatMoney } from '@/lib/cap';
 import { TeamLogo } from '@/components/TeamLogo';
 import { TradeRetrospectives } from '@/components/TradeRetrospectives';
 import { GmCard } from '@/components/ds/GmCard';
 import { GmCardReveal } from '@/components/GmCardReveal';
+import { GmCareerTabs } from '@/components/GmCareerTabs';
+import { GmDraftRounds, GmDraftHighlights, GmDraftTable } from '@/components/gm/GmDraftBoard';
+import { GmHeadToHeadPanel } from '@/components/gm/GmHeadToHead';
+import { GmHonoursTimeline, GmTenureMenPanel, GmDeadMoneyPanel } from '@/components/gm/GmTenurePanels';
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -14,8 +18,24 @@ import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
 
 /**
+ * ===========================================================================
+ * THE GM CAREER PAGE
+ * ===========================================================================
+ * Three tabs under one masthead. The frame, the tab names and the argument for
+ * the landing tab all live in components/GmCareerTabs.tsx — read that comment
+ * first; this file only decides what goes in each pane and reads the rows.
+ *
+ * THE MASTHEAD AND THE GM CARD STAND ABOVE THE TABS, on every pane. The card is
+ * the only thing on this page that leaves the game and its entry point has
+ * already had to be rescued once for being unfindable; putting it inside a pane
+ * would be losing that argument again. It also means `GmCardReveal` mounts
+ * exactly once and nothing here can double-fire it.
+ * ===========================================================================
+ */
+
+/**
  * What a graded deal's return is called on the GM card — the first two assets
- * that actually came back, off the SAME row the panel below prints in full.
+ * that actually came back, off the SAME row the Moves tab prints in full.
  */
 function receivedSummary(r: TradeRetrospective, myAbbr: string): string {
   const mine = r.teamAAbbr === myAbbr ? r.bToA : r.aToB;
@@ -31,11 +51,19 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
   const s = await buildGmCareerSummary(league.id, team, league.seasonYear);
 
   // A first-season GM page was five sparse tiles and six hundred pixels of
-  // empty page. Two things fill it with the GM's actual body of work rather
-  // than placeholders: the season log (including the season in progress, which
-  // has no TeamSeasonRecord row yet) and the ledger of moves they've made.
-  const MOVE_TYPES = ['SIGN', 'CUT', 'DRAFT', 'TAG'];
-  const [seasonRecords, ownMoves, moveCounts, tradeRows, retrospectives, dynasty, owner] = await Promise.all([
+  // empty page. Everything below fills it with the GM's actual body of work
+  // rather than placeholders: the season log (including the season in progress,
+  // which has no TeamSeasonRecord row yet), the ledger of moves he has made,
+  // every pick he has ever called, and his record against the other 31 clubs.
+  // NO 'DRAFT' HERE. Every selection this GM has ever made is a table on the
+  // draft tab, with what the man became beside it; a one-line "Round 7, Pick
+  // 27" row in the moves feed is the same pick printed a second time, under a
+  // heading that does not even claim to be about the draft.
+  const MOVE_TYPES = ['SIGN', 'RESIGN', 'CUT', 'TAG'];
+  const [
+    seasonRecords, ownMoves, moveCounts, tradeRows, retrospectives, dynasty, owner,
+    draftRecord, headToHead, tenureMen, deadMoney,
+  ] = await Promise.all([
     // Bounded on the hire year, exactly as lib/gmCareer.ts bounds the same
     // table. Unbounded, a first-year GM's "1 season" header sat above nine
     // rows of seeded franchise history he had nothing to do with.
@@ -43,7 +71,7 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
     prisma.transaction.findMany({
       where: { leagueId: league.id, teamId: team.id, type: { in: MOVE_TYPES } },
       orderBy: [{ seasonYear: 'desc' }, { createdAt: 'desc' }],
-      take: 14,
+      take: 20,
     }),
     prisma.transaction.groupBy({
       by: ['type'],
@@ -58,8 +86,12 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
       where: { leagueId: league.id, type: 'TRADE' },
       orderBy: [{ seasonYear: 'desc' }, { createdAt: 'desc' }],
     }),
-    // The same call the trade screen makes, so the two screens grade the same
-    // deals the same way — this page just takes a different cut of the result.
+    // THE FULL GRADED HISTORY NOW LIVES HERE AND ONLY HERE. It used to be
+    // rendered on the trade screen as well, under the deal a GM was in the
+    // middle of building — the app owner: *"It seems like a lot of noise to
+    // have the trade retrospectives on the trade tab."* Building a trade and
+    // reading the grades on the ones you already made are two different jobs,
+    // and only one of them belongs on the screen with the deal sheet.
     buildTradeRetrospectives(league.id, team.id, settings.capMode, league.seasonYear),
     // The GM card's Dynasty level is the Dynasty screen's own figure, not a
     // second reading of the same history.
@@ -67,46 +99,44 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
     league.userId
       ? prisma.user.findUnique({ where: { id: league.userId }, select: { username: true } })
       : Promise.resolve(null),
+    buildGmDraftRecord(league.id, team.id),
+    buildGmHeadToHead(league.id, team, s.firstYear),
+    buildGmTenureMen(league.id, team.id, s.firstYear),
+    buildGmDeadMoneyLedger(team.id, s.firstYear),
   ]);
   const myTrades = tradeRows.filter((t) => tradeInvolves(t.headline, team.abbr));
   const countOf = (t: string) => (t === 'TRADE' ? myTrades.length : moveCounts.find((m) => m.type === t)?._count ?? 0);
-  const moves = [...ownMoves, ...myTrades]
-    .sort((a, b) => b.seasonYear - a.seasonYear || b.createdAt.getTime() - a.createdAt.getTime())
-    .slice(0, 14);
+  // THE TRADES ARE NOT IN THIS FEED EITHER. Every one of them is graded in full
+  // a few inches above it on the same tab, and a one-line "Trade: DEN <-> CHI"
+  // row under that panel is the same deal printed twice — the exact duplication
+  // the draft-complete cleanup went after. Signings, releases and tags have no
+  // other rendering anywhere on this page, so they get one.
+  const moves = ownMoves.slice(0, 14);
 
-  // A CAREER page wants the two ends of the whole body of work, not the last
-  // four deals — the trade screen already shows every one of them in order.
-  // The ranking is `retroEdgeFor`, which returns the very number each row's
-  // verdict sentence is written from (lib/tradeRetro.ts), so the "best of"
-  // tag and the sentence under it cannot come apart. A deal with a pick still
-  // on the board has no grade at all and is not rankable; when nothing can be
-  // graded yet the panel falls back to the most recent deals, which is the
-  // only honest thing left to show.
+  // THE BEST AND WORST DEAL ARE TAGS ON THE FULL LIST, NOT A SECOND PANEL.
+  // A career page used to carry a two-row "Deals That Defined You" panel and
+  // link away to the trade screen for the rest; now that the whole graded
+  // history is on this page, that panel would be two of these same rows
+  // re-rendered directly above themselves. The ranking is `retroEdgeFor`, which
+  // returns the very number each row's verdict sentence is written from
+  // (lib/tradeRetro.ts), so the "Best of n" tag and the sentence beside it
+  // cannot come apart. A deal with a pick still on the board has no grade at
+  // all and is not rankable.
   const graded = retrospectives
     .map((r) => ({ r, edge: retroEdgeFor(r, team.abbr) }))
     .filter((x): x is { r: TradeRetrospective; edge: number } => x.edge !== null)
     .sort((a, b) => b.edge - a.edge);
-  const careerDeals: TradeRetrospective[] = graded.length >= 2
-    ? [graded[0].r, graded[graded.length - 1].r]
-    : graded.length === 1
-      ? [graded[0].r]
-      : retrospectives.slice(0, 2);
   const dealLabels: Record<string, string> = graded.length >= 2
     ? { [graded[0].r.id]: `Best of ${graded.length}`, [graded[graded.length - 1].r.id]: `Worst of ${graded.length}` }
     : {};
-  // The heading names whichever cut is actually on screen. A panel titled for
-  // a best-and-worst pair, sitting over two deals that cannot be graded at
-  // all, is the heading lying about its own contents.
-  const dealsTitle = graded.length >= 2
-    ? 'The Deals That Defined You'
-    : graded.length === 1
-      ? 'The Deal That Defined You'
-      : 'Deals Still Playing Out';
-  const dealsLede = graded.length >= 2
-    ? `Your best and your worst, out of ${graded.length} deals old enough to grade.`
-    : graded.length === 1
-      ? 'The one deal of yours old enough to grade so far.'
-      : 'None of your deals can be graded yet — each still has a pick on the board.';
+  const tally = { won: 0, lost: 0, even: 0, pending: 0 };
+  for (const r of retrospectives) {
+    const o = retroOutcomeFor(r, team.abbr);
+    if (o === 'WON') tally.won++;
+    else if (o === 'LOST') tally.lost++;
+    else if (o === 'EVEN') tally.even++;
+    else tally.pending++;
+  }
 
   // The card's best deal is the SAME row the panel tags "Best of n" — one
   // ranking, read twice, never computed twice. It is only CLAIMED when the
@@ -129,12 +159,268 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
     }
     : null;
 
-  // The header beside this table reads `s.tenureYears`, which is
+  // The header beside the season log reads `s.tenureYears`, which is
   // seasons-on-file plus the one in progress. Row count has to match it.
   const currentSeasonLogged = seasonRecords.some((r) => r.year === league.seasonYear);
 
   const games = s.wins + s.losses + s.ties;
   const winPct = games > 0 ? s.wins / (s.wins + s.losses || 1) : 0;
+  const postGames = headToHead.playoffs.wins + headToHead.playoffs.losses;
+  const divGames = headToHead.division.wins + headToHead.division.losses + headToHead.division.ties;
+
+  // ------------------------------------------------------------------ CAREER
+  const careerPane = (
+    <>
+      <div className="grid sm:grid-cols-2 gap-3">
+        {s.badges.map((b) => (
+          <div key={b.title} className="panel p-4 flex items-start gap-3">
+            <span className="text-2xl leading-none">{b.icon}</span>
+            <div>
+              <div className="font-semibold text-sm">{b.title}</div>
+              <div className="text-xs text-muted mt-0.5">{b.blurb}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* THE DRAFT AND TRADE TILES ARE NOT HERE ANY MORE. Each one was a
+          headline with its evidence three screens away; both now sit at the
+          top of the tab that carries that evidence, where the number and the
+          table under it are read together. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="stat-tile">
+          <div className="label-sm">Record</div>
+          <div className="text-lg font-mono font-semibold">{s.wins}-{s.losses}{s.ties ? `-${s.ties}` : ''}</div>
+          <div className="text-xs text-muted">{games > 0 ? `${(winPct * 100).toFixed(0)}% win rate` : 'No games yet'}</div>
+        </div>
+        <div className="stat-tile">
+          <div className="label-sm">Championships</div>
+          <div className={`text-lg font-mono font-semibold ${s.championships > 0 ? 'text-gold' : ''}`}>{s.championships}</div>
+          <div className="text-xs text-muted">{s.playoffAppearances} playoff trip{s.playoffAppearances === 1 ? '' : 's'}</div>
+        </div>
+        {/* January is its own record and is never folded into the autumn one —
+            see buildGmHeadToHead, which keeps the two apart at the source. */}
+        <div className="stat-tile">
+          <div className="label-sm">In January</div>
+          <div className="text-lg font-mono font-semibold">
+            {postGames > 0 ? `${headToHead.playoffs.wins}-${headToHead.playoffs.losses}` : '—'}
+          </div>
+          <div className="text-xs text-muted">{postGames > 0 ? `${postGames} playoff game${postGames === 1 ? '' : 's'}` : 'No playoff games yet'}</div>
+        </div>
+        <div className="stat-tile">
+          <div className="label-sm">In the Division</div>
+          <div className="text-lg font-mono font-semibold">
+            {divGames > 0 ? `${headToHead.division.wins}-${headToHead.division.losses}${headToHead.division.ties ? `-${headToHead.division.ties}` : ''}` : '—'}
+          </div>
+          <div className="text-xs text-muted">{divGames > 0 ? `${divGames} games against your rivals` : 'No divisional games yet'}</div>
+        </div>
+        {/* DISTINCT players, on the owner's call — a five-time All-Star
+            quarterback is one All-Star player, not five. The selections count
+            sits underneath rather than in the headline slot so the two can
+            never be read as each other. Both are bounded to this GM's tenure
+            (lib/allStars.ts allStarTallyForTeam). */}
+        <div className="stat-tile">
+          <div className="label-sm inline-flex items-center gap-1.5">
+            All-Star Players
+            <Tooltip text={tip('allStar')} />
+          </div>
+          <div className={`text-lg font-mono font-semibold ${s.allStars.players > 0 ? 'text-gold' : ''}`}>{s.allStars.players}</div>
+          <div className="text-xs text-muted">
+            {s.allStars.selections === 0
+              ? 'None selected yet'
+              : `${s.allStars.selections} selection${s.allStars.selections === 1 ? '' : 's'} since ${s.firstYear}`}
+          </div>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-head">
+          <h2 className="section-title">Season Log</h2>
+          {/* THE BEST SEASON IS A ROW IN THIS TABLE, NOT A PANEL BESIDE IT.
+              A half-width "Best Season" box printed one year, one record and
+              one playoff result — all three of which are already in the row
+              below it, verbatim. It is named on the header instead and the row
+              itself is lit. */}
+          <span className="label-sm">
+            {s.tenureYears} season{s.tenureYears === 1 ? '' : 's'}
+            {s.bestSeason && ` · best was ${s.bestSeason.year} (${RESULT_LABEL[s.bestSeason.result] ?? s.bestSeason.result})`}
+          </span>
+        </div>
+        <div className="panel overflow-hidden">
+          <table className="table-clean">
+            <thead><tr><th>Year</th><th className="text-right">W</th><th className="text-right">L</th><th className="text-right">T</th><th className="text-right">PF</th><th className="text-right">PA</th><th>Result</th></tr></thead>
+            <tbody>
+              {/* The season in progress has no TeamSeasonRecord row until it
+                  ends, so it's synthesised here — otherwise a first-year GM
+                  sees an empty table while sitting on a 7-2 start. Once the
+                  year does wrap it has a real row, and this must stand down
+                  or the log shows the season twice and outruns the header
+                  count beside it. */}
+              {!currentSeasonLogged && (
+              <tr className="bg-accent/[0.06]">
+                <td className="font-mono">{league.seasonYear}</td>
+                <td className="font-mono text-right">{team.wins}</td>
+                <td className="font-mono text-right">{team.losses}</td>
+                <td className="font-mono text-right">{team.ties}</td>
+                <td className="font-mono text-muted text-right">{team.pointsFor}</td>
+                <td className="font-mono text-muted text-right">{team.pointsAgnst}</td>
+                <td className="text-accent text-xs">In progress</td>
+              </tr>
+              )}
+              {seasonRecords.map((r) => (
+                <tr
+                  key={r.id}
+                  className={r.playoffResult === 'CHAMPION' ? 'bg-gold/5' : s.bestSeason && r.year === s.bestSeason.year ? 'bg-chalk/[0.04]' : ''}
+                >
+                  <td className="font-mono">{r.year}</td>
+                  <td className="font-mono text-right">{r.wins}</td>
+                  <td className="font-mono text-right">{r.losses}</td>
+                  <td className="font-mono text-right">{r.ties}</td>
+                  <td className="font-mono text-muted text-right">{r.pointsFor}</td>
+                  <td className="font-mono text-muted text-right">{r.pointsAgnst}</td>
+                  <td className={`text-xs ${r.playoffResult === 'CHAMPION' ? 'text-gold font-semibold' : 'text-muted'}`}>
+                    {r.playoffResult === 'CHAMPION' && '🏆 '}{RESULT_LABEL[r.playoffResult] ?? r.playoffResult}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <GmHeadToHeadPanel h2h={headToHead} />
+      <GmTenureMenPanel leagueId={league.id} men={tenureMen} />
+      <GmHonoursTimeline awards={s.awards} allStars={s.allStars} />
+    </>
+  );
+
+  // ------------------------------------------------------------------- DRAFT
+  const draftPane = (
+    <>
+      {/* Three tiles, not four: a "Best Pick" tile naming the same man the
+          Best Selection panel names two inches below it was one fact printed
+          twice on one screen. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="stat-tile">
+          <div className="label-sm inline-flex items-center gap-1.5">
+            Draft Hit Rate
+            <Tooltip text={tip('draftHitRate')} />
+          </div>
+          <div className="text-lg font-mono font-semibold">{s.draftHitRate !== null ? `${Math.round(s.draftHitRate * 100)}%` : '—'}</div>
+          <div className="text-xs text-muted">
+            {/* Below five picks lib/gmCareer.ts withholds the rate rather than
+                quoting a percentage off three men, and the tile has to say why
+                instead of printing a dash with no explanation. */}
+            {s.draftHitRate !== null ? `${s.draftHits}/${s.draftPicksMade} picks hit` : `${s.draftPicksMade} pick${s.draftPicksMade === 1 ? '' : 's'} so far — too few to rate`}
+          </div>
+        </div>
+        <div className="stat-tile">
+          <div className="label-sm">Picks Made</div>
+          <div className="text-lg font-mono font-semibold">{draftRecord.made}</div>
+          <div className="text-xs text-muted">{draftRecord.byRound.length} round{draftRecord.byRound.length === 1 ? '' : 's'} used</div>
+        </div>
+        <div className="stat-tile">
+          <div className="label-sm">Still On Your Roster</div>
+          <div className="text-lg font-mono font-semibold">{draftRecord.stillHere}</div>
+          <div className="text-xs text-muted">of everyone you have drafted</div>
+        </div>
+      </div>
+
+      <GmDraftHighlights leagueId={league.id} record={draftRecord} />
+      <GmDraftRounds record={draftRecord} />
+      <GmDraftTable leagueId={league.id} record={draftRecord} />
+    </>
+  );
+
+  // ------------------------------------------------------------------- MOVES
+  const movesPane = (
+    <>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="stat-tile">
+          <div className="label-sm">Trades Made</div>
+          <div className="text-lg font-mono font-semibold">{s.trades}</div>
+          <div className="text-xs text-muted">
+            {/* The three-way call is retroOutcomeFor's, off the same growth gap
+                every verdict below is written from — so this line can never
+                disagree with the sentences it is summarising. */}
+            {retrospectives.length === 0
+              ? 'None graded yet'
+              : `${tally.won} won · ${tally.lost} lost · ${tally.even} even${tally.pending > 0 ? ` · ${tally.pending} still playing out` : ''}`}
+          </div>
+        </div>
+        <div className="stat-tile">
+          <div className="label-sm">Signings</div>
+          <div className="text-lg font-mono font-semibold">{countOf('SIGN')}</div>
+          <div className="text-xs text-muted">free agents you brought in</div>
+        </div>
+        {/* THE RE-SIGNS ARE REAL AND WERE NEVER COUNTED. This ledger carried a
+            comment saying nothing in the sim writes a RESIGN transaction, so a
+            column for it could only read zero — and `extendContract` and
+            `signExtension` (lib/freeagency.ts) have both been writing exactly
+            that row, type and all, for every man kept off an expiring deal. On
+            the save this was checked against it was 65 of them for one club,
+            every one invisible on the page about that GM's decisions. Keeping
+            your own players is a decision; it belongs here. */}
+        <div className="stat-tile">
+          <div className="label-sm">Re-signed</div>
+          <div className="text-lg font-mono font-semibold">{countOf('RESIGN')}</div>
+          <div className="text-xs text-muted">your own men, kept</div>
+        </div>
+        <div className="stat-tile">
+          <div className="label-sm">Released</div>
+          <div className="text-lg font-mono font-semibold">{countOf('CUT')}</div>
+          <div className="text-xs text-muted">players you moved on from</div>
+        </div>
+        {/* No "Drafted" column: the draft tab counts the same picks off the
+            pick table itself, and two counters for one number is how they end
+            up disagreeing. */}
+        <div className="stat-tile">
+          <div className="label-sm">Franchise Tags</div>
+          <div className="text-lg font-mono font-semibold">{s.tagsUsed}</div>
+          <div className="text-xs text-muted">names you refused to let walk</div>
+        </div>
+      </div>
+
+      <TradeRetrospectives
+        myAbbr={team.abbr}
+        retrospectives={retrospectives}
+        title="Every Deal You Have Made"
+        labels={dealLabels}
+        action={
+          <Link href={`/league/${league.id}/trade`} className="text-xs text-accent2 hover:underline shrink-0">
+            Trade center →
+          </Link>
+        }
+      />
+
+      <GmDeadMoneyPanel ledger={deadMoney} avgPerYear={s.avgDeadMoneyPerYear} years={s.deadMoneyYears} />
+
+      <div className="section">
+        <div className="section-head">
+          <h2 className="section-title">Your Latest Moves</h2>
+          {/* The second clause is only true when there IS a graded panel above
+              it; on a GM who has never traded, pointing at one is the page
+              describing a layout it is not currently rendering. */}
+          <span className="label-sm">
+            Signings, re-signings, releases and tags{retrospectives.length > 0 && ' — the trades are graded above'}
+          </span>
+          <Link href={`/league/${league.id}/news`} className="text-xs text-accent2 hover:underline">League wire →</Link>
+        </div>
+        <div className="panel overflow-hidden divide-y divide-line/50">
+          {moves.length === 0 && <div className="px-4 py-4 text-sm text-muted">No moves yet — the ledger starts with your first signing or release.</div>}
+          {moves.map((m) => (
+            <div key={m.id} className="px-4 py-2">
+              <div className="flex items-baseline gap-2">
+                <span className="label-sm text-[10px] shrink-0">{m.type}</span>
+                <span className="text-sm truncate">{m.headline}</span>
+              </div>
+              {m.detail && <div className="text-[11px] text-muted mt-0.5 truncate">{m.detail}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
 
   return (
     <div className="space-y-5">
@@ -185,244 +471,31 @@ export default async function GmCareerPage({ params }: { params: { id: string } 
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-3">
-        {s.badges.map((b) => (
-          <div key={b.title} className="panel p-4 flex items-start gap-3">
-            <span className="text-2xl leading-none">{b.icon}</span>
-            <div>
-              <div className="font-semibold text-sm">{b.title}</div>
-              <div className="text-xs text-muted mt-0.5">{b.blurb}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <div className="stat-tile">
-          <div className="label-sm">Record</div>
-          <div className="text-lg font-mono font-semibold">{s.wins}-{s.losses}{s.ties ? `-${s.ties}` : ''}</div>
-          <div className="text-xs text-muted">{games > 0 ? `${(winPct * 100).toFixed(0)}% win rate` : 'No games yet'}</div>
-        </div>
-        <div className="stat-tile">
-          <div className="label-sm">Championships</div>
-          <div className={`text-lg font-mono font-semibold ${s.championships > 0 ? 'text-gold' : ''}`}>{s.championships}</div>
-          <div className="text-xs text-muted">{s.playoffAppearances} playoff trip{s.playoffAppearances === 1 ? '' : 's'}</div>
-        </div>
-        <div className="stat-tile">
-          <div className="label-sm inline-flex items-center gap-1.5">
-            Draft Hit Rate
-            <Tooltip text={tip('draftHitRate')} />
-          </div>
-          <div className="text-lg font-mono font-semibold">{s.draftHitRate !== null ? `${Math.round(s.draftHitRate * 100)}%` : '—'}</div>
-          <div className="text-xs text-muted">{s.draftHits}/{s.draftPicksMade} picks hit</div>
-        </div>
-        <div className="stat-tile">
-          <div className="label-sm">Trades Made</div>
-          <div className="text-lg font-mono font-semibold">{s.trades}</div>
-          <div className="text-xs text-muted">{s.tagsUsed} franchise tag{s.tagsUsed === 1 ? '' : 's'} used</div>
-        </div>
-        {/* DISTINCT players, on the owner's call — a five-time All-Star
-            quarterback is one All-Star player, not five. The selections count
-            sits underneath rather than in the headline slot so the two can
-            never be read as each other. Both are bounded to this GM's tenure
-            (lib/allStars.ts allStarTallyForTeam). */}
-        <div className="stat-tile">
-          <div className="label-sm inline-flex items-center gap-1.5">
-            All-Star Players
-            <Tooltip text={tip('allStar')} />
-          </div>
-          <div className={`text-lg font-mono font-semibold ${s.allStars.players > 0 ? 'text-gold' : ''}`}>{s.allStars.players}</div>
-          <div className="text-xs text-muted">
-            {s.allStars.selections === 0
-              ? 'None selected yet'
-              : `${s.allStars.selections} selection${s.allStars.selections === 1 ? '' : 's'} since ${s.firstYear}`}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-5">
-        <div className="panel p-4">
-          <div className="label-sm mb-3 inline-flex items-center gap-1.5">
-            Cap Management
-            <Tooltip text={tip('deadMoney')} />
-          </div>
-          {/* "$0 a season" over an empty ledger is a compliment nobody
-              earned. Nothing on record is a different statement from a clean
-              sheet, and the tile says which one it is looking at. */}
-          {s.deadMoneyYears > 0 ? (
-            <>
-              <div className="text-sm text-muted">
-                Dead money per season, across {s.deadMoneyYears} year{s.deadMoneyYears === 1 ? '' : 's'} on the books
-              </div>
-              <div className="stat-value text-stat-md mt-1">{formatMoney(s.avgDeadMoneyPerYear)}</div>
-            </>
-          ) : (
-            <>
-              <div className="text-sm text-muted">Dead money per season</div>
-              <div className="stat-value text-stat-md mt-1 text-muted">None on the books</div>
-            </>
-          )}
-        </div>
-        <div className="panel p-4">
-          <div className="label-sm mb-3">Best Season</div>
-          {s.bestSeason ? (
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-mono text-sm">{s.bestSeason.year} · {s.bestSeason.wins}-{s.bestSeason.losses}{s.bestSeason.ties ? `-${s.bestSeason.ties}` : ''}</div>
-                <div className={`text-xs mt-0.5 ${s.bestSeason.result === 'CHAMPION' ? 'text-gold font-semibold' : 'text-muted'}`}>
-                  {s.bestSeason.result === 'CHAMPION' && '🏆 '}{RESULT_LABEL[s.bestSeason.result] ?? s.bestSeason.result}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-sm text-muted">No completed seasons yet.</div>
-          )}
-        </div>
-      </div>
-
-      <div className="grid lg:grid-cols-2 gap-5">
-        <div className="section">
-          <div className="section-head">
-            <h2 className="section-title">Season Log</h2>
-            <span className="label-sm">{s.tenureYears} season{s.tenureYears === 1 ? '' : 's'}</span>
-          </div>
-          <div className="panel overflow-hidden">
-            <table className="table-clean">
-              <thead><tr><th>Year</th><th className="text-right">W</th><th className="text-right">L</th><th className="text-right">T</th><th className="text-right">PF</th><th className="text-right">PA</th><th>Result</th></tr></thead>
-              <tbody>
-                {/* The season in progress has no TeamSeasonRecord row until it
-                    ends, so it's synthesised here — otherwise a first-year GM
-                    sees an empty table while sitting on a 7-2 start. Once the
-                    year does wrap it has a real row, and this must stand down
-                    or the log shows the season twice and outruns the header
-                    count beside it. */}
-                {!currentSeasonLogged && (
-                <tr className="bg-accent/[0.06]">
-                  <td className="font-mono">{league.seasonYear}</td>
-                  <td className="font-mono text-right">{team.wins}</td>
-                  <td className="font-mono text-right">{team.losses}</td>
-                  <td className="font-mono text-right">{team.ties}</td>
-                  <td className="font-mono text-muted text-right">{team.pointsFor}</td>
-                  <td className="font-mono text-muted text-right">{team.pointsAgnst}</td>
-                  <td className="text-accent text-xs">In progress</td>
-                </tr>
-                )}
-                {seasonRecords.map((r) => (
-                  <tr key={r.id} className={r.playoffResult === 'CHAMPION' ? 'bg-gold/5' : ''}>
-                    <td className="font-mono">{r.year}</td>
-                    <td className="font-mono text-right">{r.wins}</td>
-                    <td className="font-mono text-right">{r.losses}</td>
-                    <td className="font-mono text-right">{r.ties}</td>
-                    <td className="font-mono text-muted text-right">{r.pointsFor}</td>
-                    <td className="font-mono text-muted text-right">{r.pointsAgnst}</td>
-                    <td className={`text-xs ${r.playoffResult === 'CHAMPION' ? 'text-gold font-semibold' : 'text-muted'}`}>
-                      {r.playoffResult === 'CHAMPION' && '🏆 '}{RESULT_LABEL[r.playoffResult] ?? r.playoffResult}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="section">
-          <div className="section-head">
-            <h2 className="section-title">Your Moves</h2>
-            <Link href={`/league/${league.id}/news`} className="text-xs text-accent2 hover:underline">League wire →</Link>
-          </div>
-          <div className="panel overflow-hidden">
-            <div className="grid grid-cols-3 sm:grid-cols-5 divide-x divide-line/40 border-b border-line/70">
-              {[
-                // No "Re-signs" column: nothing in the sim writes a RESIGN
-                // transaction, so it could only ever read zero. Extensions
-                // land as SIGN and are counted there.
-                { label: 'Trades', n: countOf('TRADE') },
-                { label: 'Signings', n: countOf('SIGN') },
-                { label: 'Drafted', n: countOf('DRAFT') },
-                { label: 'Released', n: countOf('CUT') },
-                { label: 'Tags', n: countOf('TAG') },
-              ].map((c) => (
-                <div key={c.label} className="px-3 py-2.5">
-                  <div className="label-sm text-[10px]">{c.label}</div>
-                  <div className="stat-value text-stat-sm mt-1">{c.n}</div>
-                </div>
-              ))}
-            </div>
-            <div className="divide-y divide-line/50">
-              {moves.length === 0 && <div className="px-4 py-4 text-sm text-muted">No moves yet — the ledger starts with your first trade or signing.</div>}
-              {moves.map((m) => (
-                <div key={m.id} className="px-4 py-2">
-                  <div className="flex items-baseline gap-2">
-                    <span className="label-sm text-[10px] shrink-0">{m.type}</span>
-                    <span className="text-sm truncate">{m.headline}</span>
-                  </div>
-                  {m.detail && <div className="text-[11px] text-muted mt-0.5 truncate">{m.detail}</div>}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {careerDeals.length > 0 && (
-        <TradeRetrospectives
-          myAbbr={team.abbr}
-          retrospectives={careerDeals}
-          title={dealsTitle}
-          lede={dealsLede}
-          labels={dealLabels}
-          action={
-            <Link href={`/league/${league.id}/trade`} className="text-xs text-accent2 hover:underline shrink-0">
-              Every deal →
-            </Link>
-          }
-        />
-      )}
-
-      {s.allStars.entries.length > 0 && (
-        <div className="panel overflow-hidden">
-          <div className="px-4 py-3 border-b border-line/70 flex items-baseline justify-between gap-3 flex-wrap">
-            <div className="label-sm">All-Stars You Developed</div>
-            <div className="text-xs text-muted">
-              {s.allStars.players} player{s.allStars.players === 1 ? '' : 's'} · {s.allStars.selections} selection{s.allStars.selections === 1 ? '' : 's'}
-            </div>
-          </div>
-          <table className="table-clean">
-            <thead><tr><th>Year</th><th>Player</th><th>Pos</th><th>Season</th></tr></thead>
-            <tbody>
-              {/* One row per SELECTION, so a repeat All-Star appears once per
-                  year he earned it — the tile above counts the men, this
-                  counts the seasons, and each says which it is. */}
-              {s.allStars.entries.map((a, i) => (
-                <tr key={i}>
-                  <td className="font-mono text-muted">{a.year}</td>
-                  <td className="text-gold">⭐ {a.name}</td>
-                  <td className="font-mono text-xs text-muted">{a.position}</td>
-                  <td className="text-xs text-muted">{a.statLine}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {s.awards.length > 0 && (
-        <div className="panel overflow-hidden">
-          <div className="px-4 py-3 border-b border-line/70 label-sm">Awards Won By Your Players</div>
-          <table className="table-clean">
-            <thead><tr><th>Year</th><th>Award</th><th>Player</th></tr></thead>
-            <tbody>
-              {s.awards.map((a, i) => (
-                <tr key={i}>
-                  <td className="font-mono text-muted">{a.year}</td>
-                  <td className="text-gold">🏆 {a.label}</td>
-                  <td>{a.detail}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <GmCareerTabs
+        initial="career"
+        panes={[
+          {
+            id: 'career',
+            label: 'Career',
+            hint: `${s.tenureYears} season${s.tenureYears === 1 ? '' : 's'} · ${s.wins}-${s.losses}${s.ties ? `-${s.ties}` : ''}`,
+            body: careerPane,
+          },
+          {
+            id: 'draft',
+            label: 'Draft',
+            hint: draftRecord.made > 0
+              ? `${draftRecord.made} pick${draftRecord.made === 1 ? '' : 's'} · ${draftRecord.hits} hit`
+              : 'No picks called yet',
+            body: draftPane,
+          },
+          {
+            id: 'moves',
+            label: 'Moves',
+            hint: `${s.trades} trade${s.trades === 1 ? '' : 's'} · ${countOf('SIGN')} signing${countOf('SIGN') === 1 ? '' : 's'}`,
+            body: movesPane,
+          },
+        ]}
+      />
     </div>
   );
 }
