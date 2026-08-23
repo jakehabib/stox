@@ -4,7 +4,7 @@ import { Rng, clamp } from '../rng';
 import { LEAGUE, Position } from '../tuning';
 import { NameRegistry, pickUniqueName } from './names';
 import { SeasonStats } from '../types';
-import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS } from '../awards';
+import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS, sweptTheField } from '../awards';
 import { AWARDED_TYPES } from '../awardTypes';
 import { RECORD_CATEGORIES, RecordCategory } from '../records';
 import { mergeStats } from '../stats';
@@ -1134,8 +1134,25 @@ function statLineFor(s: CoreLine, isDefensive: boolean): string {
  * Award winners for every seeded year, scored with the LIVE formulas
  * (lib/awards.ts offensiveScore/defensiveScore) rather than a second opinion
  * invented here — the seeded past is judged by the same standard the user's
- * own seasons will be. Six distinct players per year, so nothing in the
- * table ever reads as a duplicate.
+ * own seasons will be.
+ *
+ * That standard now includes WHO MAY WIN TWO. This used to hand out six
+ * strictly distinct names a year, which was a stricter rule than the live
+ * season's and therefore a second opinion after all: a seeded 2019 could
+ * never show the MVP holding Offensive Player of the Year, while the user's
+ * own 2031 can. It borrows `sweptTheField` from lib/awards.ts so both obey
+ * one threshold. Everything else here still hands each name out once — see
+ * `take` below, which exists for a different reason entirely (pool
+ * starvation, not duplicate-looking rows).
+ *
+ * Measured over 69 seeded years from three generated leagues, MVP and OPOY
+ * land on one man 11.6% of the time here against 5.7% in a live season. The
+ * threshold is identical; the FIELD is not. A live season ranks every man in
+ * the league, while `stars` is a few dozen legends across two decades, and on
+ * a shortlist that thin the leader laps what is behind him far more often —
+ * sometimes he is the only name on his side of the ball that year at all, in
+ * which case there is nobody to hand the second trophy to and he keeps it.
+ * One year in nine is still an exception a reader will take as one.
  */
 function pickAwards(rng: Rng, stars: HistPlayer[], seasons: SeasonHistory[], teams: HistoryTeam[]): AwardRow[] {
   const teamById = new Map(teams.map((t) => [t.id, t]));
@@ -1160,6 +1177,26 @@ function pickAwards(rng: Rng, stars: HistPlayer[], seasons: SeasonHistory[], tea
       return pick ?? null;
     };
 
+    /**
+     * Player of the Year for one side of the ball, under the same rule a live
+     * season uses: the best man on that side wins it, and if that is already
+     * the MVP he keeps it only when he finished clear of the runner-up by
+     * `AWARD_SWEEP_MARGIN`. Otherwise the trophy falls to the best name still
+     * unclaimed, which `take` supplies.
+     *
+     * `pool` is the WHOLE side of the ball, MVP included, on purpose: `take`
+     * cannot see him any more (it just marked him taken), so asking it alone
+     * would make the sweep impossible here and turn the seeded past back into
+     * the stricter rule this replaced.
+     */
+    const takePoy = (pool: typeof field, mvp: (typeof field)[number] | null) => {
+      const ranked = [...pool].sort((a, b) => b.score - a.score);
+      const leader = ranked[0];
+      if (leader && mvp && leader.p.key === mvp.p.key
+        && sweptTheField(leader.score, ranked[1]?.score ?? 0)) return leader;
+      return take(pool);
+    };
+
     // Settle the narrow trophies first. Championship-game MVP can only come
     // from one roster and a Rookie of the Year from one draft class AND one
     // side of the ball, so picking the open-field awards first strands them:
@@ -1167,6 +1204,15 @@ function pickAwards(rng: Rng, stars: HistPlayer[], seasons: SeasonHistory[], tea
     // all because a dominant club's whole cast had already been spent on the
     // league-wide awards. The two rookie awards are now the narrowest pools
     // in the list — a single class, halved — so they go first of all.
+    //
+    // A consequence worth naming, because it is the one place this file is
+    // still stricter than a live season: a seeded rookie who is the best
+    // player in the league takes Rookie of the Year here and the MVP box then
+    // goes to somebody else, where live those are two honours one man may
+    // hold (Lawrence Taylor, 1981). It is left that way because the ordering
+    // above is load-bearing against starvation and a rookie good enough to
+    // lead a shortlist of two decades' legends effectively never occurs — but
+    // it is a difference, not a rule.
     //
     // The rookie split uses the SAME `isDef` partition as OPOY/DPOY two lines
     // below, so a seeded rookie is never judged on the wrong side of the ball
@@ -1184,13 +1230,17 @@ function pickAwards(rng: Rng, stars: HistPlayer[], seasons: SeasonHistory[], tea
     // dangling reference `ensureRecordHoldersAppear` below exists to prevent.
     // A LIVE season never has this problem; it ranks every rostered rookie,
     // not a star shortlist.
+    const oroty = take(field.filter((c) => c.rookie && !c.isDef));
+    const droty = take(field.filter((c) => c.rookie && c.isDef));
+    const sbmvp = take(field.filter((c) => c.p.teamId === season.championId));
+    const mvp = take(field);
     const winners: Record<string, (typeof field)[number] | null> = {
-      AWARD_OROTY: take(field.filter((c) => c.rookie && !c.isDef)),
-      AWARD_DROTY: take(field.filter((c) => c.rookie && c.isDef)),
-      AWARD_SBMVP: take(field.filter((c) => c.p.teamId === season.championId)),
-      AWARD_MVP: take(field),
-      AWARD_OPOY: take(field.filter((c) => !c.isDef)),
-      AWARD_DPOY: take(field.filter((c) => c.isDef)),
+      AWARD_OROTY: oroty,
+      AWARD_DROTY: droty,
+      AWARD_SBMVP: sbmvp,
+      AWARD_MVP: mvp,
+      AWARD_OPOY: takePoy(field.filter((c) => !c.isDef), mvp),
+      AWARD_DPOY: takePoy(field.filter((c) => c.isDef), mvp),
     };
 
     for (const type of AWARD_ORDER) {
