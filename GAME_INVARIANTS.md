@@ -6,11 +6,14 @@ mechanically checked. Almost all of them live in `lib/invariants.ts`, and the
 harness in `scripts/simHealth.ts` runs that check after every phase transition
 across many simulated leagues and seasons. A rule that is a property of the
 ARITHMETIC rather than of stored state cannot be read off a snapshot, so it
-carries its own standalone harness instead and names it (INV-21).
+carries its own standalone harness instead and names it (INV-21, INV-22).
 
 **Any change that touches core simulation logic (season flow, the draft,
 trades, free agency, contracts/cap) should run `npm run sim:health` before
-committing.** A clean build and a passing `tsc` only prove the code compiles —
+committing** — and any change to the stat allocator in `lib/sim/engine.ts`
+should also run `npx tsx scripts/checkBoxScore.ts` (INV-22), which `sim:health`
+does not cover: it reads league STATE, and a box score that does not add up is
+perfectly valid state. A clean build and a passing `tsc` only prove the code compiles —
 they say nothing about whether a player can end up rostered with no contract,
 or a draft pick can vanish. Only running the league forward and checking its
 state catches that class of bug, which is exactly the class of bug that kept
@@ -100,6 +103,13 @@ other — `lib/invariants.ts` reports violations by ID.
   exceed what a roster is able to shed. That is the same case the
   advancement compliance block treats as unfixable and lets through, rather
   than trapping the user forever.
+  Being in that state is no longer free, which is what stops it being a
+  strategy: `settleClosingYearCapOverage` (`lib/season.ts`) writes whatever a
+  club is still over the ceiling by when its season ends into the NEW league
+  year as a `CapCharge`, so the escape buys time and never buys the money.
+  Measured on 31 generated AI clubs at a season's close, none were over
+  (median space $98.8M) — the rule is league-wide and only ever bites a club
+  that got there deliberately.
 - **INV-21 — rewriting a contract moves money, it never creates or destroys
   any.** Not a snapshot rule, so it is not in `lib/invariants.ts`: it is a
   property of the ARITHMETIC and of the WRITE PATHS, checked by two permanent
@@ -119,6 +129,24 @@ other — `lib/invariants.ts` reports violations by ID.
     the ledger back off `teamCapSummary`, and destroys the league after. A
     pure-arithmetic clause could not have caught that defect and could not
     catch its return — it would assert a formula against itself.
+  - `scripts/checkReSign.ts` (`npx tsx scripts/checkReSign.ts`) — the same
+    rule on the other path that deletes a contract row. `extendContract`
+    replaces an expired deal outright, so what it strands is a `CapCharge` the
+    write path either books or does not. Sweeps the same 320 shapes through
+    the real function against a real database and holds each branch to its own
+    rule: a REPLACE accelerates the unamortised bonus, an APPEND carries it
+    into the new row and must therefore book nothing, and billing both would
+    charge the same money twice. Reports 118 failures against the old
+    behaviour.
+  - `scripts/checkRestructureWrite.ts`
+    (`npx tsx scripts/checkRestructureWrite.ts`) — the database sibling to
+    `checkRestructure.ts`, for the half of the restructure that is not
+    arithmetic. Sweeps 1,080 shapes and compares the row read back out of the
+    database to the pure function's answer FIELD FOR FIELD, then to the
+    consequence a GM actually sees (`deadMoneyOnCut`) and to the ledger
+    `teamCapSummary` reports. Field-for-field on purpose: a check aimed at the
+    one field that was dropped would pass the next drop. Reports 1,656
+    failures against the old behaviour.
 
   Four clauses:
   - **A ZERO-DOLLAR RESTRUCTURE IS A NO-OP.** Convert nothing and this year's
@@ -147,10 +175,50 @@ other — `lib/invariants.ts` reports violations by ID.
     value: `franchiseTagValue()` averages the top-N `capHit()`s at the
     position, so a legacy bonus folded into that hit would price the next tag
     at that position off it.
+    The re-sign was the other half of the same hole and is closed the same
+    way. `extendContract`'s replace branch — the branch a walk-year re-sign
+    takes — ran `contract.deleteMany` and booked nothing, so RE-SIGNING a man
+    was the one exit from a contract that did not answer for the bonus already
+    paid to him. Measured, four exits from the SAME expired 3yr+2v deal with a
+    $13.5M bonus: walk $5.40M, cut $5.40M, tag $5.40M, **re-sign $0**. Which
+    inverted the incentive the cap exists to create — keeping a man became
+    strictly cheaper than losing him, and a void year became free money
+    provided you remembered to re-sign the player it was borrowed against.
+    Measured on that loop: a walk-year hit restructured from $33.2M to $9.04M
+    with three void years added freed $24.1M and repaid none of it. It books
+    the same `unamortizedBonus`, dated by `capChargeYear()`, priced into
+    `assertCapRoom`, and named on the wire.
   - **WHAT THIS YEAR FREES, THE LATER YEARS REPAY, EXACTLY** — void years
     included, since bonus prorated across them is charged in one lump when
     the real deal ends. This is the sentence the restructure panel prints, so
     it is a promise to the user and not only to the ledger.
+    A DYING LEAGUE YEAR CANNOT ABSORB THAT LUMP FOR FREE, which is the
+    calendar half of the same clause and was the largest hole in it. Dead
+    money is a one-year charge: `cutPlayer` files it against the year of the
+    release and `expireStaleCapCharges` sweeps it at the roll — right for a
+    club that HAD the room, since spending real cap space on a mistake is what
+    paying for it means, and catastrophic for one that did not. Measured on a
+    real league driven through the real roll, the same $74.6M albatross
+    released on four clubs: PRESEASON wk1 $39.7M vanished, REGULAR wk4 $43.1M,
+    PLAYOFFS wk19 $50.6M, and only the OFFSEASON wk1 case (already filed a
+    year forward by `capChargeYear`) paid in full. The loop: restructure
+    twelve men into bonus, bank the relief, release all twelve in the
+    playoffs, and every dollar of proration owed to later years accelerated
+    into a charge that midnight deleted.
+    `settleClosingYearCapOverage` (`lib/season.ts`) closes it without touching
+    the sweep: every dollar a club is over the ceiling when its season ends is
+    written into the new league year as a real `CapCharge`. The OVERAGE and
+    not the charge, deliberately — re-dating the dead money itself would bill
+    a club with $80M of genuine space exactly as hard as one with none, and
+    make a release in the last week of a comfortable season worse than the
+    same release in the first. Uncapped, deliberately: a ceiling on the carry
+    is a hole the exact size of the ceiling, it cannot be reached by accident
+    (the advance gate already refuses a club that could cut its way back
+    under), and it liquidates itself — any year a club spends less than the
+    ceiling, the debt shrinks by the difference. It runs inside
+    `ageContractsForYear`, which is the last moment the closing year's books
+    can be read at all: one step later every cap hit has been rewritten into
+    next year's terms.
   - **THE GUARANTEE STAYS IN THE SAME FRAME AS THE BONUS.** `guaranteed` is
     stored bonus-inclusive and is only ever read by subtracting the bonus back
     out (`guaranteedBaseByYear`), so any path that rewrites one must rewrite
@@ -158,6 +226,15 @@ other — `lib/invariants.ts` reports violations by ID.
     the restructure write did not, which left `guaranteed - signingBonus`
     re-reading as salary still owed and put a measured $10.3M of invented dead
     money on a 5-year deal.
+    `restructureContract` writes it inside its own transaction now. It was
+    latent rather than live — `restructureContractAction` patched the figure
+    back in a SECOND write, outside the library's transaction, and was the
+    only caller — which is a worse state than a plain bug: the game was
+    correct, the library was not, every new caller reintroduced it in full,
+    and a failure between the two writes left a broken row with nothing on any
+    screen to say so. Measured on one contract: stored $45.0M against a
+    computed $28.7M, and dead money on a cut of $28.7M reading back as $45.0M.
+    The patch in the action is gone.
 
   **The one documented exception, asserted rather than ignored.** A deal
   longer than `CAP.MAX_PRORATION_YEARS` stops amortising its bonus in year
@@ -174,6 +251,43 @@ other — `lib/invariants.ts` reports violations by ID.
 
 - **INV-15** — A `Game` with `played === true` has `homeScore >= 0`,
   `awayScore >= 0`, and a `boxScore` that parses to a non-empty object.
+- **INV-22 — a box score is an accounting document, and it balances.** Not a
+  snapshot rule, so it is not in `lib/invariants.ts`: it is a property of
+  `allocateStats` and `toTeamStats` in `lib/sim/engine.ts`, checked by a
+  permanent harness that builds no league and touches no database —
+  `npx tsx scripts/checkBoxScore.ts [leagues] [seasons]`, non-zero on failure.
+  Six clauses, each an identity rather than a tuning target:
+
+  - **Every yard thrown was caught by somebody.** League receiving yards equal
+    league passing yards.
+  - **The team column is the player column added up.** `teamStats.passYards`
+    equals the passers' yards on that side, exactly — zero tolerance, because
+    it is now literally the same sum.
+  - **The yards in the box score are the yards the drives gained.**
+  - **Every sack a defence recorded was taken by the other side's line.**
+  - **Every interception thrown was caught by somebody.**
+  - **Every touchdown pass was caught by somebody.**
+
+  ALL SIX FAILED, and none of them was visible in one game. Over 240 replayed
+  league-seasons before the fix: receiving yards ran 8.5% ahead of passing
+  yards, because the backs were handed `rng.int(0, 40)` on top of the
+  receivers' full share of the throw; the team pass-yard line missed the
+  passer by 5%, because it was a flat 60/40 split of total yards unrelated to
+  anything the players did; 19.6% of sacks, 4.7% of interceptions and 30.6% of
+  touchdown passes reached no player at all, because those were dealt out by
+  walking the roster flipping a coin at each name with a hard cap of one
+  apiece. A 23-yard gap between what a passer threw and what his receivers
+  caught reads as rounding on a Sunday; it is only a defect in aggregate, and
+  that is why a harness and not a rule.
+
+  Two clauses carry a deliberate tolerance and the file says why. Yardage is
+  shared out by rounding each man's slice of a total, so a few yards a game go
+  missing to rounding — the counting stats have no such excuse and are held to
+  exactly zero. And the total-yards clause allows four yards a team-game
+  against two known, separate warts left in place: `allocateStats` floors a
+  team at 120 yards before splitting it, and an overtime drive is pushed into
+  the drive list with 55 yards on it that are never added to the team's total.
+  Both show up as the worst single reading the harness prints.
 
 ## Season / phase flow
 
@@ -264,6 +378,40 @@ including two in the checker itself. Recorded here so none of it gets lost.
 Verified together with a `sim:health` run across several leagues, several
 seasons deep each, landing at **0 violations**.
 
+6. **A release or a trade made in-season was free (INV-21, third clause).**
+   `capChargeYear()` files a charge against the current league year in every
+   phase except OFFSEASON weeks 1-2, and `expireStaleCapCharges` hard-deletes
+   every charge dated before the new year two steps after `RESET_STANDINGS`
+   bumps it. So dead money raised in PRESEASON, REGULAR or PLAYOFFS could only
+   ever be paid out of whatever space the club actually had, and the rest ran
+   out of calendar. Measured on a real league driven through the real roll,
+   the same $74.6M albatross released on four clubs: $39.7M, $43.1M and
+   $50.6M vanished, and only the OFFSEASON wk1 case paid in full. The loop —
+   restructure twelve men into bonus, bank the relief, release all twelve in
+   the playoffs — laundered every dollar owed to later years into a charge
+   midnight deleted. `settleClosingYearCapOverage` now carries the whole
+   overage into the new league year; the same four cuts carry $17.1M, $20.5M
+   and $28.0M forward and the loop erases $0.
+   **Not fixed here:** `executeTrade` (`lib/trade.ts`) hard-codes
+   `year: opts.seasonYear` and never calls `capChargeYear()` at all, so a
+   trade made in the pre-roll OFFSEASON window still files against the year
+   that is ending and is deleted unbilled. The carry-over covers the club that
+   was over the ceiling; it does not cover the club that was not. One line,
+   in a file another workstream owns.
+7. **Going further over the cap switched the advance gate off, for free.**
+   `capComplianceBlock` returns `null` — advance — when `!report.fixable`, and
+   that escape is correct: a club whose dead money alone exceeds the ceiling
+   must never be soft-locked. What was wrong is that it cost nothing.
+   Measured: $50.8M over, blocked; ten releases later at $844.0M over with
+   `maxCutRelief` $53.3M, the identical `advanceWeek` call ran the week, and
+   the charges were swept at the roll. Reproduced at $978.6M over, carrying
+   $0. The escape is unchanged and the price is new: the overage is settled
+   into the next league year, so the same run now carries $978.6M forward. The
+   Cap page, the standing over-cap banner and the front office brief all said
+   "the week is still allowed to advance" and stopped there — three sentences
+   that were true and read as *"and nothing happens"*. All three name the
+   price now.
+
 ### Still open, not yet fixed
 
 1. **No roster-size ceiling is enforced anywhere (INV-08).**
@@ -293,14 +441,27 @@ seasons deep each, landing at **0 violations**.
    "founded" transaction and nothing ever deletes transactions. Both call
    sites (`lib/cap-summary.ts` and this file's INV-19 check) now pass it, so
    the ceiling actually compounds at 7%/yr and the two can never disagree.
-4. **Nothing enforces the roster *floor* either (the mirror of item 1).**
-   `LEAGUE.ROSTER_MIN` (46) is read by no signing, cut, draft or advance
-   path. The contract-economy repair got AI rosters from a measured ~25
-   players back to ~48 at their annual low point, but a handful of teams
-   still sit under 46 at the trough, and nothing in the game says so. A
-   phase-aware invariant (only meaningful once free agency has run) and an
-   AI "sign minimum-salary bodies up to the floor" pass are the two obvious
-   next steps.
+4. **Nothing enforces the roster *floor* either (the mirror of item 1) — and
+   after measuring it, nothing should.** `LEAGUE.ROSTER_MIN` (46) is read by
+   no signing, cut, draft or advance path, and `fillTeamsToRosterMinimum`
+   filters `isUser: false` by design, so a user can carry 23 men through a
+   whole offseason roll and bank the salary. The open question was whether the
+   sim punishes that. It does, hard. Two leagues off the same seed, same
+   schedule, same opponents, with the user's club stripped to its best 24 men
+   and the players removed WITHOUT `cutPlayer` so the only variable is
+   football: offense 83.7 -> 79.7, defense 83.9 -> 77.6, a 12-5 season turned
+   into 7-10, and a point differential of +114 turned into -55. About five
+   wins — a playoff team turned into a spectator. `positionUnitRating`
+   (`lib/sim/units.ts`) fills every empty depth slot at `REPLACEMENT_LEVEL`,
+   and an injury on a short roster has nobody behind it.
+   So the game already charges for this, and an advance gate would only take
+   away a decision it is already pricing correctly. What it did not do was
+   TELL anyone: INV-20 is a developer's warning on a screen a GM never opens,
+   and the front office brief said only that his safeties looked thin. It
+   names the shortfall now — silent through OFFSEASON and RESIGN, where every
+   club in the league is briefly under the line by design. Still genuinely
+   open: an AI "sign minimum-salary bodies up to the floor" pass, for the
+   handful of CPU clubs that sit under 46 at their annual trough.
 5. **Undrafted prospects accumulate in the free agent pool forever.**
    Each draft class adds `DRAFT_CLASS_SIZE + DRAFT_CLASS_EXTRA_UDFA` players
    and only ~224 are drafted; the remainder have `isDraftee` cleared at the
@@ -327,13 +488,16 @@ seasons deep each, landing at **0 violations**.
    `scripts/checkFranchiseTag.ts`, which reports 691 failures against the old
    behaviour.
 
-   **Still open, same family:** the replace branch of `extendContract` has a
-   smaller version of the same hole. It only runs at `yearsRemaining === 0`,
-   where all that is left to lose is whatever the void years still hold — but
-   that is exactly the shape the tag lost money on, so it is real. Not fixed
-   here: it changes what re-signing an expired deal costs, which is a
-   different economic decision from tagging one, and it needs its own
-   measurement and its own clause in the harness.
+   ~~**Still open, same family:** the replace branch of `extendContract` has a
+   smaller version of the same hole.~~ **ALSO FIXED**, and it was not smaller.
+   It runs at `yearsRemaining === 0`, where what is left to lose is whatever
+   the void years still hold — and a void year is a slider a GM can move.
+   Measured on the same expired deal, four exits: walk $5.40M, cut $5.40M, tag
+   $5.40M, re-sign $0; and on the loop it opened, a walk-year restructure with
+   three void years added freed $24.1M and repaid none of it. Booked now,
+   dated by `capChargeYear()`, priced into `assertCapRoom`, named on the wire.
+   Gated by `scripts/checkReSign.ts`, which reports 118 failures against the
+   old behaviour.
 7. **The restructure wire entry quotes the amount REQUESTED, not the amount
    converted.** `restructureContract`'s transaction detail is built from
    `opts.convertAmount`; the pure function clamps that against the

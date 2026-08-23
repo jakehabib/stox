@@ -24,6 +24,14 @@
  * database for that clause. Keep them apart: folding a database round-trip
  * into this sweep would cost the 55k checks that make it worth running.
  *
+ * The restructure has its own database sibling now, and for the same reason:
+ * `scripts/checkRestructureWrite.ts`. Everything below computes the right
+ * answer; lib/freeagency.ts's write path stored six of the seven fields it
+ * was handed and dropped `guaranteed`, so a contract came out of a restructure
+ * carrying a rebased bonus beside an un-rebased guarantee and $16.3M of dead
+ * money that nobody promised anybody. Not one check in this file could see it,
+ * because not one dollar of the arithmetic was wrong. Run both.
+ *
  * The invariants, and why these and not others:
  *
  *   R-1  A ZERO-DOLLAR RESTRUCTURE IS A NO-OP. Convert nothing and this

@@ -256,13 +256,21 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
           </div>
 
           <p className="text-sm text-muted">
+            {/* THE COPY HAS TO NAME THE PRICE. Both the offseason line and the
+                unfixable line used to end at "the week advances anyway", which
+                was true and was read — correctly — as "and nothing happens".
+                A club that closes a league year over the ceiling now carries
+                the overage into the next one as a real charge (see
+                settleClosingYearCapOverage in lib/season.ts), so the sentence
+                that tells a GM he is not stuck has to be the same sentence
+                that tells him what it costs. */}
             {!capComplianceDueNow(league.phase)
-              ? 'Every team\'s books run heavy through the offseason roll — expiring contracts only come off when free agency opens. You have to be under the ceiling by then; the new league year will not start while you are over.'
+              ? 'Every team\'s books run heavy through the offseason roll — expiring contracts only come off when free agency opens, and the new league year starts whether or not you are under the ceiling. Get back under it before this season closes: whatever you are still over by when it does is carried into the next league year as dead money.'
               : settings.capMode === 'REALISTIC' && compliance.fixable
                 ? 'The week will not advance until you are back under the ceiling. Any combination of these clears it — cuts and restructures below, or a trade that sends salary out.'
                 : compliance.fixable
                   ? 'Clear the shortfall before adding any more salary — signings, extensions, tags and trades are all blocked while you are over.'
-                  : 'Cutting every player who frees cap space still would not clear this — most of your commitment is dead money that cannot be released. A trade that sends salary out is the only route, so the week is still allowed to advance.'}
+                  : 'Cutting every player who frees cap space still would not clear this — most of your commitment is dead money that cannot be released. A trade that sends salary out is the only route, and the week is allowed to advance so you are never stuck standing still. That is a reprieve, not a pardon: whatever you are still over by when the season ends is carried into next year as dead money, and it will be there on this page under \u201cCap overage carried\u201d.'}
           </p>
 
           {compliance.path.length > 0 && (

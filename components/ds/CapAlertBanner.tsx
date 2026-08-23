@@ -61,11 +61,16 @@ export function CapAlertBanner({
         </div>
 
         <div className="text-xs text-muted flex-1 min-w-[12rem]">
+          {/* "the week advances anyway" without the price attached read as
+              "and nothing happens". A club that closes a league year over the
+              ceiling now carries the overage into the next one as dead money
+              (settleClosingYearCapOverage, lib/season.ts), so the line that
+              says you are not stuck has to say what standing still costs. */}
           {!complianceDue
-            ? 'Expiring contracts come off your books when free agency opens. You have to be under the ceiling by then — the new league year will not start while you are over.'
+            ? 'Expiring contracts come off your books when free agency opens. Be under the ceiling before this season closes — whatever you are still over by then carries into next year as dead money.'
             : blocksAdvance
               ? 'The week will not advance until you are compliant.'
-              : 'No cut or restructure clears this on its own — a trade that sends salary out is the only route left, so the week is still allowed to advance.'}
+              : 'No cut or restructure clears this on its own — a trade that sends salary out is the only route left. The week still advances, but whatever you are over by when the season ends carries into next year as dead money.'}
         </div>
 
         {moves.length > 0 && (

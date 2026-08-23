@@ -302,17 +302,17 @@ export async function applyFranchiseTagAction(leagueId: string, playerId: string
  *    write a rebased row and report cap relief that did not happen. The pure
  *    function reports what it actually converted; this refuses on that.
  *
- * 2. `guaranteed` HAS TO TRAVEL WITH THE BONUS. It is stored bonus-inclusive,
- *    and everything that reads it subtracts the bonus back out to find the
- *    guaranteed BASE salary still owed (lib/cap.ts `guaranteedBaseByYear`).
- *    Store a rebased bonus beside the OLD guarantee figure and the gap between
- *    them re-reads as salary the club still owes, on a schedule that no longer
- *    contains the years it was promised for — dead money conjured out of an
- *    accounting move, and money the player already collected demanded back on
- *    the club's behalf. `signExtension` writes both halves in one transaction
- *    for this reason; the restructure path writes the bonus and leaves the
- *    guarantee behind, so it is restated here, from the same call the library
- *    made. It belongs inside that transaction and should move there.
+ * 2. `guaranteed` USED TO BE RESTATED HERE, AND NO LONGER IS. It is stored
+ *    bonus-inclusive, and everything that reads it subtracts the bonus back
+ *    out to find the guaranteed BASE salary still owed (lib/cap.ts
+ *    `guaranteedBaseByYear`), so a rebased bonus stored beside the OLD
+ *    guarantee re-reads as salary the club still owes. The library dropped it
+ *    from its write and this action patched it back in a SECOND write,
+ *    outside the library's transaction — which fixed the symptom for the one
+ *    caller that existed and left the defect fully armed for the next one, on
+ *    top of a window where a failure between the two writes left a broken row
+ *    behind. `restructureContract` writes it inside its own transaction now,
+ *    from the same shaped figure, and the patch is gone.
  * ===========================================================================
  */
 export async function restructureContractAction(leagueId: string, playerId: string, convertAmount: number, addVoidYears: number) {
@@ -339,9 +339,6 @@ export async function restructureContractAction(leagueId: string, playerId: stri
     const result = await restructureContract({
       leagueId, playerId, convertAmount, addVoidYears, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week,
     });
-    if (shaped) {
-      await prisma.contract.update({ where: { playerId }, data: { guaranteed: shaped.guaranteed } });
-    }
     revalidatePath(`/league/${leagueId}`, 'layout');
     return { ok: true, message: `Restructured — new cap hit this year: $${(result.newCapHit / 1_000_000).toFixed(2)}M.` };
   } catch (err) {

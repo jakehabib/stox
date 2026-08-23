@@ -157,6 +157,18 @@ export interface AdvanceResult {
  *     anything still leaves the team over (dead money alone can exceed the
  *     ceiling), blocking would be a permanent soft-lock, so the week
  *     advances and the standing over-cap warning carries it instead.
+ *
+ *     That escape was, for a while, the most profitable move in the game:
+ *     going FURTHER over the cap switched the gate off, and every charge was
+ *     swept at the roll. Measured — $50.8M over, blocked; ten releases later
+ *     at $844.0M over with maxCutRelief $53.3M, the identical call ran the
+ *     week and the club carried nothing into the new year. The escape is
+ *     still here, because a user must never be soft-locked, but it is no
+ *     longer a way out of the bill: settleClosingYearCapOverage writes
+ *     whatever a club is still over by when its season ends into the next
+ *     league year as a real charge. You may stand still. You may not stand
+ *     still for free — and the Cap page, the over-cap banner and the front
+ *     office brief all now say so.
  *   - Not during OFFSEASON/RESIGN — see CAP_ROLLOVER_PHASES.
  */
 async function capComplianceBlock(leagueId: string, settings: LeagueSettings, phase: string): Promise<AdvanceResult | null> {
@@ -1751,22 +1763,151 @@ async function progressAllPlayers(leagueId: string, rng: Rng, retirementEnabled:
  * the offseason AGE_CONTRACTS step (a catch-up for saves that predate the
  * column, which would otherwise never age again). Returns whether it did
  * anything.
+ *
+ * It is also the last moment the CLOSING year's cap position can be read at
+ * all, which is why the overage settlement runs from inside it rather than
+ * from the phase machine: the decrement below rewrites every cap hit into
+ * next year's terms, so a step later there is nothing left to settle against.
+ * See settleClosingYearCapOverage.
  */
 async function ageContractsForYear(leagueId: string, targetYear: number): Promise<boolean> {
-  const league = await prisma.league.findUniqueOrThrow({
+  const before = await prisma.league.findUniqueOrThrow({
     where: { id: leagueId }, select: { contractsAgedYear: true },
   });
-  if (league.contractsAgedYear != null && league.contractsAgedYear >= targetYear) return false;
+  if (before.contractsAgedYear != null && before.contractsAgedYear >= targetYear) return false;
 
-  await prisma.contract.updateMany({
-    where: { player: { leagueId, status: 'ACTIVE' }, yearsRemaining: { gt: 0 } },
-    data: { yearsRemaining: { decrement: 1 } },
+  // THE MARK IS THE CLAIM, taken BEFORE the work — as a compare-and-set on
+  // the value that was just read, so exactly one of two advances landing here
+  // together wins it. The read above is not enough on its own: both runners
+  // pass it, and this step is not idempotent in either half. Aged twice,
+  // every contract loses two years for one season of football; settled twice,
+  // the loser reads a ledger the winner has already stepped forward and
+  // restates the closing year's overage off next year's hits. Same reasoning
+  // as the void-year release below — "THE DELETE IS THE CLAIM", the row that
+  // says the work is done has to be won first.
+  //
+  // Rolled back on failure, because the alternative failure mode is the one
+  // the phase machine cannot survive: marked but un-aged means no contract in
+  // the league ever expires again, and nothing on screen would say so.
+  const claimed = await prisma.league.updateMany({
+    where: { id: leagueId, contractsAgedYear: before.contractsAgedYear },
+    data: { contractsAgedYear: targetYear },
   });
-  await prisma.league.update({ where: { id: leagueId }, data: { contractsAgedYear: targetYear } });
+  if (claimed.count === 0) return false;
+
+  try {
+    // Settle the year that is CLOSING before the ledger steps off it — this
+    // is the last moment the closing year's cap position can be read, because
+    // the decrement below rewrites every hit into next year's terms.
+    await settleClosingYearCapOverage(leagueId, targetYear - 1, targetYear);
+    await prisma.contract.updateMany({
+      where: { player: { leagueId, status: 'ACTIVE' }, yearsRemaining: { gt: 0 } },
+      data: { yearsRemaining: { decrement: 1 } },
+    });
+  } catch (err) {
+    await prisma.league.updateMany({
+      where: { id: leagueId, contractsAgedYear: targetYear },
+      data: { contractsAgedYear: before.contractsAgedYear },
+    });
+    throw err;
+  }
   return true;
 }
 
-/** Dead money charges only apply to the year they were incurred. */
+/** The label every carried-overage charge is written under. Stable, because
+ *  it is how a re-run of the settlement recognises its own work. */
+const OVERAGE_CARRY_LABEL = (closingYear: number) => `Cap overage carried from ${closingYear}`;
+
+/**
+ * ===========================================================================
+ * A DYING LEAGUE YEAR CANNOT ABSORB A BILL FOR FREE.
+ * ===========================================================================
+ * Dead money is a one-year charge here: `cutPlayer` files it against the
+ * league year the release happened in (capChargeYear, lib/cap.ts) and
+ * `expireStaleCapCharges` sweeps it at the roll. That is the right shape for
+ * a club that HAD the room — spending real cap space on a mistake is what
+ * paying for it means. It was catastrophically wrong for a club that did not.
+ *
+ * Measured, on a real league driven through the real roll: the same $74.6M
+ * albatross released on four clubs.
+ *
+ *   PRESEASON wk1  $34.9M of real space  ->  $39.7M vanished at the roll
+ *   REGULAR   wk4  $31.5M of real space  ->  $43.1M vanished
+ *   PLAYOFFS  wk19 $24.0M of real space  ->  $50.6M vanished
+ *   OFFSEASON wk1  filed against the new year — paid in full, correctly
+ *
+ * And the loop it opened: restructure twelve men to convert base salary into
+ * bonus, banking the relief this year, then release all twelve in the
+ * playoffs. Every dollar of proration those restructures owed to 2028 and
+ * beyond accelerated into a 2027 charge that midnight deleted. INV-21 clause
+ * three — *what this year frees, the later years repay, exactly* — failed by
+ * the whole overage.
+ *
+ * So: the sweep stays, and what the closing year could not pay follows the
+ * club. Every dollar a club is over the ceiling when its season ends is
+ * written into the new year as a real charge, on the books, on the Cap page,
+ * in front of the advance gate and in front of the AI's own cap refusal.
+ *
+ * WHY THE OVERAGE AND NOT THE CHARGE. Re-dating the dead money itself would
+ * bill a club that had $80M of genuine space exactly as hard as one that had
+ * none, and would make releasing a man in the last week of a season you were
+ * comfortably under strictly worse than releasing him in the first. The
+ * overage is the part that was never funded, which is precisely the part that
+ * has to survive the calendar.
+ *
+ * WHY IT IS NOT CAPPED. A ceiling on the carry is a hole the exact size of
+ * the ceiling, and the number this restores is an invariant that says
+ * "exactly". It cannot be reached by accident: `capComplianceBlock` already
+ * refuses to advance a club that could cut its way back under, so the only
+ * way to end a year over is to be past the point where cuts can help — which
+ * takes a deliberate teardown. And it liquidates itself: any year the club
+ * spends less than the ceiling, the debt shrinks by the difference.
+ *
+ * WHY EVERY CLUB AND NOT JUST THE USER. It is a salary cap. Measured across
+ * a full generated league at a season's close, 0 of 31 AI clubs were over it
+ * (median space $98.8M) — they are gated at transaction time and simply do
+ * not get here, so applying the rule league-wide costs nothing and means the
+ * ledger says the same thing about everybody.
+ *
+ * Idempotent by label: it deletes its own previous row for this year before
+ * writing, so a re-run restates the figure rather than charging it twice.
+ * ===========================================================================
+ */
+async function settleClosingYearCapOverage(leagueId: string, closingYear: number, newYear: number) {
+  const league = await prisma.league.findUniqueOrThrow({
+    where: { id: leagueId }, select: { settings: true },
+  });
+  const settings = parseSettings(league.settings);
+  // SIMPLIFIED has no dead money and OFF has no ceiling, so neither has an
+  // overage to carry. Same narrowing as the advance gate.
+  if (settings.capMode !== 'REALISTIC') return;
+
+  const { teamCapSummary } = await import('./cap-summary');
+  const teams = await prisma.team.findMany({ where: { leagueId }, select: { id: true } });
+  const label = OVERAGE_CARRY_LABEL(closingYear);
+
+  for (const team of teams) {
+    // Read the closing year's position BEFORE this settlement's own row could
+    // pollute it — a re-run must restate the same figure, not compound it.
+    await prisma.capCharge.deleteMany({ where: { teamId: team.id, year: newYear, label } });
+    const summary = await teamCapSummary(team.id, closingYear, settings.capMode);
+    const overage = Math.max(0, -summary.capSpace);
+    if (overage <= 0) continue;
+    await prisma.capCharge.create({
+      data: { teamId: team.id, year: newYear, amount: overage, label },
+    });
+  }
+}
+
+/**
+ * Dead money charges only apply to the year they were incurred — a club that
+ * had the space spent it, and the year is over.
+ *
+ * This sweep is only honest because settleClosingYearCapOverage has already
+ * run: whatever the closing year could NOT fund has been rewritten as a
+ * charge against the year now opening, so what is deleted here is a bill that
+ * was genuinely paid rather than one that merely ran out of calendar.
+ */
 async function expireStaleCapCharges(leagueId: string, seasonYear: number) {
   const teams = await prisma.team.findMany({ where: { leagueId }, select: { id: true } });
   await prisma.capCharge.deleteMany({

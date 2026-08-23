@@ -479,7 +479,7 @@ export async function extendContract(opts: {
   reSign?: boolean;
 }) {
   const { playerId, apy, years, seasonYear, capMode, week } = opts;
-  const { capHit } = await import('./cap');
+  const { capHit, unamortizedBonus, capChargeYear } = await import('./cap');
 
   const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
   if (!player.teamId) throw new Error('Player is not on a roster.');
@@ -524,14 +524,76 @@ export async function extendContract(opts: {
     voidYears: opts.voidYears,
   });
   const newHit = capHit({ ...contract, baseSalaries: writeJson(contract.baseSalaries) }, capMode);
+
+  /**
+   * -------------------------------------------------------------------------
+   * KEEPING HIM MUST NOT BE CHEAPER THAN LOSING HIM.
+   * -------------------------------------------------------------------------
+   * The `deleteMany` below tears the old row up, and with it went every
+   * dollar of signing bonus the club had already paid and not yet charged to
+   * a cap. Void years are the shape that makes this large: they widen the
+   * proration divisor to shrink the hit during the real years, stranding a
+   * slice of bonus that no season ever bills — and in real football that
+   * stranded proration accelerates the moment the deal ends. Every OTHER exit
+   * from this contract charges it. Letting him walk books it
+   * (releaseUnresignedExpiringContracts, below). Cutting him books it. Tagging
+   * him books it (applyFranchiseTag, and see commit eb7d87b for the identical
+   * hole on that path). Trading him accelerates it onto the club giving him
+   * up. Re-signing him booked nothing.
+   *
+   * Measured, four exits from the SAME expired 3-year deal with 2 void years
+   * and $13.5M of bonus, three seasons played:
+   *
+   *   walk $5.40M   cut $5.40M   tag $5.40M   RE-SIGN $0
+   *
+   * And the loop it opened: restructure his walk year with three void years
+   * added — hit $28.2M down to $7.79M, $20.4M freed this season — then
+   * re-sign him and the $20.4M is never repaid by anybody. That inverts the
+   * one incentive the whole cap system exists to create: it made keeping a
+   * man strictly cheaper than losing him, and made a void year free money
+   * provided you remembered to re-sign the player it was borrowed against.
+   *
+   * So the stranded bonus is booked here, dated by capChargeYear for the same
+   * reason the tag path reads the phase (a charge filed a year early sits in
+   * a window where compliance is not enforced and is then deleted unbilled),
+   * and priced into the gate below — because it is part of what re-signing
+   * him ADDS, not a saving against it.
+   *
+   * THE BONUS, NOT THE FULL CUT CHARGE. Same split every other path makes:
+   * the bonus is cash already handed over whose charge has to land somewhere,
+   * while guaranteed salary is cash not yet paid and is not escaped here — it
+   * is replaced by the new deal, which is charged in full on the new row.
+   * -------------------------------------------------------------------------
+   */
+  const stranded = unamortizedBonus(player.contract, capMode);
+  const league = await prisma.league.findUniqueOrThrow({
+    where: { id: opts.leagueId }, select: { phase: true, week: true },
+  });
+
   // The old deal is torn up the instant this one is signed, so its hit is
-  // credited back before the new one is measured against the ceiling.
+  // credited back before the new one is measured against the ceiling — but
+  // the bonus it strands is charged, so it is measured too.
   await assertCapRoom({
     action: reSign ? 'Re-signing' : 'Extension', seasonYear, capMode,
-    charges: [{ teamId, delta: newHit, creditBack: oldHit }],
+    charges: [{ teamId, delta: newHit + stranded, creditBack: oldHit }],
   });
 
   await prisma.$transaction(async (tx) => {
+    if (stranded > 0) {
+      await tx.capCharge.create({
+        data: {
+          teamId,
+          year: capChargeYear({ phase: league.phase, week: league.week, seasonYear }),
+          amount: stranded,
+          // Its own label rather than the cut path's "Dead money — Name", for
+          // the reason applyFranchiseTag gives: the trade recap matches its
+          // charges by exact label, so causes stay distinguishable, and a GM
+          // reading the Cap page can tell a re-sign's legacy bonus from a
+          // release.
+          label: `Re-signed ${player.firstName} ${player.lastName} — old deal's bonus`,
+        },
+      });
+    }
     await tx.contract.deleteMany({ where: { playerId } });
     // Same rule as signFreeAgent: putting his name on a deal ends the talks,
     // so the persisted patience for him goes with it.
@@ -559,9 +621,13 @@ export async function extendContract(opts: {
         headline: reSign
           ? `Re-signed ${player.firstName} ${player.lastName}`
           : `Extended ${player.firstName} ${player.lastName}`,
-        detail: reSign
+        // The wire is where a GM goes back to ask what a move actually cost
+        // him, and a re-sign that accelerates a stranded bonus costs more
+        // than its APY says. Same sentence the tag path writes.
+        detail: (reSign
           ? `${years}-yr deal, ~$${(apy / 1_000_000).toFixed(1)}M/yr`
-          : `${years}-yr extension, ~$${(apy / 1_000_000).toFixed(1)}M/yr`,
+          : `${years}-yr extension, ~$${(apy / 1_000_000).toFixed(1)}M/yr`)
+          + (stranded > 0 ? ` — plus ${formatMoney(stranded)} of dead money as his old deal's bonus accelerates` : ''),
       },
     });
   });
@@ -875,6 +941,24 @@ export async function restructureContract(opts: {
         signedYear: next.signedYear,
         baseSalaries: writeJson(next.baseSalaries),
         signingBonus: next.signingBonus,
+        // `guaranteed` TRAVELS WITH THE BONUS, IN THE SAME WRITE.
+        // It is stored bonus-inclusive, and every reader subtracts the bonus
+        // back out to find the guaranteed BASE still owed
+        // (guaranteedBaseByYear, lib/cap.ts). Store a rebased bonus beside the
+        // OLD guarantee and the gap between them re-reads as salary the club
+        // still owes, on a schedule that no longer contains the years it was
+        // promised for. Measured on one restructure: stored $45.0M against a
+        // computed $28.7M, and dead-money-on-cut went from $28.7M to $45.0M —
+        // $16.3M invented out of an accounting move.
+        //
+        // The pure function computed this the whole time; this write simply
+        // dropped it, and restructureContractAction patched it back in a
+        // SECOND write outside this transaction. That made the defect latent
+        // rather than fixed: any other caller reintroduced it in full, and a
+        // failure between the two writes left a row broken in exactly this
+        // way with nothing to say so. One write, one transaction, one row that
+        // is never briefly wrong.
+        guaranteed: next.guaranteed,
         voidYears: next.voidYears,
       },
     });

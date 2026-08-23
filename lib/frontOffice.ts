@@ -2,7 +2,8 @@ import { prisma } from './db';
 import { teamNeeds, RosterPlayer } from './ai/gm';
 import { marketValue, formatMoney } from './cap';
 import { CapMode } from './types';
-import { Position } from './tuning';
+import { Position, rosterMinFor } from './tuning';
+import { parseSettings } from './settings';
 import { startersAt, lineupUnit } from './lineup';
 
 /** Position codes as a person would say them in a sentence. */
@@ -86,6 +87,45 @@ export async function buildFrontOfficeBrief(
   const needs = teamNeeds(roster as RosterPlayer[]);
 
   // --- Roster -----------------------------------------------------------
+  /**
+   * BEING SHORT OF BODIES OUTRANKS BEING THIN AT A POSITION, and until now
+   * nothing player-facing said it at all. `LEAGUE.ROSTER_MIN` is read by no
+   * signing, cut, draft or advance path, and INV-20 is a developer's warning
+   * on a screen a GM never opens — so a club could sit twenty-two men short
+   * of the legal minimum, bank the salary, and be told only that its safeties
+   * were a bit thin.
+   *
+   * There is no gate here on purpose. Measured on two leagues off the same
+   * seed, same schedule, same opponents, with the club stripped to its best
+   * 24 men: offense 83.7 -> 79.7, defense 83.9 -> 77.6, a 12-5 season turned
+   * into 7-10, and a point differential of +114 turned into -55. The game
+   * already charges for this, on the field, at about five wins — which is a
+   * far better answer than a button that refuses to advance. What it did not
+   * do was TELL anyone, and a cost a GM cannot see is a cost he cannot decide
+   * against.
+   *
+   * Silent through OFFSEASON and RESIGN for the reason INV-20 is: every
+   * expiring deal has just come off and free agency has not opened, so
+   * essentially every club in the league is briefly under the line by design.
+   */
+  const league = await prisma.league.findUniqueOrThrow({
+    where: { id: leagueId }, select: { phase: true, settings: true },
+  });
+  const rosterMin = rosterMinFor(parseSettings(league.settings).rosterMax);
+  const active = await prisma.player.count({ where: { teamId, status: 'ACTIVE' } });
+  if (active < rosterMin && league.phase !== 'OFFSEASON' && league.phase !== 'RESIGN') {
+    const short = rosterMin - active;
+    items.push({
+      category: 'Roster',
+      headline: `You are ${short} player${short === 1 ? '' : 's'} short of a legal roster`,
+      detail: `${active} men against a ${rosterMin}-man minimum. Every empty slot is filled on Sunday by whoever `
+        + `is standing there, and an injury has nobody behind it — that lands on the scoreboard long before it `
+        + `shows up on the depth chart.`,
+      action: 'Browse Free Agents',
+      href: '/free-agency',
+    });
+  }
+
   const worstNeed = Object.entries(needs).sort((a, b) => b[1] - a[1])[0];
   if (worstNeed && worstNeed[1] > 0.4) {
     items.push({
@@ -215,7 +255,7 @@ export async function buildFrontOfficeBrief(
       // cuts clears the shortfall, and in that state the honest advice is
       // "trade salary away", not "cut your third-best player".
       const best = report.fixable ? (report.path[0] ?? report.relief.find((r) => r.kind === 'CUT')) : null;
-      const { phase } = await prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { phase: true } });
+      const phase = league.phase;
       const blocks = capMode === 'REALISTIC' && report.fixable && capComplianceDueNow(phase);
       items.push({
         category: 'Cap',
@@ -228,6 +268,11 @@ export async function buildFrontOfficeBrief(
             : report.fixable
               ? 'No easy cuts — a trade that sends salary out may be the only way back.'
               : `No combination of cuts gets you under the ceiling — cutting everyone who frees anything clears only ${formatMoney(report.maxCutRelief)}. A trade that sends salary out is the way back.`,
+          // The brief is the one place a GM is told what a problem WILL do to
+          // him if he leaves it, and leaving this one alone is no longer free:
+          // the overage follows him into the next league year as dead money
+          // (settleClosingYearCapOverage, lib/season.ts).
+          !blocks ? 'Left unfixed, whatever you are over by when the season closes carries into next year as dead money.' : null,
         ].filter(Boolean).join(' '),
         action: 'Open Cap',
         href: '/cap',
