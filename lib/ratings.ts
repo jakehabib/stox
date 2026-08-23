@@ -740,4 +740,47 @@ export function ratingColor(v: number): string {
   return 'text-muted';
 }
 
+/**
+ * Colour for a rating the reader is only ever given as a RANGE.
+ *
+ * The app owner, on the draft board: *"some players in the draft are blue,
+ * green etc. doesnt that giveaway the overalls?"* It did. The cell printed
+ * "78-96" — 25 points wide, the median across a real class — while its ink
+ * came off `ratingColor(view.scoutedOvr)`, the fogged CENTRE the reader is
+ * never shown. Measured over 63,470 fogged prospect views in the dev database
+ * that ink landed in the band of the man's TRUE overall 80.2% of the time
+ * (86.5% on the 400-man class the report was filed against, 83.8% on a
+ * controlled re-run of one). The text said "we barely know"; the colour sorted
+ * him into an eight-point tier and was right nearly nine times in ten.
+ *
+ * So the ink comes off the RANGE, and only where the range can be read one way
+ * — both ends in the same band. A range that straddles a boundary gets no tier
+ * at all, because the club does not have one to give. Nothing is claimed that
+ * the printed number does not already say, which is the whole rule: a cell may
+ * not advertise a precision the number it sits on does not have.
+ *
+ * THE COLUMN GOES QUIET, and that is the honest reading of today's band rather
+ * than a design choice. A prospect's displayed range is 25 points wide cold and
+ * 7 wide after a full season on the shortlist, and a rating tier is 5 to 8
+ * points, so a tier colour survives on 0% of a cold class, 1.6% after a season
+ * of work and 8.3% of men flown in for a workout. Ink is now something the
+ * department earns. If that reads as too quiet, the number to argue with is the
+ * BAND, not this function: the band contains the man's true overall 99.7% of the
+ * time (measured), which is not a confidence interval, it is a guarantee — see
+ * the aggregation note in lib/scouting.ts buildScoutedView.
+ *
+ * `low === high` — revealed, fog off, own roster — collapses to exactly
+ * ratingColor(v), so an unfogged board is coloured precisely as it always was.
+ * There the number really is his tier.
+ */
+export function ratingColorForRange(low: number, high: number): string {
+  const ink = ratingColor(low);
+  // The neutral is `text-muted`, the ink every other fogged range in the app
+  // already prints in (the draft recap's ranges, the scouting lanes, The
+  // Selection's "our file"). Grey against a hyphenated span reads as "no
+  // claim", not as "depth" — a tier was never a span, and the span is right
+  // there to be read.
+  return ink === ratingColor(high) ? ink : 'text-muted';
+}
+
 export const ALL_POSITIONS = POSITIONS;

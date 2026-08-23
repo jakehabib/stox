@@ -5,7 +5,7 @@ import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import type { ScoutedPlayerView } from '@/lib/scouting';
 import { loadScoutMods, buildDynastyState } from '@/lib/dynasty';
-import { ratingColor, playerLabel } from '@/lib/ratings';
+import { ratingColorForRange, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE } from '@/lib/tuning';
 import { bandCutoffs, consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
@@ -1579,20 +1579,19 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th>
                   <span className="inline-flex items-center gap-1">
                     <Link href={sortHref('ovr')} scroll={false} prefetch={false} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
-                    {/* THE COLOUR LEGEND GOES ON THE UNFOGGED BRANCH ONLY, and
-                        this board is the reason the rule exists. With scouting
-                        off the cell prints one true number and the ink is
-                        honestly his tier, so the legend belongs. With scouting
-                        ON the cell prints a 25-point range while the ink comes
-                        off `ratingColor(view.scoutedOvr)` — the centre of the
-                        fog — and that ink lands in the band of the man's TRUE
-                        overall about 86.5% of the time across a real class. It
-                        already leaks most of what the range is hiding.
-                        Explaining it here as "the tier he falls in" would
-                        document the leak as a feature and teach every GM to
-                        read the hue instead of the range. Left unexplained on
-                        purpose; the leak itself is a separate call. */}
-                    <Tooltip placement="bottom" text={settings.scoutingEnabled ? tip('scoutedRange') : `${tip('overall')} ${tip('ratingColours')}`} />
+                    {/* The legend used to be withheld here, and the reason it
+                        was withheld is now fixed. The cell's ink came off
+                        `ratingColor(view.scoutedOvr)` — the centre of the fog,
+                        which the reader never sees — under a 25-point range,
+                        and landed in the band of the man's TRUE overall about
+                        86.5% of the time. Documenting that hue as "the tier he
+                        falls in" would have taught every GM to read the colour
+                        and ignore the range. The ink now comes off the range
+                        itself (ratingColorForRange), so on both branches the
+                        legend is simply true, and the glossary says what a
+                        colourless range means. The range is still the thing to
+                        read, so it leads. */}
+                    <Tooltip placement="bottom" text={settings.scoutingEnabled ? `${tip('scoutedRange')} ${define('ratingColours')}` : `${tip('overall')} ${tip('ratingColours')}`} />
                   </span>
                 </th>
                 <th>
@@ -1689,7 +1688,11 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                       </div>
                     </td>
                     <td className="text-muted">{p.age}</td>
-                    <td className={`stat-value text-stat-sm ${ratingColor(view.scoutedOvr)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
+                    {/* Ink off the RANGE, never off view.scoutedOvr — see
+                        ratingColorForRange (lib/ratings.ts) for the measurement
+                        that killed the old call. Revealed rows pass
+                        low === high and colour exactly as before. */}
+                    <td className={`stat-value text-stat-sm ${ratingColorForRange(view.ovrLow, view.ovrHigh)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
                     <td className="text-muted font-mono">{view.potentialRevealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
                     <td>
                       {read && (

@@ -237,7 +237,15 @@ export const GLOSSARY = {
   },
   ratingColours: {
     term: 'Rating colours',
-    definition: 'The colour on a rating is the tier it falls in — gold for elite, then star, quality starter, starter, and grey for depth.',
+    // The range rule sits in the DEFINITION rather than the `why` because the
+    // fogged draft board quotes `define()` here — it already spends the
+    // scouted range's own two sentences on the same bubble — and on that board
+    // the range rule IS the legend. A prospect's cell used to take its ink
+    // from the fogged centre nobody is ever shown, which made the hue a better
+    // read than the range printed on top of it; a span across two tiers now
+    // carries no colour at all, and the sentence saying so has to travel with
+    // the legend or the grey looks like a bug.
+    definition: 'The colour on a rating is the tier it falls in — gold for elite, then star, quality starter, starter, and grey for depth. A scouted range takes a colour only where the whole span sits inside one tier.',
     why: 'Below starter level the colour stays neutral on purpose. Everyone on a roster cannot be exceptional, and colouring the bottom of it only makes the top harder to find.',
   },
   scoutedRange: {

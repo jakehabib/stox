@@ -14,11 +14,19 @@ import type { DynastyScoutMods } from './dynasty';
  *   - an OBSERVED value: truth + noise, where noise shrinks as confidence rises
  *   - a RANGE around it: observed +/- error(confidence, attribute difficulty)
  *
- * Two separate things are modeled deliberately:
+ * Two separate things were meant to be modeled:
  *   1. Bias  — your observation may be centered wrong (you think he's a 78; he's a 71)
  *   2. Spread— how wide a range you're willing to quote
- * Both shrink with confidence, but bias never fully disappears at low
- * confidence, which is what makes draft busts possible.
+ *
+ * ONLY THE SECOND ONE EXISTS. observe() draws each attribute independently
+ * around its true value, and computeOverall then averages a dozen of those
+ * draws, so the noise cancels: at zero scouting the centre of a prospect's
+ * OVR is out by 3.75 rms and the displayed band is +/-12.5. Re-scouting the
+ * same man 240 times moves his mean read by nothing measurable — there is no
+ * correlated term that could hold a club at 78 on a 71. What makes a bust
+ * today is the RANGE being wide, not the read being wrong, and the two are not
+ * the same story. The full measurement, and the two ways of reconciling it,
+ * are in buildScoutedView below, at the lowMap/highMap aggregation.
  *
  * Attributes carry a scoutDifficulty (ratings.ts). A 4.4 forty is measurable;
  * "decision making" is not. So physical attributes converge fast and mental
@@ -359,6 +367,49 @@ export function buildScoutedView(args: {
     };
   });
 
+  /*
+   * ERRORS AVERAGE. BANDS ADD. — the reason the two numbers on the draft
+   * board's OVR cell disagree about the same man, measured rather than argued.
+   *
+   * The CENTRE is computeOverall of ~12 INDEPENDENT per-attribute observations,
+   * so its noise cancels down to sd_attr * sqrt(sum w^2) / sum w — about 0.38
+   * of one attribute's error for a QB, 0.53 for a left tackle. The BAND below
+   * is computeOverall(every attribute at its low) .. computeOverall(every
+   * attribute at its high): every attribute wrong in the SAME direction at
+   * once, which sums instead of cancelling and so keeps the full half-width.
+   *
+   * The result, over a real 400-man class re-observed six times at each level:
+   *
+   *   confidence   displayed band   |centre - truth| rms   truth inside band
+   *        8            25 (+/-12.5)         3.75                 100.0%
+   *       40            16 (+/- 8.0)         2.45                  99.8%
+   *       82             7 (+/- 3.5)         1.12                  99.9%
+   *       95             4 (+/- 2.0)         0.83                  99.8%
+   *
+   * A band that holds the truth 99.7% of the time is not a confidence interval,
+   * it is a guarantee, and it is 4.2x wider than the error it is quoted around.
+   * Two numbers on one cell, one of them theatre — the same shape as the
+   * potential band that opened below a man's own overall (see
+   * flatPotentialBand). Note also that observe() carries NO per-player bias
+   * despite the header of this file promising one: 240 redraws of the same
+   * prospect at confidence 8 leave a per-player mean error of sd 0.39 against
+   * the 0.23 pure noise predicts, i.e. nothing. "You think he's a 78, he's a
+   * 71" cannot happen through independent per-attribute noise on twelve
+   * attributes; it needs a correlated term this file does not have.
+   *
+   * THIS IS LEFT EXACTLY AS IT WAS, deliberately. Both repairs are balance
+   * changes with their own measurements, and lib/tuning.ts is where they land:
+   *   - narrow the band to a quadrature aggregate (25 -> 12 cold, coverage
+   *     90.6%) and the RANGE becomes the leak the colour used to be: +/-6
+   *     around a centre good to 3.75 places every prospect in a tier for free;
+   *   - or give observe() the correlated bias its header claims (sd ~6.8 cold,
+   *     ~1.8 on a full file), which makes today's 25-point band a genuine 90%
+   *     interval, makes busts possible again, and drops an UNSCOUTED club's
+   *     board from rho 0.87 against the truth to 0.79 — against the 0.72 the
+   *     public consensus board every AI club drafts off already scores.
+   * The display is what was fixed today: ratingColorForRange (lib/ratings.ts)
+   * stops the cell claiming a tier this band cannot support.
+   */
   const centerMap: AttrMap = Object.fromEntries(attrs.map((a) => [a.key, a.observed]));
   const lowMap: AttrMap = Object.fromEntries(attrs.map((a) => [a.key, a.low]));
   const highMap: AttrMap = Object.fromEntries(attrs.map((a) => [a.key, a.high]));
