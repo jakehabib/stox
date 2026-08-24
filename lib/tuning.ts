@@ -2918,8 +2918,8 @@ export const COMBINE = {
  * BIAS_SD_MAX is one correlated draw per player per observation, shared by
  * every attribute, so it survives the average instead of cancelling in it.
  * 6.0 was chosen by sweeping 0/3/4/5/5.5/6/6.5/7 against pre-registered bands:
- * it puts the cold error at 6.28 (band/error 2.02, coverage 96.6%), drops the
- * cold board to rho 0.811, and still leaves rho 0.993 and a 1.01 error on a
+ * it puts the cold error at 6.27 (band/error 2.02, coverage 96.6%), drops the
+ * cold board to rho 0.816, and still leaves rho 0.994 and a 1.01 error on a
  * full file — so the scouting tree buys 0.18 of rank correlation where it used
  * to buy 0.08.
  *

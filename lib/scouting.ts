@@ -37,10 +37,12 @@ import type { DynastyScoutMods } from './dynasty';
  *
  * observe() now draws ONE correlated bias per player per observation, shared
  * by every attribute, so it survives the average instead of cancelling in it
- * (SCOUT_FOG in lib/tuning.ts, and the measurement that sized it). Cold error
- * sd 6.28, band/error 2.02, coverage 96.6%, board rho 0.811 — rising to 0.993
- * on a full file. The band did NOT move: what changed is that the number it is
- * quoted around is now wrong by roughly what the band says it might be.
+ * (SCOUT_FOG in lib/tuning.ts, and the measurement that sized it). Over the
+ * same 150 classes: cold error sd 6.27, band/error 2.02, coverage 96.6%, board
+ * rho 0.816 — rising to rho 0.994 and an error of 1.01 on a full file, so the
+ * tree now buys 0.18 of rank correlation instead of 0.08. The band did NOT
+ * move: what changed is that the number it is quoted around is now wrong by
+ * roughly what the band says it might be.
  *
  * Attributes carry a scoutDifficulty (ratings.ts). A 4.4 forty is measurable;
  * "decision making" is not. So physical attributes converge fast and mental
