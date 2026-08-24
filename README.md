@@ -4049,3 +4049,52 @@ ever force-pushed over, so every state below still exists in git history).
   `lib/tuning.ts` half was swept into `8a3786c` by another session's pathspec
   commit while still in the working tree, which is why the comment landed one
   commit ahead of the constant it describes.
+
+- **2026-08-24 — The worst roster in the league was a coin flip, and a worse one
+  bought a kinder cap.** Three requests from the app owner — *"can we force a
+  less ideal cap situation and league worst roster?"*, *"i think it should
+  GUARANTEE the worst roster overall"*, and *"is it also possible to give a
+  draft pick disadvantage?"* — which turned out to be one change, because the
+  old design had them fighting each other. **The rank was never guaranteed.** It
+  came from a strength margin, and strength is only the mean a roster's ratings
+  are drawn around; fifty individual rolls move the finished club two or three
+  points on their own. Widened to 2.2, far past the point of doing damage, it
+  was *still* only 32nd in five leagues of six — and the leagues it did win
+  opened 10 to 15 rating points clear of the field, won 1.3 games and carried up
+  to **$71.0M** of cap room, because a worse roster is a cheaper roster and a
+  cheaper roster has money. So the rank is now **conditioned on rather than
+  sampled for**: the generator draws a roster, and if it is not below the
+  league's floor it lowers the strength *by the amount it missed by* and draws
+  again — the floor being the lowest of thirty-one rosters, an extreme order
+  statistic, is exactly why a fixed step had to inch down and why inching down
+  wrecked the club. It then keeps the dearest roster that still loses rather
+  than the first one it finds. `dealLastPlaceRoster` returns a roster below the
+  field **or it throws**, so a league that cannot show the club last is never
+  written: the guarantee is a postcondition, not a frequency. It measures with
+  `teamOverallFrom`, which is now the same function `buildLeagueRatings`
+  computes the dashboard's Team Overall with, split out rather than copied.
+  Measured over **300 leagues in memory: 32nd of 32 in all 300**, median 0.63
+  rating points below the field, the walk settling in 1.84 attempts against a
+  bound of 200 — and 32nd in all **10** leagues generated end to end. **The cap
+  room is now the quantity that is drawn**, with everything else solved to fit
+  behind it: a lognormal, positive at every input because it is an exponential,
+  bent toward a floor it never reaches and a ceiling it never reaches. `used =
+  ceiling - room` with `room > 0` is the whole proof that a save is never dealt
+  an over-cap sheet — which matters because the season will not advance while
+  the club is over the ceiling, so such a save is unplayable. Measured across
+  ten leagues: **$1.77M to $5.71M**, all under the ceiling, all advancing out of
+  week one untouched. **Bad contracts are what close the gap**, per the owner:
+  *"we can ofc give players bad contracts no?"* The count of inherited deals is
+  an outcome now rather than a draw — the generator keeps signing the last
+  regime's mistakes until the books reach their target, so a cheap wreck takes
+  more and a costlier roll fewer, and every one is still priced at what that man
+  was worth at his peak through the same `marketValue` the rest of the game
+  quotes. Nobody is paid an invented number; there are simply as many of them as
+  it takes. Measured: **5 to 14, median 8**. And **two to five draft picks are
+  gone**, weighted to early rounds and early years, modelled as trades rather
+  than deletions so every round still holds 32 picks and the draft screen
+  already renders them struck through with the club that now owns them — never
+  more than two from one draft, and an early pick always survives in each of the
+  first three, both enforced by redrawing rather than clipping. The club wins
+  **1.13 to 5.75 games, mean 2.88**; that is harder than before and it is the
+  point. Commit `7955804`.
