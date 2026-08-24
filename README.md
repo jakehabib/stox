@@ -3931,3 +3931,106 @@ ever force-pushed over, so every state below still exists in git history).
   colour still reads only the printed range, so nothing on screen changed except
   that the number the band is quoted around is now wrong by roughly what the band
   says it might be. Commit `1858e9d`.
+
+- **2026-08-24 — The consensus board could not find the best player in the
+  class.** A generational prospect sat at pick 24 and the board's number one
+  was routinely a man nobody had scouted: **47% of consensus #1s were misfiled
+  or blind reads** against a 21% class-wide rate, because the room's evaluation
+  error was applied flat across all 400 names and the extreme of a fat-tailed
+  error over 400 names is the fat tail. Fixed with EXPOSURE — a watched man is
+  read more tightly and the upward half of the error is damped on men nobody
+  watched. A generational prospect now goes top-5 **14.8% → 22.7%** of the
+  time, top-10 25.2% → 36.9%, round 1 60.4% → 75.7%, and the three tiers are a
+  visible ladder (22.7 / 17.4 / 9.5 top-five) where they used to be
+  indistinguishable. Two more clamp walls of the family this codebase has been
+  removing all day went with it: the room's perceived ceiling was clamped at 99
+  so **37% of men rated 88+ came back at exactly 99**, and the finished grade
+  was clamped so **5.3 men a class tied at the very top of the board**, ordered
+  by nothing but positional value. Commit `136111f`.
+- **2026-08-24 — A ceiling revision reached the news wire labelled
+  DEV_PROJECTION.** Commit `366173c`.
+- **2026-08-24 — A 335lb guard was jumping 41 inches and running a 3.80
+  shuttle.** Every combine drill was a linear function of one hidden number
+  printed six times — forty↔bench correlated at **0.953** where real football
+  is near 0.15 — and only the forty was anchored per position, so a left
+  tackle and a corner were scored against the same 28-inch vertical. Three
+  clamp piles went with it: **3.80s held 29.35% of every class's shuttle
+  times**, 44.7× the count one step in, and it is a time no human has run.
+  Now every position's mean is within 0.01s of the real NFL figure, each drill
+  correlates with the attribute it is supposed to measure (0.55–0.59 against
+  ~0.36 for everything before), and the extremes hold 0.01% instead of 29%.
+  Commit `1264738`.
+- **2026-08-24 — The draft board's top man was already the best in the class,
+  for free.** Picking the highest number was a solved puzzle. Scouting error
+  was applied per attribute, so it averaged away inside `computeOverall`; it is
+  one correlated bias per player per look now, which survives the average. On
+  a cold board the true best man is the top-rated name **28.0% → 16.7%** of the
+  time and the board's rank correlation with truth falls 0.917 → 0.816 — while
+  **scouting spend now visibly buys accuracy**, error sd falling
+  6.27 → 5.29 → 3.91 → 2.76 → 1.60 → 1.01 as confidence climbs. Commits
+  `1858e9d`, `fa1e7e4`, `3dd5316`.
+- **2026-08-24 — The scouting room called every corner a freak and every guard
+  a plodder.** `publicAthleticism` inverted the generator by hand and anchored
+  only the forty; the other four drills were scored against flat league-wide
+  constants that held only while every position tested identically. Once the
+  combine was anchored per position, the room read the difference as talent:
+  **spread across positions 0.271** (CB 0.648, LG 0.377) and the within-position
+  spread the stopwatch bias needs collapsed to 0.173. Now reads the same anchor
+  table the numbers were generated from — spread **0.031**, every position
+  0.506–0.537, within-position sd back to 0.288. Commit `12abdac`.
+- **2026-08-24 — A rookie who sat all year learned nothing, and playing time
+  was the only teacher.** Development had one input: an age curve times a
+  hidden trait. `progressPlayer` took no stats, no snaps, no production, so a
+  rookie who started seventeen games and a rookie who never dressed developed
+  identically. Measured consequence over n=12,890: an under-24 gained a median
+  of **+1 a season**, 17% of them got worse, a +5 year was **1 in 516**, and
+  four of every five drafted men never got within three points of the ceiling
+  printed on their own card. This lands the performance-linked model — playing
+  time, production against a per-position expectation fitted from the league
+  each year, and ceiling revision — plus the rookie learning year the app owner
+  asked for: *"idle players, especially in their rookie year can still develop
+  (like a backup QB sitting behind a veteran)"*, at his own figures, **70% in
+  year one and 55% after**, against a full-time starter's 1.00. Playing always
+  wins, by construction: both are floors under the same taper, verified across
+  the whole role range with **0 roles where sitting beats playing**. Measured on
+  4,000 real first-year players, an idle rookie gains mean **+1.22 → +1.62**,
+  median +1 → +2, best +7 → +9. Commit `8a3786c`.
+- **2026-08-24 — The best prospects in the game were the least likely to reach
+  their ceilings.** Over five-season careers a generational prospect arrived
+  within three points of his ceiling **40.2%** of the time against **73.2%** for
+  a man below the Star band — the better a player was supposed to become, the
+  less likely the game was to let him become it. The app owner's design: *"If a
+  player is star - they get a small multiplier added to their growth, all star
+  is a bit higher, franchise is a bit higher, and generational is the fastest."*
+  Growth now carries a multiplier keyed on a man's CEILING, read off the same
+  bands his card is labelled from — Generational 1.45, Franchise 1.30, All-Star
+  1.18, Star 1.08, everyone else 1.00 and unchanged bit for bit. Measured on
+  6,000 real first-year players with the ladder neutralised in one arm and live
+  in the other: Generational **40.2% → 61.4%**, Franchise 37.4% → 50.8%,
+  All-Star 45.2% → 52.6%, Star 52.7% → 56.9%, below Star 73.2% → 73.2%. The
+  league-wide mean peak rises only **0.37**, which is the point — it lifts the
+  men it is meant to lift without inflating the league, and that is the headroom
+  rookie entry ratings need in order to come down. Growth only, never decline:
+  applying 1.45× past a man's peak would have the best players in the league
+  falling apart fastest. Commit `ff4b485`.
+- **2026-08-24 — A ceiling was five and a half times readier to fall than to
+  climb.** Erosion 0.30 against a rise rate of 0.055, and the whole shape of
+  development fell out of that ratio: a −5 season was **15× more common** than a
+  +5, worst fall −16 against best rise +10, breakout 1 in 516. The promotion
+  ladder already existed — outproduce your rating with real playing time and
+  your ceiling climbs toward 99 — but almost nobody climbed it. Erosion is 0.18
+  now, a ratio of 3.27:1, still well above the 0.155 that measured as invisible
+  in a career histogram, so busts stay real. Missing on a prospect is still
+  easier than breaking out; it is no longer the dominant force in every career.
+  Commit `b3900cb`.
+- **2026-08-24 — Every league started you somewhere decent, and nobody could
+  ask for a wreck.** THE REBUILD: a third start mode beside the fantasy draft.
+  Worst roster in the league, a rough but not impossible cap, and an ironman
+  lock enforced server-side — normal difficulty, no forced trades, no
+  difficulty change, a flat cap year to year, no changeable settings. The
+  player may leave for a normal unlocked save at any time and may never go
+  back, and a save not founded in REBUILD can never become one. Seasons to a
+  first title is its own leaderboard category. Winning it is a massive deal
+  rather than the same box as any other title: a dedicated run page with every
+  move, the record and the game won, and a pop-out GM card. Commits `d7b54c6`,
+  `98f2caa`, `8688641`.
