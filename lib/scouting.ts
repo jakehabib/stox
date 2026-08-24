@@ -242,10 +242,32 @@ const POT_SCALE_MAX = 99;
  * ceilings map to the same band (a 94 and a 99 both read 89-99), which is
  * strictly more ambiguity than the middle of the scale, never less.
  */
+/**
+ * Slide a band of fixed width onto the scale instead of cutting it off at the
+ * ends. Shared by the veteran's flat band and the prospect's scouted one,
+ * because both had the same leak and one of them had already fixed it.
+ *
+ * A CUT BAND IS NARROWER THAN AN UNCUT ONE, AND WIDTH IS A TELL. Measured over
+ * 4,800 fogged prospects at the confidence a new class actually arrives with,
+ * 36.9% of them showed a potential band ending on exactly POT_SCALE_MAX and
+ * the displayed widths ran from 20 to 40 points — so a four-point "95-99" cell
+ * sitting beside a forty-point one announced the elite ceiling that the band
+ * exists to conceal. Shifted, every man at a given confidence shows the SAME
+ * width, and several different ceilings map to the same band near the ends,
+ * which is strictly more ambiguity than the middle of the scale and never
+ * less.
+ */
+function slideBand(center: number, half: number, lo: number, hi: number): { low: number; high: number } {
+  const width = Math.round(Math.min(2 * half, hi - lo));
+  const low = clamp(Math.round(center - width / 2), lo, hi - width);
+  return { low, high: low + width };
+}
+
 export function flatPotentialBand(potential: number, currentOvr?: number): { low: number; high: number } {
-  const width = POT_FLAT_HALF_BAND * 2;
   const truth = clamp(Math.round(potential), POT_SCALE_MIN, POT_SCALE_MAX);
-  const low = clamp(truth - POT_FLAT_HALF_BAND, POT_SCALE_MIN, POT_SCALE_MAX - width);
+  // Same slide the scouted band uses — one copy, so the two cannot drift.
+  const { low } = slideBand(truth, POT_FLAT_HALF_BAND, POT_SCALE_MIN, POT_SCALE_MAX);
+  const width = POT_FLAT_HALF_BAND * 2;
 
   /*
    * A CEILING CANNOT SIT BELOW WHERE THE MAN ALREADY IS.
@@ -476,8 +498,12 @@ export function buildScoutedView(args: {
     scoutedOvr: computeOverall(position, centerMap),
     ovrLow: computeOverall(position, lowMap),
     ovrHigh: computeOverall(position, highMap),
-    potLow: clamp(Math.round(potCenter - potBand), POT_SCALE_MIN, POT_SCALE_MAX),
-    potHigh: clamp(Math.round(potCenter + potBand), POT_SCALE_MIN, POT_SCALE_MAX),
+    // SHIFTED, NOT CUT — see slideBand. This was a pair of clamps onto
+    // POT_SCALE_MIN/MAX, which piled 36.9% of a live class onto a potHigh of
+    // exactly 99 and made the surviving band NARROWER for exactly the men
+    // whose ceilings the fog is there to hide.
+    potLow: slideBand(potCenter, potBand, POT_SCALE_MIN, POT_SCALE_MAX).low,
+    potHigh: slideBand(potCenter, potBand, POT_SCALE_MIN, POT_SCALE_MAX).high,
     confidence,
     revealed: false,
     // A prospect's ceiling is the hardest number in the game to know and is

@@ -562,13 +562,18 @@ something here, the principle wins and the change is wrong.
   order, which is what stops it being a free click — is the closest honest
   answer. It fires more often than the real rule's playing-time leg does, so
   more first-rounders reach the transition-tag tier here than in the real sport.
-- No AI club has ever used the franchise tag. `applyFranchiseTag` exists and
-  the user can use it, but no AI path calls it — measured, a 99 QB whose club
-  held $50.9M of room walked to the market because it could not fit his ask
-  after reserve. A real club tags him. Since `eb7d87b` the tag is no longer
-  the cheapest move on the board either — it books the tagged man's
-  unamortised signing bonus as dead money, the same way a cut does — so an AI
-  caller would have a real cost to weigh rather than a free one.
+- The franchise tag has no escalating price for putting it on the same man
+  twice. Real football charges 120% of the first tag to tag him a second year
+  and 144% for a third; `franchiseTagValue` knows exactly one price, and a
+  `Contract` row carries `isFranchiseTag` but no count of how often. So an AI
+  club refuses a second consecutive tag outright rather than quote a price the
+  user's own screen would not (lib/season.ts, THE ONE MAN THE CLUB WILL NOT
+  LET WALK FOR NOTHING) — the conservative half of the real rule — while the
+  user, who has no such gate, pays the same money the second time as the
+  first. Related and also deliberate: the re-sign page's *"Let the AI pick"*
+  button never spends the user's tag. It is a once-a-year irreversible move
+  with its own priced confirm step, and a delegate that burned it silently
+  would take that decision away with no way back.
 - A fantasy draft's player POOL is a league and a half of talent — about 1,956
   undifferentiated draws with no camp-body tail, median 77 against the
   randomized generator's 73. Priced at market, the 1,696 men who get drafted
@@ -586,6 +591,18 @@ always a plain-English trail back to "what did this look like before." To
 undo anything, ask to revert to a commit below (or the app owner can do it
 directly: `git revert <hash>`, or check out an earlier commit — nothing is
 ever force-pushed over, so every state below still exists in git history).
+
+- **2026-08-24 — A four-point ceiling band next to a forty-point one told you
+  which prospect was elite.** The scouted POTENTIAL range was clamped to the
+  ends of the rating scale rather than slid onto it, so a prospect whose
+  ceiling read near the top got a *shorter* range than everyone else — and the
+  length of the cell became the tell the cell exists to hide. Measured over
+  4,800 fogged prospects at the confidence a new draft class arrives with,
+  36.9% ended on exactly 99 and the widths ran from 20 points to 40. The window
+  now slides, sharing one helper with the established-player band that had
+  already been fixed the same way, so every prospect at a given confidence
+  shows the same width and several ceilings map to the same range near the
+  ends. Nothing else about the fog moves. Shipped in `a4d8970`.
 
 - **2026-08-20 — Visual redesign kickoff.** Starting a staged visual
   redesign (design tokens → dashboard → player page → rest of the app) to
