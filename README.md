@@ -666,7 +666,7 @@ ever force-pushed over, so every state below still exists in git history).
   thinned as intended: the highest catch rate seen fell from 0.900 to 0.889.
   The helper (`softBound` in `lib/rng.ts`) carries the reasoning and the
   measurement so the eighth instance is caught by reading rather than by
-  rediscovery. Shipped in `HASHPLACEHOLDER`.
+  rediscovery. Shipped in `def03df`.
 
 - **2026-08-24 — Cap space jumped $8M between two screens and nothing said
   why.** Four screens across the end of a season read $918K, $9.07M, $27.0M and
