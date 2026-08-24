@@ -647,6 +647,33 @@ undo anything, ask to revert to a commit below (or the app owner can do it
 directly: `git revert <hash>`, or check out an earlier commit — nothing is
 ever force-pushed over, so every state below still exists in git history).
 
+- **2026-08-24 — A receiver caught 158 passes for 1,444 yards and every man on
+  his club averaged the same yards a catch.** Yards per reception was flat
+  across a whole offence: measured over 24 replayed league-seasons, WR1 10.81,
+  WR2 10.80, WR3 10.80, TE1 10.79 and RB1 10.78 — a checkdown to the third-down
+  back worth the same as a go route, where the NFL runs 12.9 / 10.8 / 7.6 by
+  position. That flat column also capped the receiving record book, because a
+  leading receiver's total is his catches times exactly that number. Separately,
+  every club in the league shared the ball out identically: the lead back's
+  share of his backfield's carries was 57.3% for everybody (real clubs run 40%
+  to 88%), so the leading rusher each year was simply the best club's starter
+  and the leader board had no tail at all — 260 / 266 / 272 carries for its
+  median, p90 and best of twenty-four. `roleTendency` in `lib/sim/tendency.ts`
+  is now `passTendency`'s opposite number: that one says how often a club throws
+  it, this one says who it throws it to. Leader per season, before → after
+  against real: rushing yards 1,385 → 1,771 (1,700-2,000), carries 258 → 380
+  (300-380), receiving yards 1,455 → 1,744 (1,700-1,900), tight end 748 → 1,018
+  (1,000-1,200), receptions 126 → 134 (110-135). Passing, sacks and every team
+  result are untouched — all 6,528 game scores are bit-identical across the
+  pair, because none of this is in the drive loop. The fabricated backstory in
+  `lib/gen/leagueHistory.ts` was re-fitted to match, and it matters more than it
+  sounds: of 996,059 completed player-seasons in the development database,
+  803,798 are seeded rather than simulated, so four rows in five on a stat
+  leaders page never went through the sim at all — its backs were catching passes
+  for 4.15 yards apiece. The stats and news mastheads also now name the phase,
+  so playoff week 1 no longer reads "2029 · WEEK 1" exactly like the opening
+  Sunday. Shipped in `daf59c7`.
+
 - **2026-08-24 — Two agents broke the shared tree the same way, so the
   procedure is now written down instead of re-learned.** A new *Working on
   this repo alongside other agents* section records the three hazards that
