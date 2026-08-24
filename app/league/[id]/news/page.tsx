@@ -8,7 +8,7 @@ import { AWARD_TYPES, AWARD_CODE } from '@/lib/awardTypes';
 const TYPE_LABELS: Record<string, string> = {
   ALL: 'All', NEWS: 'Performances', TRADE: 'Trades', SIGN: 'Signings', CUT: 'Releases',
   DRAFT: 'Draft', INJURY: 'Injuries', RESIGN: 'Re-signs', TAG: 'Tags', CHAMPION: 'Championships', FIRE: 'Firings',
-  DEV_MILESTONE: 'Development', POSITION: 'Position Changes',
+  DEV_MILESTONE: 'Development', DEV_PROJECTION: 'Projections', POSITION: 'Position Changes',
   // Trophies get the SHORT form here — these are filter chips and badges in a
   // dense feed, the one place a full "Offensive Rookie of the Year" will not
   // fit. Spread off the shared list so a new award cannot arrive with no
@@ -22,7 +22,11 @@ const TYPE_LABELS: Record<string, string> = {
 // after a draft class lands a couple of dozen land league-wide in one step,
 // and "who reshaped their line this year" is a question the unfiltered wire
 // cannot answer once the week's signings are on top of them.
-const FILTERS = ['ALL', 'NEWS', 'TRADE', 'SIGN', 'RESIGN', 'CUT', 'POSITION', 'DRAFT', 'INJURY', 'CHAMPION', 'FIRE', 'DEV_MILESTONE'];
+// DEV_PROJECTION — a club revising what it thinks a player will become, up or
+// down. Its own chip rather than sharing Development's, because a ceiling
+// coming down is the one piece of development news a GM goes looking for and
+// it must not be buried under stat-leader filler.
+const FILTERS = ['ALL', 'NEWS', 'TRADE', 'SIGN', 'RESIGN', 'CUT', 'POSITION', 'DRAFT', 'INJURY', 'CHAMPION', 'FIRE', 'DEV_MILESTONE', 'DEV_PROJECTION'];
 
 const TYPE_STYLE: Record<string, string> = {
   NEWS: 'border-accent2/30 text-accent2 bg-accent2/10',
@@ -40,6 +44,9 @@ const TYPE_STYLE: Record<string, string> = {
   // the club did on the market.
   POSITION: 'border-line text-chalk bg-chalk/[0.06]',
   DEV_MILESTONE: 'border-accent2/30 text-accent2 bg-accent2/10',
+  // Chalk, like a position change: a revised projection is neither good news
+  // nor bad news league-wide — the same chip carries both directions.
+  DEV_PROJECTION: 'border-line text-chalk bg-chalk/[0.06]',
   // Every trophy wears the same gold, so this is generated off the one list
   // rather than written out per type — five hand-copied identical lines is
   // how the sixth award ends up rendering unstyled.
@@ -60,7 +67,7 @@ const TYPE_WEIGHT: Record<string, number> = {
   AWARD_OPOY: 2, AWARD_DPOY: 2, AWARD_OROTY: 2, AWARD_DROTY: 2, AWARD_ROTY: 2,
   FIRE: 2, TRADE: 2, DRAFT: 2,
   SIGN: 1, RESIGN: 1, TAG: 1, CUT: 1, POSITION: 1,
-  NEWS: 0, INJURY: 0, DEV_MILESTONE: 0,
+  NEWS: 0, INJURY: 0, DEV_MILESTONE: 0, DEV_PROJECTION: 1,
 };
 
 export default async function NewsPage({ params, searchParams }: { params: { id: string }; searchParams: { type?: string; page?: string } }) {
