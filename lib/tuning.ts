@@ -2274,10 +2274,28 @@ export const AI = {
    */
   MARKET: {
     /**
-     * [TUNE] Executed in-season trades per league-season, league-wide. 15
-     * against a real 35-40. About one deal per two clubs per season.
+     * [TUNE] 30 — and this is the number of deals the pass will TRY to place
+     * across an in-season league year, not the number it lands. It lands about
+     * 29% of them: measured 8.7 executed trades per league-season across six
+     * generated leagues, with 2.7 of those in the deadline advance itself.
+     *
+     * THE GAP IS NOT SLIPPAGE, IT IS THE GUARANTEE. Both clubs must clear
+     * their own bar (see MIN_MUTUAL_EDGE for the algebra), so a candidate the
+     * seller likes and the buyer merely tolerates is refused rather than
+     * rounded into a gift. Most pairings in a league genuinely have no deal in
+     * them, which is also true of the real sport.
+     *
+     * TO GET MORE TRADES, in order of how much else it disturbs: raise this
+     * (linear-ish, with diminishing returns as the per-club and elite caps
+     * start to bind — doubling it from 15 bought +34%); or narrow
+     * TRADE_VALUE.SPREAD, which is what actually sets the ceiling, and which
+     * changes the player's own market as much as this one. Do not reach for
+     * the two-sided gate; that is the thing keeping this market honest.
+     *
+     * For scale: the real in-season market runs 35-40 trades a year across 32
+     * clubs, so 8.7 is a quiet league by design — see the block above.
      */
-    SEASON_TARGET: 15,
+    SEASON_TARGET: 30,
     /**
      * How hard the season's business bunches at the deadline, in weeks of
      * e-folding. The weekly share is exp((week - deadline) / this), normalised
@@ -2303,15 +2321,38 @@ export const AI = {
      */
     MAX_EVAL_CALLS_PER_TICK: 60,
     /**
-     * Candidate deals built per deal wanted, before giving up on the tick.
-     * [TUNE] 4. About 70% of candidates are refused by one side or the other —
-     * which is correct, they are guesses — so at 3 the pass delivered 10.4
-     * trades against a SEASON_TARGET of 15 and the constant did not mean what
-     * it said. Looking harder is the honest fix for that; quietly raising the
-     * target to compensate would have left a number in this file that no
-     * measurement matched.
+     * THE HURDLE A DEAL HAS TO CLEAR, DERIVED RATHER THAN GUESSED — used to
+     * throw a candidate away in memory before either club is asked about it.
+     *
+     * Both sides must accept, and each is charged twice on the way: the club
+     * giving a man up wants its own valuation plus SPREAD.POACH_PREMIUM plus
+     * TRADE_ACCEPT_RATIO; the club taking him on writes him down by
+     * SPREAD.DUMP_HAIRCUT and wants TRADE_ACCEPT_RATIO on top of that. Write
+     * both bars out, cancel the package, and what is left is a condition on
+     * the two clubs alone:
+     *
+     *     (buyer's price for the man / seller's price for the man)
+     *   x (seller's price for a pick / buyer's price for a pick)
+     *   >=  1.04 x 1.07 / 0.93  =  1.20
+     *
+     * A pairing under that line cannot produce a deal at ANY package, so
+     * asking is two 30ms adjudications spent on a certain no.
+     *
+     * [TUNE] 1.24 rather than the bare 1.20 — a small margin for the fit and
+     * scarcity terms the screen cannot see. IT IS A FLOOR ON ASKING, NEVER A
+     * VERDICT: clearing it buys a candidate the right to be put to both clubs
+     * and nothing else. Every yes in lib/aiMarket.ts still comes from
+     * evaluateTrade, twice.
      */
-    ATTEMPTS_PER_DEAL: 4,
+    MIN_MUTUAL_EDGE: 1.24,
+    /**
+     * Candidate deals built per deal wanted, before giving up on the tick.
+     * [TUNE] 12. It was 4 while every candidate cost two adjudications; with
+     * MIN_MUTUAL_EDGE screening the hopeless ones out in memory a rejected
+     * candidate is nearly free, so the budget above is spent on pairings that
+     * have a real chance instead of on certain refusals.
+     */
+    ATTEMPTS_PER_DEAL: 12,
     /**
      * ONE SWEETENER. If the selling club is short but inside its counter
      * window, the shortlist adds the next pick and asks once more — which is
@@ -2381,11 +2422,6 @@ export const AI = {
      * barely paying for itself even in the arithmetic.
      */
     MAX_PACKAGE_PICKS: 3,
-    /**
-     * ...and a pick worth less than this share of the ask is not part of the
-     * deal, it is confetti. Keeps the last piece of a package meaningful.
-     */
-    MIN_PIECE_SHARE: 0.06,
   },
 
   DRAFT_POSITION_VALUE: {

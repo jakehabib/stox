@@ -330,11 +330,48 @@ function eligibleSeller(c: Club, ctx: MarketContext): boolean {
  * shape this market exists to produce, so it is the shape the generator starts
  * from. Retooling clubs play both sides, less often.
  */
-function sellerWeight(c: Club): number {
+function windowSellerWeight(c: Club): number {
   return c.window === 'Rebuilding' ? 3 : c.window === 'Retooling' ? 1 : 0.25;
 }
-function buyerWeight(c: Club): number {
+function windowBuyerWeight(c: Club): number {
   return c.window === 'Win-Now Contender' ? 3 : c.window === 'Retooling' ? 1 : 0.25;
+}
+
+/**
+ * WHAT THIS CLUB PAYS FOR PAPER, as a multiple of the chart — DERIVED BY
+ * ASKING `pickValue`, never by restating its formula here. The bias it applies
+ * (valuePicks and winNow, see lib/ai/gm.ts) is a real number with one
+ * implementation, and a second copy of it in this file would be a second
+ * opinion about the same club the day either one is retuned.
+ */
+function pickPremium(c: Club, ctx: MarketContext): number {
+  const mid = Math.ceil(LEAGUE.TEAM_COUNT / 2);
+  const year = ctx.draft.imminentYear ?? ctx.seasonYear;
+  return pickValue(1, mid, c.profile, year, ctx.seasonYear, ctx.draft.imminentYear) / PICK_VALUE_CHART(mid);
+}
+
+/**
+ * ...AND THE GAP BETWEEN TWO CLUBS' READINGS OF A PICK IS WHY A TRADE CAN
+ * EXIST AT ALL.
+ *
+ * Both sides have to clear their own bar, so a deal is only possible where the
+ * two clubs disagree about what is being exchanged — the seller must think the
+ * picks are worth more than the buyer thinks they are worth. Measured, that is
+ * not a rounding error: pickValue's own bias spans roughly 0.62x to 1.38x of
+ * the chart across the league.
+ *
+ * Selecting partners at random ignored it, and the refusals said so — the
+ * buyer turned down 128 of 176 candidates while the seller turned down 4,
+ * because the package was sized to satisfy a seller who valued picks dearly
+ * and then handed to a buyer who valued them the same way. Weighting the draw
+ * toward clubs on opposite sides of that spread is not a thumb on the scale;
+ * it is what a general manager does when he decides who to call.
+ */
+function sellerWeight(c: Club, ctx: MarketContext): number {
+  return windowSellerWeight(c) * pickPremium(c, ctx);
+}
+function buyerWeight(c: Club, ctx: MarketContext): number {
+  return windowBuyerWeight(c) / Math.max(0.3, pickPremium(c, ctx));
 }
 
 function weightedPick<T>(items: T[], weight: (t: T) => number, rng: Rng): T | null {
@@ -351,13 +388,13 @@ function weightedPick<T>(items: T[], weight: (t: T) => number, rng: Rng): T | nu
  */
 async function shortlist(ctx: MarketContext, rng: Rng, window: MarketWindow): Promise<Candidate | null> {
   const sellers = ctx.clubs.filter((c) => eligibleSeller(c, ctx));
-  const seller = weightedPick(sellers, sellerWeight, rng);
+  const seller = weightedPick(sellers, (c) => sellerWeight(c, ctx), rng);
   if (!seller) return null;
   const buyers = ctx.clubs.filter((c) =>
     c.id !== seller.id
     && eligibleSeller(c, ctx)
     && !ctx.recentPair.has(pairKey(seller.id, c.id)));
-  const buyer = weightedPick(buyers, buyerWeight, rng);
+  const buyer = weightedPick(buyers, (c) => buyerWeight(c, ctx), rng);
   if (!buyer) return null;
 
   if (window === 'DRAFT') return pickSwap(seller, buyer, ctx, rng);
@@ -383,7 +420,29 @@ async function shortlist(ctx: MarketContext, rng: Rng, window: MarketWindow): Pr
       const wanted = Math.max(need, fit.score);
       const expiringVeteran = p.age >= M.VETERAN_MIN_AGE && (p.contract?.yearsRemaining ?? 9) <= M.VETERAN_MAX_YEARS_LEFT;
       const sellerLean = seller.window === 'Rebuilding' ? (expiringVeteran ? 2.5 : 1) : expiringVeteran ? 1.2 : 0.5;
-      return { p, score: wanted * sellerLean * (fit.starts ? 1.4 : 1) };
+      /*
+       * CLUBS TRADE FROM SURPLUS INTO NEED, and until this line the generator
+       * only modelled the second half of that.
+       *
+       * Both clubs have to clear their own bar, and the two spreads make that
+       * a real hurdle: the seller wants his price plus the poach premium plus
+       * his negotiating margin, the buyer takes the dump haircut and wants his
+       * margin too, so a deal is only possible when
+       *
+       *     (what the buyer thinks of the man / what the seller thinks of him)
+       *   x (what the seller thinks of picks / what the buyer thinks of picks)
+       *   >= about 1.24
+       *
+       * The second factor is the club windows, already weighted in the draw
+       * above. The first is THIS: a man his own club plays every snap is
+       * priced at the top of its need band, and no buyer can out-bid a club
+       * for its own starter by enough to cover the spread. A man who is depth
+       * where he sits and a starter where he is going is priced at the bottom
+       * of one band and the top of the other, and that is the trade.
+       */
+      const atHome = rosterFit(p as unknown as RosterPlayer, seller.roster);
+      const surplus = atHome.starts ? 0.6 : 2.2;
+      return { p, score: wanted * sellerLean * surplus * (fit.starts ? 1.4 : 1) };
     })
     .filter((c) => c.score > 0.25)
     .sort((a, b) => b.score - a.score)
@@ -396,10 +455,40 @@ async function shortlist(ctx: MarketContext, rng: Rng, window: MarketWindow): Pr
   // Not everybody on a roster is a trade. See MIN_ASSET_ROUND.
   if (sellerPrice < MIN_ASSET_VALUE) return null;
 
+  /*
+   * THE CHEAPEST NO IN THE FILE, and the reason a wide search is affordable.
+   *
+   * See AI.MARKET.MIN_MUTUAL_EDGE for the derivation: with both clubs charged
+   * a spread and a negotiating margin, a pairing whose combined edge is under
+   * the hurdle cannot produce a deal at ANY package. Both quantities are
+   * already in memory here, so the candidate dies for nothing instead of
+   * costing two 30ms adjudications to be told the same thing.
+   *
+   * IT ONLY EVER SAYS NO. Clearing this screen buys a candidate the right to
+   * be asked about and nothing else — every yes in this module still comes
+   * from evaluateTrade, twice.
+   */
+  const buyerCap = await capSpaceFor(buyer, ctx);
+  const buyerPrice = priceFor(buyer, man as unknown as RosterPlayer, ctx, buyerCap);
+  const currencyGap = pickPremium(seller, ctx) / Math.max(0.05, pickPremium(buyer, ctx));
+  if (buyerPrice * currencyGap < M.MIN_MUTUAL_EDGE * sellerPrice) return null;
+
   // What the seller will want for him, in the seller's own currency, before
   // the adjudicator is asked. Deliberately the seller's number: he is the one
   // who has to be talked into it.
-  const ask = sellerPrice * (1 + TRADE_VALUE.SPREAD.POACH_PREMIUM.NORMAL) * AI.TRADE_ACCEPT_RATIO;
+  /*
+   * THE OPENING OFFER IS DELIBERATELY UNDER THE SELLER'S LINE.
+   *
+   * His actual threshold is this times AI.TRADE_ACCEPT_RATIO — the negotiating
+   * margin he wants on a deal he did not propose. Sizing the first package to
+   * meet that exactly satisfied him almost every time (he refused 4 of 176)
+   * and priced the buyer out of nearly all of them. Opening at the poach
+   * premium alone puts a cheaper deal in front of the buyer first, and the one
+   * sweetener below is what closes the remaining margin when the seller says
+   * "close, but we need a bit more" — which is the conversation those two
+   * constants describe, actually had.
+   */
+  const ask = sellerPrice * (1 + TRADE_VALUE.SPREAD.POACH_PREMIUM.NORMAL);
   if (ask <= 0) return null;
 
   // The CHEAPEST pile of the buyer's picks that covers it, priced the way the
@@ -418,22 +507,28 @@ async function shortlist(ctx: MarketContext, rng: Rng, window: MarketWindow): Pr
     .map((pk) => ({ id: pk.id, value: priceOfPick(seller, pk, ctx) }))
     .sort((a, b) => a.value - b.value);
   const chosen: { id: string; value: number }[] = [];
-  for (let i = priced.length - 1; i >= 0; i--) {
-    // Walk up from the cheapest pick that could matter: take the largest
-    // single pick still under the outstanding ask, then fill the remainder the
-    // same way. That lands on "a second and a fourth" where the descending
-    // walk landed on "a first".
+  for (let i = 0; i < M.MAX_PACKAGE_PICKS; i++) {
     const outstanding = ask - pileValue(chosen.map((c) => c.value));
     if (outstanding <= 0) break;
     const remaining = priced.filter((pk) => !chosen.some((c) => c.id === pk.id));
-    const fit = remaining.filter((pk) => pk.value <= outstanding).pop() ?? remaining[0];
-    if (!fit) break;
-    // A piece too small to matter is not a piece. Without this the filler
-    // closed a forty-point gap with three seventh-rounders and the wire read
-    // like a bag of receipts.
-    if (chosen.length > 0 && fit.value < ask * M.MIN_PIECE_SHARE) break;
+    if (remaining.length === 0) break;
+    /*
+     * THE SMALLEST PICK THAT CLOSES THE GAP, and only when nothing closes it,
+     * the largest one available. `priced` is ascending, so `find` IS "the
+     * cheapest thing that finishes this".
+     *
+     * Two earlier shapes both failed, in opposite directions, and the failures
+     * are worth keeping because the middle is narrow. Taking the buyer's BEST
+     * pick first overshot by most of a first-rounder on any ordinary player —
+     * 3 deals cleared in 68 candidates and every one was a 95 overall. Taking
+     * the largest pick that fits UNDER the gap never closed it: the last piece
+     * was always too small, packages came in short, and the seller refused 170
+     * of 257 candidates while the buyer refused 1. Closing the gap deliberately
+     * is what makes a package both adequate and tidy — it lands on "a second
+     * and a fourth" rather than on a first or on a bag of sevenths.
+     */
+    const fit = remaining.find((pk) => pk.value >= outstanding) ?? remaining[remaining.length - 1];
     chosen.push(fit);
-    if (chosen.length >= M.MAX_PACKAGE_PICKS) break;
   }
   if (chosen.length === 0) return null;
   // If everything the buyer owns still does not reach the ask, there is no
@@ -470,14 +565,30 @@ function pickSwap(a: Club, b: Club, ctx: MarketContext, rng: Rng): Candidate | n
 
   const up = weightedPick(nowPicks, (p) => 1 / p.round, rng);
   if (!up) return null;
-  const askB = priceOfPick(b, up, ctx) * AI.TRADE_ACCEPT_RATIO;
-  const priced = futurePicks.map((p) => ({ id: p.id, value: priceOfPick(b, p, ctx) })).sort((x, y) => y.value - x.value);
+  /*
+   * PRICED IN THE CURRENCY OF THE CLUB BEING ASKED TO GIVE THE SELECTION UP —
+   * which is `a`, not `b`, and getting that backwards is a guaranteed no.
+   *
+   * The first version sized this package against what the club RECEIVING the
+   * selection thought it was worth, and then piled on until it exceeded that.
+   * But the receiving club's condition runs the other way: it accepts when
+   * what it gets is worth MORE than what it sends, so building a package that
+   * cost it more than the pick was worth to it refused itself by construction.
+   * Measured: 1 deal out of 80 candidates, and that one on noise.
+   *
+   * Sized against `a` it mirrors the player path exactly — satisfy the club
+   * parting with the asset, in its own reading — and the adjudicator then
+   * decides whether `b` can live with it.
+   */
+  const ask = priceOfPick(a, up, ctx) * AI.TRADE_ACCEPT_RATIO;
+  const priced = futurePicks.map((p) => ({ id: p.id, value: priceOfPick(a, p, ctx) })).sort((x, y) => x.value - y.value);
   const chosen: { id: string; value: number }[] = [];
-  for (const pk of priced) {
-    if (pileValue(chosen.map((c) => c.value)) >= askB) break;
-    if (chosen.length > 0 && pk.value < askB * M.MIN_PIECE_SHARE) break;
-    chosen.push(pk);
-    if (chosen.length >= M.MAX_PACKAGE_PICKS) break;
+  for (let i = 0; i < M.MAX_PACKAGE_PICKS; i++) {
+    const outstanding = ask - pileValue(chosen.map((c) => c.value));
+    if (outstanding <= 0) break;
+    const remaining = priced.filter((pk) => !chosen.some((c) => c.id === pk.id));
+    if (remaining.length === 0) break;
+    chosen.push(remaining.find((pk) => pk.value >= outstanding) ?? remaining[remaining.length - 1]);
   }
   if (chosen.length === 0) return null;
   return {
