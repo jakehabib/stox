@@ -604,6 +604,32 @@ ever force-pushed over, so every state below still exists in git history).
   shows the same width and several ceilings map to the same range near the
   ends. Nothing else about the fog moves. Shipped in `2174100`.
 
+- **2026-08-24 — The note that teaches everyone about the fog said the fog had
+  no bias, and it has had one for days.** `lib/scouting.ts` carried a
+  measured-looking paragraph stating that `observe()` carried no per-player
+  bias. It had been true when written; the bias landed in `1858e9d` and the
+  note was never re-run, so the file that exists to explain scouting had been
+  telling readers the opposite of what its own code does — and it was read,
+  believed and relayed onward as fact before anyone re-measured. Rewritten with
+  the real ladder (centre error 6.25 at cold confidence down to 1.00 at 95, band
+  coverage 97-99%), with both of its stale "candidate repairs" deleted: one is
+  done, the other is now measured as unable to work. Comment only, no behaviour
+  change. Shipped in `3420e4d`.
+
+- **2026-08-24 — Every bust in the game was a scouting accident, so fixing the
+  draft board deleted busts entirely.** The consensus number one peaked below 78
+  in 10% of drafts, which looked like a healthy bust rate but was really the
+  board occasionally crowning a man who could not play: sweeping development's
+  own ceiling-trust knob across its entire range moved his bust rate by 0.0%.
+  Development now has a hidden **arc** — drawn once from a player's own id,
+  never redrawn, never stored, never shown, not in the schema — for how much of
+  his growth he actually converts. About one man in nine is on a failing arc
+  whose mean is negative, so he slides rather than merely stalling. A first pick
+  can now fail for a football reason instead of a bookkeeping one. The rookie
+  idle floor, the potential-tier ladder and the ceiling-erosion rate are
+  untouched, and ten simulated league years show slightly *less* rating
+  inflation than before. Shipped in `ca9512e`.
+
 - **2026-08-20 — Visual redesign kickoff.** Starting a staged visual
   redesign (design tokens → dashboard → player page → rest of the app) to
   move away from the generic dark-dashboard look. Game logic, simulation,
