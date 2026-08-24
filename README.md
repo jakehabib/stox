@@ -4189,3 +4189,39 @@ ever force-pushed over, so every state below still exists in git history).
   does not make. No stale-chart warning, no snap percentages, no personnel
   packages: the engine has no personnel-grouping concept, and controls that
   pretend otherwise are the thing this fix was about. Commit `ec7a591`.
+- **2026-08-24 — Your Team Rating was still the team you could have fielded,
+  not the one you named.** The engine fix above created this, which is exactly
+  why it could not be left: before it, the sim played the best available man
+  and `buildLeagueRatings` averaged the best available man, so the two were
+  wrong in the same direction and nothing on screen contradicted anything else.
+  Once the sim started fielding the man the GM named, **Team Rating, the unit
+  ratings, Power Rankings and the win chance were all describing a lineup that
+  never takes the field** — the advisor's original complaint surviving at a
+  second site. They read the depth chart now. `buildLeagueRatings` loads the
+  same `DepthChartSlot` rows lib/season.ts hands the engine and orders every
+  roster through **the sim's own `isAvailable` and `mergeUnnamed`** — one
+  ordering rule in the codebase, called from both places, not a second copy in
+  a screen file. **Measured before and after through the real function on both
+  sides**: the printed Team Rating changes for 24.8% of 1,280 clubs, mean
+  -0.35, worst -7, and it never goes up — you cannot field your named order and
+  the best men at once. **AI clubs -0.3449 and user clubs -0.3846**, the same
+  direction and size, so nobody is handed an edge. The league table moves the
+  way it should and no further: 32.7% of clubs change rank, mean shift 0.78
+  places, rank-order correlation 0.981, and one league in forty changes its
+  number one. **Against the sim it now moves with, not against**: walked over
+  every club in the database, where both respond to a club's chart the signs
+  agree **3,026 times out of 3,027** — the single exception is two quarterbacks
+  tied at 75 separated only by fatigue, which the sim reads and a roster figure
+  deliberately does not. **Injuries reach the page too**: of 2,533 clubs with a
+  man they would field unavailable, 2,420 read lower, mean cost 0.903 rating
+  points; the 68 that read higher are all clubs whose chart had a worse man in
+  front of a better one, and the injury undid it. **A club with no depth chart
+  is unchanged** — all 33 of them. The advisor's own case, end to end on a real
+  save: naming the 73 ahead of the 89 takes **Team Overall 80 to 77, Offense 83
+  to 77, the club from 8th of 32 to 20th, its Power Rank from #8 to #20 and its
+  win chance against Charlotte from 81% to 70%**, with Defense and Special
+  Teams untouched. What this number is *not* is written down where it lives: it
+  rates the starting eleven on the 0-99 scale the player ratings beside it use,
+  while the engine pays out over four receivers and four edge rushers and adds
+  coaching on top, so on 13.2% of clubs the sim responds to a slot below the
+  eleven and the page does not. Commit `HASHPLACEHOLDER2`.

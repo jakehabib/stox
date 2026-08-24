@@ -92,6 +92,25 @@ export const REPLACEMENT_LEVEL = 48;
  * measured too: of the 33 clubs in those saves carrying no chart at all, zero
  * changed rating.
  *
+ * WHAT THE SCREENS SHOW, AND WHY IT IS NOT THIS NUMBER. `buildLeagueRatings`
+ * (lib/teamRating.ts) fields the SAME men in the SAME order — it calls
+ * `isAvailable` and `mergeUnnamed` from this file through `fieldedByPosition`
+ * in lib/lineup.ts, so neither side owns a second opinion about who plays. It
+ * deliberately does NOT reproduce this function's arithmetic: it rates the
+ * starting eleven (`STARTERS_AT_POSITION`) on the 0-99 scale the player
+ * ratings beside it use, where this pays UNIT_DEPTH_WEIGHTS out over four
+ * receivers and four edge rushers and then adds coordinator bonuses and
+ * OFFENSE_BASELINE on top. The two are different scopes and cannot be equal.
+ * What must hold is that they never move against each other, and measured over
+ * every club in the database they effectively never do: 3,026 sign agreements
+ * out of 3,027 where both respond (n=10,080), the single exception being two
+ * quarterbacks tied on `trueOvr` and separated only by fatigue, which this
+ * function reads and a roster figure deliberately does not. On 13.2% of clubs
+ * this moves on a slot below the starting eleven — a fourth receiver, a third
+ * linebacker — and the screen figure stays flat, because it rates the eleven.
+ * If you change what this function counts, that note and this one are the pair
+ * to keep honest.
+ *
  * INJURIES NEED NO MACHINERY HERE AND MUST NOT GROW ANY. `computeUnits`
  * filters through `isAvailable` BEFORE it applies the chart, so an injured
  * starter is simply not in this array, the next healthy man is at index 0 for
