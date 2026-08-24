@@ -59,7 +59,7 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
   playoffTeamsPerConf: 6,
   rosterMax: 53,
   draftRounds: 7,
-  capGrowth: 'FLAT',
+  capGrowth: 'SLOW',
 
   scoutingEnabled: true,
   revealTrueRatings: false,
@@ -105,9 +105,9 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
  * opinion about compounding, and because the interesting difference is not
  * 2% versus 3% — it is whether the ceiling moves AT ALL:
  *
- *   FLAT  the default. A fixed ceiling: nothing inflates away, and a bad
- *         deal is bad forever.
- *   SLOW  a television deal's drift, slow enough to stay survivable.
+ *   FLAT  a fixed ceiling. Nothing inflates away; a bad deal is bad forever.
+ *   SLOW  the default. A drift you can feel across a decade and never lean
+ *         on, because it never outruns the roster it has to pay for.
  *   FAST  the old behaviour, kept so an existing dynasty plays as it did.
  *
  * MEASURED, over 20 league years, against 32 real generated clubs with every
@@ -117,7 +117,7 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
  *
  *          year 1   year 10   year 20   the squeeze is over in
  *   FLAT    87.9%     87.9%     87.9%   never
- *   SLOW    87.9%     76.9%     66.2%   year 10
+ *   SLOW    87.9%     80.4%     72.8%   year 14
  *   FAST    87.9%     47.8%     24.3%   year 3
  *
  * "The squeeze is over" is the first league year a club can carry that whole
@@ -125,18 +125,28 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
  * at 27, $64.0M/yr) — the year keeping everyone good stops being a choice.
  * At the old 7% that is the THIRD season of a dynasty.
  *
- * WHY FLAT IS THE DEFAULT, and why SLOW is 1.5% rather than 2%. Even a slow
- * ceiling ends the squeeze eventually, and a front-office game whose central
- * tension expires on a timer is a game that gets less interesting the longer
- * you play it — exactly backwards for a dynasty. FLAT is the only rung where
- * the decision you make in season one is the same decision in season twenty,
- * so it is what a new league is created on and what a player has to opt OUT
- * of to get inflation. SLOW moved 2% -> 1.5% for the same reason: it pushes
- * the year the tension lapses from 8 to 10, past where most dynasties run.
+ * WHY THE DEFAULT IS SLOW AT 1%. A front-office game whose central tension
+ * expires on a timer gets less interesting the longer you play it, which is
+ * exactly backwards for a dynasty — so the default has to be a rate the
+ * roster can outrun for as long as anyone actually plays. 1% is that: the
+ * squeeze survives to season 14, where 7% ended it in season 3. The rate has
+ * walked down 7% -> 2% -> 1.5% -> 1% across releases, each step for this same
+ * reason and each measured the same way.
  *
- * None of this rewrites an existing league. parseSettings pins a save with no
- * capGrowth key to FAST (it was played at 7%), and a save that already chose
- * a rung keeps it — a league that chose SLOW simply drifts at 1.5% from here.
+ * It is not FLAT because a ceiling that never moves is a real answer but a
+ * strange default — no league in any sport has one, and a player who wants it
+ * can pick it in one click. 1% is the smallest drift that still reads as a
+ * living league.
+ *
+ * NONE OF THIS REWRITES AN EXISTING LEAGUE, and that is deliberate rather
+ * than shy. parseSettings pins a save with no capGrowth key to FAST, because
+ * that save WAS played at 7% and its clubs signed every deal on those
+ * ceilings; a save that already chose a rung keeps it. Dropping a five-year
+ * dynasty from 7% to 1% takes roughly a third off its ceiling overnight, and
+ * lib/season.ts:161 stops the clock entirely while the user's own club is
+ * over the cap — so an automatic downgrade could freeze a save rather than
+ * rescue it. The Settings screen offers the move as the player's decision,
+ * with that consequence stated on the control.
  * ===========================================================================
  */
 export type CapGrowth = 'FLAT' | 'SLOW' | 'FAST';

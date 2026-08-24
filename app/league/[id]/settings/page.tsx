@@ -165,7 +165,7 @@ const CAP_GROWTH_TIP = [
   'What the salary cap does between seasons.',
   ...Object.values(CAP_GROWTH_MODES).map((m) => `${m.label} (${formatCapGrowthRate(m.rate)}/yr): ${m.blurb}`),
   'Wages are quoted in today\u2019s money whatever you pick, so the faster the ceiling climbs the less it ever asks of you.',
-  'Changing it mid-dynasty moves the ceiling under deals already on the books \u2014 lowering it can leave clubs over the cap the next morning.',
+  'Changing it mid-dynasty moves the ceiling under deals already on the books. Lowering it can leave clubs over the cap the next morning \u2014 including yours, and the season does not advance while you are over it, so clear the difference before you press on.',
 ].join(' ');
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
