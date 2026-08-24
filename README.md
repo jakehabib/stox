@@ -4229,4 +4229,47 @@ ever force-pushed over, so every state below still exists in git history).
   rates the starting eleven on the 0-99 scale the player ratings beside it use,
   while the engine pays out over four receivers and four edge rushers and adds
   coaching on top, so on 13.2% of clubs the sim responds to a slot below the
-  eleven and the page does not. Commit `HASHPLACEHOLDER2`.
+  eleven and the page does not. Commit `a7d8e26`.
+- **2026-08-24 — A 99-overall quarterback walked for nothing while his club
+  sat on cap room.** The advisor: *"the README specifically notes an AI team
+  will let a 99 OVR QB walk even with enough room because AI never uses the
+  franchise tag. That is one of those bugs a hardcore NFL fan will notice
+  immediately."* He was quoting a line this file had written down as a known
+  simplification, and the number behind it was **2 TAG rows across 270 leagues
+  in the dev database**, against 52,047 RESIGN, 40,346 SIGN and 13,968 CUT.
+  The tag existed, the user could use it, and no AI club ever had. **Measured
+  before the fix, across 16 league-seasons driven by the game's own
+  `advanceWeek`: 290 men rated 88 or better reached free agency and 143 of
+  them — nine a season — walked from clubs that were holding the cap room to
+  tag them.** AI clubs now answer that question in the same step they answer
+  their re-signings, through `applyFranchiseTag`, the same write path and the
+  same cap gate the user's own button uses; nothing new writes a contract.
+  **The bar is derived, not picked.** The tag is priced at the average of the
+  top five cap hits at the position, so what it costs says nothing about the
+  man and everything about what his position pays — measured over 66,203
+  rostered players in 46 id-strided leagues, the median tag is **$32.9M at QB
+  (12.9% of a $255M cap), $22.5M at EDGE, $12.2M at LB, $8.4M at RB and $3.0M
+  at K**. A rating bar alone would therefore mean something completely
+  different at quarterback than at safety. So the test is the tag price
+  against what the man is worth, and the ratio of the two crosses **1.00 at
+  overall 91** — above that the tag is *cheaper* than the open market and a
+  club that lets him walk has turned down a discount. `RESIGN
+  .TAG_PRICE_TOLERANCE` sits at 1.20, far tighter than the fifth-year option's
+  1.75, because a club gets one tag a year and spending it on the wrong man
+  costs the right man too. **It is the fallback, not the first move**: only men
+  the re-sign pass could not reach terms with are candidates, he has to be
+  better than anyone the club still has at his position, and the room has to
+  genuinely be there — priced as `tagValue + accelerated - oldHit`, the same
+  difference the cap gate is handed. **After: 49 tags over the same 16
+  league-seasons, 3.06 a season across 32 clubs**, on men rated 88 to 99,
+  costing a median **5.10% of the cap** (quartiles 3.96% and 6.39%), spread
+  across 14 positions rather than bunched at one — 7 left guards, 7 corners,
+  5 tight ends, one quarterback. **No club was left over the ceiling**; the
+  worst cap position of any club holding a tag was +$2.92M, and the number of
+  clubs found over the cap at the re-sign window did not rise. A man already
+  playing on a tag is not a candidate for a second one: real football charges
+  120% for a second consecutive tag and 144% for a third, this codebase has
+  one price and no count of how often, and inventing an escalator the user's
+  own screen would not quote is the lying-metric bug rather than a fix — so
+  that is what the Known simplification above says now, in place of the line
+  the advisor quoted. Commit `752fad2`.
