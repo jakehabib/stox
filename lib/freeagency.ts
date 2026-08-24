@@ -580,12 +580,27 @@ export async function extendContract(opts: {
     where: { id: opts.leagueId }, select: { phase: true, week: true },
   });
 
-  // The old deal is torn up the instant this one is signed, so its hit is
-  // credited back before the new one is measured against the ceiling — but
-  // the bonus it strands is charged, so it is measured too.
+  /*
+   * THE DIFFERENCE, NOT THE GROSS — the same defect fixed at e573a85 one
+   * function over, found again here by the offseason-cap probe.
+   *
+   * The old deal is torn up the instant this one is signed, so its hit comes
+   * off; the bonus it strands is charged, so it goes on. Both true, and both
+   * were already in the arithmetic. What was wrong is the SHAPE: stated as
+   * `delta: newHit + stranded` with `creditBack: oldHit`, the delta is a gross
+   * cap hit and therefore never <= 0, so assertCapRoom's `if (delta <= 0)
+   * continue` — the escape for a move that frees room — could not fire.
+   *
+   * A club at -$10.0M extending a man from a $20.0M hit down to $12.0M was
+   * refused, because the gate asked whether $12.0M fitted inside $10.0M rather
+   * than whether -$8.0M did. The move it turned down leaves the club $8.0M
+   * closer to legal. Stated as the difference it takes the escape and goes
+   * through, and every decision for a club under the cap is unchanged, because
+   * the two forms are the same inequality.
+   */
   await assertCapRoom({
     action: reSign ? 'Re-signing' : 'Extension', seasonYear, capMode,
-    charges: [{ teamId, delta: newHit + stranded, creditBack: oldHit }],
+    charges: [{ teamId, delta: newHit + stranded - oldHit }],
   });
 
   await prisma.$transaction(async (tx) => {
@@ -908,7 +923,13 @@ export async function applyFranchiseTag(opts: {
     // land over the ceiling the moment the charge was written — INV-19 says
     // every acquisition path is gated here, and this is what it has to be
     // gated on.
-    charges: [{ teamId, delta: tagValue + accelerated, creditBack: oldHit }],
+    //
+    // Stated as the DIFFERENCE for the same reason as the extension gate above
+    // and e573a85 before it: a gross figure with `creditBack` is arithmetically
+    // the same test, but it can never be <= 0, so assertCapRoom's relief escape
+    // is unreachable and a club already over the ceiling is refused a tag that
+    // would cost it LESS than the deal it replaces.
+    charges: [{ teamId, delta: tagValue + accelerated - oldHit }],
   });
 
   await prisma.$transaction(async (tx) => {
