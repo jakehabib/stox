@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import {
-  ACCEPT_INTEREST, beatRival, clampOffer, decideOffer, openingBidApy, sessionFingerprint,
+  ACCEPT_INTEREST, beatRival, clampOffer, decideOffer, openingBidApy, openingTermFor, sessionFingerprint,
   type BeatPlan, type DealStructure, type NegotiationOutcome, type NegotiationSession,
   type Offer, type OfferDecision, type Verdict,
 } from '@/lib/negotiation';
@@ -76,9 +76,15 @@ export interface NegotiationView {
   capOn: boolean;
   /** Room left after year one of this deal. */
   spaceAfter: number;
-  /** The label under the term control: what he will not go past, and why. */
+  /** What he will not go past, and why. Folded into `termLine` where it binds. */
   willingLine: string;
   termCapped: boolean;
+  /**
+   * The label under the term control: the term he is after, plus the horizon
+   * where there is one. Always present — the length he wants is a real
+   * per-player number and it is what his price is built off.
+   */
+  termLine: string;
   /** What the button says, and what it costs. */
   buttonLabel: string;
   /**
@@ -110,7 +116,12 @@ export function useNegotiation({ initialSession, structure, onOffer, onSigned, o
   // open on the same number the live panel opens on.
   const openingApy = () =>
     clampStep(Math.max(gate.minSalary, Math.min(openingBidApy(ctx), gate.maxSalary)), gate.minSalary, gate.maxSalary);
-  const openingYears = () => Math.min(ctx.desiredYears, gate.maxYears, ctx.willingYears);
+  // The term he is after, expressed as the OFFER rather than as the total —
+  // on an extension the two differ by the seasons he is already owed. Shared
+  // with the model rather than reconstructed here, because a panel that opens
+  // on a term the evaluator does not read as his own charges him a premium
+  // before the user has touched anything.
+  const openingYears = () => openingTermFor(ctx, gate.maxYears);
 
   const [apy, setApyRaw] = useState(openingApy);
   const [years, setYearsRaw] = useState(openingYears);
@@ -215,6 +226,31 @@ export function useNegotiation({ initialSession, structure, onOffer, onSigned, o
       ? `He does not intend to play past ${ctx.intendedFinalAge}. With ${ctx.controlYears} years already on his deal, ${yearsHeCanStillAdd} more is all he will add — at any price.`
       : `He does not intend to play past ${ctx.intendedFinalAge}, so ${ctx.willingYears} years is the longest deal he will sign — at any price.`;
 
+  // WHAT HE IS AFTER, SAID OUT LOUD AND ALWAYS.
+  //
+  // The term he wants is a real per-player number now (desiredTermFor) rather
+  // than an age ladder that answered five for everybody young — one man wants
+  // three years and the next wants seven, and it is the number the price is
+  // built off. Until this it was never stated on this screen at all: the only
+  // sentence the term control ever carried was the horizon, which is the term
+  // he REFUSES. A user could see where the wall was and never what he wanted,
+  // so the slider moving the meter looked arbitrary.
+  //
+  // The same number the slider opens on, not a second reading of it, and
+  // phrased as the OFFER — on an extension that is years on top of what he is
+  // already owed, which is what the control sets.
+  const wantedTerm = openingTermFor(ctx, gate.maxYears);
+  const wantedPhrase = wantedTerm === 1
+    ? `He is after a one-year deal${termCountsOwedYears ? ' on top of what he is owed' : ''}.`
+    : `He is after about ${wantedTerm} years${termCountsOwedYears ? ' on top of what he is owed' : ''}.`;
+  // Both directions cost, and both are buyable — the term is a preference with
+  // a price here, never a rule (see termPremium). The horizon is the one thing
+  // no price moves, so where it binds it finishes the sentence instead of
+  // sitting beside it as a second note about the same control.
+  const termLine = ctx.willingYears <= 1 || termCapped
+    ? `${wantedPhrase} ${willingLine}`
+    : `${wantedPhrase} Longer or shorter can both be had — either way he wants more per year for it.`;
+
   const buttonLabel =
     signed ? 'Signed'
       : gone ? 'He signed elsewhere'
@@ -238,7 +274,7 @@ export function useNegotiation({ initialSession, structure, onOffer, onSigned, o
     rivalMark: talksDead || decision.rivalInterest === null || !gate.rival
       ? null
       : { interest: decision.rivalInterest, label: gate.rival.teamName.split(' ').pop() ?? 'Rival' },
-    beat, appending, totalTerm, capOn, spaceAfter, willingLine, termCapped, buttonLabel,
+    beat, appending, totalTerm, capOn, spaceAfter, willingLine, termCapped, termLine, buttonLabel,
     signedDeal: result?.ok ? result.signed : undefined,
     answeredAt,
     hasMoment: moment !== null,

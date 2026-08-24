@@ -4,7 +4,7 @@ import {
   guaranteedMoney as totalGuaranteed,
   willingnessHorizon, prorationYears as capProrationYears, TERM, type ContractLike,
 } from './cap';
-import { CAP } from './tuning';
+import { CAP, POSITION_AGE_PROFILE, DEFAULT_AGE_PROFILE, type Position } from './tuning';
 import { CapMode } from './types';
 
 /**
@@ -221,7 +221,13 @@ export interface NegotiationContext {
    * two identical players don't want identical deals.
    */
   reservationApy: number;
-  /** Years he wants. Age-driven: a 34-year-old is not chasing a five-year deal. */
+  /**
+   * The term he is chasing, in seasons. Rating, the age his position makes
+   * him, personality and a seeded taste — see `desiredTermFor`. It is a
+   * PREFERENCE and not a limit: longer and shorter both cost money
+   * (`termPremium`) and neither is refused. The only term that is refused is
+   * `willingYears`, below.
+   */
   desiredYears: number;
   /** Share of the deal he wants guaranteed, 0..1. */
   desiredGuarantee: number;
@@ -455,14 +461,162 @@ const PRICE_WOBBLE = 0.05;
  */
 const ASK_HEADROOM = (1 + Math.max(PROVE_IT_PREMIUM, WINNER_SWING / 2)) * (1 + PRICE_WOBBLE);
 
-/** Years a player of this age is actually chasing. */
-function desiredYearsFor(age: number, personality: Personality): number {
-  if (personality === 'PROVE_IT') return age >= 30 ? 1 : 2;
-  if (age >= 34) return 1;
-  if (age >= 32) return 2;
-  if (age >= 30) return 3;
-  if (age >= 27) return 4;
-  return 5;
+/**
+ * ===========================================================================
+ * HOW LONG A DEAL HE ACTUALLY WANTS
+ * ===========================================================================
+ * The app owner: *"almost every player's interest declines when you offer a
+ * deal over 5 years. That shouldn't be the case. I get some players want a
+ * short term deal but others want long."*
+ *
+ * He was right, and the measurement was worse than the report. This was an
+ * age ladder — 34+ wanted one year, 32 two, 30 three, 27 four, everybody else
+ * five, with prove-it men on a fixed two — so five was the LONGEST TERM ANY
+ * PLAYER IN THE GAME WANTED. Swept over 2,400 real players in fourteen saves,
+ * offering each man his own advertised ask across terms from one to eight
+ * years: 0 of 2,400 peaked above five, and all 76 of the twenty-four-year-old
+ * business-first players in the sample peaked at exactly five — one answer,
+ * seventy-six men. Not "almost every player": every player, and two men of the
+ * same age were the same man. Re-swept after this change, 18.0% peak above
+ * five, that same cell spreads across two to seven years, and no term inside a
+ * man's own horizon is refused at any price — before or after.
+ *
+ * FOUR THINGS DECIDE IT NOW, and none of them is a ceiling.
+ *
+ *   QUALITY. A good player has the leverage to ask for years and a club has a
+ *     reason to give them; a camp body wants to be back on the market next
+ *     spring looking for a job that plays him. So the base term climbs with
+ *     rating rather than sitting flat.
+ *   HIS POSITION, THROUGH THE AGE HE EFFECTIVELY IS. Careers do not all bend
+ *     at the same age, and this codebase already says how: POSITION_AGE_PROFILE
+ *     (lib/tuning.ts) is the table the progression curve and `retirementChance`
+ *     both read. A back peaks two years early and a quarterback three years
+ *     late, so the same 29-year-old is 31 in one body and 26 in the other, and
+ *     it is that number the appetite for years is measured against. Reusing the
+ *     sim's own table rather than inventing a second one is the point: what he
+ *     says he wants and what the simulation is going to do to him come from one
+ *     place. `peakShift` also nudges the base directly and gently — a lean body
+ *     at a technique position genuinely does sign longer deals — but the bulk
+ *     of the effect is the age it makes him.
+ *   WHO HE IS. A man betting on himself wants a short deal and a big number,
+ *     which is the whole of that personality; a man who wants to stay reads a
+ *     long deal as staying; a ring-chaser keeps his options open.
+ *   TASTE. A seeded draw so two identical players differ, and — the owner's
+ *     standing instruction on outliers — drawn as the average of three rolls
+ *     rather than one, so it piles up near the middle and the crazy answers get
+ *     less and less likely the further out they go. Nothing is truncated: a
+ *     seven-year man is rare, not forbidden.
+ *
+ * NOT TO BE CONFUSED WITH `CONTRACT.MAX_DEAL_YEARS` (lib/tuning.ts), which is
+ * still 5 and still right: that ladder is what a CLUB OFFERS — it feeds
+ * `suggestedYears`, which league generation, the draft, the AI re-sign wave
+ * and every AI free-agent signing write their terms from, and it is calibrated
+ * to hold league-wide expiry near the real 27% a year. It does not bound what
+ * a man WANTS and never reads this function.
+ *
+ * The gap between the two is a real lever, and a wider one than it was: 18% of
+ * players are now after a term longer than five years, which no AI club will
+ * ever write, and 80% want something other than the ladder's answer (65%
+ * before). Handing a man his own term rather than the ladder's drops the
+ * cheapest offer that closes him by a median 17% — measured over 2,400 players
+ * in fourteen saves, 1,913 cheaper and not one dearer. That was already true
+ * at 11% before this; the term was always worth money, it was just worth the
+ * same money to everybody of the same age.
+ *
+ * THE ONE HARD CEILING IS HIS, NOT THE RULEBOOK'S. The result is clamped to
+ * `willingnessHorizon` — the last season he means to play — because a panel
+ * that says a 34-year-old is after six years while `decideOffer` refuses
+ * anything past his horizon would be two sentences about one man that
+ * contradict each other. There is no global maximum here on purpose: six years
+ * is a hard sell for most players and an easy one for a few, which is what the
+ * owner asked for, and what makes it hard is the PRICE (see `termPremium`),
+ * never a rule.
+ * ===========================================================================
+ */
+export const TERM_TASTE = {
+  /**
+   * [TUNE] The base term, as a function of rating: BASE at OVR_FLOOR and
+   * BASE + QUALITY_SPAN at OVR_CEIL, flat outside. 3.3 to 6.3 — a fringe
+   * roster player thinks in three-year deals and a star thinks in six.
+   */
+  BASE: 3.3,
+  QUALITY_SPAN: 3.0,
+  OVR_FLOOR: 55,
+  OVR_CEIL: 88,
+  /**
+   * [TUNE] Where the appetite for years starts falling, measured on his
+   * EFFECTIVE age (`age - peakShift`), and what each season past it costs.
+   * 27 because that is where AGE_CURVE's growth has run out and the downslope
+   * is next.
+   */
+  PEAK_EFFECTIVE_AGE: 27,
+  PER_YEAR_PAST_PEAK: 0.6,
+  /** [TUNE] The direct nudge from `peakShift`, on top of the age it makes him. */
+  PER_PEAK_SHIFT: 0.15,
+  /** [TUNE] What each personality adds. PROVE_IT is a multiplier instead. */
+  PERSONALITY: {
+    MERCENARY: 0.2,
+    LOYAL: 0.7,
+    WINNER: -0.45,
+    PROVE_IT: 0,
+  } as Record<Personality, number>,
+  /**
+   * [TUNE] A man betting on himself wants a fraction of the term anyone else
+   * would take — and a narrower spread with it, because "short deal, big
+   * number" is the whole of what he is chasing rather than a preference he
+   * might land either side of.
+   */
+  PROVE_IT_MULT: 0.45,
+  /**
+   * [TUNE] Width of the per-player taste draw. Applied to the average of
+   * three rolls, so this is the full span and the standard deviation is about
+   * four tenths of it: a year either way is common, two is uncommon, three is
+   * close to unheard of. That taper is the shape, not a clamp.
+   */
+  TASTE_SPREAD: 1.4,
+} as const;
+
+/**
+ * The term this man is actually chasing, in seasons.
+ *
+ * Seeded on the player id alone — the same seed `willingnessHorizon` uses, and
+ * for the same reason: what he wants out of a contract is a fact about him,
+ * so the browser, the Server Action and a script have to reach the same answer
+ * for the same man, and the club asking may not change it. His age moves the
+ * deterministic half of it every season on its own.
+ */
+export function desiredTermFor(opts: {
+  playerId: string;
+  age: number;
+  ovr: number;
+  position: string;
+  personality: Personality;
+  /** `willingnessHorizon(...).years` — the last season he means to play. */
+  horizonYears: number;
+}): number {
+  const T = TERM_TASTE;
+  const profile = POSITION_AGE_PROFILE[opts.position as Position] ?? DEFAULT_AGE_PROFILE;
+
+  const quality = Math.max(0, Math.min(1, (opts.ovr - T.OVR_FLOOR) / (T.OVR_CEIL - T.OVR_FLOOR)));
+  const base = T.BASE + quality * T.QUALITY_SPAN;
+
+  // The age he effectively is at this position — the same `age - peakShift`
+  // the retirement roll uses, so the two agree about whose career is short.
+  const effectiveAge = opts.age - profile.peakShift;
+  const agePull = -Math.max(0, effectiveAge - T.PEAK_EFFECTIVE_AGE) * T.PER_YEAR_PAST_PEAK;
+  const positionPull = profile.peakShift * T.PER_PEAK_SHIFT;
+
+  const proveIt = opts.personality === 'PROVE_IT';
+  const mult = proveIt ? T.PROVE_IT_MULT : 1;
+  const rng = new Rng(`term-${opts.playerId}`);
+  // Three rolls averaged rather than one: the middle is crowded and the tails
+  // thin out, so a man who wants eight years is rare instead of impossible.
+  const taste = ((rng.float(0, 1) + rng.float(0, 1) + rng.float(0, 1)) / 3 - 0.5) * 3 * T.TASTE_SPREAD * mult;
+
+  const wanted = (base + agePull + positionPull + T.PERSONALITY[opts.personality]) * mult + taste;
+  // His horizon is the ceiling, and the league rule is the ceiling on that.
+  const ceiling = Math.max(1, Math.min(opts.horizonYears, TERM.MAX_CONTRACT_YEARS));
+  return Math.max(1, Math.min(ceiling, Math.round(wanted)));
 }
 
 export function buildNegotiationContext(opts: {
@@ -627,7 +781,14 @@ export function buildNegotiationContext(opts: {
     openMarketApy: opts.openMarketApy ?? opts.marketApy,
     personality,
     reservationApy,
-    desiredYears: desiredYearsFor(opts.age, personality),
+    desiredYears: desiredTermFor({
+      playerId: opts.playerId,
+      age: opts.age,
+      ovr: opts.ovr,
+      position: opts.position,
+      personality,
+      horizonYears: horizon.years,
+    }),
     desiredGuarantee: personality === 'MERCENARY' ? 0.6 : personality === 'PROVE_IT' ? 0.35 : 0.5,
     guaranteeFloor: guaranteeFloorFor(opts.ovr, personality),
     patience,
@@ -942,6 +1103,24 @@ export function committedTerm(ctx: NegotiationContext, offer: Offer): number {
 }
 
 /**
+ * The term the panel should open on: the offer that commits him for exactly
+ * as long as he wants to be committed.
+ *
+ * The inverse of `committedTerm`, and it exists because the two were not
+ * inverses. The panel opened on `ctx.desiredYears` flat, which on an EXTENSION
+ * is the size of the ADD-ON — so a man with three seasons owed who wanted six
+ * years of commitment was opened on a six-year add-on, nine years committed,
+ * three past his own answer, and charged the term premium for it before the
+ * user had touched a control. Harmless while nobody wanted more than five;
+ * not harmless now that `desiredTermFor` can hand back eight.
+ */
+export function openingTermFor(ctx: NegotiationContext, maxYears: number): number {
+  const owed = ctx.mode === 'EXTENSION' ? ctx.controlYears : 0;
+  const ceiling = Math.max(1, Math.min(maxYears, ctx.willingYears - owed));
+  return Math.max(1, Math.min(ceiling, ctx.desiredYears - owed));
+}
+
+/**
  * [TUNE] How far the term component can drag interest down on its own. The
  * price carries the preference now; this is the residue.
  */
@@ -1017,6 +1196,13 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   // own words: "if a player wants a short term deal you might need to pay
   // 5-10% more for a longer term and vice versa."
   //
+  // WHICH ONLY MATTERS IF THE PREFERENCE ITSELF VARIES, and for a while it
+  // did not: `desiredYears` was an age ladder that topped out at five, so
+  // "the term he wants" was the same answer for every man of a given age and
+  // the price rose past five years for all of them at once. It is a real
+  // per-player draw now — see `desiredTermFor` — which is what makes this
+  // paragraph true rather than merely intended.
+  //
   // The one genuinely hard limit stays hard, and it is his, not the
   // rulebook's: `willingYears` — he does not intend to play past a certain
   // age, and no price buys a year he does not want to be alive for in this
@@ -1030,11 +1216,20 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
   // never enough to refuse a deal on its own. Floored deliberately — this
   // component's job is now flavour, and a flavour component that can zero out
   // is a rule wearing a preference's clothes.
+  //
+  // SYMMETRIC, AND IT USED NOT TO BE. This was `satisfaction(min(ratio, 1.15))`,
+  // which on the overshoot branch RETURNS A BONUS: a man who wanted two years
+  // and was handed twelve scored 1.0375 on term — fractionally HAPPIER about
+  // being locked up for a decade than about getting the deal he asked for. It
+  // also made the "too long" demand line unreachable, because that line is
+  // gated on `yearsScore < 0.85` and the score could never fall below 1 above
+  // his own term. So the one direction the app owner reported on was the one
+  // direction the model scored as a small positive and the panel never
+  // mentioned. Distance from his term now reads the same either way, on the
+  // same curve and against the same floor.
   const yearsRatio = committedYears / ctx.desiredYears;
-  const yearsScore = Math.max(
-    TERM_SCORE_FLOOR,
-    satisfaction(Math.min(yearsRatio, 1.15), TERM_TOLERANCE),
-  );
+  const termFit = yearsRatio <= 1 ? yearsRatio : Math.max(0, 2 - yearsRatio);
+  const yearsScore = Math.max(TERM_SCORE_FLOOR, satisfaction(termFit, TERM_TOLERANCE));
 
   const guaranteeScore = satisfaction(offer.guaranteePct / ctx.desiredGuarantee, GUARANTEE_TOLERANCE);
 
@@ -1085,13 +1280,24 @@ export function evaluateOffer(ctx: NegotiationContext, offer: Offer): OfferEvalu
         : 'He is looking for a little more per year.',
     );
   }
+  // THE TERM SAYS SOMETHING IN BOTH DIRECTIONS NOW, and what it says is the
+  // reason the model actually used. Dragging the term past what he wants moves
+  // his asking price (`termPremium`) and nothing else, so for a whole release
+  // the only feedback a user got for a deal that was too long was the MONEY
+  // line — "he wants noticeably more per year" — over an offer whose salary he
+  // had not complained about. Measured on a 25-year-old receiver at exactly his
+  // reservation price: five years read 100 with no demands, twelve read 86 with
+  // "He wants noticeably more per year" and not one word about the term that
+  // caused it. That is the lying-metric failure this codebase treats as a bug
+  // class (README design principle 6), and it is most of why the effect read as
+  // inexplicable rather than as a price.
   if (yearsScore < 0.85) {
     demands.push(
-      ctx.personality === 'PROVE_IT' && committedYears > ctx.desiredYears
-        ? 'He does not want to be tied down this long — keep it short.'
-        : committedYears < ctx.desiredYears
-          ? 'He wants a longer commitment than this.'
-          : 'The term is not what he had in mind.',
+      committedYears < ctx.desiredYears
+        ? 'He wants a longer commitment than this. The years he does get have to be worth more.'
+        : ctx.personality === 'PROVE_IT'
+          ? 'He is betting on himself and wants back on the market. Tying him up this long costs a good deal more per year.'
+          : 'That is more seasons than he asked to be tied up for. He will do it — the years past what he wanted have to be paid for.',
     );
   }
   // NOT A DEMAND WHEN HE IS UNDER HIS FLOOR, and that is a deletion rather

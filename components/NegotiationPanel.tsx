@@ -434,13 +434,15 @@ export function NegotiationPanel({
             hint={appending
               ? `${formatMoney(decision.newMoneyValue)} of new money`
               : `Total ${formatMoney(decision.totalValue)}`}
-            /* One statement of what he will not do, not two. When the term is
-               refused the reason is the SERVER's sentence; when it is merely
-               capped, the standing limit. They used to render together, the
-               second one restating the first with his age in it. */
+            /* One statement about the term, never two. When the term is
+               refused the reason is the SERVER's sentence; otherwise it is
+               what he is AFTER — with the horizon folded into the same line
+               where that binds (see termLine). This used to render only the
+               horizon, and only when it bit, so the one thing the price is
+               actually built off — the length he wants — was never on screen. */
             note={decision.blocked === 'WILLING' || decision.blocked === 'TERM'
               ? { text: decision.reason, tone: 'bad' as const }
-              : n.termCapped ? { text: n.willingLine, tone: 'muted' as const } : null}
+              : { text: n.termLine, tone: 'muted' as const }}
             min={1}
             max={gate.maxYears}
             step={1}
