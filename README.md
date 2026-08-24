@@ -3822,3 +3822,51 @@ ever force-pushed over, so every state below still exists in git history).
   missing from the AI's own re-sign wave, so a club deep in the red could not
   keep anybody however cheap the deal — the ratchet that kept it there. Commit
   `969f5ce`.
+- **2026-08-24 — Combine numbers a football person would believe.** The app
+  owner: *"We need to make sure the combine stats are realistic on the college
+  profiles."* Every drill on a prospect's college profile was a linear read of
+  one hidden scalar, so all six were the same number in different units —
+  measured over 16,000 blindly-walked prospects, the 40 tracked true overall at
+  -0.543, the vertical at +0.548 and the bench at +0.527, and every pair of
+  drills correlated between 0.92 and 0.98. Only the 40 was anchored per
+  position, so the vertical, broad jump, three-cone, shuttle and bench were
+  effectively identical for every position in football: 31 inches and 6.84s
+  whether the man was a corner or a 335lb right guard, against a real spread of
+  27-35 inches and 6.90-7.90s. The hard floors under the two agility drills were
+  the most common values in the game — 29.4% of every draft class tested at
+  exactly the 3.80 shuttle floor (44.7x the count one hundredth above it) and
+  17.3% at the 6.30 three-cone floor, which is the clamp-pile bug the ratings
+  curves have had fixed three times, sitting in a place nobody had measured.
+  Each drill is now an anchored, position-real distribution whose z-score is a
+  noisy read of the attributes it claims to measure (40 off speed and
+  acceleration, bench off strength, the jumps off an explosiveness blend, the
+  agility drills off agility), bent through a soft knee instead of clamped.
+  Per-position means now land within 0.01s of the real 40, half an inch of the
+  real vertical, 0.04s of the real three-cone and half a rep of the real bench;
+  the largest surviving pile at any extreme holds 0.04% of a class. The 40 vs
+  speed goes -0.365 to -0.602, bench vs strength 0.343 to 0.596, shuttle vs
+  agility -0.275 to -0.616 — and the 40 vs the bench falls from -0.953 to
+  -0.533, which is the whole point: six measurements instead of one.
+  Commit `1264738`.
+- **2026-08-24 — The draft board was a solved puzzle.** The app owner: *"we
+  should widen the range of scouted overalls on the draft board. its too easy to
+  just pick the highest one."* Scouting modelled a range and never modelled a
+  wrong read — `observe()` drew every attribute independently around its true
+  value and the overall averaged a dozen of them, so the error cancelled.
+  Measured over 150 blind classes of 400: an unscouted club's centre was out by
+  sd 3.90 while the range it printed was +/-12.73, a band 3.26x wider than the
+  error it was quoted around, holding the truth 99.8% of the time. That is a
+  guarantee, not a confidence interval, and the board that came with it scored
+  rho 0.917 against the truth with nothing spent — its top man was genuinely the
+  best in the class 28% of the time, and every scouting point in the game bought
+  0.08 of rank correlation. `observe()` now draws one correlated bias per player,
+  shared by every attribute, so it survives the average instead of cancelling in
+  it. Cold, an unscouted board now runs error sd 6.27 against the same +/-12.67
+  band (ratio 2.02, coverage 96.6%), rho 0.816, its top man genuinely best 16.7%
+  of the time with the true best still inside its top five 51% of the time; a
+  full file runs error 1.01, rho 0.994, top man best 72%. The error falls at
+  every rung of the confidence ladder, so scouting now buys 0.18 of rank
+  correlation instead of 0.08. The displayed band was not touched and the row
+  colour still reads only the printed range, so nothing on screen changed except
+  that the number the band is quoted around is now wrong by roughly what the band
+  says it might be. Commit `1858e9d`.
