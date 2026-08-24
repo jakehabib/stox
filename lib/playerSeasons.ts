@@ -649,6 +649,24 @@ export interface CareerTableRow {
   teamAbbr: string | null;
   age: number | null;
   stats: SeasonStats;
+  /**
+   * WHAT HE WAS RATED WHEN THAT SEASON ENDED — PlayerSeason.endOvr, off the
+   * row this line was built from, or null when nobody wrote it down (see the
+   * schema for the three ways that happens, and note that it is null for every
+   * row in every save older than the column).
+   *
+   * Null on the four row kinds that are not one man's one season: the
+   * pre-league residual and the career total are spans rather than moments and
+   * have no end-of-year rating, and the per-club `split` rows of a traded
+   * season deliberately carry none — the rating is a whole-season fact, so it
+   * is printed once, on the combined line that reads as the season, instead of
+   * three times down the same year.
+   *
+   * It is a RATING, so every reader gates it on the scouted view the same way
+   * the overall on the hero is gated. Career production is public; what a man
+   * is worth is not.
+   */
+  endOvr: number | null;
   /** The season currently being played — its numbers are not final. */
   inProgress: boolean;
   /** Why a row carries no team crest, when that needs saying out loud. */
@@ -758,6 +776,7 @@ export function buildCareerTable(args: {
       teamAbbr: null,
       age: null,
       stats: before,
+      endOvr: null,
       inProgress: false,
       note: scope === 'REGULAR'
         ? 'Career total carried into this league — the individual seasons behind it were never recorded.'
@@ -786,6 +805,7 @@ export function buildCareerTable(args: {
         teamAbbr: group[0].line.teamAbbr,
         age: group[0].line.age,
         stats: group[0].stats,
+        endOvr: group[0].line.endOvr,
         inProgress,
       });
       continue;
@@ -800,6 +820,11 @@ export function buildCareerTable(args: {
       teamAbbr: `${group.length}TM`,
       age: group.find((g) => g.line.age != null)?.line.age ?? null,
       stats: sumStats(group),
+      // The rating he FINISHED the year at, so it comes off the last club he
+      // played for that year — `group` is already in the order he played them
+      // (PlayerSeason.firstSeen). Taking the first club's would report where
+      // he stood in October under a row headed with the whole season.
+      endOvr: group[group.length - 1].line.endOvr,
       inProgress,
     });
     for (const g of group) {
@@ -811,6 +836,8 @@ export function buildCareerTable(args: {
         teamAbbr: g.line.teamAbbr,
         age: g.line.age,
         stats: g.stats,
+        // Never on a breakdown row — see CareerTableRow.endOvr.
+        endOvr: null,
         inProgress,
       });
     }
@@ -829,6 +856,7 @@ export function buildCareerTable(args: {
     teamAbbr: null,
     age: null,
     stats: sumStats(totalled),
+    endOvr: null,
     inProgress: liveYear != null,
   });
 

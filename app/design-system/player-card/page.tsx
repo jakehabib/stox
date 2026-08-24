@@ -2,6 +2,7 @@ import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { TeamLogo } from '@/components/TeamLogo';
 import { Tooltip } from '@/components/Tooltip';
 import { CareerStatTable } from '@/components/ds/CareerStatTable';
+import { buildCareerEvents, mergeCareerRecord } from '@/lib/careerRecord';
 import { ContractLedger } from '@/components/ds/ContractLedger';
 import { RatingBadge } from '@/components/ds/RatingBadge';
 import { SectionHeading } from '@/components/ds/SectionHeading';
@@ -124,20 +125,21 @@ const CAP_MODE = 'REALISTIC' as const;
 // One row per season he has played here. The career line is summed from these
 // below rather than written out, so the bottom of the table is always the
 // total of the table.
-interface Line { year: number; age: number; stats: SeasonStats }
+// `ovr` is where he finished that season — PlayerSeason.endOvr on a real card.
+interface Line { year: number; age: number; ovr: number | null; stats: SeasonStats }
 
 const REGULAR: Line[] = [
-  { year: 2022, age: 22, stats: { gp: 15, targets: 62, rec: 38, recYds: 512, recTd: 3 } },
-  { year: 2023, age: 23, stats: { gp: 17, targets: 104, rec: 66, recYds: 921, recTd: 6 } },
-  { year: 2024, age: 24, stats: { gp: 17, targets: 138, rec: 91, recYds: 1_244, recTd: 9 } },
-  { year: 2025, age: 25, stats: { gp: 16, targets: 132, rec: 87, recYds: 1_181, recTd: 8 } },
-  { year: 2026, age: 26, stats: { gp: 17, targets: 156, rec: 104, recYds: 1_466, recTd: 12 } },
-  { year: 2027, age: 27, stats: { gp: 11, targets: 108, rec: 74, recYds: 1_032, recTd: 8 } },
+  { year: 2022, age: 22, ovr: 68, stats: { gp: 15, targets: 62, rec: 38, recYds: 512, recTd: 3 } },
+  { year: 2023, age: 23, ovr: 75, stats: { gp: 17, targets: 104, rec: 66, recYds: 921, recTd: 6 } },
+  { year: 2024, age: 24, ovr: 83, stats: { gp: 17, targets: 138, rec: 91, recYds: 1_244, recTd: 9 } },
+  { year: 2025, age: 25, ovr: 84, stats: { gp: 16, targets: 132, rec: 87, recYds: 1_181, recTd: 8 } },
+  { year: 2026, age: 26, ovr: 88, stats: { gp: 17, targets: 156, rec: 104, recYds: 1_466, recTd: 12 } },
+  { year: 2027, age: 27, ovr: null, stats: { gp: 11, targets: 108, rec: 74, recYds: 1_032, recTd: 8 } },
 ];
 
 const POSTSEASON: Line[] = [
-  { year: 2024, age: 24, stats: { gp: 2, targets: 19, rec: 12, recYds: 168, recTd: 2 } },
-  { year: 2026, age: 26, stats: { gp: 3, targets: 31, rec: 21, recYds: 302, recTd: 3 } },
+  { year: 2024, age: 24, ovr: 83, stats: { gp: 2, targets: 19, rec: 12, recYds: 168, recTd: 2 } },
+  { year: 2026, age: 26, ovr: 88, stats: { gp: 3, targets: 31, rec: 21, recYds: 302, recTd: 3 } },
 ];
 
 function sum(lines: Line[]): SeasonStats {
@@ -156,6 +158,7 @@ function careerTable(scope: StatScope, lines: Line[]): CareerTable {
     teamAbbr: TEAM.abbr,
     age: l.age,
     stats: l.stats,
+    endOvr: l.ovr,
     inProgress: l.year === SEASON_YEAR,
   }));
   rows.push({
@@ -166,6 +169,7 @@ function careerTable(scope: StatScope, lines: Line[]): CareerTable {
     teamAbbr: null,
     age: null,
     stats: sum(lines),
+    endOvr: null,
     inProgress: false,
   });
   return { scope, rows, hasUndecomposed: false, hasPreLeagueCareer: false, empty: lines.length === 0 };
@@ -196,6 +200,28 @@ export default function PlayerCardMockup({ searchParams }: { searchParams?: { sp
   const scope = parseStatScope(searchParams?.[STAT_SCOPE_PARAM]);
   const showPlayoffs = scope === 'PLAYOFFS';
   const table = careerTable(scope, showPlayoffs ? POSTSEASON : REGULAR);
+  /**
+   * The career record — the same season rows with what happened to him folded
+   * in. Assembled through the real lib/careerRecord.ts so this page cannot
+   * drift from the card: a fixture that renders the shape by hand stops being
+   * a specimen the moment the assembly changes.
+   *
+   * The 2021 row is the point of the design: a year with an event and no
+   * season line still gets a row. So is the empty column against 2023 and 2025
+   * — a quiet season is a quiet season, not a gap.
+   */
+  const record = mergeCareerRecord(table.rows, buildCareerEvents({
+    player: { isDraftee: false, draftYear: 2021, draftRound: 2, draftPickNo: 41 },
+    transactions: [
+      { type: 'DRAFT', seasonYear: 2021, week: 0, teamId: TEAM.id, headline: 'Round 2, Pick 41', detail: '' },
+      { type: 'RESIGN', seasonYear: 2024, week: 5, teamId: TEAM.id, headline: 'Re-signed', detail: '4-yr deal, ~$21.5M/yr' },
+      { type: 'TAG', seasonYear: 2027, week: 1, teamId: TEAM.id, headline: 'franchise-tagged', detail: '1-yr, fully guaranteed at $24.1M' },
+    ],
+    awards: [{ type: 'AWARD_OPOY', seasonYear: 2026 }],
+    allStarYears: [2024, 2026],
+    ringYears: [2026],
+    clubAbbr: { [TEAM.id]: TEAM.abbr },
+  }));
   const scopeHref = (playoffs: boolean) =>
     `/design-system/player-card${playoffs ? `?${STAT_SCOPE_PARAM}=playoffs` : ''}`;
 
@@ -344,11 +370,16 @@ export default function PlayerCardMockup({ searchParams }: { searchParams?: { sp
       <div className="section">
         <SectionHeading
           eyebrow="Year by year"
-          title={showPlayoffs ? 'Career Stat Line — Postseason' : 'Career Stat Line'}
+          title={showPlayoffs ? 'Career Record — Postseason' : 'Career Record'}
           action={<StatScopeToggle scope={scope} regularHref={scopeHref(false)} playoffHref={scopeHref(true)} />}
         />
         <div className="panel overflow-hidden">
-          <CareerStatTable position={PLAYER.position} table={table} />
+          <CareerStatTable
+            position={PLAYER.position}
+            table={table}
+            record={showPlayoffs ? undefined : record}
+            showOvr
+          />
         </div>
       </div>
 

@@ -45,8 +45,8 @@ import {
 import { CollegeStatLine } from '@/components/CollegeStatLine';
 import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
-import { CareerHonors, HonorAward } from '@/components/ds/CareerHonors';
 import { CareerStatTable } from '@/components/ds/CareerStatTable';
+import { buildCareerEvents, mergeCareerRecord, RECORD_TX_TYPES } from '@/lib/careerRecord';
 import { StatScopeToggle, STAT_SCOPE_PARAM, parseStatScope } from '@/components/ds/StatScopeToggle';
 import { resolveRingYears } from '@/lib/gen/leagueHistory';
 import { allStarYearsFor } from '@/lib/allStars';
@@ -495,7 +495,7 @@ export default async function PlayerPage({
   // It still returns nothing for a save with no history and no seasons on
   // record, and the block simply doesn't render.
   const careerStartYear = league.seasonYear - player.experience;
-  const [awardTxs, titleSeasons, allStarYears] = await Promise.all([
+  const [awardTxs, titleSeasons, allStarYears, recordTxs, clubs] = await Promise.all([
     // HIS TROPHIES, BY ID. This matched the headline as a string — "First Last
     // (" — which meant the honours on a man's own page depended on a sentence
     // format and on no two men in a league ever sharing a name. Award rows
@@ -521,13 +521,49 @@ export default async function PlayerPage({
       : Promise.resolve([]),
     // Read back rather than listed among the awards above: a selection is not
     // a trophy with a name, it is a season he was one of the best at his
-    // position, and CareerHonors counts them ("4x All-Star") instead of
-    // printing four identical rows. Matched by id, like the awards — see
-    // lib/allStars.ts for the same fallback and the same reason.
+    // position, and the pill counts them ("4x All-Star") instead of printing
+    // four identical rows. The record below dates each one. Matched by id,
+    // like the awards — see lib/allStars.ts for the same fallback and the
+    // same reason.
     allStarYearsFor(league.id, player),
+    /**
+     * WHAT HAPPENED TO HIM — the moves half of the career record.
+     *
+     * The same OR the awards above use, and for the same measured reason:
+     * only about half of all transactions carry a `playerId` at all, and
+     * every row written before that column existed carries none. Matching a
+     * name is the weaker key and it is used ONLY where the database has
+     * nothing better, never in place of an id. The name is unique within a
+     * league (lib/gen/names.ts's NameRegistry), and the type filter keeps the
+     * match off the weekly game recaps, which mention half the roster.
+     *
+     * The types are the ones a record book carries. Injuries are not among
+     * them and cannot be: 82,440 injury rows in the development database and
+     * not one names the player it happened to. Weekly recaps and development
+     * notes are excluded on purpose — see lib/careerRecord.ts.
+     */
+    player.isDraftee ? Promise.resolve([]) : prisma.transaction.findMany({
+      where: {
+        leagueId: league.id, type: { in: [...RECORD_TX_TYPES] },
+        OR: [
+          { playerId: player.id },
+          { playerId: null, headline: { contains: `${player.firstName} ${player.lastName}` } },
+        ],
+      },
+      orderBy: [{ seasonYear: 'asc' }, { week: 'asc' }],
+    }),
+    // Club abbreviations, for the years whose only row is a transaction — a
+    // released lineman's season has no crest of its own to borrow.
+    prisma.team.findMany({ where: { leagueId: league.id }, select: { id: true, abbr: true } }),
   ]);
-  const honorAwards: HonorAward[] = awardTxs.map((t) => ({
-    year: t.seasonYear, label: AWARD_LABEL[t.type] ?? t.type, statLine: t.detail,
+  // The trophies, named, for the pill beside his name. The RECORD below dates
+  // every one of them against the season that earned it, and its numbers ARE
+  // that season's row — so the stat line these rows also carry is not read
+  // here. One fact, one place, which is why the standalone Career & Honors
+  // panel this page used to carry underneath the card is gone: it restated the
+  // same year-and-trophy list a third time.
+  const honorAwards = awardTxs.map((t) => ({
+    year: t.seasonYear, label: AWARD_LABEL[t.type] ?? t.type,
   }));
   const ringYears = await resolveRingYears({
     leagueId: league.id,
@@ -540,6 +576,37 @@ export default async function PlayerPage({
     seasons: career?.lines ?? [],
     contract: player.contract ? { teamId: player.contract.teamId, signedYear: player.contract.signedYear } : null,
   });
+
+  /**
+   * THE CAREER RECORD — the season table with what happened to him hanging off
+   * the years, which is the shape the app owner picked out of four:
+   * *"Option A, the record is what we need to add to the player cards"*.
+   *
+   * Every honour on it comes from the rows already loaded above for the pill
+   * beside his name — the same award transactions, the same All-Star seasons,
+   * the same ring years. One load, two views, so the count on the pill and the
+   * years on the record cannot disagree. That failure has been fixed on this
+   * page once already and is not worth having twice.
+   *
+   * REGULAR SEASON ONLY. The postseason view drops every year he had no
+   * playoff game in, so events hung off it would silently lose the years those
+   * rows were filtered out of — a record with holes in it, presented as a
+   * record. The toggle keeps the plain table.
+   */
+  const careerRecord = careerTable && !showPlayoffs
+    ? mergeCareerRecord(careerTable.rows, buildCareerEvents({
+        player: {
+          isDraftee: player.isDraftee, draftYear: player.draftYear,
+          draftRound: player.draftRound, draftPickNo: player.draftPickNo,
+        },
+        transactions: recordTxs,
+        awards: awardTxs,
+        allStarYears,
+        ringYears,
+        clubAbbr: Object.fromEntries(clubs.map((t) => [t.id, t.abbr])),
+      }))
+    : null;
+
   const market = marketValue({ ovr: view.scoutedOvr, position: player.position as any, age: player.age, potential: player.potential });
   // WHAT HE WILL SIGN FOR, which is only a different number for a man standing
   // on the wire: `askingPrice` is `market` discounted for weeks unsigned, and
@@ -944,12 +1011,13 @@ export default async function PlayerPage({
   const statsPane = (
     <div className="space-y-6">
       {/* One row per season the league has actually played, plus at most one
-          "Before <year>" row and the career total. */}
+          "Before <year>" row, the career total, and — on the regular-season
+          view — a row for any year that has an event and no season line. */}
       {careerTable && (
         <div className="section" id="stat-line">
           <SectionHeading
             eyebrow="Year by year"
-            title={showPlayoffs ? 'Career Stat Line — Postseason' : 'Career Stat Line'}
+            title={showPlayoffs ? 'Career Record — Postseason' : 'Career Record'}
             action={
               <StatScopeToggle
                 scope={statScope}
@@ -959,7 +1027,16 @@ export default async function PlayerPage({
             }
           />
           <div className="panel overflow-hidden">
-            <CareerStatTable position={player.position} table={careerTable} />
+            <CareerStatTable
+              position={player.position}
+              table={careerTable}
+              record={careerRecord ?? undefined}
+              // FOG. The end-of-season overall is a rating, and it is printed
+              // under exactly the gate the hero's overall uses — never off
+              // `trueOvr` and never for a man whose ratings this club has not
+              // seen. See buildScoutedView.
+              showOvr={view.revealed}
+            />
           </div>
         </div>
       )}
@@ -1347,16 +1424,6 @@ export default async function PlayerPage({
         // any route that doesn't set it, still lands on stats.
         initialView={searchParams?.view === 'contract' ? 'contract' : 'stats'}
       />
-
-      {!player.isDraftee && (
-        <CareerHonors
-          position={player.position}
-          ringYears={ringYears}
-          awards={honorAwards}
-          allStarYears={allStarYears}
-          seasons={player.experience}
-        />
-      )}
 
       {/* Two up only from lg. The depth rows now carry a cap hit and a term
           beside the rating, and in a half-width column at tablet size that
