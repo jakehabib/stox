@@ -314,6 +314,15 @@ export interface DrillAnchor {
  *
  * Timed drills (forty, cone, shuttle) are LOWER-is-better and carry a
  * negative slope below; the jumps and the bench are higher-is-better.
+ *
+ * THE SD COLUMN IS THE COMPOSITE'S SD, NOT QUITE THE PRINTED ONE. The three
+ * weights below square to 1, so a NORMAL tester's spread is exactly this
+ * column — but the outlier archetypes sit outside that unit variance by
+ * design, and about one prospect in nine is one. Measured over 16,000
+ * prospects the realised spread runs ~1.1x the table (WR 40: 0.10 against
+ * 0.09; LT 40: 0.15 against 0.13; DT bench: 5.1 against 4.7), which lands ON
+ * the real per-position spread rather than under it — published combine sds
+ * include their own workout warriors too.
  */
 export const COMBINE_ANCHOR: Record<Position, DrillAnchor> = {
   QB:   { forty: [4.80, 0.11], vertical: [31.0, 3.2], broad: [111, 5.5], cone: [7.05, 0.20], shuttle: [4.30, 0.14], bench: [0, 0] },
