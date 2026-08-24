@@ -14,6 +14,7 @@ import { applyInSeasonProgression, checkpointShare, progressFreeAgents } from '.
 import { proration, deadMoneyOnCut, capHit, formatMoney } from './cap';
 import { runAiFreeAgencyWave, fillTeamsToRosterMinimum, runInSeasonSignings } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
+import { runAiTradeMarket } from './aiMarket';
 import { mergeStats } from './stats';
 import { SeasonStats } from './types';
 import { gameHeadlines } from './news';
@@ -620,10 +621,19 @@ async function runPhaseStep(leagueId: string) {
       // FREE_AGENCY.WEEKS, not a literal, because the roadmap draws a bar with
       // one segment per week of this window and the two must not disagree
       // about how long it is.
+      // The new league year opens the trade market too — veterans for picks,
+      // once, at the top of the window rather than every week of it.
+      if (league.week === 1) {
+        await runAiTradeMarket({ leagueId, seasonYear: league.seasonYear, week: league.week, window: 'FREE_AGENCY', settings, rng });
+      }
       const nextWeek = league.week + 1;
       if (nextWeek > FREE_AGENCY.WEEKS) {
         await reseedDraftOrder(leagueId, league.seasonYear);
         await startRookieDraft(leagueId, league.seasonYear, rng);
+        // Draft-day pick movement, with the order seeded and every pick still
+        // unused — so a club that moves up really is buying the selection the
+        // board is about to call.
+        await runAiTradeMarket({ leagueId, seasonYear: league.seasonYear, week: league.week, window: 'DRAFT', settings, rng });
         return { summary: `Free agency closed. ${signings} signing(s) this week.${displacedNote} The draft is on the clock.` };
       }
       await prisma.league.update({ where: { id: leagueId }, data: { week: nextWeek } });
@@ -841,6 +851,9 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   // ever opened a scouting screen — advancing a week is not supposed to be
   // something you can do wrong (lib/shortlistAttention.ts).
   await applyShortlistAttention(leagueId, league.seasonYear, week, settings.simSeed || leagueId);
+  // The league's own trade market — clubs dealing with each other, not with
+  // the user. Deadline-weighted; see lib/aiMarket.ts and AI.MARKET.
+  await runAiTradeMarket({ leagueId, seasonYear: league.seasonYear, week, window: 'REGULAR', settings, rng });
   await maybeMakeAiTradeOffer(leagueId, league.seasonYear, week, settings, rng);
   // Somebody's starter went down on Sunday, and the man who can replace him is
   // on the wire at a fraction of what he wanted in the spring. Runs AFTER the
@@ -1576,7 +1589,7 @@ async function createFinal(leagueId: string, seasonYear: number) {
  * ===========================================================================
  * THE OFFSEASON, IN THE ADVANCES A GM ACTUALLY PRESSES
  * ===========================================================================
- * Five steps, TWO advances. The steps below are unchanged and still run in
+ * Five steps, ONE advance. The steps below are unchanged and still run in
  * this order — what changed is how many of them one press of Advance carries.
  *
  * It used to be one step per press, which put SIX presses between the final
@@ -1585,19 +1598,23 @@ async function createFinal(leagueId: string, seasonYear: number) {
  * Every one of those was bookkeeping he clicked through to reach the one
  * screen that actually asks him a question. The app owner: *"thats so many
  * advances, we need to combine some of these"*, and then *"ideally i'd like
- * post super bowl to free agency to be 3 advances"* — so the bookkeeping is
- * GROUPED rather than deleted, and the group boundary is where the reading
- * changes:
+ * post super bowl to free agency to be 3 advances"*. That got it to two
+ * decisionless presses, and he has now asked for the last one: *"I also think
+ * housekeeping only needs to be 1 stage."*
  *
- *   Advance 1  PROGRESS, RESET_STANDINGS, AGE_CONTRACTS — the season just
- *              played is settled and the new league year opens.
- *   Advance 2  ADD_DRAFT_CLASS, RESIGN — the incoming class is on the board
- *              and his own expiring men become a decision (phase -> RESIGN).
- *   Advance 3  out of RESIGN: whoever wasn't kept walks, free agency opens.
+ *   Advance 1  PROGRESS, RESET_STANDINGS, AGE_CONTRACTS, ADD_DRAFT_CLASS,
+ *              RESIGN — the season just played is settled, the new league year
+ *              opens, the incoming class lands on the board, and his own
+ *              expiring men become a decision (phase -> RESIGN).
+ *   Advance 2  out of RESIGN: whoever wasn't kept walks, free agency opens.
  *
- * Both of the first two have something worth reading in the summary, which is
- * the point of splitting there rather than running all four at once: an
- * advance that reports nothing is an advance that reads as broken.
+ * THE SPLIT USED TO BE DEFENDED HERE, and the argument was that both halves
+ * had something worth reading, because "an advance that reports nothing is an
+ * advance that reads as broken". That concern is real and it is met by the
+ * SUMMARY rather than by a second click: one press now reports the season
+ * settled AND the class on the board, which is two things to read on one
+ * screen. What it no longer does is charge a click for the privilege of
+ * reading them separately.
  *
  * LEAGUE.WEEK STILL COUNTS STEPS, NOT PRESSES, and that is deliberate rather
  * than lazy. A week is still "the next step in OFFSEASON_STEPS", so:
@@ -1618,8 +1635,7 @@ async function createFinal(leagueId: string, seasonYear: number) {
  * ===========================================================================
  */
 const OFFSEASON_ADVANCES = [
-  ['PROGRESS', 'RESET_STANDINGS', 'AGE_CONTRACTS'],
-  ['ADD_DRAFT_CLASS', 'RESIGN'],
+  ['PROGRESS', 'RESET_STANDINGS', 'AGE_CONTRACTS', 'ADD_DRAFT_CLASS', 'RESIGN'],
 ] as const;
 
 /** Every offseason step in order. League.week is a 1-based index into this. */
@@ -2476,12 +2492,15 @@ export type ResignDecision = {
   /**
    * RESIGNED — expiring deal replaced with a new one.
    * EXTENDED — walk-year man handed years early.
+   * TAGGED   — no deal was reached and the club spent its franchise tag on him
+   *            rather than lose him: one fully guaranteed season at the top of
+   *            his position's market. Kept, but not agreed.
    * WALKING  — his deal is already up and was not renewed; he reaches free
    *            agency when the re-sign window closes.
    * HELD     — walk-year man left on the deal he is already on. He is not
    *            released and nothing happens to him this offseason.
    */
-  outcome: 'RESIGNED' | 'EXTENDED' | 'WALKING' | 'HELD';
+  outcome: 'RESIGNED' | 'EXTENDED' | 'TAGGED' | 'WALKING' | 'HELD';
   /** Terms, when a deal was actually written. */
   years?: number;
   apy?: number;
@@ -2530,6 +2549,19 @@ export async function resignDecisionsForTeam(
   week: number,
   capMode: LeagueSettings['capMode'],
   rng: Rng,
+  /**
+   * `mayTag` — whether this club is allowed to spend its franchise tag here.
+   *
+   * TRUE for the AI wave and FALSE (the default) for the user's own "Let the
+   * AI pick" button, which is not an oversight and not a double standard. The
+   * tag is one irreversible move a club gets once a league year, and the user
+   * has a whole screen for it that prices it, previews the dead money and asks
+   * him to confirm (FranchiseTagButton, franchiseTagImpactAction). A delegate
+   * button that quietly burned it on his behalf would take that decision away
+   * from him and give him no way back — and the panel it reports through
+   * summarises a re-sign class, not a once-a-year commitment.
+   */
+  opts: { mayTag?: boolean } = {},
 ) {
   const { parseGmProfile, teamNeeds } = await import('./ai/gm');
   const { marketValue, suggestedYears, maxYearsForAge, buildContract, buildExtension, capHit } = await import('./cap');
