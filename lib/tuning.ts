@@ -979,10 +979,10 @@ export const PROGRESSION = {
   /** Spread of the ordinary arc, centred on 1 — the usual "he developed about as expected". */
   DEV_ARC_SD: 0.3,
   /** Share of players who never develop at all. */
-  DEV_ARC_BUST_ODDS: 0.11,
+  DEV_ARC_BUST_ODDS: 0.16,
   /** Mean of a failing arc. Negative: a man on one gets worse, not merely static. */
-  DEV_ARC_BUST_MEAN: -0.55,
-  DEV_ARC_BUST_SD: 0.45,
+  DEV_ARC_BUST_MEAN: -0.9,
+  DEV_ARC_BUST_SD: 0.55,
   /** OVR bump (spread across attributes) for leading the league in a major stat category at a checkpoint. */
   STAT_LEADER_OVR_BUMP: 1,
   /** Potential-ceiling bump for the same. */
