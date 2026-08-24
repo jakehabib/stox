@@ -15,6 +15,7 @@ import { SigningMomentProvider } from '@/components/SigningMoment';
 import { lineupGaps } from '@/lib/lineup';
 import { capComplianceDueNow } from '@/lib/season';
 import { capComplianceReport } from '@/lib/capEnforcement';
+import { pendingCapChange } from '@/lib/pendingCapChange';
 import { transactionCategory } from '@/lib/newsCategory';
 import { ensurePowerSnapshot, powerRankingWireItems } from '@/lib/powerRankings';
 import { prisma } from '@/lib/db';
@@ -40,8 +41,23 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   // capComplianceReport wraps teamCapSummary and short-circuits the extra
   // roster scan when the team is compliant, so this is no more work than
   // the plain summary this used to call, and never two of them.
-  const [compliance, workouts, tickerTx, powerItems, wireTeamRows, lineupRoster, pendingOfferCount, walkYearCount] = await Promise.all([
+  const [compliance, pendingCap, workouts, tickerTx, powerItems, wireTeamRows, lineupRoster, pendingOfferCount, walkYearCount] = await Promise.all([
     ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : capComplianceReport(userTeam.id, league.seasonYear, ctx.settings.capMode),
+    /*
+     * WHAT THE NEXT PRESS OF ADVANCE WILL DO TO THAT NUMBER. The app owner
+     * watched his room go $918K -> $9.07M -> $27.0M -> $43.3M across four
+     * screens with nothing explaining any of it, and asked for the answer
+     * where the number lives: *"it should say under that cap space number
+     * whatever the pending change is on the next Advance and why"*.
+     *
+     * Returns null except on the two advances whose cap effects are entirely
+     * determined by the ledger as it stands — the final, and the press that
+     * shuts the re-sign window. Everything else either does not move his books
+     * or cannot be quoted exactly (the offseason press runs a retirement roll),
+     * and a predicted figure that does not arrive would be worse than none.
+     * See lib/pendingCapChange.ts.
+     */
+    ctx.settings.capMode === 'OFF' ? Promise.resolve(null) : pendingCapChange(userTeam.id, league, ctx.settings.capMode).catch(() => null),
     // Private workouts are the ONLY scarce thing left in scouting — the
     // consensus board is free and the shortlist costs nothing to work — which
     // is exactly why the slot count is the one scouting number worth a
@@ -291,6 +307,33 @@ export default async function LeagueLayout({ children, params }: { children: Rea
                     under him. */}
                 {compliance.capYear !== league.seasonYear && (
                   <div className="text-[10px] text-muted leading-tight">{compliance.capYear} books</div>
+                )}
+                {/* AND WHAT THE NEXT PRESS DOES TO IT. His ask, verbatim:
+                    *"like for example, show the old cap space number with a
+                    (+15M) underneath it. and when you hover over the (15M) it
+                    says from contracts rolling off.... or whatever it may be"*,
+                    then *"it should say under that cap space number whatever
+                    the pending change is on the next Advance and why"*.
+
+                    A NATIVE title, and its own, for the reason the tile above
+                    carries one: a <Tooltip> bubble here opens over the Advance
+                    button. Nested inside the link's own title, which is how a
+                    browser lets one hover target sit inside another — the
+                    glossary definition on the tile, the cause on the figure.
+
+                    It is drawn only while there IS a pending change worth
+                    naming, which is two advances a league year (the final, and
+                    the press that shuts the re-sign window) — see
+                    lib/pendingCapChange.ts for what is deliberately left
+                    unquoted and why. The rest of the year this strip is exactly
+                    as dense as it was. */}
+                {pendingCap && (
+                  <div
+                    className={`text-[10px] leading-tight font-mono cursor-help ${pendingCap.delta >= 0 ? 'text-accent/80' : 'text-warn'}`}
+                    title={pendingCap.note}
+                  >
+                    {pendingCap.label}
+                  </div>
                 )}
               </Link>
             )}

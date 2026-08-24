@@ -9,6 +9,7 @@ import { PageMasthead } from '@/components/ds/PageMasthead';
 import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
 import { resignListCutoff } from '@/lib/contractClock';
+import { expiringCapCommitment } from '@/lib/pendingCapChange';
 import { franchiseTagBlockReason } from '@/lib/franchiseTag';
 
 export default async function ResignPage({ params, searchParams }: {
@@ -185,9 +186,12 @@ export default async function ResignPage({ params, searchParams }: {
   // capSpace. Comparing the two implied you were short by the whole amount
   // when keeping everyone at their current number costs nothing extra — it
   // is money that comes OFF the books, not money you still have to find.
-  const committedToExpiring = settings.capMode === 'OFF'
-    ? 0
-    : expiring.reduce((s, p) => s + capHit(p.contract, settings.capMode), 0);
+  //
+  // The sum itself is shared with the header, which quotes the same figure
+  // over the narrower cohort that is actually one advance from the street
+  // (lib/pendingCapChange.ts). Two reduces over `capHit` written a screen apart
+  // is how a chip and the page it links to come to disagree about one number.
+  const committedToExpiring = expiringCapCommitment(expiring, settings.capMode);
 
   return (
     <div className="space-y-5 max-w-4xl">
