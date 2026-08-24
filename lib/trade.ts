@@ -5,7 +5,7 @@ import { parseSettings } from './settings';
 import { parseGmProfile, playerValueDetailed, pickValue, teamNeeds, rosterFit, philosophySummary, leagueScarcity, RosterPlayer } from './ai/gm';
 import { draftOrderContext, type DraftOrderContext } from './draft';
 import { CapMode } from './types';
-import { recordTrade } from './tradeRetro';
+import { recordTrade, type TradeAssetSnapshot } from './tradeRetro';
 import { unamortizedBonus, formatMoney, capChargeYear } from './cap';
 import { teamCapSummary } from './cap-summary';
 import { reconcileDepthChart } from './gen/league';
@@ -134,7 +134,7 @@ const FUTURE_SLOT_REGRESSION = 0.65;
  * the offseason, before that draft actually runs — so which one is "this
  * season's pick" depends on where in the phase machine the league sits.
  */
-function effectiveSlot(pick: { year: number; slot: number; originalTeamId: string }, draft: DraftOrderContext): number {
+export function effectiveSlot(pick: { year: number; slot: number; originalTeamId: string }, draft: DraftOrderContext): number {
   if (draft.seededYear !== null && pick.year === draft.seededYear) return pick.slot;
   const imminentYear = draft.imminentYear;
   if (imminentYear === null) return pick.slot;
@@ -767,6 +767,91 @@ async function assertAssetsTradable(leagueId: string, sides: TradeSide[]): Promi
   }
 }
 
+/**
+ * ===========================================================================
+ * WHAT THE LEAGUE WIRE SAYS ABOUT A TRADE
+ * ===========================================================================
+ * One sentence a football person would recognise, built from the SAME priced
+ * snapshot the retrospective is written from — never a second pass over the
+ * assets. The headline names the man the deal is about and what it cost; the
+ * detail carries the whole ledger, both directions, so nothing that moved is
+ * missing from the record even though only one row is written.
+ *
+ * "BLOCKBUSTER" is not a mood. It fires at PACKAGE.HEADLINE_THRESHOLD — the
+ * same 800 points that makes a man a cornerstone everywhere else in this file,
+ * about a mid-first — so the word means one checkable thing and the trade
+ * screen's own idea of a pillar is what decides it.
+ */
+const ORDINALS = ['', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th'];
+
+/** "2028 Round 2" -> "a 2028 2nd". Falls back to the stored label rather than guessing. */
+function pickPhrase(label: string): string {
+  const m = /^(\d{4}) Round (\d+)$/.exec(label);
+  if (!m) return label;
+  const round = Number(m[2]);
+  return `a ${m[1]} ${ORDINALS[round] ?? `${round}th`}`;
+}
+
+function assetPhrase(a: TradeAssetSnapshot): string {
+  if (a.type === 'PICK') return pickPhrase(a.label);
+  const rating = a.ovr === undefined ? '' : `${a.ovr} OVR `;
+  return `${rating}${a.position ?? ''} ${a.label}`.replace(/\s+/g, ' ').trim();
+}
+
+/** "a 1st", "a 1st and a 2nd", "a 1st, a 2nd and a 3rd". */
+function joinPhrases(parts: string[]): string {
+  if (parts.length === 0) return 'nothing';
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+type ClubInfo = { city: string; nickname: string; abbr: string };
+
+/** The sentence written on the wire for one deal, and the man it is about. */
+export interface TradeWireLine {
+  headline: string;
+  detail: string;
+  headlinePlayerId: string | null;
+}
+
+export function describeTrade(
+  snapshot: { aToB: TradeAssetSnapshot[]; bToA: TradeAssetSnapshot[] },
+  teamA: ClubInfo,
+  teamB: ClubInfo,
+): TradeWireLine {
+  const detail =
+    `${teamA.abbr} sends ${joinPhrases(snapshot.aToB.map(assetPhrase))}. `
+    + `${teamB.abbr} sends ${joinPhrases(snapshot.bToA.map(assetPhrase))}.`;
+
+  // The headline asset: the most valuable MAN moving in either direction. A
+  // pick can never be the headline — "Chicago acquires a 2029 1st" is not the
+  // sentence a wire leads with, and the pick-only case is worded separately.
+  const players = [
+    ...snapshot.aToB.filter((x) => x.type === 'PLAYER').map((x) => ({ x, toB: true })),
+    ...snapshot.bToA.filter((x) => x.type === 'PLAYER').map((x) => ({ x, toB: false })),
+  ].sort((p, q) => q.x.value - p.x.value);
+
+  if (players.length === 0) {
+    return {
+      headline: `${teamA.city} and ${teamB.city} swap draft picks`,
+      detail,
+      headlinePlayerId: null,
+    };
+  }
+
+  const head = players[0];
+  const buyer = head.toB ? teamB : teamA;
+  const seller = head.toB ? teamA : teamB;
+  // What the buyer gave up for him — the other side of the deal, whole.
+  const paid = head.toB ? snapshot.bToA : snapshot.aToB;
+  const blockbuster = head.x.value >= TRADE_VALUE.PACKAGE.HEADLINE_THRESHOLD ? 'BLOCKBUSTER — ' : '';
+  return {
+    headline: `${blockbuster}${buyer.city} acquires ${assetPhrase(head.x)} from ${seller.city} for ${joinPhrases(paid.map(assetPhrase))}`,
+    detail,
+    headlinePlayerId: head.x.id,
+  };
+}
+
 export async function executeTrade(opts: {
   leagueId: string; teamA: string; teamB: string; aToB: TradeAsset[]; bToA: TradeAsset[]; seasonYear: number; week: number;
   /**
@@ -786,7 +871,7 @@ export async function executeTrade(opts: {
    * not an override, it is corruption.
    */
   force?: boolean;
-}) {
+}): Promise<TradeWireLine | null> {
   const [league, teamAInfo, teamBInfo] = await Promise.all([
     prisma.league.findUniqueOrThrow({ where: { id: opts.leagueId } }),
     prisma.team.findUniqueOrThrow({ where: { id: opts.teamA } }),
@@ -920,15 +1005,16 @@ export async function executeTrade(opts: {
   }
 
   // Snapshot what's being traded (and what it's worth right now) BEFORE
-  // ownership changes — this is the only record of asset identity a trade
-  // retrospective (lib/tradeRetro.ts) can grade later; the Transaction row
-  // below only ever logs asset counts, not who/what.
-  await recordTrade({
+  // ownership changes — the only record of asset identity a trade
+  // retrospective (lib/tradeRetro.ts) can grade later, and now also what the
+  // League Wire reads to name the deal (see `wire` below).
+  const snapshot = await recordTrade({
     leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week,
     teamAId: opts.teamA, teamBId: opts.teamB, teamAAbbr: teamAInfo.abbr, teamBAbbr: teamBInfo.abbr,
     aToB: opts.aToB, bToA: opts.bToA, capMode,
   });
 
+  let written: TradeWireLine | null = null;
   await prisma.$transaction(async (tx) => {
     /**
      * Trading a player away does NOT hand his signing-bonus proration to the
@@ -1031,14 +1117,52 @@ export async function executeTrade(opts: {
     await reconcileDepthChart(opts.teamA, tx);
     await reconcileDepthChart(opts.teamB, tx);
 
+    /*
+     * =====================================================================
+     * THE DEAL, SAID AS FOOTBALL — AND ATTACHED TO A MAN
+     * =====================================================================
+     * This row used to read `Trade: ATL <-> BUF` over `ATL sends 2 asset(s),
+     * receives 2 asset(s).`, with no `playerId` at all. Measured across the
+     * whole Transaction table: 25 TRADE rows in 272 leagues and ZERO of them
+     * carrying a player. Every other kind of move in this game is
+     * attributable — DRAFT 42,917 of 43,528, RESIGN 39,724 of 51,778 — so a
+     * trade was the one thing that could happen to a career and leave no
+     * trace on it. The wire could not report it and a player's own page
+     * could not show it.
+     *
+     * ONE ROW PER DEAL, NOT ONE PER PLAYER. A four-man swap is one event, and
+     * four rows would read as four trades on the wire. `playerId` therefore
+     * names the HEADLINE asset — the most valuable man moving in either
+     * direction, which is the one the wire leads with.
+     *
+     * THE OTHER MEN IN THE DEAL ARE NOT LOST, and this is the reason one row
+     * is safe: `TradeRecord` (written immediately above) carries the complete
+     * per-player ledger of both directions, each entry keyed by real
+     * `playerId`, with the club abbreviations and the league year on the row.
+     * So "2031 — Traded to New York" is answerable for the second, third or
+     * fourth piece of a deal as readily as for the headline: find the record
+     * whose `aToB` or `bToA` names him, and the side he is on says which club
+     * he went to. This row is the announcement; that row is the ledger.
+     */
+    const wire = describeTrade(snapshot, teamAInfo, teamBInfo);
     await tx.transaction.create({
       data: {
         leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week, type: 'TRADE',
-        headline: `Trade: ${teamAInfo.abbr} <-> ${teamBInfo.abbr}`,
-        detail: `${teamAInfo.abbr} sends ${opts.aToB.length} asset(s), receives ${opts.bToA.length} asset(s).`,
+        headline: wire.headline,
+        detail: wire.detail,
+        playerId: wire.headlinePlayerId,
       },
     });
+    written = wire;
   });
+  /*
+   * HANDED BACK RATHER THAN LOOKED UP AGAIN. lib/aiMarket.ts wants the
+   * sentence for the advance summary, and re-reading "the most recent TRADE
+   * row for this league and week" to find it is a query that can return a
+   * different deal than the one just written the moment two land in one tick.
+   * Callers that do not want it are unaffected — this used to return nothing.
+   */
+  return written;
 }
 
 export interface TradePartnerSuggestion {

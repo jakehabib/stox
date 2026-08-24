@@ -2132,6 +2132,142 @@ export const AI = {
    * corners who have to man up against WR1) than on a punter, no matter how
    * good that punter's ceiling looks on paper. [TUNE]
    */
+  /**
+   * =========================================================================
+   * THE AI-vs-AI TRADE MARKET — see lib/aiMarket.ts
+   * =========================================================================
+   * The league re-signs, signs, cuts and drafts on its own and, until now,
+   * never traded: 25 TRADE rows across 272 leagues in the dev database, about
+   * one deal per nine leagues ever. Everything else in this file exists to
+   * make a trade credible; none of it was reachable unless the player himself
+   * pressed Propose.
+   *
+   * VOLUME IS CALIBRATED ON THE REAL IN-SEASON MARKET, which runs roughly
+   * 35-40 trades a year across 32 clubs, very heavily bunched in the fortnight
+   * before the deadline. This ships DELIBERATELY UNDER that number, because a
+   * game week costs a player far more attention than a real NFL week does: 35
+   * wire items spread over six months of calendar is a different experience
+   * from 35 spread over the nine advances this game's in-season window has.
+   * It is far easier to add drama later than to remove noise — a quiet league
+   * reads as restrained, a churning one reads as broken — so the first ship
+   * aims at the low end and the constant is here, alone, to be turned up.
+   */
+  MARKET: {
+    /**
+     * [TUNE] Executed in-season trades per league-season, league-wide. 15
+     * against a real 35-40. About one deal per two clubs per season.
+     */
+    SEASON_TARGET: 15,
+    /**
+     * How hard the season's business bunches at the deadline, in weeks of
+     * e-folding. The weekly share is exp((week - deadline) / this), normalised
+     * across the open weeks. At 2.2 with the default week-9 deadline that puts
+     * ~36% of the year's trades in the deadline advance itself and ~25% in the
+     * one before it, and leaves the early season quiet — which is the shape
+     * the real market has and the reason a deadline feels like an event.
+     */
+    DEADLINE_TIGHTNESS: 2.2,
+    /** Deals attempted in the FREE_AGENCY step — the new league year, veterans for picks. */
+    OFFSEASON_TARGET: 4,
+    /** ...and on draft day, where real volume is highest and is nearly all pick-for-pick. */
+    DRAFT_TARGET: 5,
+
+    /**
+     * THE COST CEILING, AND WHY IT IS A COUNT OF CALLS RATHER THAN A TIMEOUT.
+     * One `evaluateTrade` measures 30.8ms on a 1,518-player league (it rescans
+     * the league for `leagueScarcity` every call), and every candidate needs
+     * TWO — one from each club's side, because neither may be gifted. So this
+     * is the real budget for the Advance button: 60 calls is about 1.8s worst
+     * case, and an ordinary week spends a fraction of it. A tick that runs out
+     * of budget simply stops looking; it never falls back to a cheaper test.
+     */
+    MAX_EVAL_CALLS_PER_TICK: 60,
+    /**
+     * Candidate deals built per deal wanted, before giving up on the tick.
+     * [TUNE] 4. About 70% of candidates are refused by one side or the other —
+     * which is correct, they are guesses — so at 3 the pass delivered 10.4
+     * trades against a SEASON_TARGET of 15 and the constant did not mean what
+     * it said. Looking harder is the honest fix for that; quietly raising the
+     * target to compensate would have left a number in this file that no
+     * measurement matched.
+     */
+    ATTEMPTS_PER_DEAL: 4,
+    /**
+     * ONE SWEETENER. If the selling club is short but inside its counter
+     * window, the shortlist adds the next pick and asks once more — which is
+     * what a phone call is. More rounds than this is a search, and a search
+     * belongs to the player, not to a background pass.
+     */
+    SWEETENER_TRIES: 1,
+
+    // --- guard rails, all measurable ---------------------------------------
+    /**
+     * Trades a single club may make per league year. A rebuilding club selling
+     * a 91 for picks is the point of this feature; a rebuilding club selling
+     * its whole roster is a bug, and this is the line between them.
+     */
+    CLUB_SEASON_CAP: 3,
+    /**
+     * Weeks before the same two clubs may deal with each other again. Stops
+     * the market undoing last week's trade, which is the shape churn takes
+     * when both sides' valuations sit near the line.
+     */
+    PAIR_COOLDOWN_WEEKS: 4,
+    /**
+     * A man who has been traded is off the market for the rest of the league
+     * year. No player bounces between clubs inside a season.
+     */
+    PLAYER_COOLDOWN_SEASONS: 1,
+    /** What counts as one of the league's genuinely elite men. Same 88 the premium tier is anchored on. */
+    ELITE_OVR: 88,
+    /**
+     * ...and how many of them may change hands in a league year. THE USER'S
+     * BOARD MUST NOT BE STRIPPED BEFORE HE CAN ACT. Some of his targets
+     * should vanish — that is the drama — but a market that clears the top of
+     * the board in one advance is worse than no market at all.
+     */
+    ELITE_MOVES_PER_SEASON: 3,
+    /**
+     * A seller must keep somebody at the position. Trading the only man at a
+     * spot is not a rebuild, it is a hole nobody chose.
+     */
+    MIN_KEPT_AT_POSITION: 1,
+    /** The shape worth getting right: an ageing man with little term left, moving from a rebuild to a contender for picks. */
+    VETERAN_MIN_AGE: 27,
+    VETERAN_MAX_YEARS_LEFT: 2,
+
+    /**
+     * A TRADE HAS TO BE ABOUT SOMEBODY. The first measured pass filled the
+     * wire with 65-to-74 overall interior linemen going for late picks —
+     * five of the first fourteen headlines — because roster need is thinnest
+     * at the positions clubs roster fewest of, and the candidate scorer
+     * followed the need straight into the bottom of the depth chart. Real
+     * clubs do make those deals; a League Wire that mostly reports them is
+     * not the feature anybody asked for.
+     *
+     * Stated as a ROUND rather than a number of points, and read off
+     * PICK_VALUE_CHART, so it stays a sentence a football person can check:
+     * the selling club must value him at least what the last pick of this
+     * round is worth. At 3 that is 116 points, which is about a 78 overall at
+     * a premium position — a rotation player, not a body.
+     */
+    MIN_ASSET_ROUND: 3,
+    /**
+     * Picks in one package. [TUNE] 3, down from 4. The greedy filler used to
+     * close a 40-point gap by adding three seventh-rounders, and the wire read
+     * "a 2030 1st, a 2027 4th, a 2029 6th, a 2029 7th and a 2028 7th" — a
+     * sentence no reporter has ever written. CONCENTRATION already weights the
+     * fourth asset at 0.70 and everything past it at 0.55, so the tail was
+     * barely paying for itself even in the arithmetic.
+     */
+    MAX_PACKAGE_PICKS: 3,
+    /**
+     * ...and a pick worth less than this share of the ask is not part of the
+     * deal, it is confetti. Keeps the last piece of a package meaningful.
+     */
+    MIN_PIECE_SHARE: 0.06,
+  },
+
   DRAFT_POSITION_VALUE: {
     QB: 1.5, EDGE: 1.25, LT: 1.2, WR: 1.15, CB: 1.15,
     DT: 1.05, S: 1.0, LB: 1.0, TE: 1.0, RB: 0.9,

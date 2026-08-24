@@ -30,6 +30,15 @@ export interface TradeAssetSnapshot {
   id: string; // playerId or draftPickId — the ORIGINAL asset traded
   label: string;
   position?: string;
+  /**
+   * His rating the day he was dealt, for players only. Carried so the League
+   * Wire can say "91 OVR EDGE Marcus Lane" without re-reading a row that has
+   * since moved, and so a retrospective years later can show what the club
+   * thought it was buying rather than what he became. OPTIONAL because every
+   * TradeRecord written before this field existed has no answer, and a
+   * career page must not print a confident 0 for a man nobody measured.
+   */
+  ovr?: number;
   value: number;
 }
 
@@ -47,7 +56,7 @@ async function snapshotAssets(
     if (a.type === 'PLAYER') {
       const p = await prisma.player.findUniqueOrThrow({ where: { id: a.id }, include: { contract: true } });
       const v = playerValueDetailed(p as unknown as RosterPlayer, { profile: NEUTRAL_PROFILE, capMode, scarcity });
-      out.push({ type: 'PLAYER', id: p.id, label: `${p.firstName} ${p.lastName}`, position: p.position, value: v.total });
+      out.push({ type: 'PLAYER', id: p.id, label: `${p.firstName} ${p.lastName}`, position: p.position, ovr: p.trueOvr, value: v.total });
     } else {
       const pick = await prisma.draftPick.findUniqueOrThrow({ where: { id: a.id } });
       // What the pick was on the day, in the same order of precedence the AI
@@ -67,7 +76,16 @@ async function snapshotAssets(
   return out;
 }
 
-/** Called from inside executeTrade, before assets change hands, so this captures pre-trade ownership context. */
+/**
+ * Called from inside executeTrade, before assets change hands, so this captures
+ * pre-trade ownership context.
+ *
+ * RETURNS THE SNAPSHOTS IT JUST PRICED. executeTrade needs the same list to
+ * name the deal on the League Wire — which man is the headline, what came back
+ * — and re-deriving it there would be a second reading of one trade, priced by
+ * a second call to playerValueDetailed a few milliseconds later. One valuation,
+ * handed to both readers.
+ */
 export async function recordTrade(opts: {
   leagueId: string; seasonYear: number; week: number;
   teamAId: string; teamBId: string; teamAAbbr: string; teamBAbbr: string;
@@ -90,6 +108,7 @@ export async function recordTrade(opts: {
       aToB: writeJson(aToB), bToA: writeJson(bToA),
     },
   });
+  return { aToB, bToA };
 }
 
 export interface AssetOutcome extends TradeAssetSnapshot {
