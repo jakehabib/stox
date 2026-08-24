@@ -1,7 +1,8 @@
 import { Rng, clamp } from './rng';
 import { readJson } from './json';
 import type { AttrMap } from './ratings';
-import { AI, CONSENSUS } from './tuning';
+import { AI, CONSENSUS, GENERATION } from './tuning';
+import { bendToCeiling, bendToFloor } from './gen/players';
 import type { Position } from './tuning';
 import { BASE_40 } from './gen/prospectProfile';
 import type { CollegeProfile, CombineTesting, CompetitionGrade } from './gen/prospectProfile';
@@ -196,13 +197,22 @@ export function publicAthleticism(position: string, testing: Partial<CombineTest
  * The regime scales BOTH errors together, so a misfiled prospect is misfiled
  * as one story rather than as two independent dice.
  *
- * SYMMETRIC ON PURPOSE, and both halves are real. In one measured 200-class
- * sample the same mechanism produced Rowan Pemberton, an 87-overall edge with
- * a 99 ceiling who graded 66 and sat at board #171 and peaked at 98; and
- * Joaquin Zuniga, a 58-overall corner with a 63 ceiling who graded 97, went
- * #1 on the board and peaked at 59. That is not a side effect to be tuned
- * away: a first pick that can bust is the only thing that makes a first pick
- * worth having. One mechanism, both stories, no second system.
+ * SYMMETRIC WHERE THE ROOM HAS LOOKED, SKEWED WHERE IT HAS NOT. Both halves
+ * are real and both are wanted: a first pick that can bust is the only thing
+ * that makes a first pick worth having, and a seventh-rounder who is genuinely
+ * a star is the best story this genre has. But run flat and symmetric over
+ * four hundred names, the tails stopped being stories and became the ordinary
+ * case at the top of the board: 47% of consensus number ones were MISFILED or
+ * BLIND reads against a 21% class-wide rate, and the median board #1 was an
+ * 80 overall in classes whose best men rated 88 — a room that had never
+ * watched a man deciding he was the best player in the country, every other
+ * draft. So the error is now scaled by EXPOSURE, and its UPWARD half is
+ * damped on the men nobody watched. The downside is untouched, and that is
+ * deliberate: every named story above is a story about a man being UNDERSOLD,
+ * and that half is where the late-round steal comes from. It still costs a
+ * first pick — rolled through lib/progression.ts over 40 classes, the
+ * consensus 1.01 peaks below 78 one year in ten and somebody outside the top
+ * 96 out-peaks him in half of them.
  *
  * WHAT THIS STILL MAY NOT DO. None of these numbers is returned. The room's
  * private read is exactly as unpublishable as trueOvr: `grade` is the number
@@ -225,20 +235,26 @@ export const CONSENSUS_EVAL = {
    * smeared over everybody: a flat wide SD blurs the whole board equally,
    * leaves it uninformative in the middle, and STILL will not produce the
    * fifth-rounder who is genuinely a star, because that event lives four SDs
-   * out. Pooled over all three regimes the room's read lands within 10 points
-   * on 74% of a class and within 20 on 92%, with a median miss of 5.6 — and
-   * the 6% it misses by more than 25 is the whole mechanic.
+   * out. Pooled over all three regimes, and after EXPOSURE below scales it,
+   * the room's read lands within 10 points on 83% of a class and within 20 on
+   * 95%, with a median miss of 4.2 — and the 3% it misses by more than 25 is
+   * the whole mechanic. On the men rated 86 and better the median miss is
+   * 3.2, which is EXPOSURE doing its job and not a second constant.
    */
   EVAL_SD: 7,
   /**
-   * MISFILED: the room has him wrong — about one prospect in six, read at
-   * three times the ordinary error (SD 21). One in six sounds high until you
-   * count how much of any real class turns out to have been badly misjudged.
+   * MISFILED: the room has him wrong — read at three times the ordinary
+   * error (SD 21). One in six of the men nobody has watched, which sounds
+   * high until you count how much of any real class turns out to have been
+   * badly misjudged; EXPOSURE below thins it toward the top of the board, so
+   * across a whole class it is drawn about one time in seven (15.1%).
    */
   MISFILE_ODDS: 0.16,
   MISFILE_MULT: 3.0,
   /**
-   * BLIND: one in twenty, read at four times (SD 28 — about the full width of
+   * BLIND: one in twenty of the men nobody watched — about one in
+   * twenty-one across a whole class once EXPOSURE thins it — read at four
+   * times (SD 28 — about the full width of
    * the range a prospect is generated across, GENERATION.DRAFT_OVR_MIN..MAX,
    * which is the honest meaning of "the room's opinion of him is worth no more
    * than a name pulled out of the class at random"). Deliberately bounded
@@ -250,37 +266,142 @@ export const CONSENSUS_EVAL = {
   BLINDSPOT_MULT: 4.0,
   /**
    * The standard allowance the room adds for "he is twenty-two", in points.
-   * Deliberately equal to GENERATION.ROOKIE_POTENTIAL_BONUS_MEAN — the
-   * generator's own statement of a rookie's typical headroom — so the grade
-   * SCALE does not move when the board stops reading real ceilings. Measured
-   * over 200 classes: mean grade 67.44 before this change, 67.3 after. Change
-   * this and every grade on the board shifts with it.
+   * It IS GENERATION.ROOKIE_POTENTIAL_BONUS_MEAN — the generator's own
+   * statement of a rookie's typical headroom — read rather than copied.
+   *
+   * IT USED TO BE A COPY, AND THE COPY WENT STALE. This was a literal 14 with
+   * a comment saying it was deliberately equal to the generator's number; the
+   * generator's number then moved twice and this did not, so the room spent
+   * two changes adding nine points of headroom no rookie in the game had, to
+   * every prospect on the board, while the comment describing the policy was
+   * the only place the policy still existed. Reading the constant is the fix
+   * that cannot go stale again. Change it — over there — and every grade on
+   * this board shifts with it.
    */
-  CEILING_ANCHOR: 14,
+  CEILING_ANCHOR: GENERATION.ROOKIE_POTENTIAL_BONUS_MEAN,
   /**
    * How much of a prospect's REAL remaining headroom the room detects, 0..1.
    * At 0 the board is a pure function of current ability; at 1 it reads the
    * future exactly, which is what it used to do. 0.35 says the room picks up
    * some of it — frame, age, raw traits are real tells — and misses most.
    *
-   * BOTH CEILING KNOBS ARE WEAK LEVERS, AND THAT IS NOT A BUG TO TUNE AROUND.
-   * Measured over 150 classes, sweeping this across its ENTIRE range (0.0 to
-   * 1.0) moves Spearman(board rank, career peak) by 0.025 and moves not one
-   * hit rate by a full point; CEILING_SD 0 to 14 moves it by 0.016. Three
-   * things stack up to that: POTENTIAL_WEIGHT is only 0.38 of the grade, a
-   * class's real spread in remaining headroom is about eight points either
-   * way against a thirty-point spread in current ability, and
-   * DEVELOPMENTAL_PULL then deliberately cancels most of what survives (-6
-   * over a 20-point gap is -0.3 per point against base's +0.38). If someone
-   * wants the board to care more about ceilings, the knob is
-   * CONSENSUS.DEVELOPMENTAL_PULL or CONSENSUS.POTENTIAL_WEIGHT, not these.
-   * They are here because the read has to be a coherent pair of numbers, not
-   * because they are where the variance lives — that is EVAL_SD and the two
-   * tails above.
+   * THIS IS NOW THE FLOOR OF A RANGE, NOT A FLAT NUMBER. It is what the room
+   * detects about a man it has barely seen; CEILING_TRUST_WATCHED below is
+   * what it detects about one it has watched everything of, and EXPOSURE
+   * slides between them. 0.35 flat was measured as a weak lever and it was
+   * one — sweeping it across its ENTIRE range moved Spearman(board rank,
+   * career peak) by 0.025 — precisely BECAUSE it was flat: a number applied
+   * equally to four hundred names cannot separate any of them. The pair does
+   * what the single constant could not.
    */
   CEILING_TRUST: 0.35,
   /** Spread of the projection error, in points. Larger than EVAL_SD because a ceiling is a forecast and a rating is an observation. See the note above on how little it moves. */
   CEILING_SD: 7,
+
+  /**
+   * =========================================================================
+   * EXPOSURE — the room has not watched everybody the same amount
+   * =========================================================================
+   * Everything above applies the SAME error to every name in the class. That
+   * is the one part of "the room is wrong" that is not football. A room is
+   * wrong about the redshirt sophomore at a directional school; it is not
+   * wrong in the same way about the man who has started thirty-nine games on
+   * national television, tested in front of every club at the combine, and
+   * been argued about on a set every Saturday for three years. Applied flat,
+   * the two named tails above — MISFILED and BLIND, "nobody got a real look"
+   * — landed on the consensus best player in the country one time in five.
+   *
+   * So the read is scaled by EXPOSURE: 0 is a name on a list, 1 is three
+   * years of Saturday nights. A logistic in the man's real ability, because
+   * that is what gets a player watched — the good ones play at the programmes
+   * that are on television, in the all-star games, at the top of every
+   * position board. It is smooth and it never reaches either end: the most
+   * scouted prospect alive still carries error, and the most obscure one is
+   * still occasionally seen clearly. No wall, a curve.
+   *
+   * IT DOES TWO THINGS, AND THEY ARE THE SAME THING. A watched man is read
+   * more tightly (ERROR_RELIEF, and the two tails get rarer by TAIL_RELIEF),
+   * and his UPSIDE is understood better (CEILING_TRUST rises toward
+   * CEILING_TRUST_WATCHED). Both are the same sentence: you cannot miss on a
+   * player you have seen a hundred times, in either direction.
+   *
+   * WHAT IT DELIBERATELY DOES NOT DO. Exposure is 0.01 on a 62-overall, 0.07
+   * on a 71, 0.31 on an 80 and 0.77 on a 90 — near nothing over most of a
+   * class, so the fog across the middle and back of the board barely moves.
+   * The relief factors are fractions, not switches: a blue chip can still be
+   * misfiled, just at the rate a blue chip actually is.
+   *
+   * WHAT IT COSTS, MEASURED, because it is not free. Over 250 classes it
+   * takes a Generational prospect's median board rank from 24 to 15, his
+   * share of top-five slots from 14.8% to 22.7%, his share of first rounds
+   * from 60.4% to 75.7%, and the share of drafts whose consensus #1 is
+   * Generational from 5.6% to 10.4%. Over 40 classes rolled through
+   * lib/progression.ts it also takes Spearman(board rank, career peak) from
+   * -0.670 to -0.722, and it thins the seventh round's Star-or-better count
+   * from 1.55 a draft to 1.12. The board is a better
+   * board and the late rounds are a little quieter for it; that trade is the
+   * reason the relief factors are fractions and not 1, and it is the number
+   * to watch if anyone pushes them further.
+   * =========================================================================
+   */
+  /** True overall at which the room has watched half of what there is to watch. */
+  EXPOSURE_MID: 84,
+  /** Points of true overall the logistic takes to go from barely-seen to seen. */
+  EXPOSURE_WIDTH: 5,
+  /** Share of the ordinary read error a fully-watched man is spared. */
+  EXPOSURE_ERROR_RELIEF: 0.45,
+  /** Share of the MISFILED and BLIND odds a fully-watched man is spared. */
+  EXPOSURE_TAIL_RELIEF: 0.85,
+  /** CEILING_TRUST for a man the room has watched everything of. */
+  CEILING_TRUST_WATCHED: 0.95,
+  /**
+   * How much of an UPWARD read error survives on a man nobody has watched.
+   * Below 1 this is deliberately asymmetric, and it is the half of exposure
+   * that actually cleans up the top of the board.
+   *
+   * Both named tails are stories about a man being UNDERSOLD — the one
+   * playing behind an All-American, the scheme that hid him, the small school,
+   * the injury year. Run symmetrically they also say the opposite: that a room
+   * which never watched a man can be certain he is the best player in the
+   * country. Measured over 150 classes, that is not a rare accident but the
+   * ordinary case — 47% of consensus number ones were MISFILED or BLIND reads
+   * against a 21% class-wide rate, and the median board #1 was an 80 overall
+   * in classes whose best men rate 88. The extreme of a fat-tailed error over
+   * four hundred names is the fat tail, every single time.
+   *
+   * So the downside stays exactly as wide as it was — the fifth-round steal is
+   * that half and it is untouched — and the upside is damped in proportion to
+   * how little the room has seen. A room that has not watched a man does not
+   * put him at the top of its board; it leaves him off it.
+   */
+  UNSEEN_UPSIDE: 0.6,
+  /**
+   * Where the room's PERCEIVED ceiling starts bending toward the top of the
+   * scale instead of being chopped off at it. 37% of the men rated 88 and
+   * better used to come back with a perceived ceiling of exactly 99 — the one
+   * term in the grade that is supposed to separate the top of a class, not
+   * separating precisely there.
+   */
+  CEILING_READ_KNEE: 93,
+  /**
+   * Where the finished GRADE starts bending toward the ends of its own scale
+   * instead of being chopped off at them.
+   *
+   * `clamp(base + delta + noise, 20, 99)` used to close this file, and it was
+   * the most expensive wall of the lot because everything this board is FOR
+   * happens at the top of it. Measured over 120 classes, 639 prospects came
+   * back graded exactly 99 against 248 at 98 — five and a third men a class
+   * tied at the very top of the board, separated by nothing but positional
+   * value, in a draft whose whole question is who goes first. The bottom did
+   * the same on a smaller scale: 90 men on exactly 20 against 26 on 21.
+   *
+   * Bent, the order survives to the sort. The knee is HIGH on purpose: the
+   * bend squeezes everything above it into the points that are left, so a low
+   * knee would buy a flat histogram by flattening the very discrimination
+   * this is here to protect.
+   */
+  GRADE_SOFT_KNEE_HI: 96,
+  GRADE_SOFT_KNEE_LO: 28,
 } as const;
 
 /**
@@ -294,30 +415,66 @@ interface RoomRead {
   ceiling: number;
 }
 
+/** How much football the room has watched, 0..1 — see EXPOSURE above. */
+function roomExposure(trueOvr: number): number {
+  return 1 / (1 + Math.exp(-(trueOvr - CONSENSUS_EVAL.EXPOSURE_MID) / CONSENSUS_EVAL.EXPOSURE_WIDTH));
+}
+
 function roomReadOf(p: ConsensusInput): RoomRead {
   const E = CONSENSUS_EVAL;
 
+  // How much football the room has actually watched — see EXPOSURE above.
+  // Logistic, so it is a curve rather than a bracket and reaches neither end.
+  const exposure = roomExposure(p.trueOvr);
+
   // Which regime this prospect falls in. Its own stream, so widening the tail
   // in a later patch cannot reshuffle the ordinary reads already in a save.
+  // The two tails are STORIES ABOUT OBSCURITY, so their odds shrink with
+  // exposure rather than being flat across the class; the relief is partial,
+  // so the blue chip nobody had a real read on still exists.
   const roll = new Rng(`consensus-regime-${p.id}`).float(0, 1);
-  const spread =
-    roll < E.BLINDSPOT_ODDS ? E.BLINDSPOT_MULT
-      : roll < E.BLINDSPOT_ODDS + E.MISFILE_ODDS ? E.MISFILE_MULT
+  const unseen = 1 - E.EXPOSURE_TAIL_RELIEF * exposure;
+  const blindOdds = E.BLINDSPOT_ODDS * unseen;
+  const misfileOdds = E.MISFILE_ODDS * unseen;
+  const regime =
+    roll < blindOdds ? E.BLINDSPOT_MULT
+      : roll < blindOdds + misfileOdds ? E.MISFILE_MULT
         : 1;
+  const spread = regime * (1 - E.EXPOSURE_ERROR_RELIEF * exposure);
 
-  const now = clamp(p.trueOvr + new Rng(`consensus-read-${p.id}`).normal(0, E.EVAL_SD * spread), 20, 99);
+  // The read itself. The miss is symmetric for a man the room has watched and
+  // skewed to the downside for one it has not — see UNSEEN_UPSIDE.
+  const miss = new Rng(`consensus-read-${p.id}`).normal(0, E.EVAL_SD * spread);
+  const skewed = miss > 0 ? miss * (E.UNSEEN_UPSIDE + (1 - E.UNSEEN_UPSIDE) * exposure) : miss;
+  const now = clamp(p.trueOvr + skewed, 20, 99);
 
   // The projection. Anchored on the standard allowance and pulled only
   // partway toward the headroom he actually has, then missed by CEILING_SD.
+  // How far it is pulled is the same exposure: the upside of a man the room
+  // has watched a hundred times is not a guess, and the upside of a man it
+  // has one tape of is almost entirely one.
+  const trust = E.CEILING_TRUST + (E.CEILING_TRUST_WATCHED - E.CEILING_TRUST) * exposure;
   const trueGap = p.potential - p.trueOvr;
   const seenGap =
     E.CEILING_ANCHOR +
-    E.CEILING_TRUST * (trueGap - E.CEILING_ANCHOR) +
+    trust * (trueGap - E.CEILING_ANCHOR) +
     new Rng(`consensus-project-${p.id}`).normal(0, E.CEILING_SD * spread);
 
-  // A ceiling below what he already is would be incoherent — nobody in the
-  // room says "he is a 78 and he tops out at 74".
-  return { now, ceiling: clamp(now + Math.max(0, seenGap), now, 99) };
+  // BENT, NOT CHOPPED. This was clamp(now + max(0, seenGap), now, 99), and a
+  // clamp does not remove the reads past the bound, it stacks them ON it:
+  // 37% of the men rated 88 and better came back with a perceived ceiling of
+  // exactly 99, so the one term in the grade that is supposed to separate the
+  // top of a class stopped separating precisely there. Same decaying
+  // exponential lib/gen/players.ts bends a prospect's real ceiling with —
+  // imported rather than copied, because two ceilings in one game free to
+  // drift apart is how this keeps happening.
+  //
+  // The lower bound stays: a ceiling below what he already is would be
+  // incoherent — nobody in the room says "he is a 78 and he tops out at 74" —
+  // and it now also catches the case where the bend itself would push a
+  // very high read below its own current number.
+  const seen = bendToCeiling(now + Math.max(0, seenGap), E.CEILING_READ_KNEE, GENERATION.POTENTIAL_CEILING);
+  return { now, ceiling: Math.max(now, seen) };
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +632,10 @@ export interface ConsensusGrade {
   athleticism: number | null;
 }
 
+/** The ends of the public grade scale. Asymptotes now, not walls — see GRADE_SOFT_KNEE_HI. */
+const GRADE_MAX = 99;
+const GRADE_MIN = 20;
+
 /**
  * One prospect's public grade. Pure, deterministic, and free — no database,
  * no team, no scouting report, no cost.
@@ -601,7 +762,11 @@ export function consensusGradeFor(p: ConsensusInput): ConsensusGrade {
   // Its own stream so a future bias cannot reshuffle existing saves.
   const noise = new Rng(`consensus-noise-${p.id}`).normal(0, CONSENSUS.NOISE_SD);
 
-  const raw = clamp(base + delta + noise, 20, 99);
+  const raw = bendToFloor(
+    bendToCeiling(base + delta + noise, CONSENSUS_EVAL.GRADE_SOFT_KNEE_HI, GRADE_MAX),
+    CONSENSUS_EVAL.GRADE_SOFT_KNEE_LO,
+    GRADE_MIN,
+  );
 
   // --- 5. What the position is worth --------------------------------------
   // Deliberately NOT folded into the grade. The room's grade is a football
