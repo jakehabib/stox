@@ -14,6 +14,7 @@ import { applyInSeasonProgression, checkpointShare, progressFreeAgents } from '.
 import { proration, deadMoneyOnCut, capHit, formatMoney } from './cap';
 import { runAiFreeAgencyWave, fillTeamsToRosterMinimum, runInSeasonSignings } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
+import { runAiTradeMarket } from './aiMarket';
 import { mergeStats } from './stats';
 import { SeasonStats } from './types';
 import { gameHeadlines } from './news';
@@ -620,10 +621,19 @@ async function runPhaseStep(leagueId: string) {
       // FREE_AGENCY.WEEKS, not a literal, because the roadmap draws a bar with
       // one segment per week of this window and the two must not disagree
       // about how long it is.
+      // The new league year opens the trade market too — veterans for picks,
+      // once, at the top of the window rather than every week of it.
+      if (league.week === 1) {
+        await runAiTradeMarket({ leagueId, seasonYear: league.seasonYear, week: league.week, window: 'FREE_AGENCY', settings, rng });
+      }
       const nextWeek = league.week + 1;
       if (nextWeek > FREE_AGENCY.WEEKS) {
         await reseedDraftOrder(leagueId, league.seasonYear);
         await startRookieDraft(leagueId, league.seasonYear, rng);
+        // Draft-day pick movement, with the order seeded and every pick still
+        // unused — so a club that moves up really is buying the selection the
+        // board is about to call.
+        await runAiTradeMarket({ leagueId, seasonYear: league.seasonYear, week: league.week, window: 'DRAFT', settings, rng });
         return { summary: `Free agency closed. ${signings} signing(s) this week.${displacedNote} The draft is on the clock.` };
       }
       await prisma.league.update({ where: { id: leagueId }, data: { week: nextWeek } });
@@ -841,6 +851,9 @@ async function simulateWeek(leagueId: string, week: number, settings: ReturnType
   // ever opened a scouting screen — advancing a week is not supposed to be
   // something you can do wrong (lib/shortlistAttention.ts).
   await applyShortlistAttention(leagueId, league.seasonYear, week, settings.simSeed || leagueId);
+  // The league's own trade market — clubs dealing with each other, not with
+  // the user. Deadline-weighted; see lib/aiMarket.ts and AI.MARKET.
+  await runAiTradeMarket({ leagueId, seasonYear: league.seasonYear, week, window: 'REGULAR', settings, rng });
   await maybeMakeAiTradeOffer(leagueId, league.seasonYear, week, settings, rng);
   // Somebody's starter went down on Sunday, and the man who can replace him is
   // on the wire at a fraction of what he wanted in the spring. Runs AFTER the
