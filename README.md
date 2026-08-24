@@ -701,6 +701,33 @@ ever force-pushed over, so every state below still exists in git history).
   untouched, and ten simulated league years show slightly *less* rating
   inflation than before. Shipped in `ca9512e`.
 
+- **2026-08-24 — The consensus number one was a rotational prospect one draft
+  in fifteen, and nobody had watched him.** The app owner's own board had a
+  63-67 corner projected "Rotational Prospect" sitting above two Franchise
+  Prospects. The centre of the board was healthy; the tail was not — the #1
+  carried a sub-Star ceiling in 24.2% of drafts and the worst seen was a 57
+  overall with a 58 ceiling. The cause was that the room's error was applied
+  flat to all four hundred names, so 47% of consensus number ones were reads
+  from the two regimes whose own names mean "nobody got a real look". The board
+  now examines its own opinion: a prospect is graded once, how high he lands
+  decides how hard the industry then looks, and he is graded again with the
+  room's read of him narrowed in proportion. Sub-Star number ones fall to 2.8%,
+  the worst #1 becomes a 72 overall with a 77 ceiling, and a Generational
+  prospect goes first overall in 22.0% of drafts against 5.6%. Shipped in
+  `4b93f5d`.
+
+- **2026-08-24 — The first pick stopped busting the moment the board stopped
+  crowning frauds, so development has to carry it now.** Sizing for the hidden
+  development arc, once the board fix removed the half of the game's busts that
+  were really scouting accidents. The consensus 1.01 now fails to be a starter
+  by age 27 in 10% of drafts and fails to be a star in 25%, against 5% and 12.5%
+  at the old size. Measured at age 27 rather than career peak, because career
+  peak initialises at a man's arrival rating and so cannot see a player who
+  stopped being good — the old rail sat at exactly 2.5% across a fourfold change
+  in this setting, and the reason is now written into the probe so it is not
+  re-registered. Ten simulated league years drift 1.8 points LESS than before
+  the week's work. Shipped in `e19d251`.
+
 - **2026-08-20 — Visual redesign kickoff.** Starting a staged visual
   redesign (design tokens → dashboard → player page → rest of the app) to
   move away from the generic dark-dashboard look. Game logic, simulation,
