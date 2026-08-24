@@ -100,6 +100,43 @@ function generateAttributes(rng: Rng, pos: Position, targetOvr: number): AttrMap
   return attrs;
 }
 
+/**
+ * The ceiling on potential, bent rather than chopped.
+ *
+ * Below GENERATION.POTENTIAL_SOFT_KNEE this is the identity: a man rated 70
+ * who rolls +8 has a potential of 78, exactly as he always did. Above the knee
+ * the sum is compressed toward GENERATION.POTENTIAL_CEILING along a decaying
+ * exponential whose scale is the remaining span, so the curve leaves the knee
+ * with slope exactly 1 — no kink — and approaches the ceiling without ever
+ * reaching it. 99 stays reachable at any roll size; it just costs an
+ * ever-larger one, which is the point.
+ *
+ * WHY: `clamp(trueOvr + bonus, trueOvr, 99)` used to sit here. A prospect's
+ * true overall already runs to DRAFT_OVR_MAX (88) and the rookie bonus used to
+ * average 14, so a large share of the sums landed past 99 — and every one of
+ * them stacked onto exactly 99, the value lib/ratings.ts labels
+ * "Generational". The whole right tail collapsed onto one number, which made
+ * the single most extreme rating in the game the most COMMON one at the top of
+ * the scale. Measured over 2,000 generated classes: 6.49% of prospects sat at
+ * 99 against 0.95% at 98 — a 6.8x wall — and the median 224-pick draft held 21
+ * generational prospects. It now holds one.
+ *
+ * The knee is deliberately high (97.5) and the bonus roll deliberately small
+ * (see ROOKIE_POTENTIAL_BONUS_MEAN). That split matters: a LOW knee does not
+ * fix this, it relocates the pile. Compressing everything above 91 moved the
+ * mass that used to sit on 99 onto 95-98 instead and made "Franchise Prospect"
+ * fatter than the tier above it was tall. The overflow has to be prevented,
+ * not redistributed, and that is the roll's job; the knee only files off the
+ * corner that is left.
+ */
+export function softCeiling(base: number, bonus: number): number {
+  const raw = base + bonus;
+  const knee = GENERATION.POTENTIAL_SOFT_KNEE;
+  const span = GENERATION.POTENTIAL_CEILING - knee;
+  if (raw <= knee || span <= 0) return raw;
+  return GENERATION.POTENTIAL_CEILING - span * Math.exp(-(raw - knee) / span);
+}
+
 export function generatePlayer(
   rng: Rng,
   opts: {
@@ -134,11 +171,13 @@ export function generatePlayer(
   const potBonusSd = rookie ? GENERATION.ROOKIE_POTENTIAL_BONUS_SD : GENERATION.POTENTIAL_BONUS_SD;
   // Older players have almost no runway left.
   const ageDamp = clamp((30 - age) / 8, 0, 1);
-  const potential = clamp(
-    Math.round(trueOvr + Math.max(0, rng.normal(potBonusMean, potBonusSd)) * ageDamp),
-    trueOvr,
-    99,
-  );
+  const potBonus = Math.max(0, rng.normal(potBonusMean, potBonusSd)) * ageDamp;
+  // softCeiling(), not a hard cap — see GENERATION.POTENTIAL_SOFT_KNEE. The
+  // lower bound stays: a ceiling below the man's own current rating is not a
+  // ceiling, and trueOvr here is the TARGET, which computeOverall can land a
+  // point or two above. The upper 99 can no longer bind (the curve's asymptote
+  // IS 99); it is left in as a guard so this never rests on the arithmetic.
+  const potential = clamp(Math.round(softCeiling(trueOvr, potBonus)), trueOvr, 99);
 
   const body = BODY[position];
   const attrs = generateAttributes(rng, position, trueOvr);

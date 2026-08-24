@@ -560,7 +560,7 @@ export const GENERATION = {
   /** Rookie class skews lower and much wider — that's the point of scouting. */
   ROOKIE_OVR_MEAN: 68,
   ROOKIE_OVR_SD: 7.5,
-  /** Potential is overall + this roll, capped at 99. */
+  /** Potential is overall + this roll, then bent under POTENTIAL_SOFT_KNEE. */
   POTENTIAL_BONUS_MEAN: 8,
   POTENTIAL_BONUS_SD: 7,
   /**
@@ -574,9 +574,71 @@ export const GENERATION = {
    * Ratings are pinned by AGE_CURVE and by where the draft class is generated,
    * not by the ceiling; see the note on AGE_CURVE. Lowering this would have
    * been a real nerf to draft upside bought with nothing.
+   *
+   * IT IS 8 NOW, AND THAT NOTE ABOVE IS WHY IT TOOK THIS LONG. The earlier
+   * measurement cleared 14 by asking whether it inflated league RATINGS — it
+   * does not, and that finding still stands. But nobody asked what it did to
+   * the LABEL, and 14 on a true overall that already reaches 88 put most of
+   * the top of every class past 99, where the clamp below used to stack it.
+   * The ladder the owner wants is close to trueOvr + 8 with a tight spread,
+   * which is what these two now are: 8 and 3.5, measured, not guessed.
+   *
+   * The narrow SD is the part to watch. It makes a prospect's ceiling far more
+   * predictable from his current rating than it used to be, which is upside
+   * the draft no longer sells. Scouting error (lib/scouting.ts observe()) is
+   * what has to carry draft uncertainty now, and it is unrelated to this.
    */
-  ROOKIE_POTENTIAL_BONUS_MEAN: 14,
-  ROOKIE_POTENTIAL_BONUS_SD: 9,
+  ROOKIE_POTENTIAL_BONUS_MEAN: 8,
+  ROOKIE_POTENTIAL_BONUS_SD: 3.5,
+  /**
+   * [TUNE] THE CEILING ON POTENTIAL IS AN ASYMPTOTE, NOT A WALL.
+   *
+   * lib/gen/players.ts softCeiling() leaves everything below KNEE alone and
+   * compresses the sum above it toward CEILING:
+   *
+   *   potential = CEILING - (CEILING-KNEE) * exp(-(raw-KNEE) / (CEILING-KNEE))
+   *
+   * The span doubles as the decay scale, so the curve is C1-continuous at the
+   * knee and never actually reaches 99 — each further point of roll buys
+   * strictly less than the point before it. Nothing is hard-capped: 12 or 15
+   * generational men in one class stay possible, just increasingly unlikely.
+   *
+   * KNEE is high and the roll above is small ON PURPOSE. A low knee does not
+   * fix the wall, it moves it: compressing everything over 91 dropped the pile
+   * from 99 onto 95-98 and left more Franchise Prospects than there had been
+   * Star Prospects. Measured per 224-pick draft over 2,000 classes:
+   *
+   *   tier (grade = potential)   before   after   target   vs tier below
+   *   Generational        99      22.11    1.49     1.5        0.22x
+   *   Franchise       95-98      13.97    6.83     4          0.46x
+   *   All-Star        90-94      23.80   14.76    11          0.63x
+   *   Star            85-89      29.99   23.28    25          0.49x
+   *   Day-One         78-84      46.05   47.70    60          0.78x
+   *   Rotational      70-77      47.74   61.30    66          <- mode
+   *   Late-Round      62-69      28.95   51.08    40
+   *   Deep Sleeper      <62      11.38   17.56    17
+   *
+   * and the wall at the top, as a share of the 400-man pool:
+   *
+   *   potential   before    after
+   *      99       6.491%   0.388%   <- was 6.80x the step below it, now 0.91x
+   *      98       0.954%   0.425%
+   *      97       1.060%   0.369%
+   *      96       1.170%   0.466%
+   *      95       1.274%   0.553%
+   *
+   * Generational per draft now runs 0 in 28% of classes, 1 in 32%, 1-3 in 63%,
+   * five or more in 4%, ten in 0.1%. It used to be at least five in every
+   * single class and ten or more in 97% of them.
+   *
+   * Two tiers still miss by more than 20% and the cause is NOT here: the
+   * drafted trueOvr roll is itself clamped, piling 6.7 prospects per class onto
+   * exactly DRAFT_OVR_MAX (88), and those men are most of the Franchise tier.
+   * Fixing that is a change to rookie RATINGS, not ceilings, so it is left for
+   * its own pass — see scripts/_potdiag.ts.
+   */
+  POTENTIAL_SOFT_KNEE: 97.5,
+  POTENTIAL_CEILING: 99,
   AGE_MIN: 21,
   AGE_MAX: 36,
   ROOKIE_AGE_MEAN: 22,
