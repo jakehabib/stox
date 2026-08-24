@@ -3798,3 +3798,27 @@ ever force-pushed over, so every state below still exists in git history).
   or fewer, sending a walk-year man's card to a list he is deliberately not
   on; and Re-sign now links to the man rather than the page, opening his
   talks and scrolling to his row. Commit `f654a8d`.
+
+- **2026-08-24 — An over-the-cap club was refused an extension that lowered
+  its own cap hit.** The negotiation panel printed the saving and then blocked
+  the deal. `resolveNegotiationSession` folded the man's current cap hit INTO
+  `capSpace` and shipped one number, so the panel's gate read
+  `year1CapHit > capSpace` — algebraically the right subtraction
+  (`newHit - oldHit > room`), but written so the SIGN of the change is
+  invisible at the place that has to test it, and the sign is what decides.
+  The enforcement gate lets any move through that adds nothing; the panel
+  could not, because over the cap `room` is negative, so a deal that lowered a
+  man's hit by $9.56M still failed `-9.56M > -12.0M`. Room and credit are two
+  fields on the gate now, and the panel asks the two questions the enforcement
+  asks: does this add money at all, and if so does what it adds fit. The
+  refusal text says what a deal ADDS rather than what it costs, and names the
+  overage instead of printing "$-8.2M of room". Measured on 20 clubs put
+  exactly $12.0M over (287 men, 5,166 offers): offers that lower or hold the
+  club's commitment and were blocked, **3,803 of 3,990 → 0**; offers that
+  genuinely add money, still blocked, 1,094 of 1,176 → 1,094 of 1,176,
+  unchanged; under-cap control byte-identical at 224 clubs / 3,564 offers / 0
+  blocked. End to end on a club $12.0M over, a receiver at $17.01M extended to
+  $7.45M went through and the club moved to −$2.44M. The same escape was
+  missing from the AI's own re-sign wave, so a club deep in the red could not
+  keep anybody however cheap the deal — the ratchet that kept it there. Commit
+  `969f5ce`.
