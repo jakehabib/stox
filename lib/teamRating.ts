@@ -87,6 +87,38 @@ function weightedSubset(byGroup: Map<PositionGroup, number>, groups: PositionGro
 }
 
 /**
+ * THE OVERALL, AS A PURE FUNCTION OF WHO IS ON THE ROSTER.
+ *
+ * Split out of buildLeagueRatings so the number can be computed BEFORE the
+ * players exist in the database — lib/gen/league.ts needs it at generation
+ * time, to confirm the club it is dealing a REBUILD save is genuinely the
+ * worst in its league before it writes anything.
+ *
+ * It is a split, not a copy. `buildLeagueRatings` calls these two, so there is
+ * exactly one definition of what a club's overall is; a generator checking a
+ * rank against arithmetic that had drifted from the dashboard's would be
+ * guaranteeing something nobody can see.
+ */
+export function unitAveragesFrom(
+  ovrsAt: (position: Position) => number[],
+): Map<PositionGroup, number> {
+  const byGroup = new Map<PositionGroup, number>();
+  for (const g of POSITION_GROUPS) {
+    byGroup.set(g, starterAverageAtGroup(ovrsAt, g, REPLACEMENT_LEVEL));
+  }
+  return byGroup;
+}
+
+export function overallFromUnits(byGroup: Map<PositionGroup, number>): number {
+  return POSITION_GROUPS.reduce((s, g) => s + (byGroup.get(g) ?? 0) * UNIT_WEIGHT[g], 0) / WEIGHT_TOTAL;
+}
+
+/** The whole computation, from a roster's ratings to the number on the card. */
+export function teamOverallFrom(ovrsAt: (position: Position) => number[]): number {
+  return overallFromUnits(unitAveragesFrom(ovrsAt));
+}
+
+/**
  * Rates every team in the league in one pass. Always league-wide, because a
  * rating without a rank is far less useful — "78 overall" means nothing until
  * you know it is 4th.
@@ -132,11 +164,8 @@ export async function buildLeagueRatings(leagueId: string): Promise<Map<string, 
 
   const draft = teams.map((t) => {
     const ovrsAt = (pos: Position) => ovrsByTeamPos.get(`${t.id}|${pos}`) ?? [];
-    const byGroup = new Map<PositionGroup, number>();
-    for (const g of POSITION_GROUPS) {
-      byGroup.set(g, starterAverageAtGroup(ovrsAt, g, REPLACEMENT_LEVEL));
-    }
-    const overall = POSITION_GROUPS.reduce((s, g) => s + (byGroup.get(g) ?? 0) * UNIT_WEIGHT[g], 0) / WEIGHT_TOTAL;
+    const byGroup = unitAveragesFrom(ovrsAt);
+    const overall = overallFromUnits(byGroup);
     return {
       team: t,
       byGroup,

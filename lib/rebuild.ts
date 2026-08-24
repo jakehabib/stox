@@ -1,7 +1,7 @@
 import { Rng, clamp } from './rng';
 import { GENERATION, type Position } from './tuning';
 import { marketValue } from './cap';
-import { bendToCeiling } from './gen/players';
+import { bendToCeiling, bendToFloor } from './gen/players';
 import type { GeneratedPlayer } from './gen/players';
 import type { LeagueSettings } from './settings';
 
@@ -39,14 +39,22 @@ import type { LeagueSettings } from './settings';
  * ---------------------------------------------------------------------------
  * lib/season.ts refuses to advance a week while the user's own club is over
  * the ceiling. A REBUILD save dealt an over-cap hand would therefore be FROZEN
- * ON TURN ONE — not hard, broken. So the opening cap position is never a
- * subtraction that might go negative. It is two independently bounded terms —
- * a payroll scaled to at most ACTIVE_TARGET_SHARE of the ceiling, and a dead
- * money charge bent asymptotically toward DEAD_CEILING — whose bounds sum to
- * 0.98. The bend never reaches its asymptote at any input, so no roll of the
- * dice, however extreme and none of them clipped, can deal a hand at or over
- * the ceiling. See THE BOOKS for the derivation, and for the first version of
- * this plan, which was safe and absurd.
+ * ON TURN ONE — not hard, broken.
+ *
+ * SO THE ROOM IS THE THING THAT IS DRAWN, and everything else is solved to fit
+ * behind it. `rebuildCapRoom` returns a strictly positive number of dollars —
+ * positive by construction, because it is a lognormal (an exponential of a
+ * normal, which cannot be zero or negative at any input) bent at BOTH ends,
+ * toward a floor it never reaches and a ceiling it never reaches. The club's
+ * books are then filled up to `ceiling - room` and never past it. There is no
+ * subtraction anywhere that can go negative and no clamp anywhere holding the
+ * line: `used < ceiling` is arithmetic.
+ *
+ * This replaced a version that bounded the two SPENDING terms instead and
+ * argued their bounds summed to 0.98. That was safe too, but it could only
+ * promise a room somewhere under 2% of the ceiling — it could not promise a
+ * room BETWEEN one and eight million, which is what the mode now needs. Draw
+ * the quantity you have to guarantee; solve for the ones you do not.
  *
  * Everything else that is randomised here is shaped the same way: extremes get
  * steadily less likely rather than being chopped off and stacked on a bound.
@@ -102,23 +110,51 @@ export const REBUILD = {
   STRENGTH_MEAN: -9.25,
   STRENGTH_SD: 0.9,
   /**
-   * How far below the worst club this league actually rolled the hand lands,
-   * at minimum, plus a drawn tail.
+   * WHERE THE SEARCH FOR A LAST-PLACE ROSTER STARTS, as a margin below the
+   * worst club this league actually rolled. `rebuildTeamStrength` opens here
+   * and lib/gen/league.ts walks down from it until the club is genuinely 32nd
+   * (see THE RANK IS A GUARANTEE) — so this is an opening bid, not the answer.
    *
-   * SMALL ON PURPOSE, AND IT WAS MEASURED THE HARD WAY. The aim is to BE the
-   * floor of the league, not to fall through it. Raising this to 1.2 to force
-   * a strictly-worst RATING did force it — the hand came out first of 32 with
-   * six points of daylight — and the same club won 1.92 games, which is not a
-   * rebuild, it is a bye week for the other thirty-one. The extra margin also
-   * made the roster cheap enough that its cap room went UP, to $55.2M.
-   *
-   * So this stays where the measurements are good, and the claim above stays
-   * honest about what that buys: at or within a point of the bottom, not
-   * guaranteed last on realised rating. A visibly worse hand is not worth a
-   * two-win season.
+   * IT IS SMALL, AND THAT IS THE WHOLE LESSON OF THIS TUNING PASS. Trying to
+   * buy the guarantee with a big margin failed twice over: at 2.2 the club was
+   * STILL only 32nd in five leagues of six, and the leagues it did win opened
+   * 10 to 15 rating points clear of the field, won 1.3 games and — because a
+   * worse roster is a cheaper roster — carried up to $71.0M of cap room. The
+   * guarantee comes from conditioning on the result now, so the opening bid's
+   * only job is to start near the floor rather than far below it. Starting
+   * near it is what keeps the finished club expensive enough for the inherited
+   * contracts to fill its books, and close enough to 31st to be worth playing.
    */
-  STRENGTH_MARGIN_MIN: 0.5,
-  STRENGTH_MARGIN_SD: 0.7,
+  STRENGTH_MARGIN_MIN: 0.2,
+  STRENGTH_MARGIN_SD: 0.3,
+  /**
+   * How far the roster drops each time it fails to be the worst in its league
+   * — the walk down, in lib/gen/league.ts, that turns the opening bid above
+   * into a guarantee.
+   *
+   * IT IS ONLY THE EPSILON. The walk moves by the amount it MISSED by plus
+   * this, because a club's overall tracks its strength about one-for-one — see
+   * the note at the walk itself. This is just the nudge that turns "level with
+   * the worst club" into "below it".
+   *
+   * FINE ON PURPOSE, BECAUSE THE STEP *IS* THE OVERSHOOT. Whatever the walk
+   * takes past the finish line is roster quality thrown away, and measured, it
+   * is thrown away twice over: a cheaper roster is also one the inherited
+   * contracts cannot fill the books with. At 0.6 the rating gap to 31st ran 2
+   * to 8 points and the cap room tracked it almost exactly — $4.97M at a gap
+   * of 2, $71.0M at a gap of 8. Landing nearer the boundary is both the better
+   * game and the tighter cap.
+   */
+  RANK_STEP: 0.2,
+  /** A termination bound, not a policy — the walk is in memory and cheap. */
+  RANK_MAX_ATTEMPTS: 200,
+  /**
+   * Extra rosters drawn once one has qualified, so the DEAREST roster that is
+   * still last can be kept rather than the first one that got there. See the
+   * walk in lib/gen/league.ts — this is what stops a lucky-low draw handing
+   * the other thirty-one clubs a bye week.
+   */
+  RANK_REFINE_DRAWS: 6,
 
   /**
    * THE HAND IS OLD, NOT STRIPPED. The previous front office kept its own
@@ -154,57 +190,70 @@ export const REBUILD = {
 
   /**
    * =========================================================================
-   * THE BOOKS, AND THE GUARANTEE THAT THEY OPEN UNDER THE CEILING
+   * THE BOOKS: DRAW THE ROOM, SOLVE FOR THE REST
    * =========================================================================
-   * Two terms, each independently bounded, and the bound on their sum is what
-   * makes the mode safe:
+   * The app owner asked for two things at once — "a less ideal cap situation
+   * AND league worst roster", with room varying run to run, "some rosters have
+   * ~1M in cap spcae, some have 7M etc." Those pull against each other, and
+   * the reason is measured and written down in this file already: the market
+   * curve is exponential, so nine rating points off a club takes two thirds
+   * off its payroll. A WORSE ROSTER IS A CHEAPER ROSTER, so every attempt to
+   * make the club more hopeless hands it more cap room. Measured: widening the
+   * roster margin to force a last-place rating moved the club to $55.2M of
+   * space, the opposite of the intent.
    *
-   *   PAYROLL   is scaled to at most ACTIVE_TARGET_SHARE of the ceiling, by
-   *             exactly the mechanism lib/gen/league.ts already uses for all
-   *             thirty-two clubs (`scale = min(1, target / total)`). 0.72 is a
-   *             contender's books — this club pays like a team going for it,
-   *             which is the point, because it is not one.
+   * So the room is not a residue any more, it is the input. It is drawn first,
+   * strictly positive, in the band the owner named; the payroll and the dead
+   * money are then solved to consume exactly what is left.
    *
-   *   DEAD MONEY is a drawn share bent asymptotically toward DEAD_CEILING and
-   *             therefore strictly below it at every possible draw.
-   *
-   * So `used < (0.72 + 0.24) x ceiling`, always, with no clamp anywhere and no
-   * dependence on how the roster happened to roll. lib/season.ts refuses to
-   * advance a week while the user's own club is over the ceiling, so this is
-   * the property that stops a REBUILD save being frozen on turn one.
-   *
-   * THE FIRST ATTEMPT AT THIS WAS WRONG AND IS WORTH RECORDING. It picked a
-   * target for USED (95.5% of the ceiling) and booked whatever was left over
-   * as dead money. Measured, that produced $131.7M of dead money against a
-   * $107.1M payroll — more owed to men who had left than to the men playing.
-   * It satisfied every constraint and was absurd, because a genuinely terrible
-   * roster is CHEAP: the market curve is exponential, so nine rating points
-   * off a club takes two thirds off its payroll. Fixing a share of USED means
-   * the worse the roster, the more invented money has to be poured in. Fixing
-   * the two terms separately is the version that survives a bad roll.
+   * AND THE INSTRUMENT THAT CONSUMES IT IS THE ALBATROSS CONTRACTS, not more
+   * dead money. That is the whole trick, and it is the one lever that gets
+   * tighter BECAUSE the roster got worse rather than in spite of it: a wrecked
+   * club's payroll is bad players on deals nobody would sign. Piling on dead
+   * money instead was tried in the first version of this design and produced
+   * $131.7M owed to men who had left against a $107.1M payroll — safe, legal
+   * and absurd. Scaling the NUMBER of inherited deals keeps every single
+   * contract honestly priced at what that man was worth at his peak, and lets
+   * the total reach whatever the target needs.
    */
-  ACTIVE_TARGET_SHARE: 0.72,
-  DEAD_MEAN: 0.215,
+  /**
+   * The room, as a share of the ceiling. ~$4.0M median on a $255.0M cap, and
+   * the SPREAD IS THE POINT — with the rank now fixed at 32nd every time (see
+   * STRENGTH_MARGIN_MIN), this and the pick forfeits are where one run stops
+   * feeling like the last one. A log SD of 0.55 puts two thirds of runs
+   * between $2.3M and $6.9M.
+   */
+  ROOM_MEDIAN_SHARE: 0.0157,
+  ROOM_LOG_SD: 0.55,
+  /**
+   * Both ends are bends, not caps, and the LOW one is the safety property.
+   * `bendToFloor` compresses toward its floor and never reaches it, so the
+   * room is always strictly greater than ROOM_FLOOR_SHARE of the ceiling —
+   * about $0.9M — however badly the draw goes. A club with $0.9M of room can
+   * still advance; a club with $0 of room cannot, and one with -$0.1M is a
+   * save that never plays a down.
+   */
+  ROOM_FLOOR_KNEE: 0.0098,
+  ROOM_FLOOR_SHARE: 0.0035,
+  /** ~$8.4M, approached and never reached — the top of the owner's band. */
+  ROOM_CEIL_KNEE: 0.0255,
+  ROOM_CEIL_SHARE: 0.0329,
+
+  /**
+   * WHAT THE LAST REGIME LEFT ON THE BOOKS. Still a real, drawn charge — it is
+   * the flavour of the mode and the thing the cap page leads with — but it is
+   * no longer asked to be the plug. Roughly $40M of a $255.0M ceiling.
+   */
+  DEAD_MEAN: 0.16,
   DEAD_SD: 0.035,
   /** Below the knee the draw is itself; above it, bent toward the asymptote. */
-  DEAD_KNEE: 0.18,
+  DEAD_KNEE: 0.14,
   /**
-   * ~$66M on a $255.0M ceiling, approached and never reached. Extreme, and
-   * deliberately within a distance of real football rather than beyond it —
-   * clubs have carried north of $60M of dead money through one very bad year.
-   *
-   * 0.72 + 0.26 = 0.98, AND THAT SUM IS THE SAFETY PROPERTY. Neither of these
-   * two numbers may be raised without checking the other: the moment they sum
-   * to 1, a REBUILD save can be dealt a cap sheet it cannot advance out of.
+   * ~$56M, approached and never reached. Extreme, and deliberately within a
+   * distance of real football rather than beyond it — clubs have carried north
+   * of $60M of dead money through one very bad year.
    */
-  DEAD_CEILING: 0.26,
-  /**
-   * How much of an under-spent payroll comes back as dead money instead of as
-   * room. 1.0 would be "every dollar you failed to spend is owed to somebody
-   * who left", which is too neat; a share of it keeps a cheap roll reading as
-   * a slightly kinder hand rather than as no hand at all.
-   */
-  DEAD_SHORTFALL_PULL: 0.75,
+  DEAD_CEILING: 0.22,
 
   /**
    * How much of this year's dead money is still owed NEXT year, as a share.
@@ -212,6 +261,27 @@ export const REBUILD = {
    * not impossible": long enough that you cannot spend your way out of it in
    * one offseason, short enough that the climb is visible from the first one.
    */
+  /**
+   * THE PICKS THE LAST REGIME TRADED AWAY — see drawForfeitedPicks.
+   *
+   * Two or three lost picks is the usual hand, four or five the bad one. The
+   * decays front-load the damage: each year further out is ~55% as likely to
+   * be raided as the one before, and each round down ~55% as likely as the one
+   * above, so a first-rounder in the first draft is far and away the most
+   * common thing to lose and a seventh in year four is nearly impossible.
+   */
+  FORFEIT_MIN: 2,
+  FORFEIT_SPREAD: 1.15,
+  /** Only the drafts the mode can reasonably reach. */
+  FORFEIT_YEARS: 3,
+  FORFEIT_YEAR_DECAY: 0.55,
+  FORFEIT_ROUND_DECAY: 0.55,
+  /** Never more than this from one draft. */
+  MAX_PER_YEAR: 2,
+  /** In these years, at least one of the first PROTECTED_ROUNDS survives. */
+  PROTECTED_YEARS: 3,
+  PROTECTED_ROUNDS: 2,
+
   DEAD_TAIL_MEAN: 0.45,
   DEAD_TAIL_SD: 0.09,
 
@@ -240,11 +310,54 @@ export const REBUILD = {
    * Drawn without replacement, weighted by market value among the veterans, so
    * they land on the men a real front office would have extended.
    */
-  ALBATROSS_MIN: 5,
-  ALBATROSS_MAX: 7,
+  /**
+   * THE COUNT IS AN OUTCOME, NOT A DRAW. `chooseAlbatrosses` keeps signing the
+   * last regime's mistakes until the books reach their target, so a very cheap
+   * wreck takes more of them and a costlier roll takes fewer. A fixed count
+   * cannot guarantee a tight cap, because what a fixed number of men ADD
+   * depends on how the roster rolled — which is exactly the failure that put
+   * $55.2M of room on a guaranteed-last roster.
+   *
+   * MIN is the floor for flavour: even a roster that needs no help carries a
+   * few. MAX is a tripwire rather than a target — the value of this model is
+   * that the fix is getting off a handful of contracts rather than unpicking
+   * fifty.
+   *
+   * IT WENT 8 -> 11 ON MEASUREMENT, and the reason is worth stating because it
+   * is a real cost. The cheapest rosters the mode deals cost about $110M at
+   * market against a payroll target near $215M, and eight inherited deals
+   * could only carry them to $190M — leaving $28.9M of room where the mode
+   * promises single digits. Each extra man is worth roughly $10M of the gap.
+   * PEAK_GAP went up in the same pass, which is the lever that closes it
+   * without adding bodies; MAX is what covers the tail the lever cannot reach.
+   * It reached 14 because at 11 one league in ten still opened on $16.0M. Note
+   * what the ceiling does and does not cost: the loop stops the moment the
+   * books are full, so a typical roster never comes near it — measured, the
+   * median club carries far fewer — and raising it only lengthens the tail for
+   * the cheapest wrecks. Fourteen deals on a forty-eight man roster is a lot of
+   * bad paper, and it is what a club with no cap room and the worst roster in
+   * football actually looks like.
+   */
+  ALBATROSS_MIN: 4,
+  ALBATROSS_MAX: 14,
   ALBATROSS_AGE_MIN: 28,
-  /** How much better he was at his peak, in rating points. */
-  PEAK_GAP_MEAN: 16,
+  /**
+   * How much better he was at his peak, in rating points.
+   *
+   * MEASURED UP FROM 16. At 16 each inherited deal added about $7.8M over
+   * market, the closing loop ran into ALBATROSS_MAX at ten men and still
+   * finished $11M short of its payroll target — so the club opened with $21.2M
+   * of room instead of the $1M-$8M the mode promises. The choice then is more
+   * men or dearer men, and more men is the wrong one: the value of this model
+   * is that the fix is getting off a handful of contracts rather than unpicking
+   * the roster. At 21 each deal adds roughly $12M, so the target is reached
+   * with fewer of them and the loop stops before the tripwire.
+   *
+   * A 70 priced as the 91 he was four years ago is around $16M. That is a real
+   * contract for a former all-pro who fell off, not an invented number — which
+   * is the whole reason this is a market lookup and not a multiplier.
+   */
+  PEAK_GAP_MEAN: 23,
   PEAK_GAP_SD: 3.5,
   /** How long ago that was. Also how long the deal has been running. */
   PEAK_YEARS_MIN: 3,
@@ -410,10 +523,14 @@ export function seasonsToFirstTitle(
  * "worst of the ones you happened to look at".
  */
 export function rebuildTeamStrength(rng: Rng, others: readonly number[]): number {
-  const absolute = rng.normal(REBUILD.STRENGTH_MEAN, REBUILD.STRENGTH_SD);
   const margin = REBUILD.STRENGTH_MARGIN_MIN + Math.abs(rng.normal(0, REBUILD.STRENGTH_MARGIN_SD));
-  const floor = others.length > 0 ? Math.min(...others) - margin : absolute;
-  return Math.min(absolute, floor);
+  if (others.length === 0) return rng.normal(REBUILD.STRENGTH_MEAN, REBUILD.STRENGTH_SD);
+  // Just under the league's own floor. NOT also capped by an absolute target
+  // any more: in a league whose clubs bunched, an absolute -9.25 sat miles
+  // below a floor of -3 and produced the 0.90-win roster this pass removed.
+  // The worst real club IS the grim benchmark, and the walk in
+  // lib/gen/league.ts takes it the rest of the way.
+  return Math.min(...others) - margin;
 }
 
 /**
@@ -498,57 +615,93 @@ export interface AlbatrossCandidate {
 }
 
 /**
- * Pick the deals the last regime is remembered for, and price each one at the
- * player the man used to be.
+ * Pick the deals the last regime is remembered for, price each at the player
+ * the man used to be, AND KEEP SIGNING THEM UNTIL THE BOOKS REACH `targetApy`.
  *
- * Drawn WITHOUT REPLACEMENT and WEIGHTED BY MARKET VALUE among the club's
- * veterans, because that is who gets overpaid in real football — nobody hands
- * a fifth receiver a bad contract, they hand it to the 31-year-old who was
- * very good two years ago. Falls back to the whole roster if the club somehow
- * has no veterans at all, so this can never return an empty set on a legal
- * roster and quietly leave the books clean.
+ * THE COUNT CLOSES THE GAP. That is the whole change from the version that
+ * drew a fixed 5-7: what a fixed number of men ADD to a payroll depends
+ * entirely on how the roster rolled, so it could not promise a tight cap on a
+ * cheap wreck — measured, a guaranteed-last roster opened with $55.2M of room.
+ * Drawing the ROOM first and letting the number of bad contracts be whatever
+ * closes it makes the cap position a property of the mode instead of a
+ * property of the dice.
  *
- * The price is floored at what he is worth TODAY: a deal that came out below
- * that is a bargain rather than an albatross, and the floor is the one place
- * that could happen — a man whose peak fell at an age the market pays less for.
+ * EVERY MAN IS STILL HONESTLY PRICED. Nobody is paid a number nobody would
+ * write down; he is paid what he was worth at his peak, PEAK_GAP rating points
+ * higher and PEAK_YEARS younger, through the same `marketValue` the rest of the
+ * game quotes. Only how MANY such men there are is solved for. The alternative
+ * — inflating a fixed few by a multiplier — needed 3-4x to bite and was
+ * rejected for inventing salaries; see the note on ALBATROSS_MIN.
+ *
+ * IT CANNOT OVERSHOOT. The last man signed is trimmed back toward his own
+ * market value so the total lands ON the target rather than past it, and his
+ * trim can never take him below market (at market he adds nothing, which is
+ * the identity). So the payroll is <= target, which is what keeps the club's
+ * room >= the room that was drawn, which is what keeps it under the ceiling.
+ *
+ * THE FALLBACK IS EXPLICIT AND IT IS ALWAYS SAFE. If every eligible veteran is
+ * already overpaid and the payroll still falls short — a roster so cheap that
+ * even its whole old guard on peak money cannot fill the books — the club
+ * simply opens with MORE room than was drawn. Never less, never over the
+ * ceiling. A rebuild with $14M instead of $4M is an easier hand, not a broken
+ * save, and that is the correct direction to fail in.
  */
 export function chooseAlbatrosses(
   rng: Rng,
   roster: readonly AlbatrossCandidate[],
+  /** What the club's payroll has to reach, in APY dollars. */
+  targetApy: number,
 ): Map<string, Albatross> {
   const veterans = roster.filter((p) => p.age >= REBUILD.ALBATROSS_AGE_MIN);
-  const pool = (veterans.length >= REBUILD.ALBATROSS_MAX ? veterans : [...roster])
+  const pool = (veterans.length >= REBUILD.ALBATROSS_MIN ? veterans : [...roster])
     .map((p) => ({ p, w: Math.max(1, p.marketValue) }));
 
-  const want = Math.min(pool.length, rng.int(REBUILD.ALBATROSS_MIN, REBUILD.ALBATROSS_MAX));
+  // What the roster costs before anybody is overpaid.
+  let payroll = roster.reduce((sum, p) => sum + p.marketValue, 0);
   const out = new Map<string, Albatross>();
 
-  for (let k = 0; k < want; k++) {
-    const total = pool.reduce((s, c) => s + c.w, 0);
-    if (total <= 0) break;
+  const draw = () => {
+    const total = pool.reduce((sum, c) => sum + c.w, 0);
+    if (total <= 0) return null;
     let roll = rng.float(0, total);
     let idx = pool.length - 1;
     for (let i = 0; i < pool.length; i++) {
       roll -= pool[i].w;
       if (roll <= 0) { idx = i; break; }
     }
-    const [chosen] = pool.splice(idx, 1);
-    const p = chosen.p;
+    return pool.splice(idx, 1)[0].p;
+  };
+
+  while (pool.length > 0 && out.size < REBUILD.ALBATROSS_MAX) {
+    // Stop once the books are full, but never before the flavour floor: a
+    // rebuild with no inherited mistakes on it is not a rebuild.
+    if (out.size >= REBUILD.ALBATROSS_MIN && payroll >= targetApy) break;
+
+    const p = draw();
+    if (!p) break;
 
     const gap = Math.max(0, rng.normal(REBUILD.PEAK_GAP_MEAN, REBUILD.PEAK_GAP_SD));
     const yearsServed = rng.int(REBUILD.PEAK_YEARS_MIN, REBUILD.PEAK_YEARS_MAX);
     // The rating he signed off the back of, bent toward 99 rather than clipped
     // at it, so a man who was already very good does not stack on the bound.
     const peakOvr = Math.round(bendToCeiling(p.trueOvr + gap, 92, 99));
-    const peak = marketValue({
+    const peak = Math.max(p.marketValue, marketValue({
       ovr: peakOvr,
       position: p.position,
       age: Math.max(GENERATION.AGE_MIN, p.age - yearsServed),
       potential: p.potential,
-    });
+    }));
 
+    // What signing him at his peak ADDS. Trimmed if it would carry the books
+    // past the target — never below his own market value, where it adds zero.
+    const room = Math.max(0, targetApy - payroll);
+    const apy = out.size + 1 > REBUILD.ALBATROSS_MIN
+      ? Math.min(peak, p.marketValue + room)
+      : peak;
+
+    payroll += apy - p.marketValue;
     out.set(p.id, {
-      apy: Math.max(p.marketValue, peak),
+      apy,
       yearsRemaining: rng.int(REBUILD.ALBATROSS_YEARS_MIN, REBUILD.ALBATROSS_YEARS_MAX),
       yearsServed,
       peakOvr,
@@ -558,45 +711,40 @@ export function chooseAlbatrosses(
 }
 
 /**
- * WHAT THE CLUB'S PAYROLL IS BUILT TO — the same kind of number
- * `rosterCapTarget` produces for the other thirty-one, read by the same
- * `scale = min(1, target / total)` mechanism, and never exceeded. That is half
- * of the "opens under the ceiling" guarantee.
+ * HOW MUCH ROOM THE CLUB OPENS WITH, and the safety property of the whole mode.
+ *
+ * Drawn, not derived — see THE BOOKS. The shape is a lognormal, which is an
+ * exponential of a normal and therefore STRICTLY POSITIVE at every possible
+ * input: there is no draw, however extreme, that returns zero or a negative
+ * number, and nothing here clips one away. Both ends are then bends rather
+ * than caps — compressed toward a floor it never reaches and a ceiling it
+ * never reaches — so the result always lands inside the band the owner named
+ * without any value being stacked on a bound.
+ *
+ * `used = ceiling - room` with `room > 0` is the entire proof that a REBUILD
+ * save is never dealt an over-cap sheet, and lib/season.ts refusing to advance
+ * a club that is over the ceiling is why that proof has to be airtight rather
+ * than typical.
  */
-export function rebuildActiveTarget(capTotal: number): number {
-  return capTotal * REBUILD.ACTIVE_TARGET_SHARE;
+export function rebuildCapRoom(rng: Rng, capTotal: number): number {
+  const raw = REBUILD.ROOM_MEDIAN_SHARE * Math.exp(rng.normal(0, REBUILD.ROOM_LOG_SD));
+  const capped = bendToCeiling(raw, REBUILD.ROOM_CEIL_KNEE, REBUILD.ROOM_CEIL_SHARE);
+  const floored = bendToFloor(capped, REBUILD.ROOM_FLOOR_KNEE, REBUILD.ROOM_FLOOR_SHARE);
+  return Math.round(capTotal * floored);
 }
 
 /**
- * WHAT THE LAST REGIME LEFT ON THE BOOKS — the other half.
+ * WHAT THE LAST REGIME LEFT ON THE BOOKS — a real drawn charge, bent toward
+ * DEAD_CEILING and never reaching it.
  *
- * A drawn share of the ceiling, bent asymptotically toward DEAD_CEILING and
- * therefore strictly below it at every possible draw: a roll of 0.6, eleven
- * standard deviations out and not clipped away, still returns 0.2399. Together
- * with the payroll bound above, `used` is guaranteed under the ceiling by
- * arithmetic rather than by a check somebody could forget to run.
- *
- * IT LEANS ON HOW FAR THE PAYROLL FELL SHORT, and that is what makes the
- * opening ROOM consistent instead of the opening BILL. Measured across real
- * REBUILD leagues with a flat draw, the club opened with anywhere from $12.5M
- * of space to $57.9M — and $57.9M is more room than an average club has, which
- * is not a rough cap situation by any reading. The cause is the market curve:
- * when the inherited contracts roll small the roster simply does not cost
- * enough to reach its payroll target, and every dollar it fails to spend
- * becomes room.
- *
- * So the shortfall is added to the draw BEFORE the bend. A club whose payroll
- * landed on target gets the ordinary bill; a club whose payroll came in cheap
- * gets a heavier one, and the two open in a similar place. This is emphatically
- * NOT the plug that produced $131.7M of dead money against a $107.1M payroll in
- * the first version of this design — that one solved for a fixed share of USED
- * and had to grow without limit as the roster got cheaper. This is a nudge
- * INSIDE a bound that already existed: whatever the shortfall, the bend still
- * approaches DEAD_CEILING and never reaches it, so the guarantee is untouched.
+ * It is no longer asked to be the plug that closes the cap. That job belongs to
+ * the inherited contracts now (see chooseAlbatrosses), because dead money
+ * grows without limit as the roster gets cheaper: the version that used it as
+ * the closing term booked $131.7M against a $107.1M payroll, which conserved
+ * every rule and described a club that cannot exist.
  */
-export function rebuildDeadMoney(rng: Rng, capTotal: number, activeSalary: number): number {
-  const shortfall = Math.max(0, rebuildActiveTarget(capTotal) - activeSalary) / capTotal;
-  const raw = rng.normal(REBUILD.DEAD_MEAN, REBUILD.DEAD_SD) + shortfall * REBUILD.DEAD_SHORTFALL_PULL;
+export function rebuildDeadMoney(rng: Rng, capTotal: number): number {
+  const raw = rng.normal(REBUILD.DEAD_MEAN, REBUILD.DEAD_SD);
   const share = bendToCeiling(Math.max(0, raw), REBUILD.DEAD_KNEE, REBUILD.DEAD_CEILING);
   return Math.round(capTotal * share);
 }
@@ -604,6 +752,195 @@ export function rebuildDeadMoney(rng: Rng, capTotal: number, activeSalary: numbe
 /** How much of this year's dead money is still on the books next year. */
 export function rebuildDeadTailShare(rng: Rng): number {
   return Math.max(0, rng.normal(REBUILD.DEAD_TAIL_MEAN, REBUILD.DEAD_TAIL_SD));
+}
+
+/**
+ * ===========================================================================
+ * DEALING A ROSTER THAT IS LAST BY CONSTRUCTION
+ * ===========================================================================
+ * The app owner asked for the worst roster in the league EVERY time, and a
+ * strength margin cannot promise that: strength is the mean a roster's ratings
+ * are drawn around, and fifty individual rolls move the finished club two or
+ * three points on their own. Measured, a margin widened to 2.2 — far past the
+ * point of doing damage — still came out 31st in one league of six, while the
+ * leagues it did win opened 10 to 15 points clear, won 1.3 games and carried
+ * up to $71.0M of cap room, because a worse roster is a cheaper roster.
+ *
+ * SO THE RANK IS CONDITIONED ON RATHER THAN SAMPLED FOR, and this function is
+ * the whole of it. It draws a roster; if that roster is not below the league's
+ * floor it lowers the strength BY THE AMOUNT IT MISSED BY and draws again.
+ *
+ * THE GUARANTEE IS A POSTCONDITION, NOT A FREQUENCY. This returns a roster
+ * whose overall is strictly below `floorOverall` or it throws. There is no
+ * path on which it returns something that failed the test, which is what makes
+ * "every REBUILD league shows 32nd of 32" a property of the code rather than a
+ * statistic — a league that could not satisfy it is never written at all.
+ *
+ * IT TERMINATES. Every rejected draw lowers the strength by at least
+ * RANK_STEP, and every rating on a roster is generated around
+ * `VETERAN_OVR_MEAN + strength` under a floor of GENERATION.ROSTER_OVR_FLOOR,
+ * so a low enough strength drives the whole roster onto that floor — below any
+ * overall a normally-drawn club can have. The attempt bound is therefore a
+ * tripwire for a caller that passed an impossible floor, not the exit.
+ *
+ * WHY IT THROWS RATHER THAN RETURNING ITS BEST EFFORT: the first version of
+ * this kept the best roster seen and broke out of the loop on the bound, which
+ * meant an exhausted search returned the EMPTY roster it started with. That is
+ * a club with no players, written to the database, discovered by the user. A
+ * generator that cannot meet its contract must fail where it is standing.
+ */
+export function dealLastPlaceRoster<T>(rng: Rng, opts: {
+  /** Where the search starts — see rebuildTeamStrength. */
+  startStrength: number;
+  /** The lowest overall among the other clubs. Must be beaten strictly. */
+  floorOverall: number;
+  build: (strength: number) => T;
+  overallOf: (roster: T) => number;
+}): { roster: T; overall: number; strength: number; attempts: number } {
+  let strength = opts.startStrength;
+  let best: T | null = null;
+  let bestOverall = -Infinity;
+
+  for (let attempt = 1; attempt <= REBUILD.RANK_MAX_ATTEMPTS; attempt++) {
+    const roster = opts.build(strength);
+    const overall = opts.overallOf(roster);
+
+    if (overall < opts.floorOverall) {
+      best = roster;
+      bestOverall = overall;
+      /**
+       * KEEP THE DEAREST ROSTER THAT STILL LOSES, not the first one found.
+       * The step aims the strength at the floor, but each draw carries its own
+       * noise and the one that clears the bar can clear it by a mile —
+       * measured, one league in six accepted a roster six points under the
+       * field, worth 1.50 expected wins and $56.3M of room. These rosters are
+       * built in memory and thrown away, so sampling a few more and keeping
+       * the best qualifier is free, and it turns "somewhere below last" into
+       * "just below last".
+       */
+      for (let k = 0; k < REBUILD.RANK_REFINE_DRAWS; k++) {
+        const alt = opts.build(strength);
+        const altOverall = opts.overallOf(alt);
+        if (altOverall < opts.floorOverall && altOverall > bestOverall) {
+          best = alt;
+          bestOverall = altOverall;
+        }
+      }
+      return { roster: best, overall: bestOverall, strength, attempts: attempt };
+    }
+
+    // The miss IS the step. `floorOverall` is the lowest of thirty-one rosters
+    // — an extreme order statistic, well under what its own strength predicts —
+    // so a roster built at the same strength is typically still above it, and a
+    // fixed step has to inch down many times to get under. Measured, that walk
+    // ran deep enough to drag a club to 0.20 expected wins and $80.0M of room
+    // while still, technically, being 32nd. A club's overall tracks its
+    // strength about one-for-one, so the distance missed is the distance to
+    // move, and one informed step lands just under instead of far beneath.
+    strength -= (overall - opts.floorOverall) + REBUILD.RANK_STEP;
+  }
+
+  throw new Error(
+    `REBUILD: could not deal a roster below ${opts.floorOverall.toFixed(2)} overall in `
+    + `${REBUILD.RANK_MAX_ATTEMPTS} attempts (last strength ${strength.toFixed(2)}). `
+    + 'Refusing to write a league that would not show the club last.',
+  );
+}
+
+/**
+ * ===========================================================================
+ * THE PICKS THE LAST REGIME TRADED AWAY
+ * ===========================================================================
+ * The app owner: *"is it also possible to give a draft pick disadvantage? Like
+ * maybe no first round pick first year, no second etcetc. but every run should
+ * be random so its fun each time."*
+ *
+ * MODELLED AS TRADES, NOT AS DELETIONS, and that decision buys three things at
+ * once. The league keeps thirty-two picks in every round, so nothing in the
+ * draft machinery has to learn about a hole. Another club visibly holds the
+ * pick, which is what actually happened in the fiction. And the draft screen
+ * ALREADY renders exactly this — a pick whose `originalTeamId` is yours and
+ * whose `ownerTeamId` is not shows up under "traded away", with the club that
+ * has it — so the player is told he was dealt this rather than left to notice
+ * a gap. No new screen, and the mode borrows the game's existing vocabulary
+ * instead of inventing one.
+ *
+ * WEIGHTED TOWARD EARLY ROUNDS AND EARLY YEARS, because that is the shape of
+ * the damage a desperate front office actually does: it mortgages the top of
+ * next year's draft, not the bottom of the one after next.
+ *
+ * WHAT IT WILL NEVER DO, and these are guarantees rather than tendencies:
+ *
+ *   IT NEVER TAKES EVERY EARLY PICK. At least one of the first two rounds
+ *   survives in every one of the first PROTECTED_YEARS years. A rebuild whose
+ *   own draft capital is gone in all directions is not a climb, it is a
+ *   sentence, and the whole design rests on the climb being winnable.
+ *
+ *   IT NEVER GUTS ONE YEAR. At most MAX_PER_YEAR picks go from any single
+ *   draft, so no season arrives with nothing to do.
+ *
+ * Both are enforced by REDRAWING a candidate that would violate them, which
+ * shapes the distribution rather than clipping it — the same reason nothing
+ * else in this file clamps.
+ */
+export interface ForfeitedPick {
+  /** Years from the founding draft: 0 is the first draft the GM will run. */
+  yearOffset: number;
+  round: number;
+}
+
+/**
+ * How many picks are lost, and which. Drawn per run — with the roster rank now
+ * fixed at 32nd every time, this and the cap room are where two runs stop
+ * feeling like the same disaster.
+ */
+export function drawForfeitedPicks(rng: Rng, draftRounds: number): ForfeitedPick[] {
+  const count = REBUILD.FORFEIT_MIN
+    + Math.round(Math.abs(rng.normal(0, REBUILD.FORFEIT_SPREAD)));
+
+  const taken: ForfeitedPick[] = [];
+  const has = (y: number, r: number) => taken.some((t) => t.yearOffset === y && t.round === r);
+  const perYear = (y: number) => taken.filter((t) => t.yearOffset === y).length;
+  // Early picks still held in a protected year, if this one were taken too.
+  const earlyLeft = (y: number, r: number) => {
+    let n = 0;
+    for (let round = 1; round <= REBUILD.PROTECTED_ROUNDS; round++) {
+      if (!has(y, round) && !(round === r)) n++;
+    }
+    return n;
+  };
+
+  // Weighted draw over (year, round), front-loaded on both axes.
+  const candidates: { y: number; r: number; w: number }[] = [];
+  for (let y = 0; y < REBUILD.FORFEIT_YEARS; y++) {
+    for (let r = 1; r <= draftRounds; r++) {
+      candidates.push({ y, r, w: Math.pow(REBUILD.FORFEIT_YEAR_DECAY, y) * Math.pow(REBUILD.FORFEIT_ROUND_DECAY, r - 1) });
+    }
+  }
+
+  let guard = 0;
+  while (taken.length < count && guard++ < 400) {
+    const total = candidates.reduce((s, c) => s + c.w, 0);
+    if (total <= 0) break;
+    let roll = rng.float(0, total);
+    let pick = candidates[candidates.length - 1];
+    for (const c of candidates) { roll -= c.w; if (roll <= 0) { pick = c; break; } }
+
+    const violatesYear = perYear(pick.y) >= REBUILD.MAX_PER_YEAR;
+    const violatesEarly = pick.y < REBUILD.PROTECTED_YEARS
+      && pick.r <= REBUILD.PROTECTED_ROUNDS
+      && earlyLeft(pick.y, pick.r) < 1;
+    if (has(pick.y, pick.r) || violatesYear || violatesEarly) {
+      // Redraw: drop this candidate's weight to zero rather than clipping the
+      // count, so the shape stays a draw and the guarantee stays absolute.
+      pick.w = 0;
+      continue;
+    }
+    taken.push({ yearOffset: pick.y, round: pick.r });
+    pick.w = 0;
+  }
+
+  return taken.sort((a, b) => a.yearOffset - b.yearOffset || a.round - b.round);
 }
 
 /**
@@ -617,12 +954,31 @@ export function rebuildHandoverNote(opts: {
   deadMoney: string;
   capSpace: string;
   albatrosses: number;
+  /** The picks the last regime dealt away, already worded by the caller. */
+  forfeits: string | null;
 }): string {
-  return `The ${opts.clubName} job is open for a reason. The roster is the bottom of the league, `
+  return `The ${opts.clubName} job is open for a reason. The roster is the worst in the league, `
     + `${opts.deadMoney} of the cap belongs to men who no longer play here, and ${opts.albatrosses} `
     + `contracts on this book were signed by somebody who is not answering his phone. `
-    + `You have ${opts.capSpace} to work with and every one of your own draft picks. `
+    + `That leaves you ${opts.capSpace}. `
+    + (opts.forfeits
+      ? `He also mortgaged the draft on his way out — ${opts.forfeits} are gone. `
+      : `He did at least leave the draft picks alone. `)
     + `Nobody is coming to help. Win it and they will never stop talking about it.`;
+}
+
+/**
+ * "your 2027 first and your 2028 second" — the forfeited picks as a GM would
+ * say them out loud. Ordinals rather than round numbers, because nobody in
+ * football says "a round 1 pick".
+ */
+export function describeForfeits(picks: readonly ForfeitedPick[], firstDraftYear: number): string | null {
+  if (picks.length === 0) return null;
+  const ord = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh'];
+  const parts = picks.map((p) =>
+    `your ${firstDraftYear + p.yearOffset} ${ord[p.round - 1] ?? `round ${p.round}`}`);
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
 /**
@@ -638,5 +994,6 @@ export const IRONMAN_REFUSAL =
 export const REBUILD_LABEL = 'The Rebuild';
 
 export const REBUILD_BLURB =
-  'You inherit the bottom of the league, a cap sheet buried under the last regime’s dead money, '
-  + 'and no way to change the rules until you have won something. Every draft pick is still yours.';
+  'You inherit the worst roster in the league — guaranteed, every time — a cap sheet with almost '
+  + 'nothing left on it, draft picks the last man mortgaged, and no way to change the rules until '
+  + 'you have won something. No two runs are handed the same wreck.';

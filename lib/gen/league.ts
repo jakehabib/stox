@@ -7,7 +7,10 @@ import {
   ageRebuildRoster,
   applyRebuildPins,
   chooseAlbatrosses,
-  rebuildActiveTarget,
+  dealLastPlaceRoster,
+  describeForfeits,
+  drawForfeitedPicks,
+  rebuildCapRoom,
   rebuildDeadMoney,
   rebuildDeadTailShare,
   rebuildHandoverNote,
@@ -16,6 +19,7 @@ import {
 } from '../rebuild';
 import { TEAM_SEEDS, COACH_FIRST, COACH_LAST, FIRST_NAMES, LAST_NAMES, NameRegistry } from './names';
 import { generateRoster, generatePlayer, toPlayerCreate, GeneratedPlayer } from './players';
+import { teamOverallFrom } from '../teamRating';
 import { generateLeagueHistory } from './leagueHistory';
 import { buildSchedule } from '../schedule';
 import { buildContract, capForYear, capHit, formatMoney, marketValue, suggestedYears } from '../cap';
@@ -472,15 +476,68 @@ export async function createLeague(opts: {
       registerPlayer(p, { status: 'FREE_AGENT', isDraftee: true, teamId: null }, false);
     }
   } else {
+    /**
+     * =====================================================================
+     * THE REBUILD HAND, PART TWO: THE RANK IS A GUARANTEE, SO IT IS CHECKED
+     * =====================================================================
+     * The app owner asked for the worst roster in the league *every* time. A
+     * strength margin cannot deliver that, and this is measured rather than
+     * argued: strength is the mean a roster's ratings are drawn AROUND, and
+     * fifty individual rolls move the finished club two or three points on
+     * their own. Widened to 2.2 — far past the point of doing damage — the
+     * club still came out 31st in one league of six, while the leagues it DID
+     * win the race in opened 10 to 15 points clear of the field, won 1.3 games
+     * and, because a cheaper roster spends less, carried $71.0M of cap room.
+     * A bigger margin buys a worse guarantee AND a worse game.
+     *
+     * So the rank is not sampled and hoped for, it is CONDITIONED ON. Roll the
+     * roster; if it is not the worst in this league, roll it again a notch
+     * lower. The first draw that clears the field is the one that is kept, so
+     * the club lands just below 31st rather than a canyon below it — the
+     * guarantee is exact and the hand stays playable, which the brute-force
+     * version could not manage at the same time.
+     *
+     * It terminates: every rejected attempt lowers the strength by
+     * RANK_STEP, so the proposal walks down until it cannot lose. In practice
+     * it accepts on the first or second try.
+     *
+     * THE COMPARISON USES THE DASHBOARD'S OWN ARITHMETIC — `teamOverallFrom`
+     * is the function `buildLeagueRatings` computes its Team Overall with, not
+     * a second implementation. Guaranteeing a rank against a formula that had
+     * drifted from the one on screen would guarantee nothing anybody can see.
+     */
+    const ovrsAtFor = (roster: GeneratedPlayer[]) => (pos: Position) =>
+      roster.filter((p) => p.position === pos).map((p) => p.trueOvr);
+
+    const rosterByAbbr = new Map<string, GeneratedPlayer[]>();
     for (const team of teams) {
+      if (team.abbr === rebuildAbbr) continue;
       // Rolled up front with the club's window — see strengthByAbbr above.
       const strength = strengthByAbbr.get(team.abbr) ?? rng.normal(0, 4);
       // Topped up to a legal roster before it is written — see topUpRoster.
-      const roster = topUpRoster(rng, generateRoster(rng, strength, names), strength, names);
-      // THE REBUILD HAND, PART TWO: the men at the top of this depth chart are
-      // the last regime's, and they are older than they look on paper. Ratings
-      // are untouched — see ageRebuildRoster.
-      for (const p of team.abbr === rebuildAbbr ? ageRebuildRoster(rng, roster) : roster) {
+      rosterByAbbr.set(team.abbr, topUpRoster(rng, generateRoster(rng, strength, names), strength, names));
+    }
+
+    if (rebuildAbbr !== null) {
+      const floor = Math.min(...[...rosterByAbbr.values()].map((r) => teamOverallFrom(ovrsAtFor(r))));
+      // The guarantee itself lives in lib/rebuild.ts — it returns a roster
+      // strictly below the field or it throws, so a league that could not show
+      // the club last is never written. See dealLastPlaceRoster.
+      const dealt = dealLastPlaceRoster(rng, {
+        startStrength: strengthByAbbr.get(rebuildAbbr) ?? 0,
+        floorOverall: floor,
+        build: (strength) => topUpRoster(rng, generateRoster(rng, strength, names), strength, names),
+        overallOf: (roster) => teamOverallFrom(ovrsAtFor(roster)),
+      });
+      strengthByAbbr.set(rebuildAbbr, dealt.strength);
+      // THE REBUILD HAND, PART THREE: the men at the top of this depth chart
+      // are the last regime's, and older than they look. Ratings untouched, so
+      // this cannot disturb the rank just settled — see ageRebuildRoster.
+      rosterByAbbr.set(rebuildAbbr, ageRebuildRoster(rng, dealt.roster));
+    }
+
+    for (const team of teams) {
+      for (const p of rosterByAbbr.get(team.abbr) ?? []) {
         registerPlayer(p, { teamId: team.id, status: 'ACTIVE' }, true);
       }
     }
@@ -516,7 +573,8 @@ export async function createLeague(opts: {
   // contract block so the founding note quotes the figures that were written
   // rather than a second set computed from the same intentions.
   let rebuildBooks: { capSpace: number; deadMoney: number; albatrosses: number } | null = null;
-  let rebuildCeiling: number | null = null;
+  let rebuildForfeits: { yearOffset: number; round: number }[] = [];
+
 
   // Contracts: match players back up by (name, position, ovr) — unique enough
   // in practice, and this avoids 1,700 individual inserts.
@@ -569,7 +627,25 @@ export async function createLeague(opts: {
      * all quietly overpaid, and the difference is what makes the ruinous ones
      * findable on the cap page.
      */
-    const albatrosses = rebuildAbbr === null
+    /**
+     * THE REBUILD CLUB'S BOOKS ARE SOLVED BACKWARDS FROM THE ROOM.
+     *
+     * The room is drawn first and is strictly positive by construction (see
+     * rebuildCapRoom); the dead money is drawn next; and the payroll target is
+     * whatever is left. `chooseAlbatrosses` then signs the last regime's
+     * mistakes until the books reach it. The count is the outcome, so a very
+     * cheap wreck takes more of them and a costlier roll takes fewer — which
+     * is the only arrangement that can promise a tight cap whatever the roster
+     * rolled, and the fix for a guaranteed-last roster opening on $55.2M.
+     */
+    const rebuildPlan = rebuildAbbr === null ? null : (() => {
+      const capTotal = capForYear(seasonYear, seasonYear, capGrowthRate(settings));
+      const room = rebuildCapRoom(rng, capTotal);
+      const dead = rebuildDeadMoney(rng, capTotal);
+      return { capTotal, room, dead, targetActive: Math.max(0, capTotal - room - dead) };
+    })();
+
+    const albatrosses = rebuildPlan === null
       ? new Map<string, Albatross>()
       : chooseAlbatrosses(
         rng,
@@ -583,6 +659,7 @@ export async function createLeague(opts: {
             potential: p.potential,
             marketValue: nominalByPlayer.get(p.id) ?? 0,
           })),
+        rebuildPlan.targetActive,
       );
     for (const [playerId, alb] of albatrosses) nominalByPlayer.set(playerId, alb.apy);
 
@@ -683,27 +760,22 @@ export async function createLeague(opts: {
 
     /**
      * =====================================================================
-     * THE REBUILD HAND, PART FOUR: WHAT THE PAYROLL IS BUILT TO
+     * THE REBUILD HAND, PART FOUR: TRIMMING ONTO THE TARGET
      * =====================================================================
-     * The same `scale = min(1, target / total)` every other club in the loop
-     * above gets, against a target that says "this club pays like a contender"
-     * — see rebuildActiveTarget. Never above market for anybody, so the cap
-     * page, the extension screen and the trade valuation all keep telling the
-     * truth about deals the generator did not invent; the only men above
-     * market are the inherited ones, and their price is a real market value
-     * for a real (past) player.
+     * The inherited contracts have already carried the payroll up to its
+     * target in APY terms. This is the reconciliation, and it exists because
+     * AN APY IS NOT A CAP HIT — the 100K rounding and the league-minimum floor
+     * move the real figure a little, and the real figure is the one the cap
+     * page, the compliance gate and INV-19 all read.
      *
-     * SOLVED BY MEASUREMENT, NOT BY ASSUMPTION. `activeSalary` is the sum of
-     * the actual `capHit` of the actual rows — the same function the cap page,
-     * the compliance gate and INV-19 run. An APY is not a cap hit, and the gap
-     * between the two is exactly where a wrong number would live. The loop
-     * runs until the measurement stops moving rather than a fixed number of
-     * times; the only nonlinearities are 100K rounding and the league-minimum
-     * floor, so it settles in one or two passes.
+     * IT ONLY EVER SCALES DOWN. `Math.min(1, ...)` is the same bound the loop
+     * above applies to all thirty-two clubs, and here it is also the safety
+     * property: the payroll can land under its target but never over it, so
+     * the club's room can only ever be LARGER than the room that was drawn.
+     * Larger is a slightly easier hand; smaller could be a save that cannot
+     * advance out of week one, and that asymmetry is deliberate.
      */
-    if (rebuildAbbr !== null) {
-      const capTotal = capForYear(seasonYear, seasonYear, capGrowthRate(settings));
-      const targetActive = rebuildActiveTarget(capTotal);
+    if (rebuildPlan !== null) {
       const mine = shapes.filter((sh) => sh.teamId === userTeam.id);
       const measure = (scale: number) =>
         mine.reduce((sum, sh) => sum + capHit(rowFor(sh, scale), settings.capMode), 0);
@@ -711,13 +783,12 @@ export async function createLeague(opts: {
       let scale = 1;
       for (let step = 0; step < 6; step++) {
         const at = measure(scale);
-        if (at <= targetActive || at <= 0) break;
-        const next = Math.min(1, scale * (targetActive / at));
+        if (at <= rebuildPlan.targetActive || at <= 0) break;
+        const next = Math.min(1, scale * (rebuildPlan.targetActive / at));
         if (Math.abs(next - scale) < 1e-9) break;
         scale = next;
       }
       scaleByTeam.set(userTeam.id, scale);
-      rebuildCeiling = capTotal;
     }
 
     const contractRows = shapes.map((sh) => rowFor(sh, scaleByTeam.get(sh.teamId) ?? 1));
@@ -728,25 +799,23 @@ export async function createLeague(opts: {
     /**
      * ...AND WHAT THE LAST REGIME LEFT BEHIND.
      *
-     * A drawn share of the ceiling, bounded by a bend rather than a clamp —
-     * see rebuildDeadMoney. It is NOT derived from the payroll, and that is
-     * the fix for the first version of this: a plan that made dead money the
-     * plug between a cheap roster and a fixed cap-used target booked $131.7M
-     * of it against a $107.1M payroll, because a genuinely bad roster is
-     * cheap and the plug has to grow to cover it. Two independent terms with
-     * independent bounds behave under every roll.
+     * A drawn share of the ceiling, bounded by a bend rather than a clamp. It
+     * is no longer the plug that closes the cap — the inherited contracts are
+     * — because dead money grows without limit as the roster gets cheaper, and
+     * the version that used it this way booked $131.7M against a $107.1M
+     * payroll: legal, conserving and describing a club that cannot exist.
      *
      * The bill runs out in two seasons: the whole charge this year, a
      * shrinking tail next year, nothing after that. That is "rough but not
      * impossible" expressed as a date — you cannot spend your way clear in one
      * offseason and you can see the end of it from the first.
      */
-    if (rebuildAbbr !== null && rebuildCeiling !== null) {
+    if (rebuildPlan !== null) {
       const activeSalary = contractRows
         .filter((r) => r.teamId === userTeam.id)
         .reduce((sum, r) => sum + capHit(r, settings.capMode), 0);
 
-      const deadThisYear = rebuildDeadMoney(rng, rebuildCeiling, activeSalary);
+      const deadThisYear = rebuildPlan.dead;
       const deadNextYear = Math.round(deadThisYear * rebuildDeadTailShare(rng));
 
       const charges = [
@@ -756,7 +825,7 @@ export async function createLeague(opts: {
       if (charges.length > 0) await prisma.capCharge.createMany({ data: charges });
 
       rebuildBooks = {
-        capSpace: rebuildCeiling - activeSalary - deadThisYear,
+        capSpace: rebuildPlan.capTotal - activeSalary - deadThisYear,
         deadMoney: deadThisYear,
         albatrosses: albatrosses.size,
       };
@@ -783,6 +852,34 @@ export async function createLeague(opts: {
       });
     }
   }
+  /**
+   * THE REBUILD HAND, PART FIVE: THE PICKS THE LAST REGIME TRADED AWAY.
+   *
+   * Applied to the rows BEFORE they are written, so the league is simply born
+   * with those picks belonging to somebody else. They are reassigned rather
+   * than deleted — every round still has thirty-two picks in it, nothing in
+   * the draft machinery has to learn about a hole, and the draft screen
+   * already renders a pick whose original club is you and whose owner is not
+   * as "traded away" to the club that has it. The player is told he was dealt
+   * this instead of discovering a gap.
+   *
+   * `originalTeamId` is left pointing at the user's club on purpose: that is
+   * what makes it HIS forfeited first-rounder on the screen rather than an
+   * anonymous extra pick of somebody else's, and it is what the pick's
+   * projected slot is computed from.
+   */
+  if (rebuildAbbr !== null) {
+    const forfeits = drawForfeitedPicks(rng, settings.draftRounds);
+    const others = teams.filter((t) => t.id !== userTeam.id);
+    for (const f of forfeits) {
+      const year = seasonYear + 1 + f.yearOffset;
+      const row = pickRows.find((r) =>
+        r.originalTeamId === userTeam.id && r.year === year && r.round === f.round);
+      if (row) row.ownerTeamId = rng.pick(others).id;
+    }
+    rebuildForfeits = forfeits;
+  }
+
   for (let i = 0; i < pickRows.length; i += CHUNK) {
     await prisma.draftPick.createMany({ data: pickRows.slice(i, i + CHUNK) });
   }
@@ -857,6 +954,9 @@ export async function createLeague(opts: {
           deadMoney: formatMoney(rebuildBooks.deadMoney),
           capSpace: formatMoney(rebuildBooks.capSpace),
           albatrosses: rebuildBooks.albatrosses,
+          // The first draft this GM will run is next year's — see the pick
+          // rows above, which start at seasonYear + 1.
+          forfeits: describeForfeits(rebuildForfeits, seasonYear + 1),
         })
         : `You are the GM of the ${userTeam.city} ${userTeam.nickname}. ${
           fantasy ? 'A fantasy draft will fill every roster from scratch.' : 'Rosters have been randomized league-wide.'
