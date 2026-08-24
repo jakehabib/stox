@@ -4224,4 +4224,4 @@ ever force-pushed over, so every state below still exists in git history).
   rates the starting eleven on the 0-99 scale the player ratings beside it use,
   while the engine pays out over four receivers and four edge rushers and adds
   coaching on top, so on 13.2% of clubs the sim responds to a slot below the
-  eleven and the page does not. Commit `HASHPLACEHOLDER2`.
+  eleven and the page does not. Commit `a7d8e26`.
