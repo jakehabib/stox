@@ -2092,16 +2092,16 @@ export const PICK_VALUE_CHART = (overallPick: number): number => {
  *
  *   QB       — its own tier and by a clear margin. Three firsts for a
  *              franchise passer is a real price teams have paid.
- *   PREMIUM  — WR, the offensive line, and the EDGE/DT front. The trenches
- *              and the receivers: unified OL franchise tag, DE/DT and WR tags
- *              all sit within a few percent of each other at the top of the
- *              non-QB market, and elite ones fetch a genuine first.
- *   MID      — CB/S, TE and LB. Real starters whose trade market is visibly
- *              softer than the trenches: corners have gone for a third
- *              (Sneed) and a third-plus-change (Lattimore), the best tight
- *              ends for a third (Waller), and the off-ball linebacker market
- *              is the same shape — a good one fetches a second and a fifth
- *              (Roquan Smith), which is what MID pays at 88.
+ *   PREMIUM  — WR, the offensive line, the EDGE/DT front, and the secondary.
+ *              The trenches, the receivers and the men who cover them:
+ *              unified OL franchise tag, DE/DT, WR and CB tags all sit within
+ *              a few percent of each other at the top of the non-QB market,
+ *              and elite ones fetch a genuine first.
+ *   MID      — TE and LB. Real starters whose trade market is visibly softer
+ *              than the trenches: the best tight ends have gone for a third
+ *              (Waller) or a second and a third (Hockenson), and the off-ball
+ *              linebacker market is the same shape — a good one fetches a
+ *              second and a fifth (Roquan Smith), which is what MID pays at 88.
  *   LOW      — RB. Genuinely devalued in the modern game, and capped: even
  *              the best back in football tops out around second-round money.
  *   MINIMAL  — K/P. Near-worthless in trade without being literally zero,
@@ -2120,7 +2120,38 @@ export const TRADE_VALUE_TIER: Record<Position, TradeValueTier> = {
   WR: 'PREMIUM',
   LT: 'PREMIUM', LG: 'PREMIUM', C: 'PREMIUM', RG: 'PREMIUM', RT: 'PREMIUM',
   EDGE: 'PREMIUM', DT: 'PREMIUM',
-  CB: 'MID', S: 'MID',
+  /*
+   * THE SECONDARY WAS LEVELLED DOWN WHERE THE LINE WAS LEVELLED UP, and that
+   * is the whole of the bug the app owner's screenshot caught: a rebuilding
+   * club with $63.2M of room and a severe hole at corner refused a 92-rated
+   * 25-year-old with six years of control for one projected top-ten pick.
+   *
+   * Both {CB, S} and {LT, LG, C, RG, RT} are conversion components that
+   * contain one dear position and one cheap one, and the component has to
+   * take ONE tier because the ratings model cannot charge the move (measured:
+   * S -> CB costs a safety 1-2 rating points, and a PREMIUM/MID split needs
+   * 4.36 — see the block above). The line was resolved UP: C is paid 0.79 and
+   * sits at PREMIUM because it travels with LT at 1.29. The secondary was
+   * resolved DOWN: CB is paid 1.24 — third-highest in the game behind only
+   * EDGE 1.47 and LT 1.29, above DT 1.11 and RT 1.09, both PREMIUM — and it
+   * was filed at MID because it travels with S at 0.77.
+   *
+   * Two identical situations, opposite answers, and the corner was the one
+   * paying for it. At MID a 92 corner based at 569 against a 92 receiver's
+   * 1083 — 0.53x for a position this game's own pay scale rates at 0.98x of
+   * the receiver. Measured against real trades the gap is the same size: a
+   * 94 at MID priced 766 while Ramsey (24, the best corner in football) cost
+   * two firsts and a fourth, about 1640 chart points, and Mack — the same
+   * price for an edge rusher — is the anchor PREMIUM is calibrated on.
+   *
+   * So the secondary is resolved the way the line already was, and the
+   * safety rides up with the corner exactly as the centre rides up with the
+   * left tackle. S at 0.77 is a shade under C at 0.79, so this is not a new
+   * kind of claim: it is the same claim, applied consistently. The football
+   * agrees — Fitzpatrick went for pick 18 and Adams for two firsts and a
+   * third, and at MID neither trade was purchasable at any rating.
+   */
+  CB: 'PREMIUM', S: 'PREMIUM',
   TE: 'MID',
   LB: 'MID', // paid 0.73 against EDGE 1.47; LB -> EDGE costs the rating to match
   RB: 'LOW',
@@ -2166,28 +2197,62 @@ export const TRADE_VALUE = {
    *   PREMIUM  94 ~ 1457 (pick 8), 96 ~ 1957 (pick 4). Mack cost two firsts
    *            and a third against a second coming back (~1765); Tunsil two
    *            firsts and a second; Hill a first, a second and three later
-   *            picks (~1205). 88 ~ 597 is a late first, which is what a
-   *            Pro-Bowl receiver or tackle actually fetches; 82 ~ 241 a
-   *            third; 78 ~ 130 a late third.
-   *   MID      94 ~ 766 (pick 23) — Fitzpatrick went for a first, Ramsey for
-   *            two and a fourth, and the elite corner market is genuinely
-   *            that bimodal. 88 ~ 313 (a late second): Sneed went for a
-   *            third, Lattimore for a third and change, Waller for pick 100.
+   *            picks (~1205); Ramsey, at 24, two firsts and a fourth
+   *            (~1640) — the corner market's top end is the edge rusher's,
+   *            which is why the secondary sits on this row and not below it.
+   *            88 ~ 597 is a late first, which is what a Pro-Bowl receiver,
+   *            tackle or corner actually fetches; 82 ~ 241 a third; 78 ~ 130
+   *            a late third. THE OTHER HALF OF THE CORNER MARKET IS ON THIS
+   *            ROW TOO, and it has to be: Sneed went for a third and
+   *            Lattimore for a third and change, both at 27-28 and neither
+   *            elite. That is the age curve and the rating doing their job,
+   *            not a second tier — a 27-year-old 88 corner prices at 597 x
+   *            0.85 here, which is a late second, and that is the trade.
+   *   MID      94 ~ 766 (pick 23), 88 ~ 313 (a late second). Hockenson cost
+   *            a second and a third, Waller pick 100, Roquan Smith a second
+   *            and a fifth — the tight end and off-ball linebacker markets
+   *            are the softest real starters have.
    *   LOW      94 ~ 442 (a mid second) and the ceiling at 750 is the
    *            McCaffrey package itself (a second, third, fourth and fifth ~
    *            713). 90 ~ 243, a third — Swift went for a fourth and the best
    *            backs of the last few years reached free agency untraded.
    *   MINIMAL  99 ~ 32, a fifth. 94 ~ 16, a sixth. Never zero, never a real
-   *            asset, and the ceiling stops even a club with no kicker at all
-   *            from paying more than a low fifth for one.
+   *            asset, and the bound stops even a club with no kicker at all
+   *            from paying more than a late fourth for one — 48 points, the
+   *            softened bound (see below); it was a low fifth at 40 while the
+   *            ceiling was a flat clamp. The chart is so nearly level through
+   *            round four (40 to 48 spans eight picks) that any headroom at
+   *            all crosses that line, so the sentence moved rather than the
+   *            headroom being shrunk to preserve it.
    *
    * WHERE THE CEILINGS COME FROM, each derived from the same anchor rather
    * than inherited: QB 5000 = five mid-firsts, so the best quarterback in the
    * game out-prices the first overall pick decisively, which is the real
    * answer and why nobody trades that man for a lottery ticket. PREMIUM 2100
-   * = two mid-firsts, the most any veteran non-quarterback has actually cost.
-   * MID 1500 = a first and a high second, Ramsey's price. LOW 750 = the
-   * McCaffrey package. MINIMAL 40 = a low fifth.
+   * = two mid-firsts, the most any veteran non-quarterback has actually cost
+   * (Tunsil, and Ramsey within a hundred points of it). MID 1500 = a first
+   * and a high second, which no tight end or linebacker has ever fetched —
+   * it is deliberate headroom above the market rather than an anchor, and
+   * the curve does not reach it below 99. LOW 750 = the McCaffrey package.
+   * MINIMAL 40 = a low fifth.
+   *
+   * NONE OF THESE IS A WALL ANY MORE, AND EACH ONE IS NOW A KNEE RATHER THAN
+   * A MAXIMUM. `playerValueDetailed` used to end in `Math.min(total,
+   * ceiling)`, and a hard clamp is the one shape the app owner has ruled out
+   * for outliers. Measured before it was softened: a 94, a 96, a 98 and a 99
+   * receiver at a club that needed one all priced at exactly 2100 — one
+   * number for four different players, so the game could not tell the best
+   * receiver alive from a merely excellent one, and the trade screen quoted a
+   * figure the football model had not produced.
+   *
+   * Each ceiling is now where a compression curve begins (see
+   * CEILING_SOFTENING in lib/ai/gm.ts): identical below it, strictly
+   * increasing above it, asymptotic to LIMIT x it and never reaching that.
+   * So every anchor above still reads exactly as written — it is what the
+   * curve is calibrated through — and the true maximum is a fifth higher:
+   * QB 6000, PREMIUM 2520, MID 1800, LOW 900, MINIMAL 48. The ordering
+   * QB > PREMIUM > MID > LOW > MINIMAL survives it, since one shape is
+   * applied to all five.
    *
    * STEEPNESS IS SHARED ACROSS PREMIUM/MID/LOW (0.147) ON PURPOSE. Curves
    * with their own steepness made the gap between tiers swing with rating —

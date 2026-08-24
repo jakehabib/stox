@@ -631,6 +631,125 @@ function tierCurveValue(ovr: number, curve: { replacementLevel: number; steepnes
 }
 
 /**
+ * ===========================================================================
+ * SHAPE, NEVER A HARD CAP — THE POSITIONAL BOUND
+ * ===========================================================================
+ * `playerValueDetailed` used to end its multiplier stack in
+ * `Math.min(total, curve.ceiling)`, and a flat clamp is the one treatment of
+ * outliers the app owner has ruled out. What it does to the top of the market
+ * is not subtle. Measured on the shipped table, a club that needed a receiver
+ * priced a young cheap one at:
+ *
+ *   OVR   90     92     94     96     98     99
+ *        1298   1754   2100   2100   2100   2100
+ *
+ * Four different players, one number. The game could not tell the best
+ * receiver alive from a merely excellent one, and a trade screen quoting the
+ * same value for a 94 and a 99 is a lying metric in the plainest sense — it
+ * is not the answer the football model produced, it is the answer the clamp
+ * produced. Across a blind sweep of every rostered player in three leagues
+ * against a randomly drawn club, 0.5% of valuations landed exactly ON the
+ * ceiling, and every one of them was a top-of-the-league player whose rating
+ * had stopped mattering.
+ *
+ * THE BOUND ITSELF IS NOT THE PROBLEM AND DOES NOT GO AWAY. Everything the
+ * old comment claimed for it is still true here: a punter can never be worth
+ * a first-round pick, no stack of favourable modifiers can carry a position
+ * past what that position is worth, and the guarantee holds after age,
+ * contract, fit, scarcity, cap and noise have all been multiplied in. What
+ * changes is that the ceiling stops being the answer and becomes the KNEE of
+ * a compression curve:
+ *
+ *   at or below the knee   the number is returned untouched — this is 99.5%
+ *                          of the league, so nothing anyone has ever seen on
+ *                          a trade screen moves
+ *   above it               the excess is compressed, strictly monotonically,
+ *                          onto the gap between the knee and a hard asymptote
+ *
+ * The curve is `knee + span x (1 - exp(-excess / span))`. It is continuous at
+ * the knee AND has gradient exactly 1 there, so there is no visible corner in
+ * the price; it is strictly increasing everywhere, so a 99 always out-prices
+ * a 94 again; and it never reaches `LIMIT x ceiling`, so the bound is a real
+ * bound rather than a promise.
+ *
+ * THE BOUND MOVES, AND lib/tuning.ts HAD TO BE TOLD. Every ceiling is now the
+ * knee rather than the maximum, so the maximum is LIMIT times it, and two
+ * sentences over there were written about the old number: MINIMAL's "no more
+ * than a low fifth" (40 is pick 132; 48 is pick 124, a late fourth — the
+ * chart is so flat through round four that ANY headroom at all crosses that
+ * line, so the sentence had to be restated rather than the headroom shrunk to
+ * fit it) and the ceilings paragraph generally. Both are corrected there. The
+ * football claims that matter are untouched: a punter is still a Day 3 pick
+ * at absolute most and cannot approach a first, and PREMIUM's hard bound of
+ * 2520 still sits under the largest veteran non-quarterback trade there has
+ * been (Tunsil, about 2400 chart points, plus a buyer's need premium).
+ *
+ * WHAT THIS DELIBERATELY DOES NOT TOUCH is `tierCurveValue` above, whose own
+ * `Math.min` is part of the published tier table: lib/ratings.ts holds a
+ * second reading of that table (see `tierValue` there, which
+ * `convertedAttributes` uses to price a position change) and
+ * assertNoProfitableConversion checks the table itself. Softening the base
+ * curve here and not there would be two opinions about one curve, which is
+ * the bug class this codebase has been bitten by most. So the base curve is
+ * left exactly as the table states it and only the finished valuation is
+ * shaped — with the consequence, stated rather than hidden, that ratings
+ * above the point where the RAW curve tops out (97 for PREMIUM, 98 for QB and
+ * LOW, 99 for MID) still share a base. Separating those needs the table
+ * changed, not this function.
+ * ===========================================================================
+ */
+/*
+ * EXPORTED so nothing has to keep a second copy of the bound. The probe that
+ * measured this change first hard-coded 1.25 beside the code, and when the
+ * headroom was retuned to 1.20 the probe went on printing the old number and
+ * the old football sentence with it — a lying metric produced by the very
+ * measurement meant to catch one. A caller that wants to know the most a
+ * position can ever be worth reads `ceiling x CEILING_SOFTENING.LIMIT`, here.
+ */
+export const CEILING_SOFTENING = {
+  /**
+   * Where compression begins, as a share of the tier ceiling. 1.0 — the
+   * ceiling itself — so every valuation the old clamp never touched is
+   * returned bit-for-bit identical and this change cannot move a price that
+   * was not already pinned.
+   */
+  KNEE: 1.0,
+  /**
+   * The hard asymptote, as a share of the tier ceiling. [TUNE] 1.20, chosen
+   * by measurement rather than taste. The pre-softening product runs to 1.82x
+   * the ceiling on a 99 at a club with a hole at his position, so the whole
+   * top of the market has to fit inside this headroom, and how much of the
+   * rating survives the compression is what the number buys:
+   *
+   *   LIMIT   a 94 receiver .. a 99 receiver, after softening
+   *   1.10    2293 .. 2310   — 17 points apart. Still flat; this is the clamp
+   *                            again wearing a curve.
+   *   1.20    2401 .. 2513   — 112 points, about a fourth-round pick between
+   *                            an excellent receiver and the best one alive.
+   *   1.25    2434 .. 2605   — 171 points, and PREMIUM's bound passes Tunsil.
+   *
+   * 1.20 is the smallest headroom at which the rating clearly still matters at
+   * the top. It puts PREMIUM's hard bound at 2520 (under Tunsil's ~2400 plus a
+   * buyer's premium), QB's at 6000 — the owner's "four or five first-round
+   * pick equivalents", with the fifth one intact rather than clipped — and
+   * MINIMAL's at 48, a late fourth, which is the one number in lib/tuning.ts
+   * that had to be restated.
+   */
+  LIMIT: 1.20,
+};
+
+/**
+ * The finished valuation, bounded by what the position can be worth without
+ * flattening everyone who reaches it. See the block above.
+ */
+function softCeiling(total: number, ceiling: number): number {
+  const knee = ceiling * CEILING_SOFTENING.KNEE;
+  if (total <= knee) return total;
+  const span = ceiling * (CEILING_SOFTENING.LIMIT - CEILING_SOFTENING.KNEE);
+  return knee + span * (1 - Math.exp(-(total - knee) / span));
+}
+
+/**
  * What a player is worth to THIS team, in abstract "value points" comparable
  * to draft pick chart value (pickValue() below shares the same scale — a
  * mid/late Round 1 pick prices around 400-900). Used by trades and FA alike.
@@ -961,12 +1080,13 @@ export function playerValueDetailed(
     total *= noiseMult;
   }
 
-  // Absolute sanity ceiling — applied to the FINAL total, after every
-  // multiplier, so no stack of favorable modifiers (young + cheap + needed +
-  // scarce) can push an ordinary player at a low-value position past what
-  // that position can ever be worth. This is what actually guarantees "a
-  // punter can never be worth a first-round pick," not just the base curve.
-  total = Math.min(total, curve.ceiling);
+  // The positional bound, applied to the FINAL total, after every multiplier,
+  // so no stack of favourable modifiers (young + cheap + needed + scarce) can
+  // push an ordinary player at a low-value position past what that position
+  // can ever be worth. This is what actually guarantees "a punter can never be
+  // worth a first-round pick," not just the base curve — see softCeiling for
+  // why it is now a shape rather than a wall.
+  total = softCeiling(total, curve.ceiling);
 
   /*
    * THE BILL, LAST, AND OUTSIDE EVERYTHING ABOVE.
