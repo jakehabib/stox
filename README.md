@@ -4370,3 +4370,35 @@ ever force-pushed over, so every state below still exists in git history).
   own screen would not quote is the lying-metric bug rather than a fix — so
   that is what the Known simplification above says now, in place of the line
   the advisor quoted. Commit `752fad2`.
+- **2026-08-24 — The league never traded.** 25 `TRADE` rows across 272 leagues in
+  the dev database — about one deal per nine leagues, ever — against 51,778
+  RESIGN, 43,528 DRAFT and 40,062 SIGN. Every other market ran whether the
+  player was watching or not; the trade market only existed while he had the
+  screen open, so there was no trade market, there was a trade screen.
+  `lib/aiMarket.ts` is that market: clubs deal with each other on the season
+  clock, in-season with the business bunched at the deadline, once at the top of
+  free agency and once as the draft board opens. A rebuilding club shopping a
+  man who is depth where he sits and a starter where he is going, to a contender
+  with picks to spend, is the shape the generator starts from — and the three
+  windows a club can be in are read straight off `philosophySummary`, so the
+  market cannot treat a club as a seller while the screen calls it Retooling.
+  **ONE VALUATION MODEL:** every accept/reject is `evaluateTrade`, the same
+  function the player's own Propose button calls, asked TWICE — once from each
+  club — because between two AI clubs a deal one side merely tolerates is a gift
+  nobody chose to make. Deals are written by `executeTrade` with no force flag,
+  so `assertCapRoom` gates both books, roster limits hold, bonus proration
+  accelerates onto the club giving a man up, and picks genuinely change owner.
+  Measured over six league-seasons driven week by week through the real pass:
+  **7.7 trades per league-season**, 2.0 of them in the deadline advance and 1.8
+  in the one before it; executed deals sit at a median **1.22x** on a neutral
+  reading with 80% inside 1.5x and none past 3x; **no man is traded twice in a
+  season**; the busiest club makes 3 deals and 57 of 74 trading clubs make
+  exactly one; elite movement binds at its cap of 3 a year. 420ms on an average
+  week-tick, 2.5s on the deadline. And a trade is finally attributable: the
+  TRADE transaction read `Trade: ATL <-> BUF` over "ATL sends 2 asset(s)" with
+  no `playerId` at all — **zero of 25**, the only kind of move in this game that
+  could happen to a career and leave no trace on it. It now reads *"BLOCKBUSTER
+  — Kansas City acquires 91 OVR S Hunter Glascock from New Jersey for a 2028
+  1st"*, carries the headline man, and keeps the whole ledger in `detail`; the
+  other men in a deal are traceable through `TradeRecord`, which already holds
+  the full per-player ledger of both directions. Commits `f2e7308`, `5b8b058`.
