@@ -965,7 +965,22 @@ export const PROGRESSION = {
 export const SIM = {
   /** Unit scores are normalized around this. A 50-rated unit scores 0 edge. */
   UNIT_BASELINE: 60,
-  /** Points per full drive at league-average offense vs league-average defense. */
+  /**
+   * DEAD, AND KEPT ONLY AS A WARNING — nothing reads this. Verified by
+   * grepping the whole tree: the only occurrence outside this file is none.
+   *
+   * The engine does not work in points per drive at all. `runDrive` in
+   * lib/sim/engine.ts computes a SCORING PROBABILITY from the unit edge
+   * (`SCORING_DRIVE_BASE + edge * EDGE_TO_SCORE_PROB`), then splits scoring
+   * drives between touchdowns and field goals with `TD_SHARE_BASE +
+   * edge * EDGE_TO_TD_SHARE`. Points fall out of those three constants and
+   * nothing else.
+   *
+   * Left in place with this note rather than deleted, because a constant this
+   * plausible-looking will be reinvented by the next person who goes looking
+   * for the scoring knob. It is not the scoring knob. If you want to move
+   * scoring, move SCORING_DRIVE_BASE or TD_SHARE_BASE.
+   */
   BASE_POINTS_PER_DRIVE: 1.85,
   /**
    * [TUNE] LIVE drives per team per game. Was 11 on the note "Real NFL ~11".
@@ -996,7 +1011,16 @@ export const SIM = {
    * lib/gameShape.ts mirrors this as a literal and had to move with it.
    */
   DRIVES_PER_TEAM: 10,
-  /** How much a 1-point unit-rating edge moves expected points per drive. */
+  /**
+   * DEAD — see BASE_POINTS_PER_DRIVE above. Nothing reads this either.
+   *
+   * This is the one that matters, because its name says it is the lever
+   * connecting a rating point to the scoreboard, and it is not. That job
+   * belongs to EDGE_TO_SCORE_PROB (0.012 of a scoring drive per edge point)
+   * and EDGE_TO_TD_SHARE (0.008). Measured through the real engine, one point
+   * of unit edge is worth about 0.74 points a game, and this constant has no
+   * part in that number.
+   */
   RATING_TO_PPD: 0.028,
   /** Home field advantage, added to the home offense's unit score. */
   HOME_FIELD_EDGE: 2.0,
