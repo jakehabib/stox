@@ -11,7 +11,7 @@ import { SimPlayer, SimStaff } from './sim/units';
 import { retirementChance, bumpForMilestone } from './progression';
 import { AttrMap } from './ratings';
 import { applyInSeasonProgression, checkpointShare, progressFreeAgents } from './development';
-import { proration, deadMoneyOnCut } from './cap';
+import { proration, deadMoneyOnCut, capHit, formatMoney } from './cap';
 import { runAiFreeAgencyWave, fillTeamsToRosterMinimum, runInSeasonSignings } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
 import { mergeStats } from './stats';
@@ -551,6 +551,27 @@ async function runPhaseStep(leagueId: string) {
       if (claimedResign.count === 0) return { summary: 'Free agency is already open.' };
 
       try {
+        // WHAT COMES OFF *HIS* BOOKS, priced before the men are gone.
+        //
+        // The app owner, on a club that read -$60M at the offseason roll and
+        // improved twice with no move made: *"he changed nothing. What is going
+        // on there?"* Part of that was arithmetic and is fixed at the source
+        // (bookYearFor, lib/cap-summary.ts). This part is not a defect at all —
+        // an expiring man is charged his final year's number until the re-sign
+        // window shuts, and the moment it does, that charge is gone — but it
+        // was the largest single move in his cap position and NOTHING said so.
+        // A number that improves by eight figures unannounced reads as a bug
+        // whether or not it is one.
+        //
+        // Measured on a scratch league driven four seasons by advanceWeek
+        // (scripts/_offcap_probe.ts): this step took one club from -$8.8M to
+        // +$2.5M — $11.3M, four men — and the summary it printed talked only
+        // about the league-wide pool.
+        //
+        // Read BEFORE the release, because afterwards there is no contract left
+        // to price. AI clubs are not counted: this sentence is the user's own
+        // books, and the league-wide line above already carries the market.
+        const walking = await userTeamExpiringCap(leagueId, settings.capMode);
         await releaseUnresignedExpiringContracts(leagueId, league.seasonYear);
         // The wire, before anybody shops it. This league's own expiring
         // contracts are the market's real names; the fringe population is the
@@ -567,6 +588,11 @@ async function runPhaseStep(leagueId: string) {
         return {
           summary: [
             releasedBefore > 0 ? `${releasedBefore} unsigned player(s) hit free agency.` : null,
+            walking && walking.men > 0
+              ? `${walking.men} of them ${walking.men === 1 ? 'was' : 'were'} yours: `
+                + `${formatMoney(walking.cap)} came off the ${walking.abbr}'s books as `
+                + `${walking.men === 1 ? 'that deal ran' : 'those deals ran'} out.`
+              : null,
             minted > 0 ? `${minted} veteran(s) and camp bodies worked out for clubs and are on the wire.` : null,
             refilled > 0 ? `${refilled} minimum-salary signing(s) got short-handed rosters back to a legal size.` : null,
             'Free agency is open.',
@@ -2166,6 +2192,31 @@ async function expireStaleCapCharges(leagueId: string, seasonYear: number) {
   await prisma.capCharge.deleteMany({
     where: { year: { lt: seasonYear }, teamId: { in: teams.map((t) => t.id) } },
   });
+}
+
+/**
+ * What the user's own expiring class is still being charged, the instant
+ * before it walks: the men at zero years remaining and the cap they carry.
+ *
+ * `capHit` is the same function `teamCapSummary` sums, so the figure this
+ * quotes in the advance summary is exactly the figure that leaves the Cap
+ * page's Committed tile one moment later — deriving it any other way is how
+ * this app has repeatedly shipped a sentence quoting a number it was not
+ * using. Null when nobody owns a club (the sim harness), which is also the
+ * only case where there is nobody to tell.
+ */
+async function userTeamExpiringCap(
+  leagueId: string,
+  capMode: LeagueSettings['capMode'],
+): Promise<{ abbr: string; men: number; cap: number } | null> {
+  if (capMode === 'OFF') return null;
+  const team = await prisma.team.findFirst({ where: { leagueId, isUser: true }, select: { id: true, abbr: true } });
+  if (!team) return null;
+  const men = await prisma.player.findMany({
+    where: { teamId: team.id, status: 'ACTIVE', contract: { yearsRemaining: 0 } },
+    select: { contract: true },
+  });
+  return { abbr: team.abbr, men: men.length, cap: men.reduce((s, p) => s + capHit(p.contract, capMode), 0) };
 }
 
 /**

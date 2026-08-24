@@ -1052,7 +1052,7 @@ export async function fifthYearOptionQuote(opts: {
     fifthYearOptionApplies, fifthYearOptionBlockReason, fifthYearOptionTier, fifthYearOptionValue,
     FIFTH_YEAR_OPTION_TIERS,
   } = await import('./fifthYearOption');
-  const { capHitSchedule, deadMoneyOnCut, positionSalaryBand } = await import('./cap');
+  const { capHitSchedule, deadMoneyOnCut, positionSalaryBand, capChargeYear } = await import('./cap');
   const { allStarYearsFor } = await import('./allStars');
   const { capSheet } = await import('./cap-summary');
   const { PHASE_LABELS } = await import('./season');
@@ -1144,9 +1144,21 @@ export async function fifthYearOptionQuote(opts: {
   // which on an already-exercised deal is the year sitting on the row. The same
   // arithmetic the player card does, so the preview, the standing status line
   // and the contract table can never name three different years.
+  //
+  // COUNTED FROM THE LEDGER, NOT FROM THE LEAGUE CLOCK. `yearsRemaining` is a
+  // count on the contract ledger, and through OFFSEASON weeks 1-2 that ledger
+  // is a year ahead of `League.seasonYear` (ageContractsForYear runs the
+  // instant the season ends). Counting forward from `seasonYear` there named
+  // the year he is CURRENTLY playing as the option year, and the `find` below
+  // then priced the option against that year's column — capSheet's columns are
+  // dated off the same ledger year, so the two have to be counted from the
+  // same place. `fourthYearHit` above is already `capHitSchedule[0]`, i.e. the
+  // ledger year, which is why `seasonYear` on the returned quote is that year
+  // too: the card prints it as "his <year> cap hit" beside that figure.
+  const ledgerYear = capChargeYear({ phase: league.phase, week: league.week, seasonYear: league.seasonYear });
   const optionYear = decided === 'EXERCISED'
     ? player.contract.signedYear + player.contract.years - 1
-    : league.seasonYear + Math.max(1, player.contract.yearsRemaining);
+    : ledgerYear + Math.max(1, player.contract.yearsRemaining);
   const sheet = capMode === 'OFF' ? null : await capSheet(player.teamId, league, capMode);
   const nextYear = sheet?.years.find((y) => y.year === optionYear) ?? null;
 
@@ -1154,7 +1166,7 @@ export async function fifthYearOptionQuote(opts: {
     capEnabled: capMode !== 'OFF',
     playerName: `${player.firstName} ${player.lastName}`,
     position: player.position,
-    seasonYear: league.seasonYear,
+    seasonYear: ledgerYear,
     optionYear,
     tier,
     tierEarned: spec.earned,

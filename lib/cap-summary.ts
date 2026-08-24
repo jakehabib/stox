@@ -25,20 +25,115 @@ export interface CapSummary {
   rosterSize: number;
   /** False only when capMode is OFF. The single flag UI should branch on. */
   capEnabled: boolean;
+  /**
+   * THE LEAGUE YEAR EVERY FIGURE ABOVE IS MEASURED IN, and the only year any
+   * caller may print beside them. It is `League.seasonYear` everywhere except
+   * OFFSEASON weeks 1-2, where the contract ledger has already rolled and
+   * `seasonYear` has not — see the header on `bookYearFor` below.
+   *
+   * It exists because the Cap page used to label these figures
+   * `${league.seasonYear}` off its own read of the League row, which is a
+   * second derivation of a year this function had already decided. Print this.
+   */
+  capYear: number;
+}
+
+/**
+ * ===========================================================================
+ * THE YEAR A CLUB'S BOOKS ARE CURRENTLY WRITTEN IN
+ * ===========================================================================
+ * Not the same question as "what season is it", and confusing the two is the
+ * bug this whole header exists to stop.
+ *
+ * `ageContractsForYear` steps every contract onto the next league year THE
+ * INSTANT THE SEASON ENDS — inside the playoffs' final step, before the phase
+ * even flips to OFFSEASON (lib/season.ts). `League.seasonYear` does not move
+ * until the RESET_STANDINGS step, which is the second step of the first
+ * offseason Advance. So through OFFSEASON weeks 1-2 there is a window where
+ * `capHit()` returns NEXT year's number for every man in the league while
+ * `League.seasonYear` still names the season just played.
+ *
+ * THIS FUNCTION USED TO READ `seasonYear` AND IT PRODUCED A FIGURE THAT
+ * DESCRIBED NO LEAGUE YEAR AT ALL. Measured on a scratch league driven four
+ * seasons by `advanceWeek` (scripts/_offcap_probe.ts), the NYA at OFFSEASON
+ * week 1 were shown:
+ *
+ *     ceiling      $262.7M   the 2029 ceiling — the season just PLAYED
+ *     salaries     $274.1M   2030 terms — the ledger had already rolled
+ *     dead money     $3.7M   2029 charges — a closed season's bill
+ *     ------------------------------------------------------------------
+ *     on screen    -$15.1M   three years stitched into one number
+ *
+ * One Advance later, with no transaction of any kind, the same club read
+ * -$8.8M: the ceiling moved onto 2030 (+$2.6M) and the 2029 dead money stopped
+ * being counted (+$3.7M). That $6.4M was never real. The 2029 bill had already
+ * been paid out of the 2029 books — `settleClosingYearCapOverage` reads the
+ * closing year's position before the ledger steps and carries forward anything
+ * that year could NOT fund, so what `expireStaleCapCharges` later sweeps is a
+ * bill that was genuinely settled. Charging it a second time on top of next
+ * year's salaries is a double count.
+ *
+ * AND IT RAN THE OTHER WAY TOO, which is the dangerous half. `cutPlayer` dates
+ * its dead money with `capChargeYear()` — deliberately the NEW year in this
+ * window, because the new year is the one that will pay it — so a release
+ * booked a charge this function was not reading. Measured
+ * (scripts/_offcap_cut.ts): releasing an $80.6M-dead-money contract at
+ * OFFSEASON week 1 moved the club from -$6.8M to +$39.2M on screen and in the
+ * cap gate, for a move that actually left it $34.6M worse off. One Advance
+ * later the same club read -$35.0M. A GM cutting his way out of a bad number
+ * in this window was being shown a windfall for a catastrophe.
+ *
+ * SO THE READER FOLLOWS THE LEDGER. `capChargeYear` already names this exact
+ * boundary and is what the write paths (cuts, tags, trades, void-year bills)
+ * are dated by, so reading against it is what puts the sheet and the ledger in
+ * the same year — which is all the fix is.
+ *
+ * ONLY THE CURRENT LEAGUE YEAR IS SHIFTED. A caller naming any other year
+ * means that year literally, and there is exactly one:
+ * `settleClosingYearCapOverage` asks for the CLOSING year while the league row
+ * has already been stepped onto the new one, and it must get the closing year
+ * unshifted or the settlement restates itself off the wrong season.
+ * (At its main call site the league is still standing in PLAYOFFS, where
+ * `capChargeYear` is the identity anyway; the guard is what makes the
+ * AGE_CONTRACTS catch-up path safe too.)
+ *
+ * REJECTED: moving `League.seasonYear` forward at the end of the playoffs so
+ * the two never disagree. It is the honest shape and it is not surgery — the
+ * RESET_STANDINGS step closes the season's stats, awards and standings against
+ * that same field, PROGRESS's summary calls it "the season just played", and
+ * every offseason transaction is stamped with it. One seam would close and
+ * five would open.
+ * REJECTED: leaving the arithmetic and explaining the jump in words. The
+ * number is not merely unexplained — it is a closed season's bill added to a
+ * new season's salaries under an old season's ceiling. There is no honest
+ * sentence for that.
+ * ===========================================================================
+ */
+function bookYearFor(
+  league: { phase: string; week: number; seasonYear: number },
+  askedFor: number,
+): number {
+  if (askedFor !== league.seasonYear) return askedFor;
+  return capChargeYear({ phase: league.phase, week: league.week, seasonYear: askedFor });
 }
 
 export async function teamCapSummary(teamId: string, seasonYear: number, mode: CapMode): Promise<CapSummary> {
   const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId }, select: { leagueId: true } });
   const league = await prisma.league.findUniqueOrThrow({
     where: { id: team.leagueId },
-    select: { id: true, seasonYear: true, startYear: true, settings: true },
+    select: { id: true, seasonYear: true, startYear: true, settings: true, phase: true, week: true },
   });
+
+  // The year this club's books are actually written in right now. See the
+  // header above — through OFFSEASON weeks 1-2 it is a year ahead of
+  // `League.seasonYear`, because the contract ledger already is.
+  const capYear = bookYearFor(league, seasonYear);
 
   const players = await prisma.player.findMany({
     where: { teamId, status: 'ACTIVE' },
     include: { contract: true },
   });
-  const deadRows = await prisma.capCharge.findMany({ where: { teamId, year: seasonYear } });
+  const deadRows = await prisma.capCharge.findMany({ where: { teamId, year: capYear } });
 
   // capForLeague resolves the founding year AND the league's own growth rung
   // together, which is why this reads it rather than capForYear directly.
@@ -52,7 +147,7 @@ export async function teamCapSummary(teamId: string, seasonYear: number, mode: C
   // $255.0M. THIS function is the one every cap gate and every over-cap
   // warning runs on, so of the six call sites it was the one that decided
   // what the game was actually played under.
-  const capTotal = mode === 'OFF' ? 0 : await capForLeague(league, seasonYear);
+  const capTotal = mode === 'OFF' ? 0 : await capForLeague(league, capYear);
   const activeSalary = players.reduce((sum, p) => sum + capHit(p.contract, mode), 0);
   const deadMoney = mode === 'OFF' ? 0 : deadRows.reduce((s, r) => s + r.amount, 0);
   const capUsed = activeSalary + deadMoney;
@@ -65,6 +160,7 @@ export async function teamCapSummary(teamId: string, seasonYear: number, mode: C
     capSpace: mode === 'OFF' ? Number.POSITIVE_INFINITY : capTotal - capUsed,
     rosterSize: players.length,
     capEnabled: mode !== 'OFF',
+    capYear,
   };
 }
 
@@ -136,14 +232,15 @@ export interface DeadMoneyYear {
 }
 
 export interface DeadMoneyRunway {
-  /** One entry per year in the window, starting at the league's current season. */
+  /** One entry per year in the window, starting at the year the ledger is written in. */
   years: DeadMoneyYear[];
   /**
-   * Everything dated to the current league year, booked and scheduled.
+   * Everything dated to the ledger year, booked and scheduled.
    * `years[0].booked` — NOT this — is the figure `CapSummary.deadMoney` holds
-   * and the masthead tile shows; the two differ only inside the RESIGN window,
-   * where a void-year deal at zero years remaining is about to be charged to
-   * this same season and belongs in the column with it.
+   * and the masthead tile shows, and the two are now the same year in every
+   * window; they differ only inside RESIGN, where a void-year deal at zero
+   * years remaining is about to be charged to this same season and belongs in
+   * the column with it.
    */
   thisYear: number;
   /** Every dollar on the bill, including anything dated past the window. */
@@ -159,24 +256,28 @@ export interface DeadMoneyRunway {
 }
 
 /**
- * TWO DIFFERENT YEARS, AND MIXING THEM UP IS THE BUG THIS COMMENT EXISTS TO
- * PREVENT.
+ * ONE YEAR, AND IT IS THE LEDGER'S.
  *
- * The WINDOW starts at `league.seasonYear`, because that is the year the whole
- * Cap page is written in — the masthead's ceiling, the compliance gate and
- * `summary.deadMoney` are all measured against it, and a runway whose first
- * column disagreed with the tile above it would be two dead-money figures on
- * one screen.
+ * The WINDOW starts at `capChargeYear(league)` — the year the contract ledger
+ * is currently expressed in — and so does every figure on the Cap page, now
+ * that `teamCapSummary` reads the same year (see `bookYearFor` above). The
+ * masthead's ceiling, the compliance gate, `summary.deadMoney` and column 0
+ * here are therefore all in one league year, which is what makes this panel
+ * reconcilable against the tile above it.
  *
- * The SCHEDULED bills are dated off `capChargeYear()` instead, which is the
- * year the CONTRACT LEDGER is currently expressed in. Those two are the same
- * year everywhere except OFFSEASON weeks 1-2, where the season has not rolled
- * but `ageContractsForYear` already has: `yearsRemaining` is written in next
- * year's terms there, so counting it forward from `seasonYear` would date
- * every void bill a year early. In that window a release booked right now
- * lands in the SECOND column, not the first, and this panel is the only thing
- * on the page that says so — `teamCapSummary` reads `year: seasonYear` and
- * cannot see it at all.
+ * IT USED TO BE TWO. The window was labelled from `league.seasonYear` while
+ * the SCHEDULED bills were dated off `capChargeYear()`, and through OFFSEASON
+ * weeks 1-2 those are different years — so a void bill sat one column out of
+ * step with the ledger position it was computed from. Both halves now count
+ * from the same place, so the skew has nowhere left to live.
+ *
+ * AND THE BOOKED FILTER MOVED WITH IT. A row dated before the ledger year
+ * belongs to a season that has closed: whatever it could not fund has already
+ * been rewritten into the new year by `settleClosingYearCapOverage`, and
+ * `expireStaleCapCharges` deletes it at the AGE_CONTRACTS step. Between the
+ * ledger rolling (end of the playoffs) and that sweep those settled rows are
+ * still sitting on the table, and counting them would bill the club twice for
+ * one season for the length of the whole pre-roll window.
  */
 export async function deadMoneyRunway(
   teamId: string,
@@ -184,9 +285,10 @@ export async function deadMoneyRunway(
   mode: CapMode,
   windowYears = 4,
 ): Promise<DeadMoneyRunway> {
+  const ledgerYear = capChargeYear(league);
   const empty: DeadMoneyRunway = {
     years: Array.from({ length: windowYears }, (_, i) => ({
-      year: league.seasonYear + i, booked: 0, scheduled: 0, total: 0, items: [],
+      year: ledgerYear + i, booked: 0, scheduled: 0, total: 0, items: [],
     })),
     thisYear: 0, total: 0, beyondWindow: 0, beyondItems: [], lastYear: null, largest: null,
   };
@@ -197,18 +299,11 @@ export async function deadMoneyRunway(
   // a void-year bill takes no view of the mode either.
   if (mode === 'OFF') return empty;
 
-  const ledgerYear = capChargeYear(league);
-
   const [rows, deals] = await Promise.all([
-    // `gte: seasonYear` and not the whole table. A row dated before the current
-    // league year belongs to a season that has closed: whatever it could not
-    // fund has already been rewritten into this year by
-    // settleClosingYearCapOverage, and expireStaleCapCharges deletes it at the
-    // AGE_CONTRACTS step. Between the year roll (OFFSEASON week 2) and that
-    // sweep (week 3) those paid rows are still sitting there, and counting
-    // them would bill the club twice for one season for exactly one week.
+    // `gte: ledgerYear` and not the whole table — see the note above on why a
+    // row dated before the ledger year is a bill that has already been settled.
     prisma.capCharge.findMany({
-      where: { teamId, year: { gte: league.seasonYear } },
+      where: { teamId, year: { gte: ledgerYear } },
       select: { year: true, amount: true, label: true },
     }),
     prisma.contract.findMany({
@@ -248,14 +343,14 @@ export async function deadMoneyRunway(
   }
 
   const years: DeadMoneyYear[] = Array.from({ length: windowYears }, (_, i) => {
-    const year = league.seasonYear + i;
+    const year = ledgerYear + i;
     const mine = items.filter((it) => it.year === year).sort((a, b) => b.amount - a.amount);
     const booked = mine.filter((it) => it.kind === 'BOOKED').reduce((s, it) => s + it.amount, 0);
     const scheduled = mine.filter((it) => it.kind === 'SCHEDULED').reduce((s, it) => s + it.amount, 0);
     return { year, booked, scheduled, total: booked + scheduled, items: mine };
   });
 
-  const lastWindowYear = league.seasonYear + windowYears - 1;
+  const lastWindowYear = ledgerYear + windowYears - 1;
   const beyond = items
     .filter((it) => it.year > lastWindowYear)
     .sort((a, b) => a.year - b.year || b.amount - a.amount);
@@ -356,26 +451,26 @@ export async function deadMoneyRunway(
  * `dead.beyondWindow` / `dead.beyondItems` carry the stranded void bills out
  * by name — the discipline `deadMoneyRunway` already applied.
  *
- * YEAR ALIGNMENT, AND THE ONE WINDOW WHERE THE LABELS SKEW.
- * Column i is labelled `league.seasonYear + i` and is fed by
- * `capHitSchedule(contract)[i]`. Those agree everywhere except OFFSEASON weeks
- * 1-2, where `ageContractsForYear` has already stepped the ledger onto the new
- * league year but `RESET_STANDINGS` has not moved `seasonYear` yet — so in
- * that window index 0 is really NEXT year's charge.
+ * YEAR ALIGNMENT, AND THE SKEW THAT USED TO LIVE HERE.
+ * Column i is labelled `capChargeYear(league) + i` and is fed by
+ * `capHitSchedule(contract)[i]`, and those are now the same year by
+ * construction: the ledger year is exactly the year `capHitSchedule`'s first
+ * entry is written in.
  *
- * That skew is `teamCapSummary`'s own and it is the whole page's: the masthead
- * reads "<seasonYear> Salary Cap" over an active-salary figure written in next
- * year's terms, and the compliance gate runs on the same figure. Column 0 is
- * pinned to reproduce it EXACTLY rather than corrected here, because a cap
- * sheet whose first column disagreed with the gate the game is enforcing would
- * be the lying metric — just pointed the other way. What this does instead is
- * SAY SO: `preRoll` is set through that window and the top panel prints a
- * sentence naming it, which is more than anything else on the page has ever
- * done.
- * REJECTED: dating the whole window off `capChargeYear(league)` so the labels
- * are externally true. It makes column 0 stop matching the masthead's Dead
- * Money tile and the ceiling in the tile beside it, i.e. it trades one skew
- * for three visible contradictions on the same screen.
+ * It used to be `league.seasonYear + i`, which agrees with the schedule
+ * everywhere EXCEPT OFFSEASON weeks 1-2 — `ageContractsForYear` steps the
+ * ledger the moment the season ends, `RESET_STANDINGS` moves `seasonYear` two
+ * steps later, and in between index 0 was really next year's charge under this
+ * year's heading. Column 0 was deliberately pinned to reproduce that, because
+ * `teamCapSummary` had the same skew and a first column disagreeing with the
+ * gate the game enforces would have been the lying metric pointed the other
+ * way. `teamCapSummary` now reads the ledger year too (see `bookYearFor`), so
+ * the pinning is kept — the year it is pinned TO is simply the true one, and
+ * column 0 still reconciles against the masthead tile line for line.
+ *
+ * `preRoll` survives that fix and still means something: through those two
+ * weeks the league CLOCK in the header reads one year while this sheet reads
+ * the next, and the top panel says so.
  * ===========================================================================
  */
 
@@ -454,6 +549,9 @@ export async function capSheet(
 
   const settings = parseSettings(league.settings);
   const rosterFloor = rosterMinFor(settings.rosterMax);
+  // The league year the contract ledger — and therefore `capHitSchedule`'s
+  // first entry, and `teamCapSummary` — is currently written in.
+  const ledgerYear = capChargeYear(league);
 
   const [players, runway, ...ceilings] = await Promise.all([
     prisma.player.findMany({
@@ -461,10 +559,10 @@ export async function capSheet(
       select: { id: true, firstName: true, lastName: true, position: true, contract: true },
     }),
     deadMoneyRunway(teamId, league, mode, windowYears),
-    ...Array.from({ length: windowYears }, (_, i) => capForLeague(league, league.seasonYear + i)),
+    ...Array.from({ length: windowYears }, (_, i) => capForLeague(league, ledgerYear + i)),
   ]);
 
-  const lastWindowYear = league.seasonYear + windowYears - 1;
+  const lastWindowYear = ledgerYear + windowYears - 1;
   /** Active cap charges per league year, and the men behind them. */
   const activeByYear = new Map<number, number>();
   const menByYear = new Map<number, number>();
@@ -504,7 +602,7 @@ export async function capSheet(
       ? capHitSchedule(p.contract, mode)
       : [capHit(p.contract, mode)];
     for (let i = 0; i < schedule.length; i++) {
-      const year = league.seasonYear + i;
+      const year = ledgerYear + i;
       lastActiveYear = Math.max(lastActiveYear ?? year, year);
       if (year > lastWindowYear) {
         beyondActive += schedule[i];
@@ -517,7 +615,7 @@ export async function capSheet(
   }
 
   const years: CapSheetYear[] = Array.from({ length: windowYears }, (_, i) => {
-    const year = league.seasonYear + i;
+    const year = ledgerYear + i;
     const activeSalary = activeByYear.get(year) ?? 0;
     const dead = runway.years[i];
     const deadBooked = dead?.booked ?? 0;
@@ -551,7 +649,7 @@ export async function capSheet(
       : lastDeadYear === null ? lastActiveYear
         : Math.max(lastActiveYear, lastDeadYear),
     rosterFloor,
-    preRoll: capChargeYear(league) !== league.seasonYear,
-    ledgerYear: capChargeYear(league),
+    preRoll: ledgerYear !== league.seasonYear,
+    ledgerYear,
   };
 }

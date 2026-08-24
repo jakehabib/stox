@@ -87,13 +87,22 @@ function splitLabel(label: string): { name: string; cause: string | null } {
   return { name: label.slice(i + 1).trim(), cause: label.slice(0, i).trim() };
 }
 
-export function DeadMoneyRunwayPanel({ runway, leagueId, seasonYear }: {
+export function DeadMoneyRunwayPanel({ runway, leagueId }: {
   runway: DeadMoneyRunway;
   leagueId: string;
-  /** The league year the rest of the Cap page is written in — the first column. */
-  seasonYear: number;
 }) {
   const { years, total, thisYear, lastYear, largest, beyondWindow, beyondItems } = runway;
+  /**
+   * THE FIRST COLUMN'S OWN YEAR, taken off the runway rather than passed in
+   * beside it. It used to be a `seasonYear` prop fed from `League.seasonYear`,
+   * which is a SECOND derivation of a year `deadMoneyRunway` has already
+   * decided — and through OFFSEASON weeks 1-2 the two disagree, because the
+   * window is dated off the contract ledger and the league clock is a year
+   * behind it there. The sentences below name this year four times; one of
+   * them being sourced differently from the column it describes is exactly the
+   * drift this tab keeps being rescued from.
+   */
+  const seasonYear = years[0]?.year ?? lastYear ?? 0;
   /**
    * THIS PANEL STILL DELETES ITSELF ON A CLEAN LEDGER, AND THAT IS NOW A
    * DEFENSIBLE ANSWER RATHER THAN A SILENCE.

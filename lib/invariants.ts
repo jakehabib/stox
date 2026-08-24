@@ -1,6 +1,6 @@
 import { prisma } from './db';
 import { readJson } from './json';
-import { capHit, capForYear, formatMoney } from './cap';
+import { capHit, capForYear, capChargeYear, formatMoney } from './cap';
 import { resolveStartYear } from './leagueYear';
 import { parseSettings, capGrowthRate } from './settings';
 import { rosterMinFor } from './tuning';
@@ -190,8 +190,16 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
   // read) rather than calling teamCapSummary per team — this runs after
   // every single sim step, and 32 teams x 2 queries each would dominate it.
   if (settings.capMode !== 'OFF') {
+    // THE YEAR THE BOOKS ARE WRITTEN IN, not the year on the league clock.
+    // `capHit` below returns the ledger's current year for every man, and
+    // through OFFSEASON weeks 1-2 that is a year ahead of League.seasonYear
+    // (ageContractsForYear runs the instant the season ends; RESET_STANDINGS
+    // moves seasonYear two steps later). teamCapSummary resolves exactly this
+    // year — see bookYearFor in lib/cap-summary.ts — and the note below is
+    // about these two never diverging.
+    const capYear = capChargeYear(league);
     const deadRows = await prisma.capCharge.findMany({
-      where: { teamId: { in: teams.map((t) => t.id) }, year: league.seasonYear },
+      where: { teamId: { in: teams.map((t) => t.id) }, year: capYear },
     });
     const spendByTeam = new Map<string, number>(teams.map((t) => [t.id, 0]));
     for (const p of players) {
@@ -209,7 +217,7 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
     // FLAT or FAST league would be audited against a ceiling it is not playing
     // under — reporting clubs over a cap that is not theirs, or missing ones
     // that are.
-    const ceiling = capForYear(league.seasonYear, await resolveStartYear(league), capGrowthRate(settings));
+    const ceiling = capForYear(capYear, await resolveStartYear(league), capGrowthRate(settings));
     const overCap = teams
       .filter((t) => (spendByTeam.get(t.id) ?? 0) > ceiling)
       .map((t) => `${t.abbr} ${formatMoney(ceiling - (spendByTeam.get(t.id) ?? 0))}`);

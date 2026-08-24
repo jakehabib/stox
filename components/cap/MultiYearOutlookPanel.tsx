@@ -296,19 +296,29 @@ export function MultiYearOutlookPanel({ sheet, teamId, teamAbbr, accent }: {
           {anyDead && ` ${formatMoney(deadInWindow)} of it is dead money and cannot be released; every charge is named at the foot of this tab.`}
         </p>
 
-        {/* THE ONE WINDOW WHERE THE COLUMN LABELS SKEW, said out loud rather
-            than left for a GM to trip over. Through OFFSEASON weeks 1-2 the
-            contract ledger has already stepped onto the new league year while
-            League.seasonYear has not, so every charge below is written in next
-            year's terms under this year's heading. That is the whole page's
-            convention — the masthead, the compliance gate and teamCapSummary
-            all share it — and this panel is pinned to it deliberately (see
-            lib/cap-summary.ts) rather than inventing a second calendar on one
-            screen. What it can do is name it, which nothing else here does. */}
+        {/* THE TWO WEEKS WHERE THE LEAGUE CLOCK AND THE BOOKS DISAGREE, said
+            out loud rather than left for a GM to trip over. Through OFFSEASON
+            weeks 1-2 the contract ledger has already stepped onto the new
+            league year (ageContractsForYear runs the instant the season ends)
+            while League.seasonYear does not move until RESET_STANDINGS — so
+            the header clock reads one year and every cap figure on this page,
+            this chart included, is written in the next. They used to disagree
+            SILENTLY and in the arithmetic too: the ceiling and the dead money
+            were read a year behind the salaries they were being subtracted
+            from. That is fixed (see bookYearFor, lib/cap-summary.ts) and the
+            whole page now speaks one year — this note is what tells a reader
+            WHICH one, and why his club still reads heavy.
+
+            The heaviness is real and it is temporary: every expiring contract
+            in the league is still charged here, at its final year's number,
+            until the re-sign window closes and the unkept walk. That is the
+            one honest reason a club's room improves on an Advance it made no
+            move in, and it is the reason this sentence names it up front. */}
         {preRoll && (
           <p className="text-[11px] text-muted border-l-2 border-line pl-2.5 leading-relaxed mt-2.5">
-            The books have already turned over onto {ledgerYear}: every charge below is written in the new league year&apos;s
-            terms, and expiring deals stay on them until free agency opens. Every club in the league reads heavy right now.
+            The books have turned over onto {ledgerYear} — every figure on this page is written in it, though the header
+            clock still reads the season just played. Expiring deals stay on these books at their last year&apos;s number
+            until free agency opens, so every club in the league reads heavy right now and comes back down when they walk.
           </p>
         )}
       </div>

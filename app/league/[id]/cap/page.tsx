@@ -105,6 +105,26 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
     }
   });
 
+  /**
+   * WHAT COMES OFF THESE BOOKS ON ITS OWN, and why this figure is on the page.
+   *
+   * The app owner, on a club that read -$60M at the offseason roll and got
+   * better twice while its GM made no move: *"he changed nothing. What is
+   * going on there?"* Part of that was arithmetic and is fixed at the source
+   * (bookYearFor, lib/cap-summary.ts). The rest is real accounting with
+   * nothing on screen to explain it: a man whose deal has run out is still
+   * rostered and still charged his final year's number until the re-sign
+   * window shuts, and then he is gone. On a measured club that was $11.3M
+   * across four men — bigger than the whole arithmetic error — and the only
+   * way to see it coming was to press Advance.
+   *
+   * `r.hit` is `capHit`, the same figure `teamCapSummary` sums into the
+   * Committed tile above, so this is a slice of that number and not a second
+   * opinion on it.
+   */
+  const expiring = rows.filter((r) => r.p.contract != null && r.p.contract.yearsRemaining === 0);
+  const expiringCap = expiring.reduce((s, r) => s + r.hit, 0);
+
   const sortHref = (key: SortKey) => {
     const nextDir = sortKey === key && dir === -1 ? 'asc' : 'desc';
     return `/league/${league.id}/cap?sort=${key}&dir=${nextDir}${advanced ? '&view=advanced' : ''}`;
@@ -197,7 +217,12 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       })),
       capUsed: summary.capUsed,
       capTotal: summary.capTotal,
-      nextYearCapTotal: capForYear(league.seasonYear + 1, startYear, capGrowthRate(settings)),
+      // NEXT year is next relative to the year these hits are written in, not
+      // next relative to the league clock. `nextYearHit` above is
+      // capHitSchedule[1], i.e. the season after the contract ledger's current
+      // one — so through OFFSEASON weeks 1-2, pairing it with seasonYear + 1
+      // measured next year's salaries against THIS year's ceiling.
+      nextYearCapTotal: capForYear(summary.capYear + 1, startYear, capGrowthRate(settings)),
       deadMoney: summary.deadMoney,
     });
 
@@ -218,7 +243,13 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       <PageMasthead
         teamId={team.id}
         teamAbbr={team.abbr}
-        eyebrow={`${league.seasonYear} Salary Cap`}
+        /* summary.capYear, NOT league.seasonYear. Through OFFSEASON weeks 1-2
+           the contract ledger has already rolled onto the new league year and
+           League.seasonYear has not, so every figure in this masthead is
+           written in the year teamCapSummary resolved — see bookYearFor in
+           lib/cap-summary.ts. Labelling them off the League row is how this
+           page came to head next year's salaries with last year's date. */
+        eyebrow={`${summary.capYear} Salary Cap`}
         title={`${team.city} ${team.nickname}`}
         action={
           <div className="flex gap-1.5">
@@ -234,7 +265,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
             tip: tip('capSpace'),
             color: summary.capSpace >= 0 ? 'text-accent' : 'text-bad',
           },
-          { label: 'Cap Limit', value: formatMoney(summary.capTotal), detail: `${league.seasonYear} league cap`, tip: tip('capLimit') },
+          { label: 'Cap Limit', value: formatMoney(summary.capTotal), detail: `${summary.capYear} league cap`, tip: tip('capLimit') },
           { label: 'Committed', value: formatMoney(summary.capUsed), detail: `${players.length} contracts`, tip: tip('committedCap') },
           {
             label: 'Dead Money',
@@ -267,7 +298,11 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
                 that tells a GM he is not stuck has to be the same sentence
                 that tells him what it costs. */}
             {!capComplianceDueNow(league.phase)
-              ? 'Every team\'s books run heavy through the offseason roll — expiring contracts only come off when free agency opens, and the new league year starts whether or not you are under the ceiling. Get back under it before this season closes: whatever you are still over by when it does is carried into the next league year as dead money.'
+              ? `Every team's books run heavy through the offseason roll — expiring contracts only come off when free agency opens, and the new league year starts whether or not you are under the ceiling.`
+                + (expiring.length > 0
+                  ? ` ${expiring.length} of the contracts above ${expiring.length === 1 ? 'has' : 'have'} run out: ${formatMoney(expiringCap)} of what is committed here comes off by itself the moment the re-sign window shuts, without you cutting anybody.`
+                  : '')
+                + ` Get back under it before this season closes: whatever you are still over by when it does is carried into the next league year as dead money.`
               : settings.capMode === 'REALISTIC' && compliance.fixable
                 ? 'The week will not advance until you are back under the ceiling. Any combination of these clears it — cuts and restructures below, or a trade that sends salary out.'
                 : compliance.fixable
@@ -464,7 +499,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
           dead last: Contracts is the page's reference table, it closes the
           page on Basic too, and an Advanced panel after it would strand it. */}
       {advanced && sheet && (
-        <DeadMoneyRunwayPanel runway={sheet.dead} leagueId={league.id} seasonYear={league.seasonYear} />
+        <DeadMoneyRunwayPanel runway={sheet.dead} leagueId={league.id} />
       )}
 
       <div className="panel overflow-hidden">
