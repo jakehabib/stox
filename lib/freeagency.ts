@@ -719,9 +719,34 @@ export async function signExtension(opts: {
     convertPct: opts.convertPct,
   });
   const newHit = capHit({ ...next, baseSalaries: writeJson(next.baseSalaries) }, capMode);
+  /*
+   * THE DIFFERENCE, NOT THE WHOLE NEW HIT — which is what made an extension
+   * that FREES room get blocked for a club that was already over the cap.
+   *
+   * This passed `delta: newHit, creditBack: oldHit`. Arithmetically that is
+   * the same test: `newHit > capSpace + oldHit` is `newHit - oldHit >
+   * capSpace`. But assertCapRoom's first act is `if (delta <= 0) continue`,
+   * the escape for a move that frees room or is neutral, and a delta stated
+   * as the whole new hit is never <= 0 — a cap hit is a positive number. So
+   * the escape could not fire here, and a club sitting at -$60.0M of space
+   * extending a man from $20.0M down to $15.0M was refused: the gate asked
+   * whether $15.0M fitted in -$40.0M, which nothing ever does. The move it
+   * refused makes the club $5.0M LESS over the cap.
+   *
+   * Stated as the difference, the same club offers delta -$5.0M, takes the
+   * escape, and the extension goes through. Every decision for a club UNDER
+   * the cap is unchanged, because the two forms are the same inequality.
+   *
+   * It also stops the refusal message lying about the size of the move: it
+   * now reads "adds $5.0M against -$60.0M of room" rather than "adds $25.0M
+   * against -$40.0M", neither number of which the player would recognise.
+   *
+   * Same form as restructureContract's gate below — one meaning of `delta`
+   * across both, so the two cannot drift apart again.
+   */
   await assertCapRoom({
     action: opts.reSign ? 'Re-signing' : 'Extension', seasonYear, capMode,
-    charges: [{ teamId, delta: newHit, creditBack: oldHit }],
+    charges: [{ teamId, delta: newHit - oldHit }],
   });
 
   await prisma.$transaction(async (tx) => {
