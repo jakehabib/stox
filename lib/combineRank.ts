@@ -1,4 +1,5 @@
-import { CombineTesting } from './gen/prospectProfile';
+import { CombineTesting, COMBINE_ANCHOR } from './gen/prospectProfile';
+import type { Position } from './tuning';
 
 /**
  * Ranks a prospect's testing numbers against the rest of his position group
@@ -94,4 +95,63 @@ export function overallTestingPercentile(ranks: ProspectCombineRanks): number | 
   const values = Object.values(ranks).filter((r): r is MeasurableRank => r != null).map((r) => r.percentile);
   if (values.length === 0) return null;
   return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+/**
+ * ===========================================================================
+ * THE POSITION-ADJUSTED PUBLIC ATHLETICISM READ
+ * ===========================================================================
+ * 0..1, 0.5 = an average tester FOR HIS POSITION. Every drill is converted to
+ * a z against that position's own anchor in lib/gen/prospectProfile.ts, the
+ * z's are averaged, and the mean is put through a normal CDF — so a guard who
+ * benches 26 and runs 5.25 reads 0.50, exactly like a corner who benches
+ * nothing and runs 4.47.
+ *
+ * WHY THIS EXISTS AND WHAT SHOULD CALL IT. lib/consensus.ts publicAthleticism()
+ * does the same job by inverting the generator's formulas, and it anchors ONLY
+ * the 40 — the other four drills are inverted against flat constants (28in,
+ * 100in, 7.00s, 14 reps) that were the same for every position back when every
+ * position tested identically. Now that a corner really does jump 35.5in and a
+ * guard 27in, that inverter reads the corner as a better athlete than the
+ * guard by construction. Measured over 10,000 prospects it now returns a mean
+ * of 0.635 for a corner and 0.376 for a right tackle, which at
+ * CONSENSUS.TESTING_PULL = 9 is a silent, permanent 2.3-point positional
+ * distortion on the consensus board, plus a spread collapse (sd 0.30 -> 0.17)
+ * that weakens the stopwatch bias for everybody.
+ *
+ * The correct call there is `return testingAthleticism(position, testing)`.
+ * It is not made yet only because lib/consensus.ts belongs to another change
+ * in flight; this function is written to be that one-line drop-in, on the
+ * same 0..1 scale the room already compares against its `ability` term.
+ * ===========================================================================
+ */
+export function testingAthleticism(position: string, testing: Partial<CombineTesting>): number | null {
+  const anchor = COMBINE_ANCHOR[position as Position];
+  if (!anchor) return null;
+  const zs: number[] = [];
+  // Timed drills subtract: quicker than the anchor is a positive z.
+  const timed: [number | null | undefined, [number, number]][] = [
+    [testing.fortyYard, anchor.forty],
+    [testing.threeCone, anchor.cone],
+    [testing.shuttle, anchor.shuttle],
+  ];
+  for (const [v, [mean, sd]] of timed) if (v != null && sd > 0) zs.push((mean - v) / sd);
+  const scored: [number | null | undefined, [number, number]][] = [
+    [testing.vertical, anchor.vertical],
+    [testing.broadJump, anchor.broad],
+    [testing.benchReps, anchor.bench],
+  ];
+  for (const [v, [mean, sd]] of scored) if (v != null && sd > 0) zs.push((v - mean) / sd);
+  if (zs.length === 0) return null;
+  const z = zs.reduce((a, b) => a + b, 0) / zs.length;
+  return normalCdf(z);
+}
+
+/** Standard normal CDF via Abramowitz & Stegun 7.1.26 (|err| < 1.5e-7). */
+function normalCdf(z: number): number {
+  const sign = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * x);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return 0.5 * (1 + sign * y);
 }
