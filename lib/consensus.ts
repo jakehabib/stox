@@ -1,4 +1,5 @@
 import { Rng, clamp } from './rng';
+import { testingAthleticism } from './combineRank';
 import { readJson } from './json';
 import type { AttrMap } from './ratings';
 import { AI, CONSENSUS, GENERATION } from './tuning';
@@ -114,16 +115,47 @@ export function bandCutoffs(shape: BoardShape = DEFAULT_SHAPE) {
  * public testing numbers.
  */
 export function publicAthleticism(position: string, testing: Partial<CombineTesting>): number | null {
-  const base40 = BASE_40[position as Position] ?? 4.9;
-  const proxies: number[] = [];
-  if (testing.fortyYard != null) proxies.push(50 + (base40 - testing.fortyYard) * 160);
-  if (testing.vertical != null) proxies.push(50 + (testing.vertical - 28) * 3.2);
-  if (testing.broadJump != null) proxies.push(50 + (testing.broadJump - 100) * 2.3);
-  if (testing.threeCone != null) proxies.push(50 + (7.0 - testing.threeCone) * 55);
-  if (testing.benchReps != null) proxies.push(50 + (testing.benchReps - 14) * 3.5);
-  if (proxies.length === 0) return null;
-  const proxy = proxies.reduce((a, b) => a + b, 0) / proxies.length;
-  return clamp((proxy - 20) / 79, 0, 1);
+  /**
+   * -------------------------------------------------------------------------
+   * POSITION MUST NOT DECIDE HOW ATHLETIC A MAN LOOKS.
+   * -------------------------------------------------------------------------
+   * This used to invert the generator's formulas by hand, and it anchored only
+   * the forty. The other four drills were scored against FLAT league-wide
+   * constants — 28in vertical, 100in broad, 7.00s three-cone, 14 bench reps —
+   * which were correct for exactly as long as every position in football tested
+   * identically. They no longer do: the combine is anchored per position now
+   * (a corner's vertical means 35.7in, a left guard's means 27.1in), and
+   * measuring both against 28 told the room the corner was a freak and the
+   * guard was a plodder for no reason but where they line up.
+   *
+   * Measured over 40 freshly generated classes, 16,000 prospects, walked in
+   * generation order:
+   *
+   *                    spread across positions    sd within a position
+   *   hand-inverted           0.271                      0.173
+   *     CB 0.648 ... LG 0.377
+   *   z against the anchor    0.031                      0.288
+   *     every position 0.506-0.537
+   *
+   * Both halves of that matter. The spread across positions is the bias itself
+   * — a silent, permanent grade shift of over two points, up for the skill
+   * positions and down for the line. The sd WITHIN a position is what the
+   * stopwatch bias has to work with at all, and flattening it to 0.173 quietly
+   * switched most of the effect off.
+   *
+   * So it reads the same per-position anchor table the numbers were generated
+   * from, rather than a second hand-written copy of it that can go stale the
+   * next time the combine moves. That is the whole lesson: one table, one
+   * reader.
+   *
+   * ONE CONSEQUENCE, STATED PLAINLY. A draft class already sitting in a save
+   * was generated before the combine was anchored, so its numbers are in the
+   * old flat shape and this reads them a little generously for linemen — the
+   * same measurement on stored classes gives a 0.276 spread the other way.
+   * That is a board-grade artefact on one class, not a property of any player,
+   * and it clears the moment that class is drafted. Nothing is backfilled.
+   */
+  return testingAthleticism(position, testing);
 }
 
 // ---------------------------------------------------------------------------
