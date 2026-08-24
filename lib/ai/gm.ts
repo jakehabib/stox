@@ -660,9 +660,10 @@ function tierCurveValue(ovr: number, curve: { replacementLevel: number; steepnes
  * changes is that the ceiling stops being the answer and becomes the KNEE of
  * a compression curve:
  *
- *   at or below the knee   the number is returned untouched — this is 99.5%
- *                          of the league, so nothing anyone has ever seen on
- *                          a trade screen moves
+ *   at or below the knee   the number is returned untouched — measured at
+ *                          97.4% of the league on a blind sweep of 8,275
+ *                          rostered players, so what moves is the top of the
+ *                          market and nothing else
  *   above it               the excess is compressed, strictly monotonically,
  *                          onto the gap between the knee and a hard asymptote
  *
@@ -705,15 +706,52 @@ function tierCurveValue(ovr: number, curve: { replacementLevel: number; steepnes
  * the old football sentence with it — a lying metric produced by the very
  * measurement meant to catch one. A caller that wants to know the most a
  * position can ever be worth reads `ceiling x CEILING_SOFTENING.LIMIT`, here.
+ *
+ * AND THAT BOUND IS ON `total`, NOT ON THE PRICE A BUYER PAYS. lib/trade.ts
+ * applies SPREAD.POACH_PREMIUM to the talent AFTER this function has run, so
+ * the ask for a man at the bound is up to 18% above it on HARD. Measured, the
+ * dearest receiver in a generated league asked 2614 against a stated bound of
+ * 2520 while the knee sat at 1.0. A caller quoting this number as "the most
+ * anyone will ever be charged" would be quoting the wrong one.
  */
 export const CEILING_SOFTENING = {
   /**
-   * Where compression begins, as a share of the tier ceiling. 1.0 — the
-   * ceiling itself — so every valuation the old clamp never touched is
-   * returned bit-for-bit identical and this change cannot move a price that
-   * was not already pinned.
+   * Where compression begins, as a share of the tier ceiling. [TUNE] 0.60,
+   * down from 1.0 — the ceiling itself — because a knee that starts AT the
+   * bound leaves the whole run-up to it uncompressed, and the run-up is where
+   * the men who cost real draft capital live.
+   *
+   * MEASURED AGAINST THE TRADES THAT HAVE ACTUALLY HAPPENED, which is the
+   * only bar that means anything here. The ask a buyer has to beat, against
+   * the largest real deal of its kind (Ramsey 1640, Mack 1765 net, Tunsil
+   * ~2350, three mid-firsts for a franchise quarterback):
+   *
+   *   KNEE   top of the market (92+ and QB)   everyone else
+   *   1.00              1.18x                     0.99x
+   *   0.80              1.13x                     0.98x
+   *   0.70              1.11x                     0.98x
+   *   0.60              1.07x                     0.97x
+   *   0.50              1.04x                     0.96x
+   *   0.40              1.00x                     0.96x
+   *
+   * 0.60 takes about 60% of the excess off the top and leaves the rest of the
+   * league where it was: on a blind sweep of 8,275 rostered players, 97.4% of
+   * valuations come back bit-for-bit identical, and nothing at or below a 92
+   * moves by more than 0.3% (a 92 receiver 1350 -> 1346, a 90 and an 88
+   * unchanged to the point). It is still a PREMIUM: 1.07x means the best men
+   * in this game remain dearer than the dearest men in the real one, which is
+   * the right side of the line to stop on.
+   *
+   * IT MAKES THE TOP LESS FLAT, NOT MORE, which is the opposite of what a
+   * clamp does and is worth stating because the two get confused. Compressing
+   * earlier spreads the same headroom over a wider range of raw inputs, so the
+   * gap between a 96 receiver and a 99 one goes from 72 points to 114.
+   *
+   * The bound itself does NOT move — LIMIT is untouched, so the asymptote is
+   * still ceiling x 1.20 and every football sentence written about it stands.
+   * What changed is the approach to it, not where it is.
    */
-  KNEE: 1.0,
+  KNEE: 0.60,
   /**
    * The hard asymptote, as a share of the tier ceiling. [TUNE] 1.20, chosen
    * by measurement rather than taste. The pre-softening product runs to 1.82x
