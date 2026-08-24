@@ -64,7 +64,11 @@ export function CareerStatTable({ position, table, record, showOvr = false }: {
    */
   showOvr?: boolean;
 }) {
-  const cols = careerColumns(position);
+  // Box-score columns only. An efficiency rate belongs in the analytics view,
+  // not beside receptions and yards — see `advanced` in lib/statLabels.ts. The
+  // FULL set is still what `careerColumns` returns, because performance
+  // grading walks it and lib/coachRoom.ts is tuned to its exact shape.
+  const cols = careerColumns(position).filter((c) => !c.advanced);
   const rows: CareerRecordRow[] = record ?? table.rows.map((r) => ({
     season: r, year: null, events: [], honored: false, eventTeamId: null, eventTeamAbbr: null,
   }));

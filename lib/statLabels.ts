@@ -120,6 +120,26 @@ export interface StatColumn {
   derive?: (s: SeasonStats) => number | null;
   /** How a derived value is written. Ignored on raw columns, which are integers. */
   format?: 'pct1' | 'avg1' | 'rate1';
+  /**
+   * AN EFFICIENCY METRIC RATHER THAN A BOX-SCORE LINE — kept out of the career
+   * table on the player card and shown in the analytics view instead. The app
+   * owner, on catch rate sitting beside receptions and yards: *"on the player
+   * cards catch% seems misplaced. that seems like an advanced stat"*. He is
+   * right about the register: a receiving line reads G / Tgt / Rec / Yds / Avg
+   * / TD, all counting stats plus yards-per-catch, which is how every real
+   * stat page has printed one for fifty years.
+   *
+   * IT IS A DISPLAY FLAG AND NOTHING ELSE, and that is deliberate rather than
+   * timid. `CAREER_COLUMNS` is not a display list: `scoredStats`
+   * (lib/performanceScore.ts) builds its scoring vector by walking these
+   * columns, and lib/coachRoom.ts carries BAKED LITERAL means and standard
+   * deviations matched to the exact shape of that vector — its own comments
+   * say so. Dropping a column from the set would shift a receiver's
+   * performance grade and every constant tuned against it, to move a number on
+   * one screen. So the column stays in the set, keeps its place in the vector,
+   * and is filtered only where it is drawn.
+   */
+  advanced?: boolean;
 }
 
 /** Is this column a computed rate rather than a stored field? */
@@ -245,14 +265,14 @@ export const CAREER_COLUMNS: Record<string, StatColumn[]> = {
   ],
   WR: [
     { key: 'gp', short: 'G' }, { key: 'targets', short: 'Tgt' }, { key: 'rec', short: 'Rec', lead: 2 },
-    { key: 'catchPct', short: 'Ctch%', derive: (s) => pct(s.rec, s.targets), format: 'pct1' },
+    { key: 'catchPct', short: 'Ctch%', derive: (s) => pct(s.rec, s.targets), format: 'pct1', advanced: true },
     { key: 'recYds', short: 'Yds', lead: 1 },
     { key: 'recYpr', short: 'Avg', derive: (s) => per(s.recYds, s.rec), format: 'avg1' },
     { key: 'recTd', short: 'TD', lead: 3 },
   ],
   TE: [
     { key: 'gp', short: 'G' }, { key: 'targets', short: 'Tgt' }, { key: 'rec', short: 'Rec', lead: 2 },
-    { key: 'catchPct', short: 'Ctch%', derive: (s) => pct(s.rec, s.targets), format: 'pct1' },
+    { key: 'catchPct', short: 'Ctch%', derive: (s) => pct(s.rec, s.targets), format: 'pct1', advanced: true },
     { key: 'recYds', short: 'Yds', lead: 1 },
     { key: 'recYpr', short: 'Avg', derive: (s) => per(s.recYds, s.rec), format: 'avg1' },
     { key: 'recTd', short: 'TD', lead: 3 },
