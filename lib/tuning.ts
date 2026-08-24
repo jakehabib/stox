@@ -1007,8 +1007,24 @@ export const PROGRESSION = {
    * points of it and 0.4% lost 6 or more, and the mean drift across all
    * drafted careers was +0.10 — the rise half outweighed it. A bust mechanism
    * nobody can see in a career histogram has not shipped.
+   *
+   * AND 0.18 AFTER A SECOND ONE, which is the number here now. 0.30 against a
+   * rise rate of 0.055 made a ceiling five and a half times readier to fall
+   * than to climb, and the whole shape of the game's development came out of
+   * that ratio: a -5 season was 15 times more common than a +5, and a
+   * breakout was a 1-in-516 event. The app owner, on seeing it: *"lets maybe
+   * tone down the erosion a bit then"* — after asking for the other half,
+   * *"if a below star has an amazing year maybe he jumps to star, or all star
+   * etc."* Those are one request. A promotion ladder nobody climbs is not a
+   * ladder, and at 5.5:1 against, almost nobody climbed it.
+   *
+   * 0.18 keeps busts real and visible — it is still well above the 0.155 that
+   * measured as invisible, and erosion still outruns rise better than three to
+   * one, so missing on a prospect remains easier than breaking out, which is
+   * true to football. What it stops being is the dominant force in every
+   * career.
    */
-  CEILING_EROSION_RATE: 0.30,
+  CEILING_EROSION_RATE: 0.18,
   /**
    * The same, against the room left below 99, for a man producing past his
    * rating. Deliberately smaller: the stat-leader and award bumps above
