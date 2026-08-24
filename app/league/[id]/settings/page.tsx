@@ -4,6 +4,7 @@ import { updateSettingsAction } from '@/app/actions/league';
 import { Tooltip } from '@/components/Tooltip';
 import { leagueFileName } from '@/lib/leagueFile';
 import { CAP_GROWTH_MODES, formatCapGrowthRate } from '@/lib/settings';
+import { SettingsForm } from '@/components/SettingsForm';
 
 export default async function SettingsPage({ params }: { params: { id: string } }) {
   const { league, settings } = await getLeagueContext(params.id);
@@ -16,7 +17,7 @@ export default async function SettingsPage({ params }: { params: { id: string } 
         <p className="text-muted text-sm mt-1">How this league plays. Changes take effect from your next advance — nothing already on the books is rewritten.</p>
       </div>
 
-      <form action={action} className="space-y-6">
+      <SettingsForm action={action}>
         <Section title="Core Rules">
           <SelectField
             label="Salary Cap Mode" name="capMode" defaultValue={settings.capMode}
@@ -123,8 +124,7 @@ export default async function SettingsPage({ params }: { params: { id: string } 
           />
         </Section>
 
-        <button type="submit" className="btn-primary">Save Settings</button>
-      </form>
+      </SettingsForm>
 
       {/* Sharing. Outside the settings <form> on purpose — it is a download and
           an outbound link, not a setting, and nesting it would make Save
