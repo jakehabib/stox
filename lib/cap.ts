@@ -1262,11 +1262,20 @@ export function buildContract(opts: {
   };
 }
 
-/** Rookie scale: linear-ish interpolation between pick 1 and the last pick. */
+/**
+ * Rookie scale: exponential decay between pick 1 and the last pick, STEEPENED.
+ *
+ * A flat exponential got both ends right and the middle badly wrong — #32 paid
+ * 74% of #1 where the real scale pays about 32%, and one club's seven-man class
+ * cost 9.6% of its cap against a real ~4.5%. `ROOKIE_SCALE_SHAPE` bends the
+ * curve between the anchors; see its comment in lib/tuning.ts for the sweep and
+ * why 0.40. Both anchors are fixed points of the exponent, so pick 1.01 and the
+ * last pick are unmoved by construction.
+ */
 export function rookieScaleApy(overallPick: number, totalPicks: number): number {
   const t = clamp((overallPick - 1) / Math.max(1, totalPicks - 1), 0, 1);
-  // Exponential decay matches the real scale's shape better than linear. [TUNE]
-  const apy = CAP.ROOKIE_SCALE_R1_PICK1 * Math.pow(CAP.ROOKIE_SCALE_R7_LAST / CAP.ROOKIE_SCALE_R1_PICK1, t);
+  const apy = CAP.ROOKIE_SCALE_R1_PICK1
+    * Math.pow(CAP.ROOKIE_SCALE_R7_LAST / CAP.ROOKIE_SCALE_R1_PICK1, Math.pow(t, CAP.ROOKIE_SCALE_SHAPE));
   return Math.max(CAP.MIN_SALARY, Math.round(apy / 50_000) * 50_000);
 }
 

@@ -949,6 +949,36 @@ export const CAP = {
   FRANCHISE_TAG_TOP_N: 5, // tag = avg of top-5 salaries at the position
   ROOKIE_SCALE_R1_PICK1: 9_500_000,   // total APY at pick 1.1 [TUNE]
   ROOKIE_SCALE_R7_LAST: 1_050_000,    // APY at the last pick
+  /**
+   * [TUNE] HOW THE LADDER BENDS BETWEEN ITS TWO ANCHORS.
+   *
+   * The two ENDS were already right against the real 2024 scale — pick 1.01
+   * paid 3.73% of the cap against a real 3.87%, and the last pick 0.41%
+   * against a real ~0.4%. The middle was not. A flat exponential in `t` made
+   * pick #32 pay 74% of #1 where the real scale pays about 32%, put HALF the
+   * league-wide pool in rounds two through four, and charged a club picking
+   * 16th every round $24.6M for seven rookies against a real ~$12M. The whole
+   * class cost 9.6% of all 32 clubs' cap against a real rookie pool of ~3.5%.
+   *
+   * Raising `t` to this power bends the curve without moving either anchor,
+   * because t=0 and t=1 are fixed points of the exponent — pick 1.01 and the
+   * last pick are untouched by construction, which is why this is a shape
+   * change and not a re-anchoring.
+   *
+   * Swept 1.00 / 0.40 / 0.35 against the real 2024 scale:
+   *
+   *          #1      #16     #32     #64     #224   class@16  league pool
+   *   1.00  $9.50M  $8.20M  $7.00M  $5.10M  $1.05M  $24.8M     9.73%
+   *   0.40  $9.50M  $4.50M  $3.50M  $2.50M  $1.05M  $14.9M     5.99%   <- here
+   *   0.35  $9.50M  $4.05M  $3.15M  $2.30M  $1.05M  $14.1M     5.66%
+   *   real  $9.88M  $5.30M  $3.17M  $1.55M  $1.03M  ~$12M      ~3.5%
+   *
+   * 0.40 rather than 0.35 because the real scale's #16 is $5.30M and 0.35
+   * undershoots it by more than 0.40 overshoots #64 — the top of round one is
+   * where a GM's money actually goes. Existing contracts are stone and do not
+   * re-price; only future drafts move.
+   */
+  ROOKIE_SCALE_SHAPE: 0.40,
   ROOKIE_DEAL_YEARS: 4,
   /**
    * [TUNE] Years of NFL experience that still counts as "on a rookie deal".
