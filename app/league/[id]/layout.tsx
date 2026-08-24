@@ -273,6 +273,25 @@ export default async function LeagueLayout({ children, params }: { children: Rea
               >
                 <div className="label-sm">Cap Space</div>
                 <div className={`text-sm font-mono font-semibold ${compliance.capSpace >= 0 ? 'text-accent' : 'text-bad'}`}>{formatMoney(compliance.capSpace)}</div>
+                {/* WHICH YEAR'S MONEY THIS IS, on the one screen where cap space
+                    is always visible. Contracts age the instant the final
+                    whistle blows, so from the end of the playoffs the ledger is
+                    already writing next season's books while `seasonYear` still
+                    reads the season just played — `capYear` is the year
+                    teamCapSummary actually used, and the note on it ends "Print
+                    this." The Cap page did; this chip did not.
+
+                    Shown ONLY when the two disagree, which is the offseason
+                    window either side of the year roll. The rest of the time it
+                    would be a line on every screen restating the date beside
+                    it, and this strip is deliberately dense. It is the caption
+                    on a jump the app owner watched and could not explain: room
+                    going $918K -> $9.07M the moment his season ended, with
+                    every figure correct and nothing saying the year had moved
+                    under him. */}
+                {compliance.capYear !== league.seasonYear && (
+                  <div className="text-[10px] text-muted leading-tight">{compliance.capYear} books</div>
+                )}
               </Link>
             )}
             {workouts && (

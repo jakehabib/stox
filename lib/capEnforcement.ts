@@ -270,6 +270,21 @@ export interface CapComplianceReport {
   capSpace: number;
   capUsed: number;
   capTotal: number;
+  /**
+   * THE LEAGUE YEAR THESE FIGURES ARE WRITTEN IN, which is not always
+   * `League.seasonYear`. Through OFFSEASON weeks 1-2 the contract ledger has
+   * already stepped forward and this is a year ahead — see `bookYearFor` and
+   * the note on `CapSummary.capYear`, which ends "Print this."
+   *
+   * The Cap page took that instruction; the header did not, and it is the one
+   * place cap space is ALWAYS on screen. The app owner watched his room go
+   * $918K -> $9.07M -> $27.0M across a playoff exit and an offseason and asked
+   * where the money came from. Every figure was right: contracts age the moment
+   * the final whistle blows, so what just expired leaves the books. What was
+   * wrong was the label — next year's cap sheet under this year's date, with
+   * nothing on screen saying so.
+   */
+  capYear: number;
   deadMoney: number;
   rosterSize: number;
   /** Dollars over the ceiling — 0 when compliant. */
@@ -315,7 +330,7 @@ export async function capComplianceReport(
     return {
       ...base,
       compliant: true,
-      capSpace: 0, capUsed: 0, capTotal: 0, deadMoney: 0, rosterSize: 0,
+      capSpace: 0, capUsed: 0, capTotal: 0, capYear: seasonYear, deadMoney: 0, rosterSize: 0,
       shortfall: 0, maxCutRelief: 0, fixable: true, relief: [], path: [],
     };
   }
@@ -328,6 +343,7 @@ export async function capComplianceReport(
       ...base,
       compliant: true,
       capSpace: summary.capSpace, capUsed: summary.capUsed, capTotal: summary.capTotal,
+      capYear: summary.capYear,
       deadMoney: summary.deadMoney, rosterSize: summary.rosterSize,
       shortfall: 0, maxCutRelief: 0, fixable: true, relief: [], path: [],
     };
@@ -376,6 +392,7 @@ export async function capComplianceReport(
     capSpace: summary.capSpace,
     capUsed: summary.capUsed,
     capTotal: summary.capTotal,
+    capYear: summary.capYear,
     deadMoney: summary.deadMoney,
     rosterSize: summary.rosterSize,
     shortfall,
