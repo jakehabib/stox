@@ -723,11 +723,86 @@ export const GENERATION = {
     QB: 1.5, WR: 1.8, EDGE: 1.6, CB: 1.3, DT: 1.1, LB: 0.9,
     LT: 0.7, S: 0.7, RB: 0.6, RT: 0.5, TE: 0.45, LG: 0.35, RG: 0.35, C: 0.35,
   } as Record<string, number>,
-  /** Draft-class tier ramp: top of round one down to the last pick. */
-  DRAFT_TIER_SPREAD: 17,
-  DRAFT_TIER_OFFSET: 9,
-  DRAFT_OVR_MIN: 54,
-  DRAFT_OVR_MAX: 88,
+  /**
+   * ---------------------------------------------------------------------
+   * THE DRAFT-CLASS RATING ROLL
+   * ---------------------------------------------------------------------
+   * One prospect's true overall is a normal draw around the mean his slot in
+   * the class implies:
+   *
+   *   tierMean = ROOKIE_OVR_MEAN + (1 - pct) * DRAFT_TIER_SPREAD
+   *              - DRAFT_TIER_OFFSET + class-strength bias
+   *   rating   = softly-bounded normal(tierMean, DRAFT_OVR_SD)
+   *
+   * so the ramp runs from 77 at the top of round one down to 61 at the last
+   * pick and everything past it, and DRAFT_OVR_SD is how far one man sits
+   * from his own slot.
+   *
+   * DRAFT_OVR_SD IS THE ROLL THAT USED TO BE ROOKIE_OVR_SD (7.5), AND IT HAD
+   * TO COME DOWN. The owner's tier ladder is, fitted to his own numbers, a
+   * potential distribution of about N(77.5, 9.9) — rating N(69.9, 9.3), i.e.
+   * a rating variance budget of 87. Three independent things spend that
+   * budget: the per-group class-strength bias (generateClassStrength, N(0,6))
+   * costs 36, the tier ramp costs SPREAD^2/12, and this roll costs its own
+   * square. At 7.5 the roll alone costs 56 — so bias plus roll came to 92
+   * before the ramp bought a single point of top-vs-bottom gradient, and the
+   * ladder was arithmetically out of reach at any spread, offset or ceiling.
+   * At 6 the same three come to 36 + 21 + 36 = 93 against a measured target
+   * of 87, and the soft bends below spend the rest. ROOKIE_OVR_SD no longer
+   * shapes a draft class; it is only the fallback for a rookie generated with
+   * no ovrTarget, which nothing in the game does today.
+   *
+   * A TIGHTER ROLL DID NOT COST THE LATE ROUNDS THEIR STEALS — IT BOUGHT THEM.
+   * Measured over 60 classes ranked by the shipped consensus board, prospects
+   * grading Star or better per round went:
+   *
+   *   round      R1     R2    R3    R4    R5    R6    R7
+   *   before   19.68  12.93  8.42  4.72  2.88  1.57  1.10
+   *   after    18.95  12.90  8.82  5.98  3.92  2.23  1.55
+   *
+   * every round from the fourth on is richer, the seventh by half again, and
+   * a Generational prospect turns up in rounds six and seven at all now (0.02
+   * a draft each; over the same 60 classes before, neither round produced
+   * one). What the roll gave up was noise the class-strength bias was piling
+   * on top of the ramp, not the ramp's own signal: the gap between the first
+   * and last third of a class holds at 10.1 -> 10.3 rating points.
+   *
+   * DRAFT_OVR_MIN AND DRAFT_OVR_MAX ARE ASYMPTOTES, NOT WALLS. They used to
+   * be the arguments of a clamp, and both ends of a class piled up on them:
+   * measured over 300 classes (120,000 prospects), 1.89% of the pool sat on
+   * exactly 88 against 0.44% on 87 — and 20.2% sat on exactly 54 against
+   * 2.7% on 55, a 7.4x wall and the single largest defect in the generator.
+   * lib/gen/players.ts now bends the roll toward these two with the SAME
+   * decaying exponential softCeiling() has always used for potential (see
+   * POTENTIAL_SOFT_KNEE): below SOFT_KNEE_HI and above SOFT_KNEE_LO the roll
+   * is untouched, outside them each further point of roll buys strictly less
+   * than the one before.
+   *
+   * THE ASYMPTOTES ARE WIDE ON PURPOSE — 46/92 rather than the old 54/88.
+   * A tight asymptote does not remove a pile, it moves it, which is the same
+   * lesson POTENTIAL_SOFT_KNEE above had to learn. Measured on the real
+   * generator: bending toward 54 from a knee at 60 crams a fifth of the pool
+   * into six points and leaves a 1.53x spike at 55; bending the top toward 88
+   * from a knee at 82 leaves 1.23x at 86. At 46/92 the worst neighbour ratio
+   * anywhere in the distribution is 1.07x — flat — against the 1.13x residual
+   * the potential curve leaves at 98.
+   *
+   * NEITHER BOUND IS REACHED BY THE CURVE. Rounding can still land on one:
+   * over 120,000 prospects, three came out at exactly 92 and one at exactly
+   * 46, which is the honest meaning of "asymptote" on an integer scale.
+   *
+   * Widening them has one knock-on worth knowing: prospectQuality()
+   * in lib/gen/prospectProfile.ts dials college production off exactly this
+   * range, so a class's college stat lines now spread across 46..92 instead
+   * of 54..88 and the middle of a class bunches slightly closer together.
+   */
+  DRAFT_TIER_SPREAD: 16,
+  DRAFT_TIER_OFFSET: 7,
+  DRAFT_OVR_SD: 6,
+  DRAFT_OVR_SOFT_KNEE_LO: 56,
+  DRAFT_OVR_MIN: 46,
+  DRAFT_OVR_SOFT_KNEE_HI: 84,
+  DRAFT_OVR_MAX: 92,
   /**
    * The unsigned pool. Hardcoded in TWO places before this (lib/gen/league.ts
    * and lib/leagueFile.ts) and following nothing, so raising the roster

@@ -112,14 +112,14 @@ function generateAttributes(rng: Rng, pos: Position, targetOvr: number): AttrMap
  * ever-larger one, which is the point.
  *
  * WHY: `clamp(trueOvr + bonus, trueOvr, 99)` used to sit here. A prospect's
- * true overall already runs to DRAFT_OVR_MAX (88) and the rookie bonus used to
- * average 14, so a large share of the sums landed past 99 — and every one of
- * them stacked onto exactly 99, the value lib/ratings.ts labels
- * "Generational". The whole right tail collapsed onto one number, which made
- * the single most extreme rating in the game the most COMMON one at the top of
- * the scale. Measured over 2,000 generated classes: 6.49% of prospects sat at
- * 99 against 0.95% at 98 — a 6.8x wall — and the median 224-pick draft held 21
- * generational prospects. It now holds one.
+ * true overall already ran to the top of its own range (88 at the time) and
+ * the rookie bonus used to average 14, so a large share of the sums landed
+ * past 99 — and every one of them stacked onto exactly 99, the value
+ * lib/ratings.ts labels "Generational". The whole right tail collapsed onto
+ * one number, which made the single most extreme rating in the game the most
+ * COMMON one at the top of the scale. Measured over 2,000 generated classes:
+ * 6.49% of prospects sat at 99 against 0.95% at 98 — a 6.8x wall — and the
+ * median 224-pick draft held 21 generational prospects. It now holds one.
  *
  * The knee is deliberately high (97.5) and the bonus roll deliberately small
  * (see ROOKIE_POTENTIAL_BONUS_MEAN). That split matters: a LOW knee does not
@@ -130,11 +130,48 @@ function generateAttributes(rng: Rng, pos: Position, targetOvr: number): AttrMap
  * corner that is left.
  */
 export function softCeiling(base: number, bonus: number): number {
-  const raw = base + bonus;
-  const knee = GENERATION.POTENTIAL_SOFT_KNEE;
-  const span = GENERATION.POTENTIAL_CEILING - knee;
+  return bendToCeiling(base + bonus, GENERATION.POTENTIAL_SOFT_KNEE, GENERATION.POTENTIAL_CEILING);
+}
+
+/**
+ * The curve itself, with its knee and its asymptote passed in — one bend, used
+ * by both things in this file that need one.
+ *
+ * Below `knee` this is the identity. Above it the value is compressed toward
+ * `ceiling` along a decaying exponential whose scale is the remaining span, so
+ * the curve leaves the knee with slope exactly 1 (no kink) and approaches the
+ * ceiling without ever reaching it. Each further point of input buys strictly
+ * less than the point before, which is the whole idea: the extreme outcome
+ * stays possible and gets steadily less likely, rather than being chopped off
+ * and stacked on the bound.
+ *
+ * SECOND CALLER, SAME CURVE, ON PURPOSE. A prospect's RATING roll is bent by
+ * this too (see generateDraftClass). Writing it a second mechanism would have
+ * left two ceilings in one file free to drift apart the first time either was
+ * retuned.
+ */
+export function bendToCeiling(raw: number, knee: number, ceiling: number): number {
+  const span = ceiling - knee;
   if (raw <= knee || span <= 0) return raw;
-  return GENERATION.POTENTIAL_CEILING - span * Math.exp(-(raw - knee) / span);
+  return ceiling - span * Math.exp(-(raw - knee) / span);
+}
+
+/**
+ * The same bend, mirrored: above `knee` the identity, below it compressed
+ * toward `floor` and never reaching it.
+ *
+ * A floor needs this every bit as much as a ceiling does. The rating roll's
+ * hard lower clamp was the biggest pile in the generator, larger than the
+ * ceiling's: 20.2% of every class sat on exactly GENERATION.DRAFT_OVR_MIN
+ * against 2.7% one point above it, a 14.7x local spike where the ceiling's was
+ * 8.7x. The class runs 176 men past the last pick and every one of them rolls
+ * around a mean only a few points clear of the floor, so that is where the
+ * overflow was.
+ */
+export function bendToFloor(raw: number, knee: number, floor: number): number {
+  const span = knee - floor;
+  if (raw >= knee || span <= 0) return raw;
+  return floor + span * Math.exp(-(knee - raw) / span);
 }
 
 export function generatePlayer(
@@ -159,7 +196,7 @@ export function generatePlayer(
 
   const mean = rookie ? GENERATION.ROOKIE_OVR_MEAN : GENERATION.VETERAN_OVR_MEAN;
   const sd = rookie ? GENERATION.ROOKIE_OVR_SD : GENERATION.VETERAN_OVR_SD;
-  const trueOvr = opts.ovrTarget ?? rng.normalClamped(mean, sd, 38, 99);
+  const ovrTarget = opts.ovrTarget ?? rng.normalClamped(mean, sd, 38, 99);
 
   const age = opts.ageOverride ?? (rookie
     ? rng.normalClamped(GENERATION.ROOKIE_AGE_MEAN, 1.0, 20, 25)
@@ -172,15 +209,25 @@ export function generatePlayer(
   // Older players have almost no runway left.
   const ageDamp = clamp((30 - age) / 8, 0, 1);
   const potBonus = Math.max(0, rng.normal(potBonusMean, potBonusSd)) * ageDamp;
-  // softCeiling(), not a hard cap — see GENERATION.POTENTIAL_SOFT_KNEE. The
-  // lower bound stays: a ceiling below the man's own current rating is not a
-  // ceiling, and trueOvr here is the TARGET, which computeOverall can land a
-  // point or two above. The upper 99 can no longer bind (the curve's asymptote
-  // IS 99); it is left in as a guard so this never rests on the arithmetic.
-  const potential = clamp(Math.round(softCeiling(trueOvr, potBonus)), trueOvr, 99);
 
   const body = BODY[position];
-  const attrs = generateAttributes(rng, position, trueOvr);
+  const attrs = generateAttributes(rng, position, ovrTarget);
+  const trueOvr = computeOverall(position, attrs);
+  // softCeiling(), not a hard cap — see GENERATION.POTENTIAL_SOFT_KNEE. The
+  // lower bound stays: a ceiling below the man's own current rating is not a
+  // ceiling. The upper 99 can no longer bind (the curve's asymptote IS 99); it
+  // is left in as a guard so this never rests on the arithmetic.
+  //
+  // IT IS BUILT ON THE FINISHED RATING, NOT ON THE TARGET, and that is the
+  // whole reason this sits below generateAttributes() rather than above it.
+  // The ceiling used to be rolled off `ovrTarget`, but the rating a player
+  // actually carries is computeOverall() of his attributes, which lands a
+  // point or two clear of the target when the attribute nudge cannot close
+  // the gap — so a handful of men were written with a ceiling BELOW their own
+  // current rating, which is not a ceiling. Rare (2 in 120,000 measured) and
+  // free to fix, because the potential-bonus roll above is unchanged and in
+  // the same place, so the same seed still generates the same men.
+  const potential = clamp(Math.round(softCeiling(trueOvr, potBonus)), trueOvr, 99);
 
   const { firstName, lastName } = pickUniqueName(rng, opts.names ?? new NameRegistry());
 
@@ -194,7 +241,7 @@ export function generatePlayer(
     weightLb: rng.normalClamped(body.w, body.wSd, 160, 360),
     college: rng.pick(COLLEGES),
     trueAttrs: attrs,
-    trueOvr: computeOverall(position, attrs),
+    trueOvr,
     potential,
     devTrait,
   };
@@ -344,14 +391,66 @@ export function generateDraftClass(rng: Rng, size: number, names?: NameRegistry)
     const position = weightedPosition(rng);
     const bias = strengthByGroup[positionGroup(position)] ?? 0;
     const tierMean = GENERATION.ROOKIE_OVR_MEAN + (1 - pct) * GENERATION.DRAFT_TIER_SPREAD - GENERATION.DRAFT_TIER_OFFSET + bias;
+    // BOTH ENDS ARE BENT, NEITHER IS CHOPPED. This roll used to be
+    // clamp(..., DRAFT_OVR_MIN, DRAFT_OVR_MAX), and a clamp does not remove
+    // the men past the bound, it stacks them ON it: measured over 300 classes,
+    // 1.89% of every pool sat on exactly 88 against 0.44% on 87, and 20.2% sat
+    // on exactly 54 against 2.7% on 55. The bottom wall was the larger of the
+    // two by a distance, because the class runs 176 men past the last pick and
+    // all of them roll around a mean only a few points clear of the floor.
+    //
+    // The two bends are disjoint by construction — SOFT_KNEE_LO is far below
+    // SOFT_KNEE_HI — so the middle of the class is untouched and the order of
+    // the two calls cannot matter.
+    const roll = rng.normal(tierMean, GENERATION.DRAFT_OVR_SD);
+    const bent = bendToFloor(
+      bendToCeiling(roll, GENERATION.DRAFT_OVR_SOFT_KNEE_HI, GENERATION.DRAFT_OVR_MAX),
+      GENERATION.DRAFT_OVR_SOFT_KNEE_LO,
+      GENERATION.DRAFT_OVR_MIN,
+    );
     const player = generatePlayer(rng, {
       position,
       rookie: true,
-      ovrTarget: clamp(Math.round(rng.normal(tierMean, GENERATION.ROOKIE_OVR_SD)), GENERATION.DRAFT_OVR_MIN, GENERATION.DRAFT_OVR_MAX),
+      ovrTarget: Math.round(bent),
       names,
     });
     player.collegeProfile = generateCollegeProfile(rng, player.position, player.trueAttrs, player.trueOvr);
     out.push(player);
+  }
+
+  // EVERY DRAFT HAS A HEADLINE NAME. The ceiling roll is a roll, so 30% of
+  // classes came out with nobody at 99 at all — no prospect the board could
+  // call generational, in a year the user only gets one of. If the draft the
+  // league actually picks from produced none, the best ceiling in it is raised
+  // to POTENTIAL_CEILING; if it produced one or five, nothing happens.
+  //
+  // THIS IS A FLOOR ON THE COUNT, NOT A CAP ON IT. It can only ever add the
+  // ONE man a class was short, and only to the man already at the top of it,
+  // so nothing above one is touched: measured over 300 classes it takes the
+  // mean from 1.59 to 1.89 a draft and the share of drafts with none from
+  // 29.7% to zero, while the share holding four or more is 10.0% either way
+  // and the biggest class in the sample holds eight.
+  //
+  // IT COSTS A STEP AT 99, AND THAT IS THE WHOLE OF WHAT IT COSTS. Guaranteeing
+  // any particular value puts probability on that value: 99 sits at 1.32x the
+  // height of 98 in the potential histogram with this, and 1.00x without it.
+  // Nothing else in either histogram moves, and the rating histogram — which
+  // is what this file's other change is about — is untouched.
+  //
+  // It is scoped to the men the DRAFT reaches rather than the whole pool: a
+  // generational prospect nobody may pick is not a headline. A class shorter
+  // than DRAFT_CLASS_SIZE is treated as being all draftees.
+  {
+    const reach = Math.min(out.length, GENERATION.DRAFT_CLASS_SIZE);
+    let best = -1;
+    for (let i = 0; i < reach; i++) {
+      if (best < 0
+        || out[i].potential > out[best].potential
+        || (out[i].potential === out[best].potential && out[i].trueOvr > out[best].trueOvr)) best = i;
+    }
+    if (best >= 0 && out[best].potential < GENERATION.POTENTIAL_CEILING) {
+      out[best].potential = GENERATION.POTENTIAL_CEILING;
+    }
   }
 
   // Combine testing is a SEPARATE pass: it needs each prospect's trueOvr
