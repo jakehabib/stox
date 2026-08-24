@@ -201,8 +201,10 @@ export function CreateLeagueForm({
                 Compounded that is not a drift, it is a different game —
                 measured over 20 league years against 32 real generated clubs
                 priced at market, a full roster costs 88% of the cap in year
-                one and 24% by year twenty at 7%, against 60% at 2% and a flat
-                88% forever at 0%.
+                one and 24% by year twenty at 7%, against 66% at 1.5% and a
+                flat 88% forever at 0%. A new league starts Flat: it is the
+                only rung where the squeeze the whole front office is built
+                around never lapses.
 
                 It sits directly under Salary cap because it is meaningless
                 without one, and because a reader who has just decided how

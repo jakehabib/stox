@@ -936,10 +936,16 @@ export const CAP = {
    * under nearly double the opening ceiling while marketValue() still answers
    * in year-one dollars. Measured over 20 league years against 32 real
    * generated clubs priced at market, 7% leaves a median club at 24% of its
-   * own ceiling by year 20 and 2% leaves it at 60% — still a squeeze, still a
-   * choice. The rungs and the table are in lib/settings.ts.
+   * own ceiling by year 20 and 1.5% leaves it at 66% — still a squeeze, still
+   * a choice. The rungs and the table are in lib/settings.ts.
+   *
+   * It was 2% here for one release. A club that keeps its own good players is
+   * still ahead of the ceiling at 2%, just slowly: the year a full roster at
+   * market can also afford the best quarterback in football arrives in season
+   * 8. At 1.5% that is season 10, which is longer than most dynasties run.
+   * The DEFAULT rung is FLAT now regardless — see DEFAULT_SETTINGS.
    */
-  CAP_GROWTH_PER_YEAR: 0.02,
+  CAP_GROWTH_PER_YEAR: 0.015,
   MIN_SALARY: 1_000_000,
   MAX_PRORATION_YEARS: 5,
   /** Simplified mode: flat annual number, no bonus proration, no dead money. */

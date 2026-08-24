@@ -59,7 +59,7 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
   playoffTeamsPerConf: 6,
   rosterMax: 53,
   draftRounds: 7,
-  capGrowth: 'SLOW',
+  capGrowth: 'FLAT',
 
   scoutingEnabled: true,
   revealTrueRatings: false,
@@ -105,8 +105,9 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
  * opinion about compounding, and because the interesting difference is not
  * 2% versus 3% — it is whether the ceiling moves AT ALL:
  *
- *   FLAT  a fixed ceiling. Nothing inflates away; a bad deal is bad forever.
- *   SLOW  the tuned default, and where the drift stays survivable longest.
+ *   FLAT  the default. A fixed ceiling: nothing inflates away, and a bad
+ *         deal is bad forever.
+ *   SLOW  a television deal's drift, slow enough to stay survivable.
  *   FAST  the old behaviour, kept so an existing dynasty plays as it did.
  *
  * MEASURED, over 20 league years, against 32 real generated clubs with every
@@ -116,13 +117,26 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
  *
  *          year 1   year 10   year 20   the squeeze is over in
  *   FLAT    87.9%     87.9%     87.9%   never
- *   SLOW    87.9%     73.6%     60.4%   year 8
+ *   SLOW    87.9%     76.9%     66.2%   year 10
  *   FAST    87.9%     47.8%     24.3%   year 3
  *
  * "The squeeze is over" is the first league year a club can carry that whole
  * roster at market AND still sign the best quarterback in football (a 99 OVR
  * at 27, $64.0M/yr) — the year keeping everyone good stops being a choice.
  * At the old 7% that is the THIRD season of a dynasty.
+ *
+ * WHY FLAT IS THE DEFAULT, and why SLOW is 1.5% rather than 2%. Even a slow
+ * ceiling ends the squeeze eventually, and a front-office game whose central
+ * tension expires on a timer is a game that gets less interesting the longer
+ * you play it — exactly backwards for a dynasty. FLAT is the only rung where
+ * the decision you make in season one is the same decision in season twenty,
+ * so it is what a new league is created on and what a player has to opt OUT
+ * of to get inflation. SLOW moved 2% -> 1.5% for the same reason: it pushes
+ * the year the tension lapses from 8 to 10, past where most dynasties run.
+ *
+ * None of this rewrites an existing league. parseSettings pins a save with no
+ * capGrowth key to FAST (it was played at 7%), and a save that already chose
+ * a rung keeps it — a league that chose SLOW simply drifts at 1.5% from here.
  * ===========================================================================
  */
 export type CapGrowth = 'FLAT' | 'SLOW' | 'FAST';
@@ -145,9 +159,9 @@ export const CAP_GROWTH_MODES: Record<CapGrowth, {
     blurb: 'The ceiling never moves. What a roster costs this year is what it costs in twenty, and no contract you regret ever inflates its way off the books.',
   },
   SLOW: {
-    // The default rung IS the tuning constant, not a second copy of it, so the
-    // fallback curve in capForYear() and the rung a new league is created on
-    // cannot drift apart.
+    // This rung IS the tuning constant, not a second copy of it, so the
+    // fallback curve capForYear() uses when no league is passed and the rung
+    // a player picks on the Settings screen cannot drift apart.
     rate: CAP.CAP_GROWTH_PER_YEAR,
     label: 'Slow',
     blurb: 'The ceiling drifts up the way a television deal does — real money across a decade, never enough to bail you out of a deal you should not have signed.',
@@ -168,6 +182,19 @@ export const CAP_GROWTH_MODES: Record<CapGrowth, {
  * imported league file — and an unrecognised rung must play at the default,
  * not compound at NaN and put every ceiling in the league at NaN with it.
  */
+/**
+ * A rung's rate the way a screen should print it. `toFixed(0)` was fine while
+ * every rung was a whole percent and turned into a lying label the moment
+ * SLOW moved to 1.5%: it rendered "2% a year" beside a ceiling the league
+ * grows at 1.5%. Rounded to a tenth first, because 0.07 * 100 is
+ * 7.000000000000001 in binary floating point and a bare integer check on that
+ * prints "7.0%".
+ */
+export function formatCapGrowthRate(rate: number): string {
+  const pct = Math.round(rate * 1000) / 10;
+  return `${Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(1)}%`;
+}
+
 export function capGrowthRate(s: Pick<LeagueSettings, 'capGrowth'>): number {
   return CAP_GROWTH_MODES[s.capGrowth]?.rate ?? CAP_GROWTH_MODES[DEFAULT_SETTINGS.capGrowth].rate;
 }

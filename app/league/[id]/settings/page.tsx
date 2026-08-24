@@ -3,7 +3,7 @@ import { getLeagueContext } from '@/lib/league-data';
 import { updateSettingsAction } from '@/app/actions/league';
 import { Tooltip } from '@/components/Tooltip';
 import { leagueFileName } from '@/lib/leagueFile';
-import { CAP_GROWTH_MODES } from '@/lib/settings';
+import { CAP_GROWTH_MODES, formatCapGrowthRate } from '@/lib/settings';
 
 export default async function SettingsPage({ params }: { params: { id: string } }) {
   const { league, settings } = await getLeagueContext(params.id);
@@ -159,11 +159,11 @@ export default async function SettingsPage({ params }: { params: { id: string } 
  * on its own has no idea what it is slow COMPARED to.
  */
 const CAP_GROWTH_MODES_OPTIONS: [string, string][] = Object.entries(CAP_GROWTH_MODES)
-  .map(([key, m]) => [key, `${m.label} — ${(m.rate * 100).toFixed(0)}% a year`] as [string, string]);
+  .map(([key, m]) => [key, `${m.label} — ${formatCapGrowthRate(m.rate)} a year`] as [string, string]);
 
 const CAP_GROWTH_TIP = [
   'What the salary cap does between seasons.',
-  ...Object.values(CAP_GROWTH_MODES).map((m) => `${m.label} (${(m.rate * 100).toFixed(0)}%/yr): ${m.blurb}`),
+  ...Object.values(CAP_GROWTH_MODES).map((m) => `${m.label} (${formatCapGrowthRate(m.rate)}/yr): ${m.blurb}`),
   'Wages are quoted in today\u2019s money whatever you pick, so the faster the ceiling climbs the less it ever asks of you.',
   'Changing it mid-dynasty moves the ceiling under deals already on the books \u2014 lowering it can leave clubs over the cap the next morning.',
 ].join(' ');
