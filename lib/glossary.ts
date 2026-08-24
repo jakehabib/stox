@@ -195,7 +195,7 @@ export const GLOSSARY = {
   franchiseTag: {
     term: 'Franchise tag',
     definition: 'A one-year deal you can force on a single player whose contract is up, priced at the average of the five biggest salaries at his position. One club, one tag, one league year — and it goes on during the re-sign window, before free agency opens.',
-    why: 'It keeps a star off the market for a season without a long commitment. It is expensive, it is fully guaranteed, and it buys you a year rather than a solution. It does not wipe out his old contract either: whatever signing bonus that deal had not finished amortising accelerates onto this year\'s cap as dead money the moment you tag him.',
+    why: 'It keeps a star off the market for a season without a long commitment. It is expensive, it is fully guaranteed, and it buys you a year rather than a solution. It does not wipe out his old contract either: whatever signing bonus that deal had not finished amortising accelerates onto this year\'s cap as dead money the moment you tag him. Rival clubs use it too, on the men they cannot re-sign and will not lose, so an elite name you are waiting on may never reach the market at all.',
   },
   rookieDeal: {
     term: 'Rookie deal',

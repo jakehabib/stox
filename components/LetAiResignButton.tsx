@@ -23,6 +23,15 @@ type Result = { kept: number; released: number; decisions: ResignDecision[] };
 const GROUPS: { outcome: ResignDecision['outcome']; heading: string; foot?: string }[] = [
   { outcome: 'RESIGNED', heading: 'Re-signed' },
   { outcome: 'EXTENDED', heading: 'Extended early' },
+  // Unreachable from this button as it stands — the delegate never spends the
+  // user's tag, and says why in resignDecisionsForTeam. It is here because the
+  // outcome exists in the type this panel claims to account for in full, and a
+  // group the list does not render is a man who silently vanishes off it.
+  {
+    outcome: 'TAGGED',
+    heading: 'Franchise-tagged',
+    foot: 'One fully guaranteed season at the top of the position\u2019s market. No agreement was reached — he simply cannot leave.',
+  },
   {
     outcome: 'WALKING',
     heading: 'Letting them walk',

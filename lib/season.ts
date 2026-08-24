@@ -1826,7 +1826,7 @@ async function runOffseasonStepClaimed(
       // AI teams make their own keep-or-let-walk calls before the user
       // lands on the re-sign screen, same as a real front office already
       // having a plan by the time the window opens.
-      const kept = await runAiResignWave(leagueId, league.seasonYear, league.week, settings.capMode, rng);
+      const { kept, tagged } = await runAiResignWave(leagueId, league.seasonYear, league.week, settings.capMode, rng);
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'RESIGN', week: 1 } });
       /**
        * AFTER THE PHASE FLIP, AND THAT IS NOT A STYLE CHOICE.
@@ -1855,8 +1855,20 @@ async function runOffseasonStepClaimed(
       const optionLine = options.exercised + options.declined > 0
         ? `Clubs picked up ${options.exercised} fifth-year option${options.exercised === 1 ? '' : 's'} and turned down ${options.declined}. `
         : '';
+      // The tags are said out loud and the men are NAMED, which the re-signings
+      // deliberately are not. A tag is a club announcing it could not reach
+      // terms with somebody it refuses to lose — it is the loudest thing an AI
+      // front office does all offseason, it happens a handful of times a year
+      // league-wide, and every one of them is a man who will NOT be on the
+      // market the user is about to shop.
+      const tagLine = tagged.length === 0 ? '' : (
+        `${tagged.length === 1 ? 'One club used its franchise tag' : `${tagged.length} clubs used their franchise tags`}`
+        + ` — ${tagged.slice(0, 3).map((t) => `${t.position} ${t.name}`).join(', ')}`
+        + `${tagged.length > 3 ? ` and ${tagged.length - 3} more` : ''}. `
+      );
       return {
         summary: optionLine
+          + tagLine
           + (kept > 0 ? `Around the league, clubs have already re-signed ${kept} of their own expiring players. ` : '')
           + 'Re-sign yours, then advance to open free agency.',
       };
@@ -2762,7 +2774,173 @@ export async function resignDecisionsForTeam(
       if (expired) released++;
     }
   }
-  return { kept, released, decisions };
+
+  /*
+   * ===========================================================================
+   * THE ONE MAN THE CLUB WILL NOT LET WALK FOR NOTHING
+   * ===========================================================================
+   * Everything above is a club trying to reach an AGREEMENT. The franchise tag
+   * is what a club does when it cannot — a man it must not lose, no deal on the
+   * table, and one fully guaranteed season imposed on him at the top of his
+   * position's market. Until this block existed no AI club had ever done it:
+   * 2 TAG rows across 270 leagues in the dev database, against 52,047 RESIGN.
+   * So an elite player whose club could not close reached free agency every
+   * single time — the README's own example, a 99 quarterback walking from a
+   * club sitting on $50.9M of room, which is not a thing a real front office
+   * does and is the first thing a hardcore fan notices.
+   *
+   * IT RUNS AFTER THE LOOP, NOT INSIDE IT, and that ordering is the rule
+   * itself: the tag is the FALLBACK. A club that agreed terms extends him and
+   * never reaches this block, because only men recorded WALKING are candidates
+   * — his deal is up, the front office wanted to weigh him, and no contract
+   * came of it. `capSpace`, `projected` and `depthByPos` have all been spent
+   * down by the deals that were struck, so the tag is priced against what is
+   * genuinely left rather than against the room the club started with.
+   *
+   * ONE WRITE PATH. `applyFranchiseTag` does the tagging, exactly as it does
+   * for the user — the contract, the TAG transaction, the accelerated bonus of
+   * the deal it replaces, and `assertCapRoom` as the final authority. Nothing
+   * here writes a contract. The price is re-derived from the same query and
+   * the same two pure functions the commit path uses (`franchiseTagValue` over
+   * the position's live cap hits, `unamortizedBonus` for the acceleration),
+   * which is how `franchiseTagImpactAction` prices the user's preview too: the
+   * decision and the bill are the same arithmetic on the same rows a moment
+   * apart, not a second pricing model.
+   *
+   * WHAT IT WEIGHS, in the order it weighs it:
+   *   1. Elite enough to be worth a tag at all (RESIGN.TAG_MIN_OVR).
+   *   2. Not already playing on one. See below.
+   *   3. Genuinely irreplaceable HERE — better than the best man the club
+   *      still has at his position after the re-signing above. A club with an
+   *      equal man already on the books does not need to spend its one tag.
+   *   4. Worth the money: the tag price against what he is actually worth
+   *      (RESIGN.TAG_PRICE_TOLERANCE — see lib/tuning.ts for the measurement
+   *      that sets it, and why a rating bar alone cannot do this job).
+   *   5. Room that genuinely exists, priced the way the tag will actually be
+   *      billed: `tagValue + accelerated - oldHit`.
+   * Candidates are taken best-market-first, so a club whose room only covers
+   * one of two elite walkers keeps the more valuable one rather than whichever
+   * row came back first.
+   *
+   * NOT TWICE IN A ROW, and the honest reason. Real football makes a second
+   * consecutive tag 120% of the first and a third 144%, and this codebase has
+   * no notion of either — `franchiseTagValue` is one price, and a contract row
+   * carries `isFranchiseTag` but no count. Rather than invent an escalator
+   * here (a price the user's own screen would not quote, which is the lying-
+   * metric bug this codebase keeps removing), a man already playing on the tag
+   * is simply not a candidate for a second one. He is re-signed or he walks,
+   * which is the conservative half of the real rule.
+   *
+   * WHAT PHASE THIS RUNS IN, because the fifth-year option wave below was
+   * caught by exactly this. The AI's re-sign pass runs inside the OFFSEASON
+   * step named RESIGN, a few lines BEFORE the phase flip that opens the window
+   * — so the League row still reads OFFSEASON here. `applyFranchiseTag` takes
+   * no view on phase (the RESIGN-only rule lives one level up, in
+   * `applyFranchiseTagAction` and lib/franchiseTag.ts, where the user's greyed
+   * control reads it), so this is not blocked the way the option quote was.
+   * And the one thing that DOES read the phase resolves the same either side
+   * of the flip: `capChargeYear` files the accelerated bonus a year early only
+   * through OFFSEASON weeks 1-2, and this step is week 5 of 5. If a phase gate
+   * is ever added to `applyFranchiseTag` itself, this call has to move after
+   * the flip or it will silently stop tagging anybody.
+   *
+   * LEFT FOR THE TRADE MARKET. A tagged man a club cannot afford long-term is
+   * a trade asset in real football, and an AI-vs-AI trade market is being
+   * built alongside this. Nothing here reaches into it: a tagged player is an
+   * ordinary one-year contract to `tradeCapEffect` and needs no special case
+   * to be dealt. The seam, if that market ever wants it, is `Contract
+   * .isFranchiseTag` on a one-year, zero-bonus deal.
+   * ===========================================================================
+   */
+  let tagged: ResignDecision | null = null;
+  if (opts.mayTag && settings.franchiseTagEnabled) {
+    const { franchiseTagValue, unamortizedBonus } = await import('./cap');
+    const { applyFranchiseTag } = await import('./freeagency');
+
+    // One club, one tag, one league year — the same query `applyFranchiseTag`
+    // guards on, asked before the evaluation rather than discovered by a throw
+    // at the end of it.
+    const alreadyHeld = await prisma.contract.findFirst({
+      where: { teamId, isFranchiseTag: true, signedYear: seasonYear },
+      select: { id: true },
+    });
+    const walking = new Set(decisions.filter((d) => d.outcome === 'WALKING').map((d) => d.playerId));
+    const candidates = alreadyHeld || projected >= rosterMax ? [] : priced
+      .filter(({ p }) => walking.has(p.id) && p.trueOvr >= RESIGN.TAG_MIN_OVR && !p.contract!.isFranchiseTag)
+      .sort((a, b) => b.market - a.market || b.p.trueOvr - a.p.trueOvr);
+
+    // THE BEST MAN AT EACH POSITION WHO WILL STILL BE HERE, which is not what
+    // `depthByPos` holds. That table is built from the roster MINUS the whole
+    // expiring class, plus whoever was re-signed out of it — deliberately, so
+    // the keep test above measures a departing starter as the hole he is. A
+    // WALK-YEAR man is in neither set and is going nowhere: he has a season
+    // left whatever this window decides. Left out, a club with a 92 on a
+    // walk-year deal reads its position as empty and spends its one tag on the
+    // 88 behind him.
+    const staying = new Map(depthByPos);
+    for (const q of pending) {
+      if (q.contract!.yearsRemaining !== 1) continue;
+      const list = staying.get(q.position) ?? [];
+      list.push(q.trueOvr);
+      list.sort((a, b) => b - a);
+      staying.set(q.position, list);
+    }
+
+    for (const { p, market } of candidates) {
+      // Can this club replace him at all? Not the depth-chart-ideal slot the
+      // keep test uses — the question a tag asks is "is there anybody else",
+      // not "is he better than our fourth corner".
+      const best = (staying.get(p.position) ?? [])[0] ?? 0;
+      if (p.trueOvr <= best) continue;
+
+      // Priced off the same rows, with the same function, that the write path
+      // is about to price it off.
+      const peers = await prisma.player.findMany({
+        where: { leagueId, position: p.position, status: 'ACTIVE' },
+        include: { contract: true },
+      });
+      const tagValue = franchiseTagValue(peers.map((q) => capHit(q.contract, capMode)).filter((v) => v > 0));
+      if (tagValue > market * RESIGN.TAG_PRICE_TOLERANCE) continue;
+
+      const oldHit = capHit(p.contract, capMode);
+      const accelerated = unamortizedBonus(p.contract, capMode);
+      // WHAT THE TAG ADDS, stated as the difference exactly as the write
+      // path's own `assertCapRoom` call states it: the deal it replaces stops
+      // being charged, the bonus it strands starts being.
+      const cost = tagValue + accelerated - oldHit;
+      const openSlots = Math.max(0, rosterMin - projected);
+      const reserve = capMode === 'OFF' ? 0 : RESIGN.TAG_CAP_RESERVE + openSlots * CAP.MIN_SALARY;
+      // `continue`, not `break`: a club that cannot afford the tag on its most
+      // valuable walker may still be able to afford it on the next one, and a
+      // cheaper position is exactly where that happens.
+      if (cost > 0 && cost > capSpace - reserve) continue;
+
+      const done = await applyFranchiseTag({ leagueId, playerId: p.id, seasonYear, capMode, week })
+        .then(() => true)
+        .catch(() => false);
+      // The budget above is a budget; `assertCapRoom` inside the write path is
+      // the authority, and when it refuses the man is left exactly where the
+      // budget check would have left him — WALKING, with no tag spent.
+      if (!done) continue;
+
+      const row = decisions.find((d) => d.playerId === p.id)!;
+      row.outcome = 'TAGGED';
+      row.years = 1;
+      row.apy = tagValue;
+      row.note = 'no deal, so the club used its franchise tag rather than lose him';
+      released--;
+      capSpace -= cost;
+      projected++;
+      const list = depthByPos.get(p.position) ?? [];
+      list.push(p.trueOvr);
+      list.sort((a, b) => b - a);
+      depthByPos.set(p.position, list);
+      tagged = row;
+      break;
+    }
+  }
+
+  return { kept, released, decisions, tagged };
 }
 
 /**
@@ -2771,10 +2949,11 @@ export async function resignDecisionsForTeam(
  * ===========================================================================
  * `#62 in the backlog is "AI clubs never use the franchise tag"` — a feature
  * only the user can operate is a competitive advantage he did not earn, and
- * the tag has spent long enough being the one example of it. This wave is
- * written so that the option never becomes the second: every non-user club
- * decides on every first-rounder whose option is due, in the same step, before
- * the user reaches his own.
+ * the tag was the standing example of it until AI clubs got one too (see THE
+ * ONE MAN THE CLUB WILL NOT LET WALK FOR NOTHING, in resignDecisionsForTeam).
+ * This wave was written so that the option never became the second: every
+ * non-user club decides on every first-rounder whose option is due, in the
+ * same step, before the user reaches his own.
  *
  * WHAT A CLUB IS ACTUALLY WEIGHING, and it is the same question the user is:
  * one guaranteed season at the option price, against what that man would cost
@@ -2795,10 +2974,10 @@ export async function resignDecisionsForTeam(
  * due must see the first option on its books before it prices the second.
  *
  * REJECTED: leaving this for a later pass and shipping the control on the
- * player card alone. Measured on the tag, that decision is worth about $50M of
- * room a season to whichever side of the league has it — a 99 quarterback
+ * player card alone. Measured on the tag, that decision was worth about $50M
+ * of room a season to whichever side of the league had it — a 99 quarterback
  * walked to the market from a club holding $50.9M because no AI path could
- * tag him.
+ * tag him. That one is closed now; this stayed shut because of it.
  * ===========================================================================
  */
 async function decideFifthYearOptions(
@@ -2868,16 +3047,24 @@ async function decideFifthYearOptions(
  * league into free agency every single year.
  *
  * Returns how many men the league kept, which is the one fact about this wave
- * a GM can act on: it is the size of the market that is NOT about to open.
+ * a GM can act on: it is the size of the market that is NOT about to open —
+ * and, separately, the men who were kept without an agreement, because a club
+ * that has spent its franchise tag has told the league something about itself.
  */
-async function runAiResignWave(leagueId: string, seasonYear: number, week: number, capMode: LeagueSettings['capMode'], rng: Rng): Promise<number> {
+async function runAiResignWave(
+  leagueId: string, seasonYear: number, week: number, capMode: LeagueSettings['capMode'], rng: Rng,
+): Promise<{ kept: number; tagged: ResignDecision[] }> {
   const teams = await prisma.team.findMany({ where: { leagueId, isUser: false } });
   let kept = 0;
+  const tagged: ResignDecision[] = [];
   for (const team of teams) {
-    const decisions = await resignDecisionsForTeam(leagueId, team.id, seasonYear, week, capMode, rng);
+    // `mayTag` — every AI club may spend its own tag. The user's is his, and
+    // his delegate button does not touch it; see resignDecisionsForTeam.
+    const decisions = await resignDecisionsForTeam(leagueId, team.id, seasonYear, week, capMode, rng, { mayTag: true });
     kept += decisions.kept;
+    if (decisions.tagged) tagged.push(decisions.tagged);
   }
-  return kept;
+  return { kept, tagged };
 }
 
 /**

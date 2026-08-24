@@ -1676,6 +1676,79 @@ export const RESIGN = {
    * players who would actually walk.
    */
   EARLY_EXTENSION_WILLINGNESS: 0.6,
+  /**
+   * ===========================================================================
+   * [TUNE] WHEN A CLUB TAGS A MAN RATHER THAN LET HIM WALK FOR NOTHING
+   * ===========================================================================
+   * The tag was a control only the user could reach. Measured on the dev
+   * database: 2 TAG rows across 270 leagues, against 52,047 RESIGN, 40,346
+   * SIGN and 13,968 CUT. So an elite man whose club could not reach terms with
+   * him reached free agency every single time, however much room that club was
+   * sitting on — the case the README described, a 99 quarterback walking from
+   * a club holding $50.9M.
+   *
+   * WHY A PRICE TEST AND NOT JUST A RATING. The tag pays the average of the
+   * top five cap hits at the position (CAP.FRANCHISE_TAG_TOP_N), so what it
+   * costs has nothing to do with the man being tagged and everything to do
+   * with what his position pays. Measured over 66,203 rostered players in 46
+   * id-strided leagues from the dev database (scripts/_ftai_price.ts), the
+   * median tag is $32.9M at QB (12.9% of a $255M cap), $22.5M at EDGE, $20.3M
+   * at CB, $12.2M at LB, $8.4M at RB and $3.0M at K. A rating bar alone would
+   * therefore mean something completely different at quarterback than at
+   * safety.
+   *
+   * The honest comparison is the tag price against what the man is actually
+   * worth — `marketValue`, which already knows his position, his age and his
+   * ceiling. Median ratio of tag price to market APY, same sample, by overall:
+   *
+   *     ovr   99    96    93    91    90    88    86    84    82    80    76
+   *     x    0.61  0.75  0.89  1.02  1.04  1.14  1.29  1.43  1.60  1.80  2.48
+   *
+   * It crosses 1.00 at 91: at that quality and above the tag is CHEAPER than
+   * what the open market would pay him, and a club that lets him walk has
+   * turned down a discount. It stays defensible a little below that, because
+   * the tag is not the same good as a contract — one fully guaranteed season,
+   * no signing bonus, no dead-money tail, no bidding war, and the man cannot
+   * leave. That is why TAG_PRICE_TOLERANCE sits above 1 rather than at it.
+   *
+   * It is far tighter than FIFTH_YEAR_OPTION_TOLERANCE (1.75) for two reasons
+   * that are both about scarcity rather than about taste. A fifth-year option
+   * is per player — a club with three first-rounders coming due answers three
+   * of them — while a club has exactly ONE tag a year, so paying it on the
+   * wrong man costs the right man as well. And the option buys an ascending
+   * 24-year-old; the tag buys a veteran at the top of his market who is more
+   * likely to be leaving his best football behind him.
+   *
+   * 1.20 lands the bar at roughly overall 87 for a man in his prime and pulls
+   * it up sharply for an older one, which is the behaviour wanted: an 88 at 27
+   * is tagged, an 88 at 33 is not, and no constant here had to know that.
+   *
+   * TAG_MIN_OVR is the second leg and it is a floor, not the test. Without it
+   * the price test alone would tag a kicker whose $3.0M tag happens to sit at
+   * his market — cheap, defensible on the spreadsheet, and a waste of the one
+   * tag a club gets. 88 is where the price test starts passing anyone in the
+   * first place, so it binds only on the cheap positions.
+   *
+   * REJECTED: a rating bar alone. At a fixed overall it tags quarterbacks the
+   * club cannot afford and safeties it did not need, and it cannot see age at
+   * all.
+   */
+  TAG_MIN_OVR: 88,
+  /** Most a club will pay for the tag as a multiple of the man's market APY. */
+  TAG_PRICE_TOLERANCE: 1.20,
+  /**
+   * Cap held back from the tag, on top of the league minimum reserved for
+   * every roster slot still short of a legal roster.
+   *
+   * Far smaller than CAP_RESERVE, and that is the football statement: a club
+   * that tags its best player has decided that man IS its offseason. The
+   * re-sign wave holds $10M back so it can still bid in free agency and sign
+   * a draft class; a club holding that back from the tag as well would refuse
+   * to keep a 92 quarterback in order to protect money it has not yet decided
+   * to spend on anybody. Roster LEGALITY is not negotiable and is still
+   * reserved separately, per open slot.
+   */
+  TAG_CAP_RESERVE: 2_000_000,
 };
 
 /** [TUNE] Market value curve: $ APY a player of a given overall commands. */
