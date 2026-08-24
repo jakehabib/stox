@@ -11,10 +11,29 @@ import { POSITION_GROUPS, PositionGroup } from '../positionGroups';
  * college-style box scores and combine/pro-day testing numbers, generated
  * once at class creation and revealed progressively as the NFL season
  * plays out (see collegeWeeksElapsed). Deliberately tuned to COLLEGE norms,
- * not NFL ones: a 13-game season, higher pass-volume/completion%/yards-per-
- * attempt than the pros (spread/RPO systems), and the real NCAA passer
- * efficiency formula (different weights than the NFL's). [TUNE] throughout —
- * these are plausible ranges, not fitted to real CFB data.
+ * not NFL ones: a 13-game season, the real NCAA passer efficiency formula
+ * (different weights than the NFL's), and — the one axis where college
+ * genuinely runs hotter — a much higher yards-per-attempt off the explosive
+ * plays spread/RPO systems give up.
+ *
+ * WHAT THIS PARAGRAPH USED TO CLAIM, AND WHY IT NO LONGER DOES. It said
+ * college was tuned above the pros on "pass-volume/completion%/yards-per-
+ * attempt". Measured over 1,550 generated college quarterbacks against 3,591
+ * simulated pro seasons of 100+ attempts, only the last of those three is
+ * true, and the other two are backwards:
+ *
+ *   completion %   college 60.5% median  vs  pros 64.1%
+ *   attempts/game  college 30.1          vs  pros 43.0
+ *   yards/attempt  college  7.99         vs  pros  5.48
+ *
+ * The NUMBERS are the ones worth keeping — real FBS runs about 61-62% on
+ * roughly 31-33 throws a game, so a college passer completing fewer at lower
+ * volume than a pro is exactly right, and it was the sentence describing them
+ * that had drifted. A comment stating a policy the code abandoned misleads
+ * the next person tuning this file just as badly as a wrong constant would,
+ * so it is corrected here rather than the generator being bent to match it.
+ *
+ * [TUNE] throughout — these are plausible ranges, not fitted to real CFB data.
  * ===========================================================================
  */
 
