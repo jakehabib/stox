@@ -424,6 +424,14 @@ not in a box score. Two consequences, both handled in `syncPlayerSeasons`:
   playoff-split backfill (§6) would have silently erased every league's rating
   history and left a table that still looked complete.
 
+### It is no longer what the chip reads — see §8
+
+`endOvr` shipped as the chip's source and was wrong for 39% of every roster
+(§8). It stays as **per-season history**, which a future career arc will want,
+and `syncPlayerSeasons` now **copies it from `Player.lastSeasonOvr`** rather
+than re-deriving it from `trueOvr`, so the stored season row and the number on
+the card cannot drift apart. Do not wire the chip back to this column.
+
 ### Null is a real answer, and it shows nothing at all
 
 `yearOverYearOvr()` returns null — and the card draws no chip whatsoever, not
@@ -472,3 +480,73 @@ nothing today and stays correct if that scope ever widens.
   chip reads `±0`** — for that stretch of the calendar his current rating *is*
   his end-of-last-season rating, so zero is the honest answer, and it is muted
   rather than coloured because it is not news.
+
+
+---
+
+## 8. Every position, not just the ones a box score names (`Player.lastSeasonOvr`)
+
+> Owner's ask: *"all positions need to be able to show growth, thats a big
+> immersion killer."*
+
+§7 put the chip's source on `PlayerSeason.endOvr`. That table is written from
+box-score lines, and a box score names about twenty-six men a club. Measured
+over one full league-season, rostered men with a row:
+
+| | | | | | |
+|---|---|---|---|---|---|
+| **ALL** | **1,012 / 1,669 (60.6%)** | C 0/72 | LG 0/70 | LT 0/68 | RG 0/73 |
+| RT 0/76 | QB 42/102 | S 86/122 | WR 160/224 | TE 79/102 | CB 122/154 |
+| DT 115/142 | EDGE 125/146 | LB 121/145 | RB 104/115 | K 29/29 | P 29/29 |
+
+**Not one of 359 offensive linemen, at any of the five positions, ever** — and
+that is structural, not a first-year gap. A left guard's rating moves exactly
+as much as a receiver's; there was simply nowhere to write it down.
+
+### The fix: one column on `Player`, stamped for everybody
+
+```prisma
+lastSeasonOvr Int?   // where he finished last season
+```
+
+Written by `stampLastSeasonOvr()` (`lib/playerSeasons.ts`) in **one UPDATE**
+per league per year, for every man still in football, whether or not anything
+he did appeared in a box score. The rejected alternative is the same one §4
+already rejected — zero-stat `PlayerSeason` rows for whole rosters, ~1,700 a
+year against ~50, with every lineman collecting an empty career-table line
+every season.
+
+### Where the stamp is taken, and why exactly there
+
+The instant the **FINAL is played** — inside the playoff step in
+`lib/season.ts`, after `snapshotSeasonHistory` and after `recordSeasonAwards`
+(so every rating point the season awarded has landed), and before the phase
+flips to `OFFSEASON` (so nothing has aged, retired, or rolled offseason
+development onto anybody).
+
+That is the last instant `trueOvr` still means *"what he finished the season
+at"*. One step later it does not: `PROGRESS` runs `progressFreeAgents`, which
+moves the rating of every unsigned player. Stamping at `RESET_STANDINGS`
+instead would have baked that roll into every free agent's number.
+
+### Who is stamped
+
+| | Stamped? | Chip? |
+|---|---|---|
+| `ACTIVE` (rostered), any position | yes | yes |
+| `FREE_AGENT` veteran | yes | yes |
+| Draft prospect (`isDraftee`) | **no** | no — no professional season exists to compare against |
+| `RETIRED` | **no** | no — the card gates him out; his rating froze, so a chip would read `±0` about a year he did not play |
+
+No year is stored beside the number and none is needed: the stamp is **not
+conditional on playing**, so every man still in football is written every
+single season and the value is always last season's. A man who missed the whole
+year injured was still on a roster, was still stamped, and his chip correctly
+reports the year he lost.
+
+### One source, permanently
+
+The chip reads `Player.lastSeasonOvr` and nothing else. It does **not** fall
+back to `PlayerSeason.endOvr` for the men who happen to have a row — one
+displayed number with two definitions is how a card ends up disagreeing with
+itself, and a wrong displayed number is this project's recurring defect.

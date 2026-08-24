@@ -287,6 +287,39 @@ model Player {
   potential Int // 0..99 ceiling
   devTrait  String @default("Normal") // Slow | Normal | Star | Superstar
 
+  // WHERE HE FINISHED LAST SEASON. The number the player card's year-over-year
+  // chip subtracts from `trueOvr`, and the ONLY number it subtracts.
+  //
+  // WHY THIS AND NOT PlayerSeason.endOvr, which holds the same fact per
+  // season: that table is written from box-score lines, and a box score names
+  // about twenty-six men a club. Measured over a full league-season, 1,012 of
+  // 1,669 rostered men had a row — and NOT ONE of 359 offensive linemen, at
+  // any of the five positions, ever. Backup quarterbacks were 42 of 102. A
+  // career-arc chip that is structurally blank for 39% of every roster is,
+  // in the app owner's words, "a big immersion killer". This column is
+  // stamped for every man still in football whether or not anything he did
+  // showed up in a box score, so the chip works at every position.
+  //
+  // ONE SOURCE. The chip reads this and never falls back to
+  // PlayerSeason.endOvr for men who happen to have a row — two sources for one
+  // displayed number is how a card ends up disagreeing with itself. endOvr
+  // stays as per-season history (a future career arc wants it); it is not what
+  // the chip reads, and syncPlayerSeasons now copies THIS column into it so
+  // the two can never drift apart.
+  //
+  // STAMPED THE INSTANT THE FINAL ENDS, right after the award bumps and before
+  // any offseason step has touched anybody — see stampLastSeasonOvr() in
+  // lib/playerSeasons.ts. That is the last moment `trueOvr` still means "what
+  // he finished the season at": the very next step ages every roster and rolls
+  // development onto every unsigned player.
+  //
+  // Null means nobody has written it down yet, and every reader shows NO CHIP
+  // rather than a wrong one — not "+0", not a greyed box. That is every player
+  // in every save that existed before this column, until that save finishes
+  // one more season; it is a draft prospect, who has never played a
+  // professional down; and it is a rookie until his first year is over.
+  lastSeasonOvr Int?
+
   // Draft / status -------------------------------------------------------------
   status      String  @default("ACTIVE") // ACTIVE | INJURED | FREE_AGENT | RETIRED | ROOKIE_POOL
   isDraftee   Boolean @default(false) // in the current rookie/fantasy pool

@@ -289,23 +289,31 @@ export default async function PlayerPage({
   /**
    * HOW HIS OVERALL HAS MOVED THIS YEAR — the one new thing on the hero.
    *
-   * FOG: gated on `view.revealed`, which is the only honest gate available.
-   * The number the chip is arithmetic on is the number the hero PRINTS
-   * (`view.scoutedOvr`), never `player.trueOvr` behind it — a delta taken off
-   * the true rating is a second channel out of the fog, and a reader who knows
-   * last season's stored overall could recover a hidden rating exactly by
-   * adding. Gating on `revealed` goes further than that and is the deliberate
-   * choice: a delta computed from a fogged centre point is noise dressed as
-   * information, two error bars subtracted from each other and printed to the
-   * unit. In this game `revealed` is false only for a draft prospect (see the
-   * SCOPE block in lib/scouting.ts — established pros are never fogged), and a
-   * prospect has never played a professional season, so in practice the gate
-   * costs nothing and it stays correct if that scope ever widens.
+   * ONE SOURCE: `player.lastSeasonOvr`, stamped for every man still in
+   * football the instant the season ended. Deliberately NOT the per-season
+   * PlayerSeason.endOvr rows this card already has loaded — those exist only
+   * for players a box score named, which is no offensive lineman in any
+   * season, so reading them here made the chip structurally impossible for
+   * 39% of a roster. Reading endOvr as a fallback for the men who do have a
+   * row would be worse than either: one number on screen with two definitions.
    *
-   * `career` is null for a draftee, so he is doubly excluded.
+   * FOG: gated on `view.revealed`, and the arithmetic is on the number the
+   * hero PRINTS (`view.scoutedOvr`), never `player.trueOvr` behind it. A delta
+   * off the true rating is a second channel out of the fog — a reader who
+   * knows last season's overall recovers a hidden rating exactly by adding —
+   * and a delta off a fogged centre point is two error bars subtracted from
+   * each other and printed to the unit. `revealed` is false only for a draft
+   * prospect (see the SCOPE block in lib/scouting.ts; established pros are
+   * never fogged), and a prospect has no professional season and no stamp
+   * either, so the gate costs nothing today and stays correct if that scope
+   * ever widens.
+   *
+   * RETIRED MEN GET NOTHING. His rating froze the day he walked away, so his
+   * stamp and his current overall agree forever and the chip would sit on his
+   * card reading "±0 this year" about a year of football he did not play.
    */
-  const ovrChange = view.revealed && career
-    ? yearOverYearOvr({ currentOvr: view.scoutedOvr, seasonYear: league.seasonYear, seasons: career.lines })
+  const ovrChange = view.revealed && player.status !== 'RETIRED'
+    ? yearOverYearOvr({ currentOvr: view.scoutedOvr, lastSeasonOvr: player.lastSeasonOvr })
     : null;
 
   // Your team's current depth at this player's position — the point is
@@ -875,9 +883,12 @@ export default async function PlayerPage({
              carries the tier colour, the 95+ mark and the 99 plate itself. */
           <div className="flex flex-col items-center gap-2">
             <RatingBadge value={view.scoutedOvr} label="Overall" size="lg" filled />
-            {/* Absent, not empty, when last season's rating was never written
-                down — see yearOverYearOvr(). Most of the league is in that
-                state the day this ships, and on a lineman it is permanent. */}
+            {/* Absent, not empty, when nobody has written his last season down
+                — see yearOverYearOvr(). That is every player in every existing
+                save until it finishes one more season, and every rookie until
+                his first year is over. It is no longer a permanent state for
+                linemen: the stamp does not care whether a box score named
+                him. */}
             {ovrChange && <OvrChangeChip delta={ovrChange.delta} />}
           </div>
         ) : (

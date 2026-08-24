@@ -1,0 +1,24 @@
+-- WHERE HE FINISHED LAST SEASON, FOR EVERY MAN — INCLUDING THE ONES NO BOX
+-- SCORE EVER NAMES.
+--
+-- The year-over-year chip on the player card shipped reading
+-- PlayerSeason.endOvr, which is written from box-score lines. Measured over a
+-- full league-season: 1,012 of 1,669 rostered men had a row, and 0 of 359
+-- offensive linemen did — C 0/72, LG 0/70, LT 0/68, RG 0/73, RT 0/76 — plus
+-- backup quarterbacks at 42 of 102. The chip was therefore structurally
+-- impossible for 39% of every roster, permanently, not just in year one. The
+-- app owner: "all positions need to be able to show growth, thats a big
+-- immersion killer."
+--
+-- This column is stamped for every player still in football the instant the
+-- final ends, whether or not he recorded a single counting stat. One UPDATE a
+-- season. PlayerSeason.endOvr stays as per-season history and is now COPIED
+-- from this column rather than read separately, so the stored season row and
+-- the number on the card can never drift apart.
+--
+-- NULLABLE, AND EVERY EXISTING ROW STAYS NULL. That rating is gone; the only
+-- number on disk is what the man is rated today, and writing that in would be
+-- this season's answer wearing last season's label. Null means "nobody wrote
+-- it down", every reader draws no chip at all, and the column fills the next
+-- time a save finishes a season.
+ALTER TABLE "Player" ADD COLUMN "lastSeasonOvr" INTEGER;

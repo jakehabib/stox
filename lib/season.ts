@@ -22,7 +22,7 @@ import { generateDraftClass, toPlayerCreate } from './gen/players';
 import { NameRegistry } from './gen/names';
 import { classStrengthSummary } from './gen/prospectProfile';
 import { checkAndUpdateRecords, recordBreakHeadline } from './records';
-import { syncPlayerSeasons } from './playerSeasons';
+import { syncPlayerSeasons, stampLastSeasonOvr } from './playerSeasons';
 import { reseedDraftOrder, startRookieDraft } from './draft';
 import { ensureSeasonSchedule } from './scheduleSeason';
 /**
@@ -1270,6 +1270,16 @@ async function simulatePlayoffRound(leagueId: string, settings: ReturnType<typeo
   if (kindsPlayed.has('FINAL')) {
     await snapshotSeasonHistory(leagueId, league.seasonYear);
     await recordSeasonAwards(leagueId, league.seasonYear, league.week);
+    // WHERE EVERY MAN FINISHED THIS SEASON, WRITTEN DOWN HERE BECAUSE THIS IS
+    // THE LAST INSTANT `trueOvr` STILL MEANS THAT. The awards above have just
+    // paid their rating bumps, and nothing has aged, retired or rolled
+    // offseason development onto anybody yet — the PROGRESS step does all
+    // three, and progressFreeAgents moves the rating of every unsigned player.
+    // One UPDATE for the whole league, everyone included whether or not a box
+    // score ever named him, which is what lets the player card's chip work at
+    // every position instead of only the ~26 a club that turn up in one. See
+    // stampLastSeasonOvr in lib/playerSeasons.ts.
+    await stampLastSeasonOvr(leagueId);
     await fireStrugglingCoordinators(leagueId, league.seasonYear, rng);
     // The contract ledger steps onto the NEXT league year here, the instant
     // the season is over — not three offseason steps later. See
