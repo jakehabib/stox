@@ -712,7 +712,35 @@ function gradeTag(grade: number, unproven: boolean): { label: string; className:
 export function playerLabel(opts: { ovr: number; potential: number; isDraftee?: boolean; experience?: number; confidence: number }): { label: string; className: string } {
   const { ovr, potential, isDraftee, experience, confidence } = opts;
   const unproven = isDraftee || (experience ?? 1) === 0;
-  const grade = unproven ? potential : ovr;
+
+  /*
+   * A GENERATIONAL CEILING IS AN IDENTITY, NOT A DRAFT-WEEK BADGE.
+   *
+   * `grade` used to be `unproven ? potential : ovr`, flat, and that flip was
+   * jarring exactly where it mattered most. A prospect is graded on his
+   * ceiling, so a 99-potential man taken first overall reads "Generational" on
+   * draft night — and then the moment he has one season of experience the
+   * basis switches to his CURRENT overall, and the same player reads "Quality
+   * Starter" because he is 77 today. Nothing about him changed; the question
+   * being asked did.
+   *
+   * The tag now survives that switch: at the generational band, and ONLY
+   * there, a proven player is graded on his ceiling too. Every other band is
+   * exactly as it was, so a 90-potential man still becomes what he actually is
+   * once he plays.
+   *
+   * It is not a permanent sticker either, and that is the point of putting it
+   * on the ceiling rather than on a flag. Potential is a live number that can
+   * now fall — see the ceiling-erosion work in lib/development.ts — so a man
+   * who never delivers on a 99 loses the ceiling and loses the tag with it,
+   * honestly and gradually, rather than keeping a title he has disproved.
+   * `Math.max` because the ceiling is the higher of the two by construction
+   * and a man who has actually REACHED 99 is generational by either reading.
+   */
+  const ceiling = Math.max(ovr, potential);
+  const grade = unproven
+    ? potential
+    : ceiling >= RATING_BANDS.GENERATIONAL ? ceiling : ovr;
   const tag = gradeTag(grade, unproven);
 
   if (confidence < LABEL_CONFIDENCE_MEDIUM) return { label: 'Unevaluated', className: 'text-muted' };
