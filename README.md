@@ -3828,11 +3828,13 @@ ever force-pushed over, so every state below still exists in git history).
   rosters and Fantasy draft. It is the same generator, the same season machine
   and the same thirty-two clubs — one club is dealt a different hand, and it is
   yours. Measured on real generated leagues (every club rated, no slice): the
-  club is generated strictly below every other one in its league, comes out
-  **last or second-last of 32 on realised unit rating** — a roster is fifty
-  individual rolls around that target, so the noise can flip it by a point —
-  and wins about four games a year off the roster as generated, bottom of the
-  league on results. It is bad in a
+  club is generated strictly below every other one in its league and shows
+  **31st or 32nd of 32** on the overall rating the dashboard prints — a roster
+  is fifty individual rolls around that target, so the noise can flip it by a
+  place — and wins between three and five games a year off the roster as
+  generated. Forcing a guaranteed 32nd was tried and measured: it cost two
+  wins a season and left the club with MORE cap room, so the copy says "the
+  bottom of the league" instead, which is what it actually is. It is bad in a
   fixable way — old at the top of the depth chart, its young players untouched
   (10 men aged 24-or-under against a league median of 11), and holding all 28 of
   its own draft picks. The books are ugly and *legal*, and that distinction is

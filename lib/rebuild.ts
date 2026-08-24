@@ -19,16 +19,20 @@ import type { LeagueSettings } from './settings';
  * What it changes is three facts about the club you take over and one rule
  * about what you may change afterwards.
  *
- *   THE ROSTER    is the worst in the league, on purpose, and bad in a way you
- *                 can fix — see THE HAND below.
+ *   THE ROSTER    is the bottom of the league, on purpose, and bad in a way
+ *                 you can fix — see THE HAND below.
  *   THE BOOKS     are ugly and legal: very little room, a mountain of the last
  *                 regime's dead money, and a handful of contracts you would
  *                 not have signed. See THE BOOKS.
  *   THE RULES     are locked while the run is live. See IRONMAN.
  *
- * And it is measured, not asserted: the club it deals is confirmed by
- * simulation to be last (or inside the noise of last) on unit rating and to
- * win 3-5 games a year off the roster as generated.
+ * AND THE COPY IS WRITTEN TO THE MEASUREMENT, NOT THE OTHER WAY AROUND. The
+ * club is confirmed by simulation to show 31st or 32nd of 32 on the rating the
+ * dashboard prints, and to win between three and five games off the roster as
+ * generated. It says "the bottom of the league" everywhere a player can read
+ * it, because "the worst roster in football" is a place it reaches about half
+ * the time and a claim it cannot keep — see STRENGTH_MARGIN_MIN for what
+ * forcing the stronger claim actually cost.
  *
  * ---------------------------------------------------------------------------
  * THE ONE THING THAT COULD RUIN IT: STARTING OVER THE CAP
@@ -60,61 +64,58 @@ export const REBUILD = {
    * 12 simulated seasons of their own schedule, every club measured, no
    * slice): off+def unit rating ran 141.0 to 171.0 with a mean of 157.5, and
    * regressed on expected wins at `wins = -44.50 + 0.3363 x (off+def)`. The
-   * club at the floor of that range won 3.67 games. So the target is an
-   * off+def at the bottom of a real league's range, which is where 3-5 wins
-   * lives.
+   * club at the floor of that range won 3.67 games.
    *
    * THIS NUMBER IS ONLY HALF OF THE ANSWER — see rebuildTeamStrength, which
    * takes the WORSE of this and "a shade below the worst club this league
-   * actually rolled". Measuring real REBUILD leagues is what forced that, in
-   * both directions:
+   * actually rolled". An absolute target alone fails in both directions, and
+   * both were measured rather than reasoned about: at -8.0 the hand came out
+   * third-worst in one league and fourth-worst in another, because the other
+   * thirty-one are drawn from N(0, 4) and some of them roll very low; and a
+   * fixed rating cannot promise a record either, because a league whose clubs
+   * bunch tightly makes its worst club a six-win team while one with a strong
+   * top makes its worst club a two-win team at the same rating.
    *
-   *   AN ABSOLUTE TARGET IS NOT ENOUGH TO BE LAST. At -8.0 the club came out
-   *   THIRD-worst in one league and FOURTH-worst in another, because the other
-   *   thirty-one are themselves drawn from N(0, 4) and some of them roll very
-   *   low. A create screen promising "the worst roster in football" over a
-   *   fourth-worst roster is the kind of claim this project treats as a defect.
+   * WHAT IS AND IS NOT PROMISED, because the loose version of this is exactly
+   * the kind of overclaim this project treats as a defect:
    *
-   *   AND WINS ARE RELATIVE, NOT ABSOLUTE. A league whose clubs bunch tightly
-   *   makes its worst club a six-win team; a league with a very strong top
-   *   makes its worst club a two-win team at the SAME rating. Measured on two
-   *   real leagues: off+def 145.0 won 4.42 games and was last; off+def 148.0 —
-   *   three points BETTER — won 2.75 and was only fourth-worst. So an
-   *   absolute target alone cannot promise a win band either.
+   *   THE WORST *STRENGTH* IS GUARANTEED. The worst realised unit RATING is
+   *   not. Strength is the mean a roster's ratings are drawn around; what a
+   *   club ends up rated is that plus fifty individual rolls, which move it
+   *   two or three points on their own. Measured, a club generated strictly
+   *   below every other one came out second-worst on rating — and won the
+   *   fewest games in its league anyway. STRENGTH_MARGIN_MIN exists to clear
+   *   that noise; the honest claim is "at or within a point of the bottom".
    *
-   * WHAT IS AND IS NOT PROMISED, because the difference is worth writing down
-   * and because the loose version of it is exactly the kind of overclaim this
-   * project treats as a defect.
+   *   A WIN TOTAL IS NOT PROMISED AT ALL. Measured across real leagues, the
+   *   same off+def of 145 produced 4.42 wins in one and 5.67 in another,
+   *   because a record depends on the schedule drawn and on how far the rest
+   *   of the league is spread. About four is the centre and two to six is the
+   *   range; no value of this constant narrows it, and tuning further would be
+   *   tuning against noise.
    *
-   * THE RELATIVE TERM GUARANTEES THE WORST *STRENGTH*, not the worst realised
-   * unit rating. Strength is the mean every overall on the roster is drawn
-   * around; what a club ends up rated is that draw plus the noise of fifty-odd
-   * individual rolls, so a club generated strictly below every other one can
-   * still come out a point above the next-worst. Measured, it does: in one
-   * league the hand landed off+def 144.0 for SECOND-worst — and won the fewest
-   * games in the league anyway. So the honest claim is "last or second-last on
-   * rating, and bottom of the league", not "last on rating, always".
-   *
-   * A WIN TOTAL IS NOT PROMISED AT ALL, and cannot be: measured across real
-   * leagues, the same off+def of 145 produced 4.42 wins in one and 5.67 in
-   * another, because a club's record depends on the schedule it draws and on
-   * how far the rest of its league happens to be spread. About four wins is
-   * the centre; two to six is the honest range, and no value of this constant
-   * narrows it. Tuning further would be tuning against noise.
-   *
-   * The SD is real spread and not decoration: two REBUILD saves should not
-   * open on the same roster, and a hand a shade less grim has to stay
-   * possible. It came down from 1.4 in the same pass, because at 1.4 the
-   * spread of what got DEALT was wider than the gap between a three-win club
-   * and a six-win one.
+   * The SD is real spread, not decoration: two REBUILD saves should not open
+   * on the same roster. It came down from 1.4 in the same pass, because at 1.4
+   * the spread of what got DEALT was wider than the gap between a three-win
+   * club and a six-win one.
    */
   STRENGTH_MEAN: -9.25,
   STRENGTH_SD: 0.9,
   /**
    * How far below the worst club this league actually rolled the hand lands,
-   * at minimum, plus a drawn tail. Small on purpose: the aim is to BE the
-   * floor of the league, not to fall through it — a club four points below
-   * everyone else is not a rebuild, it is a bye week for the other thirty-one.
+   * at minimum, plus a drawn tail.
+   *
+   * SMALL ON PURPOSE, AND IT WAS MEASURED THE HARD WAY. The aim is to BE the
+   * floor of the league, not to fall through it. Raising this to 1.2 to force
+   * a strictly-worst RATING did force it — the hand came out first of 32 with
+   * six points of daylight — and the same club won 1.92 games, which is not a
+   * rebuild, it is a bye week for the other thirty-one. The extra margin also
+   * made the roster cheap enough that its cap room went UP, to $55.2M.
+   *
+   * So this stays where the measurements are good, and the claim above stays
+   * honest about what that buys: at or within a point of the bottom, not
+   * guaranteed last on realised rating. A visibly worse hand is not worth a
+   * two-win season.
    */
   STRENGTH_MARGIN_MIN: 0.5,
   STRENGTH_MARGIN_SD: 0.7,
@@ -617,7 +618,7 @@ export function rebuildHandoverNote(opts: {
   capSpace: string;
   albatrosses: number;
 }): string {
-  return `The ${opts.clubName} job is open for a reason. The roster is the worst in the league, `
+  return `The ${opts.clubName} job is open for a reason. The roster is the bottom of the league, `
     + `${opts.deadMoney} of the cap belongs to men who no longer play here, and ${opts.albatrosses} `
     + `contracts on this book were signed by somebody who is not answering his phone. `
     + `You have ${opts.capSpace} to work with and every one of your own draft picks. `
@@ -637,5 +638,5 @@ export const IRONMAN_REFUSAL =
 export const REBUILD_LABEL = 'The Rebuild';
 
 export const REBUILD_BLURB =
-  'You inherit the worst roster in football, a cap sheet buried under the last regime’s dead money, '
+  'You inherit the bottom of the league, a cap sheet buried under the last regime’s dead money, '
   + 'and no way to change the rules until you have won something. Every draft pick is still yours.';

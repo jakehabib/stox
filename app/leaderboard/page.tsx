@@ -165,7 +165,7 @@ export default async function LeaderboardPage({
                   /* Not "nobody has played one" — runs may well be under way.
                      What is true is that none has FINISHED, and saying which
                      is the difference between an empty board and a wrong one. */
-                  ? 'Nobody has taken the worst roster in football and won a championship with it yet. A run only appears here once the title is on the books.'
+                  ? 'Nobody has taken a club off the bottom of the league and won a championship with it yet. A run only appears here once the title is on the books.'
                   : 'The board is empty because it is opt-in and brand new. Be the first franchise on it.'}
             </p>
           </div>

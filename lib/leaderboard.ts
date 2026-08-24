@@ -110,7 +110,7 @@ export type LeaderboardSort = 'LEVEL' | 'TITLES' | 'PER_SEASON' | 'REBUILD';
  * ===========================================================================
  * Everything else here rewards accumulation, which is why the caveat above
  * exists. This one cannot be accumulated at all: it is how many seasons it
- * took to win a first championship starting from the worst roster in football,
+ * took to win a first championship starting from the bottom of the league,
  * and playing longer only ever makes it worse.
  *
  * WHO IS ON IT. Only a save founded as a REBUILD (`settings.leagueStart`),
@@ -131,7 +131,7 @@ export type LeaderboardSort = 'LEVEL' | 'TITLES' | 'PER_SEASON' | 'REBUILD';
  * ===========================================================================
  */
 export const REBUILD_SORT_BLURB =
-  'Seasons taken to win a first championship from the worst roster in football, under locked rules. '
+  'Seasons taken to win a first championship from the bottom of the league, under locked rules. '
   + 'Lower is better — the only column here that time cannot pad. '
   + 'Runs still in progress are not listed, and a run whose GM unlocked the rules never is.';
 

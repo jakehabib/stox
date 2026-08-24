@@ -90,7 +90,7 @@ export function RebuildCard({ run }: { run: RebuildRun }) {
           {seasons === 1 ? 'Season to the title' : 'Seasons to the title'}
         </div>
         <div className="text-[11px] text-muted mt-1">
-          worst roster in football, {standing.tenureStartYear} — champions, {standing.firstTitleYear}
+          bottom of the league, {standing.tenureStartYear} — champions, {standing.firstTitleYear}
         </div>
       </div>
 

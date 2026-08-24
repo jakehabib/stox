@@ -114,7 +114,7 @@ export function SeasonAnnouncement({ leagueId, seasonYear, championName, champio
             You did it in {rebuildSeasons} {rebuildSeasons === 1 ? 'season' : 'seasons'} →
           </div>
           <p className="text-sm text-muted mt-1">
-            The worst roster in football to a championship. See the whole climb — and the card.
+            The bottom of the league to a championship. See the whole climb — and the card.
           </p>
         </Link>
       )}

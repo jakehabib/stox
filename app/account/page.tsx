@@ -152,7 +152,7 @@ export default async function AccountPage() {
                 <div className="label-sm mb-2">The Rebuild board</div>
                 {standing.rebuild.best ? (
                   <p className="text-sm text-chalk/90">
-                    You took the {standing.rebuild.best.teamName} from the worst roster in football to a
+                    You took the {standing.rebuild.best.teamName} from the bottom of the league to a
                     championship in{' '}
                     <strong className="font-semibold text-gold">
                       {standing.rebuild.best.seasonsToTitle}
