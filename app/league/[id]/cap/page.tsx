@@ -15,6 +15,7 @@ import { positionBadgeClass } from '@/components/ds/positionColor';
 import { MetricTiles } from '@/components/ds/MetricTiles';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { MultiYearOutlookPanel } from '@/components/cap/MultiYearOutlookPanel';
+import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { DeadMoneyRunwayPanel } from '@/components/cap/DeadMoneyRunwayPanel';
 import { buildCapHealth, rankContractValue, classifyContractValue, type CapHealth, type SurplusRow } from '@/lib/analytics';
 import { capComplianceReport } from '@/lib/capEnforcement';
@@ -348,7 +349,17 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
           It sits directly under the usage bar because it is that bar told
           forward in time: same three quantities, four years of them, with the
           room left over as the headline instead of the share used. */}
-      {advanced && sheet && <MultiYearOutlookPanel sheet={sheet} />}
+      {advanced && sheet && (
+        <MultiYearOutlookPanel
+          sheet={sheet}
+          teamId={team.id}
+          teamAbbr={team.abbr}
+          // The club's own primary, resolved the way PageMasthead resolves it
+          // (off the ABBREVIATION, not the id) so this panel and the masthead
+          // above it are the same colour rather than two different greens.
+          accent={generateTeamLogoParams(team.abbr).primary}
+        />
+      )}
 
       {advanced && health && (
         <MetricTiles
