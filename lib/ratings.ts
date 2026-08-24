@@ -680,7 +680,7 @@ function gradeTag(grade: number, unproven: boolean): { label: string; className:
   // Same boundaries as ratingTier, so a tag and a colour can never disagree.
   if (grade >= RATING_BANDS.GENERATIONAL) return { label: 'Generational', className: 'text-gold' };
   if (grade >= RATING_BANDS.SUPERSTAR) return { label: unproven ? 'Franchise Prospect' : 'Superstar', className: 'text-gold' };
-  if (grade >= RATING_BANDS.ELITE) return { label: unproven ? 'Blue-Chip Prospect' : 'Elite', className: 'text-gold' };
+  if (grade >= RATING_BANDS.ELITE) return { label: unproven ? 'All-Star Prospect' : 'Elite', className: 'text-gold' };
   if (grade >= RATING_BANDS.STAR) return { label: unproven ? 'Star Prospect' : 'Star', className: 'text-accent' };
   if (grade >= RATING_BANDS.QUALITY) return { label: unproven ? 'Day-One Starter' : 'Quality Starter', className: 'text-accent2' };
   if (grade >= RATING_BANDS.STARTER) return { label: unproven ? 'Rotational Prospect' : 'Starter', className: 'text-chalk' };
