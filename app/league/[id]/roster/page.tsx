@@ -18,6 +18,7 @@ import { PageMasthead } from '@/components/ds/PageMasthead';
 import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
 import { RosterGroupHeader } from '@/components/ds/RosterGroupHeader';
+import { startersAt } from '@/lib/lineup';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { buildRosterShape } from '@/lib/rosterShape';
 import { buildLeagueRatings } from '@/lib/teamRating';
@@ -130,22 +131,53 @@ export default async function RosterPage({ params, searchParams }: { params: { i
     return { p, view, hit: capHit(p.contract, settings.capMode) };
   });
 
-  // Who actually plays: the Depth Chart page's manual rank-0, falling back
-  // to the best true rating at that exact position for anyone never set —
-  // same "first player is the starter" rule DepthChartGroup already uses,
-  // so the two pages agree on who's WR1 without the roster page reimplementing
-  // depth-chart ordering itself.
-  const starterIdByPosition = new Map<string, string>();
-  for (const s of slots) if (!starterIdByPosition.has(s.position)) starterIdByPosition.set(s.position, s.playerId);
-  for (const p of players) {
-    if (starterIdByPosition.has(p.position)) continue;
-    const incumbent = players.filter((x) => x.position === p.position).reduce((best, x) => (x.trueOvr > best.trueOvr ? x : best));
-    starterIdByPosition.set(p.position, incumbent.id);
+  /*
+   * WHO ACTUALLY PLAYS. The Depth Chart's manual ranking, falling back to the
+   * best true rating at that exact position for anyone never ranked.
+   *
+   * ONE PER POSITION WAS WRONG, and visibly so. This was a Map of position to
+   * a SINGLE player id, so a defence that fields two edge rushers, two
+   * tackles, two linebackers, three corners and two safeties printed exactly
+   * one "Starter" tag in each of those groups — the second edge rusher on the
+   * field read as a backup. Offence had it too: three receivers start and one
+   * was tagged.
+   *
+   * `startersAt` (lib/lineup.ts) is THE definition of how many men are on the
+   * field at a position, and DepthChartGroup has always used it. This page had
+   * its own rule instead, so the two screens disagreed about who starts — and
+   * the comment that used to sit here claimed they agreed, which is the same
+   * defect one layer up.
+   *
+   * A slot whose player is no longer on the roster is skipped rather than
+   * counted: DepthChartSlot rows outlive a trade or a cut until the next
+   * checkpoint sweeps them, and a starter tag on a man who left is worse than
+   * no tag at all.
+   */
+  const onRoster = new Set(players.map((p) => p.id));
+  const rankedByPosition = new Map<string, string[]>();
+  for (const s of slots) {
+    if (!onRoster.has(s.playerId)) continue;
+    rankedByPosition.set(s.position, [...(rankedByPosition.get(s.position) ?? []), s.playerId]);
+  }
+  const starterIds = new Set<string>();
+  for (const position of new Set(players.map((p) => p.position))) {
+    const spots = startersAt(position);
+    if (spots <= 0) continue;
+    const ranked = rankedByPosition.get(position) ?? [];
+    const alreadyRanked = new Set(ranked);
+    const unranked = players
+      .filter((p) => p.position === position && !alreadyRanked.has(p.id))
+      .sort((a, b) => b.trueOvr - a.trueOvr)
+      .map((p) => p.id);
+    for (const id of [...ranked, ...unranked].slice(0, spots)) starterIds.add(id);
   }
 
   // What kind of team this is, not just who's on it — starter rating at each
   // unit against the league's average starter there. Computed after the
-  // starter map above so "aging starters" means the men who actually play.
+  // starter set above so "aging starters" means the men who actually play.
+  // That count was structurally short for the same reason the tag was: it
+  // could never exceed one man per position, so a club could not have more
+  // than sixteen starters at all, let alone sixteen aged thirty or over.
   const leagueRatings = await buildLeagueRatings(league.id);
   const myRating = leagueRatings.get(team.id);
 
@@ -153,7 +185,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
     league.id,
     team.id,
     players.map((p) => ({ position: p.position, trueOvr: p.trueOvr, age: p.age, contract: p.contract })),
-    new Set(starterIdByPosition.values()),
+    starterIds,
     players.map((p) => ({ id: p.id, age: p.age })),
   );
 
@@ -215,7 +247,7 @@ export default async function RosterPage({ params, searchParams }: { params: { i
   // the same row. It was inline in the group loop, which meant a split
   // section would have needed a second copy of it.
   const renderRow = ({ p, view, hit }: (typeof sorted)[number]) => {
-    const isStarter = starterIdByPosition.get(p.position) === p.id;
+    const isStarter = starterIds.has(p.id);
     // Regular season only — seasonStats is the regular-season bucket (see
     // Player.seasonStats in the schema). A roster line is a "what has he
     // done for me lately", and folding in a January run would make two
