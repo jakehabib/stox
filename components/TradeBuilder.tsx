@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { evaluateTradeAction, executeTradeAction, rankTradePartnersAction } from '@/app/actions/trade';
+import { evaluateTradeAction, executeTradeAction, forceTradeAction, rankTradePartnersAction } from '@/app/actions/trade';
 import { insiderReadAction, tradeIntelAction, type TradeIntelRead } from '@/app/actions/dynasty';
 import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
@@ -58,7 +58,7 @@ interface DealItem {
 
 export function TradeBuilder({
   leagueId, myTeam, partners, partnerId, myRoster, myPicks, partnerRoster, partnerPicks, initialGive, initialGet, capSpace, partnerCapSpace, capMode,
-  deadlinePassed, tradeDeadlineWeek, initialPartnerPos, draftRounds, imminentYear, lastTrade,
+  deadlinePassed, tradeDeadlineWeek, initialPartnerPos, draftRounds, imminentYear, lastTrade, forceTradeEnabled,
 }: {
   leagueId: string; myTeam: Team; partners: Team[]; partnerId: string;
   /** Position being shopped, carried in the URL so it survives changing club. See TeamPanel's initialPosFilter. */
@@ -82,6 +82,13 @@ export function TradeBuilder({
    * this session — so an old trade can never announce itself on a page load.
    */
   lastTrade: TradeRecapData | null;
+  /**
+   * The league's `forceTradeEnabled` setting, read on the server. It decides
+   * whether the Force Trade button is DRAWN and nothing more — forceTradeAction
+   * re-reads the same setting off the league row and refuses without it, so a
+   * browser that renders the button anyway still gets nothing.
+   */
+  forceTradeEnabled?: boolean;
 }) {
   const router = useRouter();
   // Held here rather than in the panel because the club switcher has to read it
@@ -294,11 +301,21 @@ export function TradeBuilder({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewKey]);
 
-  const execute = () => {
+  /**
+   * `force` picks the door. The forced one suspends every rule that could
+   * refuse the deal — the partner club's answer, the deadline, the cap and
+   * the roster limit — and only because the LEAGUE has forcing switched on,
+   * which that action verifies for itself against the database rather than
+   * trusting this call. Both doors end in the same executeTrade and book the
+   * same money.
+   */
+  const execute = (force = false) => {
     const spaceBefore = capSpace;
     const partnerSpaceBefore = partnerCapSpace;
     startTransition(async () => {
-      const res = await executeTradeAction(leagueId, myTeam.id, partnerId, giveAssets, getAssets);
+      const res = force
+        ? await forceTradeAction(leagueId, myTeam.id, partnerId, giveAssets, getAssets)
+        : await executeTradeAction(leagueId, myTeam.id, partnerId, giveAssets, getAssets);
       if (!res.ok) {
         // Most often the salary cap on one side or the other. Keep the
         // assembled offer on screen so the user can rework it instead of
@@ -555,8 +572,30 @@ export function TradeBuilder({
             <button className="btn-secondary" disabled={pending || deadlinePassed || nothingSelected} onClick={() => propose()}>
               {pending ? 'Evaluating…' : deadlinePassed ? 'Deadline Passed' : 'Propose Trade'}
             </button>
+            {/* Deliberately NOT a second primary. Propose is the button on
+                this screen; this one is the override you reached for the
+                settings page to switch on, and it should look like the
+                exception it is — an outlined ghost in `warn`, the token this
+                app already uses for "you are allowed to, and you should know
+                you did".
+                It stays live past the deadline, unlike Propose and Confirm,
+                because the deadline is one of the rules forcing suspends —
+                see app/actions/trade.ts. A button that refuses would be worse
+                than no button; so would one the player was told overrides
+                everything and then does not. */}
+            {forceTradeEnabled && (
+              <button
+                type="button"
+                className="btn border border-warn/40 text-warn hover:bg-warn/10 disabled:opacity-40"
+                disabled={pending || nothingSelected}
+                title="Writes this deal through whatever it looks like — no agreement from the other club, no cap check, no roster limit, no deadline. The money is still booked, so your cap sheet will show it."
+                onClick={() => execute(true)}
+              >
+                Force Trade
+              </button>
+            )}
             {result?.accepted && !deadlinePassed && (
-              <button className="btn-primary" disabled={pending} onClick={execute}>Confirm &amp; Execute</button>
+              <button className="btn-primary" disabled={pending} onClick={() => execute()}>Confirm &amp; Execute</button>
             )}
           </div>
         </div>

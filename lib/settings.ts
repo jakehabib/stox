@@ -38,6 +38,39 @@ export interface LeagueSettings {
   tradeDeadlineWeek: number;        // last REGULAR week trades are allowed; default 9 matches the real NFL's Tuesday-after-week-9 deadline
   franchiseTagEnabled: boolean;
   aiAcceptsLopsided: boolean;       // off => AI enforces strict value ratios
+  /**
+   * THE ESCAPE HATCH, AND WHY IT IS NOT `aiAcceptsLopsided` WITH A BIGGER
+   * NUMBER. That setting moves the bar the AI holds a deal to — from a 1.04
+   * required ratio down to 0.9 — but the club still gets a vote and it still
+   * says no. The save this was written for could not be fixed by a lower bar
+   * at any value, because the problem was never price: an AI club had drafted
+   * a sixth quarterback and nobody in the league wants a fifth, so the deal
+   * that unbreaks the roster is one no club accepts at any ratio.
+   *
+   * On, this puts a Force Trade button beside Propose that writes the deal
+   * without asking anyone. It suspends every RULE that can refuse a trade —
+   * the other club's answer, the trade deadline, the salary cap and the
+   * roster limit — and it is meant to read as drastic, because it is.
+   *
+   * What it does NOT suspend is anything that keeps the save coherent. A club
+   * still cannot trade a player it does not own, a retired man, a spent pick
+   * or the same asset twice, and every dollar is booked the ordinary way, so
+   * the cap sheet afterwards shows exactly how far over the deal left him.
+   * Suspending a rule leaves the league in a state the player chose and can
+   * see; suspending an ownership claim leaves contracts pointing at nobody.
+   *
+   * Note what going over the cap costs, because it is not nothing: the season
+   * does not advance while the user's own club is over the ceiling (see
+   * lib/season.ts:161). Forcing salary ONTO your roster can therefore stop
+   * the clock until you clear it. That is stated on the Settings control.
+   *
+   * Off by default, and off is what an existing save gets — parseSettings
+   * spreads DEFAULT_SETTINGS first, and unlike capGrowth an absent key here
+   * carries no history to preserve: no league was ever played with forcing
+   * on, so `false` is not a silent change of rules, it is the rules the save
+   * already had.
+   */
+  forceTradeEnabled: boolean;
 
   // --- Sim ------------------------------------------------------------------
   simVariance: number;              // multiplier on RNG spread (section 9)
@@ -77,6 +110,7 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
   tradeDeadlineWeek: 9,
   franchiseTagEnabled: true,
   aiAcceptsLopsided: false,
+  forceTradeEnabled: false,
 
   simVariance: 1.0,
   homeFieldAdvantage: true,

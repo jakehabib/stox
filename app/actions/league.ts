@@ -142,6 +142,7 @@ export async function updateSettingsAction(leagueId: string, formData: FormData)
     tradeDeadlineWeek: Number(formData.get('tradeDeadlineWeek') || current.tradeDeadlineWeek),
     franchiseTagEnabled: formData.get('franchiseTagEnabled') === 'on',
     aiAcceptsLopsided: formData.get('aiAcceptsLopsided') === 'on',
+    forceTradeEnabled: formData.get('forceTradeEnabled') === 'on',
     simVariance: Number(formData.get('simVariance') || current.simVariance),
     homeFieldAdvantage: formData.get('homeFieldAdvantage') === 'on',
     recapVerbosity: String(formData.get('recapVerbosity') || current.recapVerbosity) as LeagueSettings['recapVerbosity'],

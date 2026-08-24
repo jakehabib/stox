@@ -211,6 +211,7 @@ export default async function TradePage({ params, searchParams }: { params: { id
         capMode={settings.capMode}
         deadlinePassed={deadlinePassed}
         tradeDeadlineWeek={settings.tradeDeadlineWeek}
+        forceTradeEnabled={settings.forceTradeEnabled}
         draftRounds={settings.draftRounds}
         imminentYear={imminentYear}
         lastTrade={lastTrade}

@@ -769,6 +769,23 @@ async function assertAssetsTradable(leagueId: string, sides: TradeSide[]): Promi
 
 export async function executeTrade(opts: {
   leagueId: string; teamA: string; teamB: string; aToB: TradeAsset[]; bToA: TradeAsset[]; seasonYear: number; week: number;
+  /**
+   * THE OVERRIDE. Set only by forceTradeAction, and only after it has read
+   * `forceTradeEnabled` off the league row for itself.
+   *
+   * It suspends the two refusals that are POLICY — the salary cap and the
+   * roster limit — and nothing else. Everything that protects the integrity
+   * of the save still runs: a club cannot trade a player it does not own, a
+   * retired man, a spent pick or the same asset twice, and the money is still
+   * booked exactly as it is for an ordinary trade (bonus accelerates onto the
+   * seller, base salary travels, the charge is dated by capChargeYear).
+   *
+   * That distinction is the whole design. Skipping a rule leaves a legal save
+   * in an illegal STATE the player asked for and can see; skipping an
+   * ownership claim leaves a save with contracts pointing at nobody, which is
+   * not an override, it is corruption.
+   */
+  force?: boolean;
 }) {
   const [league, teamAInfo, teamBInfo] = await Promise.all([
     prisma.league.findUniqueOrThrow({ where: { id: opts.leagueId } }),
@@ -830,7 +847,14 @@ export async function executeTrade(opts: {
    * neither. Flagged rather than silently reconciled: lib/capEnforcement.ts
    * belongs to the cap workstream and this is its call to make.
    */
-  await assertCapRoom({ action: 'Trade', seasonYear: opts.seasonYear, capMode, charges: deltas });
+  // The cap is a rule of the league, and a forced trade is the player
+  // overruling the league on purpose — so this is the first of the two gates
+  // `force` suspends. The charges themselves are still computed and still
+  // written below; what is skipped is the REFUSAL, not the accounting, so the
+  // cap sheet afterwards tells the truth about how far over he now is.
+  if (!opts.force) {
+    await assertCapRoom({ action: 'Trade', seasonYear: opts.seasonYear, capMode, charges: deltas });
+  }
 
   /*
    * A 53-MAN LIMIT THAT ONLY EXISTED ON CUT-DOWN DAY.
@@ -872,6 +896,12 @@ export async function executeTrade(opts: {
      * thing he can do.
      */
     if (info.isUser) {
+      // The second gate `force` suspends. He is over the limit and he chose to
+      // be; final cuts will square it, and until then the roster screen shows
+      // the real count. The AI branch below is NOT skipped — an AI club still
+      // makes room the ordinary way, because the alternative is silently
+      // handing another club an illegal roster the player never sees.
+      if (opts.force) continue;
       throw new TradeAssetError(
         `${info.city} ${info.nickname} would carry ${after} players against a ${rosterLimit}-man limit. `
         + `Release ${after - rosterLimit} before making this deal.`,

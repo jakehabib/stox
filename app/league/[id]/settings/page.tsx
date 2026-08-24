@@ -101,7 +101,11 @@ export default async function SettingsPage({ params }: { params: { id: string } 
           />
           <Toggle
             label="AI accepts lopsided trades (easy mode)" name="aiAcceptsLopsided" defaultChecked={settings.aiAcceptsLopsided}
-            tip="Loosens how much value the AI demands to accept a trade — offers that would normally get rejected as lopsided in your favor go through more easily. An easy-mode toggle, not a balance fix."
+            tip="Loosens how much value the AI demands to accept a trade — offers that would normally get rejected as lopsided in your favor go through more easily. It moves the bar; it does not remove it, and a deal no club would ever want is still refused. For that, use Allow forced trades below."
+          />
+          <Toggle
+            label="Allow forced trades" name="forceTradeEnabled" defaultChecked={settings.forceTradeEnabled}
+            tip="Puts a Force Trade button on the trade screen that writes a deal through whatever it looks like — no agreement from the other club, no salary cap check, no roster limit, no deadline. Every dollar is still booked, so your cap sheet shows exactly where it left you, and the season will not advance while your own club is over the cap. Meant as a repair tool for a save that has got stuck, not a way to play."
           />
         </Section>
 
