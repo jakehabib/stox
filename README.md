@@ -3822,6 +3822,67 @@ ever force-pushed over, so every state below still exists in git history).
   missing from the AI's own re-sign wave, so a club deep in the red could not
   keep anybody however cheap the deal — the ratchet that kept it there. Commit
   `969f5ce`.
+
+- **2026-08-24 — Every league started you somewhere decent, and nobody could
+  ask for a wreck.** The Rebuild: a third starting situation beside Randomized
+  rosters and Fantasy draft. It is the same generator, the same season machine
+  and the same thirty-two clubs — one club is dealt a different hand, and it is
+  yours. Measured on real generated leagues (every club rated, no slice): the
+  club is generated strictly below every other one in its league, comes out
+  **last or second-last of 32 on realised unit rating** — a roster is fifty
+  individual rolls around that target, so the noise can flip it by a point —
+  and wins about four games a year off the roster as generated, bottom of the
+  league on results. It is bad in a
+  fixable way — old at the top of the depth chart, its young players untouched
+  (10 men aged 24-or-under against a league median of 11), and holding all 28 of
+  its own draft picks. The books are ugly and *legal*, and that distinction is
+  the whole feature: the season does not advance while your own club is over the
+  cap, so a rebuild dealt an over-cap hand would be frozen on turn one rather
+  than merely hard. The opening position is therefore two independently bounded
+  terms — a payroll scaled to at most 72% of the ceiling, and a dead-money
+  charge bent asymptotically toward 26% — whose bounds sum to 0.98, so no roll
+  can produce a cap sheet at or over the ceiling. A real one: $183.4M of
+  payroll, $59.1M owed to men who no longer play there, $12.5M of room, dead
+  money clearing $59.1M → $30.6M → $0. The five or six contracts you would not
+  have signed are priced at what each man was worth **at his peak**, three or
+  four years ago, rather than by multiplying his value by a number — which is
+  why a 34-year-old quarterback sits on $46.3M with $31.4M of dead money if you
+  cut him, and why a 71-rated corner is on $16.9M, without anything being
+  invented. Ironman: Normal difficulty, no forced trades, a ceiling that never
+  moves, and no changeable settings at all until you win something — enforced in
+  the settings write against a database read, because a server action is a public
+  HTTP endpoint and hiding a control is presentation, not a lock. Two one-way
+  doors and no door in: you can end the run from Settings at any time and take
+  the rules back, you can never return to them, and a save not founded as a
+  rebuild can never become one (nothing in the app writes that setting after
+  creation). Ending the run early forfeits the leaderboard entry permanently,
+  because the board measures a title won *under those rules*. The board gains a
+  fourth category, Seasons To First Title, and it is the only column where lower
+  wins; a run still going is not shown as a large number or a zero — it is not
+  listed, the board says so, and your own unfinished run is visible only to you
+  on `/account`, where it can be called unfinished honestly. Commit `d7b54c6`.
+
+- **2026-08-24 — Winning a rebuild said "You won the championship!" in the same
+  box as any other title.** The Rebuild's whole point is the climb out, and
+  finishing one produced exactly the panel every other championship produces.
+  There is now a screen for it at `/league/[id]/rebuild` — the one editorial
+  page in the app, the exception all the surrounding quiet exists to make room
+  for. It leads with the number the mode is about (how many seasons it took) and
+  then gives that number its denominator: the founding note quoted **verbatim**
+  so you can read what you were handed, the record season by season as a shape
+  you can see the climb in, the final score, every early pick you made and every
+  trade you struck. A pop-out card comes with it, through the same
+  `GmCardReveal` the GM card already uses and built in the same 380x560
+  rectangle with the same team-tinted ground and crest watermark, so somebody
+  who has seen his GM card recognises this one. It is deliberately **not** a
+  second full-screen moment: the trophy moment's budget is exactly one
+  interruption a season, so the championship announcement on the dashboard
+  carries the door instead, it is the loudest thing on that panel, and the page
+  is still there next year. What is selected and by what rule is stated on the
+  page — the picks are rounds one and two, all of them, rated as each man is
+  today and not filtered by how he turned out, and the trades are every trade —
+  because a curated list that does not admit it is curated is the quiet kind of
+  lying number. Commit `98f2caa`.
 - **2026-08-24 — Combine numbers a football person would believe.** The app
   owner: *"We need to make sure the combine stats are realistic on the college
   profiles."* Every drill on a prospect's college profile was a linear read of

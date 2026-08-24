@@ -29,7 +29,9 @@ export default async function SettingsPage({ params }: { params: { id: string } 
         <div>
           <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">League Settings</h1>
           <p className="text-muted text-sm mt-1">
-            This league is a {REBUILD_LABEL.toLowerCase()} run. Its rules were set the day you took the job.
+            {/* REBUILD_LABEL already carries its article ("The Rebuild"), so it
+                is dropped in rather than pluralised into "a the rebuild run". */}
+            This league is {REBUILD_LABEL}. Its rules were set the day you took the job.
           </p>
         </div>
 

@@ -222,7 +222,7 @@ function SeasonRow({ s, maxWins, accent }: { s: RebuildSeasonLine; maxWins: numb
               width: `${Math.max(3, (s.wins / maxWins) * 100)}%`,
               // #eab308 is the `gold` token in tailwind.config.ts; inline
               // because the width beside it is computed.
-              background: champ ? '#eab308' : `color-mix(in srgb, ${accent} 60%, transparent)`,
+              background: champ ? '#eab308' : accent,
             }}
           />
         </div>

@@ -82,13 +82,33 @@ export const REBUILD = {
    *   three points BETTER — won 2.75 and was only fourth-worst. So an
    *   absolute target alone cannot promise a win band either.
    *
+   * WHAT IS AND IS NOT PROMISED, because the difference is worth writing down
+   * and because the loose version of it is exactly the kind of overclaim this
+   * project treats as a defect.
+   *
+   * THE RELATIVE TERM GUARANTEES THE WORST *STRENGTH*, not the worst realised
+   * unit rating. Strength is the mean every overall on the roster is drawn
+   * around; what a club ends up rated is that draw plus the noise of fifty-odd
+   * individual rolls, so a club generated strictly below every other one can
+   * still come out a point above the next-worst. Measured, it does: in one
+   * league the hand landed off+def 144.0 for SECOND-worst — and won the fewest
+   * games in the league anyway. So the honest claim is "last or second-last on
+   * rating, and bottom of the league", not "last on rating, always".
+   *
+   * A WIN TOTAL IS NOT PROMISED AT ALL, and cannot be: measured across real
+   * leagues, the same off+def of 145 produced 4.42 wins in one and 5.67 in
+   * another, because a club's record depends on the schedule it draws and on
+   * how far the rest of its league happens to be spread. About four wins is
+   * the centre; two to six is the honest range, and no value of this constant
+   * narrows it. Tuning further would be tuning against noise.
+   *
    * The SD is real spread and not decoration: two REBUILD saves should not
    * open on the same roster, and a hand a shade less grim has to stay
    * possible. It came down from 1.4 in the same pass, because at 1.4 the
    * spread of what got DEALT was wider than the gap between a three-win club
    * and a six-win one.
    */
-  STRENGTH_MEAN: -8.5,
+  STRENGTH_MEAN: -9.25,
   STRENGTH_SD: 0.9,
   /**
    * How far below the worst club this league actually rolled the hand lands,
@@ -177,6 +197,13 @@ export const REBUILD = {
    * to 1, a REBUILD save can be dealt a cap sheet it cannot advance out of.
    */
   DEAD_CEILING: 0.26,
+  /**
+   * How much of an under-spent payroll comes back as dead money instead of as
+   * room. 1.0 would be "every dollar you failed to spend is owed to somebody
+   * who left", which is too neat; a share of it keeps a cheap roll reading as
+   * a slightly kinder hand rather than as no hand at all.
+   */
+  DEAD_SHORTFALL_PULL: 0.75,
 
   /**
    * How much of this year's dead money is still owed NEXT year, as a share.
@@ -543,13 +570,32 @@ export function rebuildActiveTarget(capTotal: number): number {
  * WHAT THE LAST REGIME LEFT ON THE BOOKS — the other half.
  *
  * A drawn share of the ceiling, bent asymptotically toward DEAD_CEILING and
- * therefore strictly below it at every possible draw: a roll of 0.6, fourteen
+ * therefore strictly below it at every possible draw: a roll of 0.6, eleven
  * standard deviations out and not clipped away, still returns 0.2399. Together
  * with the payroll bound above, `used` is guaranteed under the ceiling by
  * arithmetic rather than by a check somebody could forget to run.
+ *
+ * IT LEANS ON HOW FAR THE PAYROLL FELL SHORT, and that is what makes the
+ * opening ROOM consistent instead of the opening BILL. Measured across real
+ * REBUILD leagues with a flat draw, the club opened with anywhere from $12.5M
+ * of space to $57.9M — and $57.9M is more room than an average club has, which
+ * is not a rough cap situation by any reading. The cause is the market curve:
+ * when the inherited contracts roll small the roster simply does not cost
+ * enough to reach its payroll target, and every dollar it fails to spend
+ * becomes room.
+ *
+ * So the shortfall is added to the draw BEFORE the bend. A club whose payroll
+ * landed on target gets the ordinary bill; a club whose payroll came in cheap
+ * gets a heavier one, and the two open in a similar place. This is emphatically
+ * NOT the plug that produced $131.7M of dead money against a $107.1M payroll in
+ * the first version of this design — that one solved for a fixed share of USED
+ * and had to grow without limit as the roster got cheaper. This is a nudge
+ * INSIDE a bound that already existed: whatever the shortfall, the bend still
+ * approaches DEAD_CEILING and never reaches it, so the guarantee is untouched.
  */
-export function rebuildDeadMoney(rng: Rng, capTotal: number): number {
-  const raw = rng.normal(REBUILD.DEAD_MEAN, REBUILD.DEAD_SD);
+export function rebuildDeadMoney(rng: Rng, capTotal: number, activeSalary: number): number {
+  const shortfall = Math.max(0, rebuildActiveTarget(capTotal) - activeSalary) / capTotal;
+  const raw = rng.normal(REBUILD.DEAD_MEAN, REBUILD.DEAD_SD) + shortfall * REBUILD.DEAD_SHORTFALL_PULL;
   const share = bendToCeiling(Math.max(0, raw), REBUILD.DEAD_KNEE, REBUILD.DEAD_CEILING);
   return Math.round(capTotal * share);
 }

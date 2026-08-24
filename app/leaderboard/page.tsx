@@ -128,7 +128,10 @@ export default async function LeaderboardPage({
               </Link>
             ))}
           </div>
-          <p className="text-xs text-muted">{sortDef.blurb}</p>
+          {/* The Rebuild's blurb is already printed at full weight in the
+              honesty panel above, and printing it twice on one screen is
+              duplication rather than emphasis. */}
+          {sort !== 'REBUILD' && <p className="text-xs text-muted">{sortDef.blurb}</p>}
 
           {multiSport && (
             <div className="flex flex-wrap items-center gap-1 pt-1">

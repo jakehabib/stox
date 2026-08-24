@@ -42,6 +42,7 @@ export function RebuildCard({ run }: { run: RebuildRun }) {
     (best, p) => (best === null || p.ovr > best.ovr ? p : best), null,
   );
   const worstYear = run.seasons.reduce((w, s) => (s.wins < w.wins ? s : w), run.seasons[0]);
+  const maxWins = Math.max(...run.seasons.map((s) => s.wins), 1);
 
   return (
     <div
@@ -109,32 +110,39 @@ export function RebuildCard({ run }: { run: RebuildRun }) {
       </div>
 
       {/* ---- The climb, as a shape ----------------------------------------- */}
-      <div className="relative px-5 pt-4">
+      {/* THE BARS NEED A DEFINITE HEIGHT TO SIZE AGAINST. A percentage height
+          resolves against nothing when its parent is auto, so the first
+          version of this rendered the win totals with no bars under them at
+          all — invisible in code review and obvious in a screenshot. The row
+          takes its height from `flex-1` on a card that has one, and each
+          column stretches to it, so the percentages have something to be a
+          percentage OF. */}
+      <div className="relative px-5 pt-4 pb-2 flex-1 flex flex-col min-h-0">
         <div className="label-sm mb-2">Wins, season by season</div>
-        <div className="flex items-end gap-1 h-16">
+        <div className="flex items-stretch gap-1.5 flex-1 min-h-[72px]">
           {run.seasons.map((s) => {
-            const max = Math.max(...run.seasons.map((x) => x.wins), 1);
             const champ = s.playoffResult === 'CHAMPION';
             return (
-              <div key={s.year} className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0">
-                <span className={`text-[10px] tabular-nums ${champ ? 'text-gold font-bold' : 'text-muted'}`}>{s.wins}</span>
+              <div key={s.year} className="flex-1 flex flex-col justify-end items-center gap-1 min-w-0">
+                <span className={`text-[11px] tabular-nums ${champ ? 'text-gold font-bold' : 'text-muted'}`}>{s.wins}</span>
                 <div
                   className="w-full rounded-sm"
                   style={{
-                    height: `${Math.max(6, (s.wins / max) * 100)}%`,
-                    // The same #eab308 the `gold` token carries in tailwind.config.ts —
-                    // inline because this is a computed height/colour pair, not a class.
-                    background: champ ? '#eab308' : `color-mix(in srgb, ${accent} 62%, transparent)`,
+                    height: `${Math.max(8, (s.wins / maxWins) * 100)}%`,
+                    // #eab308 is the `gold` token in tailwind.config.ts; inline
+                    // because the height beside it is computed.
+                    background: champ ? '#eab308' : accent,
                   }}
                 />
+                <span className="text-[9px] text-muted tabular-nums">&rsquo;{String(s.year).slice(2)}</span>
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* ---- The man he found ---------------------------------------------- */}
-      <div className="relative px-5 pt-4 pb-3 mt-auto">
+      {/* ---- The man he found, when there is one ---------------------------- */}
+      <div className="relative px-5 pb-3">
         {bestPick && (
           <div className="flex items-baseline justify-between gap-2">
             <div className="min-w-0">

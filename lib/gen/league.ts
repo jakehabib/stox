@@ -746,7 +746,7 @@ export async function createLeague(opts: {
         .filter((r) => r.teamId === userTeam.id)
         .reduce((sum, r) => sum + capHit(r, settings.capMode), 0);
 
-      const deadThisYear = rebuildDeadMoney(rng, rebuildCeiling);
+      const deadThisYear = rebuildDeadMoney(rng, rebuildCeiling, activeSalary);
       const deadNextYear = Math.round(deadThisYear * rebuildDeadTailShare(rng));
 
       const charges = [
