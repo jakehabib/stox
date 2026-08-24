@@ -957,6 +957,175 @@ export const PROGRESSION = {
    * granting the first charge rather than after.
    */
   DEV_FOCUS_GROWTH_MULT: 1.5,
+
+  // -------------------------------------------------------------------------
+  // THE CEILING IS A PROJECTION, AND IT MOVES BOTH WAYS
+  // -------------------------------------------------------------------------
+  // Read by ceilingRevision() in lib/progression.ts and by the season-end pass
+  // in lib/development.ts. `Player.potential` used to be write-once-upward:
+  // the generator set it, a milestone bump could raise it, and nothing could
+  // ever lower it. These are the knobs on the other direction.
+  //
+  // A man is judged against WHAT HE CURRENTLY IS, never against his ceiling —
+  // see the long note on ceilingRevision for why the opposite would make a
+  // high ceiling a handicap.
+
+  /**
+   * Production this far either side of what a man of his CURRENT rating
+   * usually produces at his position, in standard deviations, is an ordinary
+   * season and moves the ceiling by nothing. Most of the league lives in here.
+   */
+  CEILING_DELIVERY_DEADBAND: 0.5,
+  /**
+   * Standard deviations past that deadband which saturate the revision (tanh).
+   * A four-sigma disaster is NOT four times the revision of a one-sigma one —
+   * the further out a season is, the less each extra sigma of it counts, which
+   * is the standing rule about outliers applied to the evidence rather than to
+   * the outcome.
+   */
+  CEILING_DELIVERY_SPREAD: 1.3,
+  /**
+   * The age (POSITION_AGE_PROFILE-adjusted, the same yardstick
+   * retirementChance uses) at which a season's evidence weighs equally for and
+   * against the ceiling. Below it a good year mostly raises; above it a bad
+   * year mostly lowers. "especially with age", in one number.
+   */
+  CEILING_AGE_MIDPOINT: 26.0,
+  /** How sharply that hand-over happens, in years. */
+  CEILING_AGE_WIDTH: 2.1,
+  /**
+   * Share of the still-unproven projection that a fully-evidenced,
+   * fully-saturated bad season takes off. Erosion is proportional to what is
+   * left unproven, so it slows as the ceiling comes down to meet the player.
+   * See the "why a generational prospect does not collapse" note on
+   * ceilingRevision for where the bound actually comes from — it is the
+   * feedback loop, not a floor, and nothing piles up at a value.
+   *
+   * 0.30 OFF A MEASUREMENT, not off a guess. At 0.155 the mechanism was real
+   * but invisible: over a 10-season league only 14.7% of career starters ever
+   * saw their ceiling move down at all, 2% of drafted careers lost 2 or more
+   * points of it and 0.4% lost 6 or more, and the mean drift across all
+   * drafted careers was +0.10 — the rise half outweighed it. A bust mechanism
+   * nobody can see in a career histogram has not shipped.
+   */
+  CEILING_EROSION_RATE: 0.30,
+  /**
+   * The same, against the room left below 99, for a man producing past his
+   * rating. Deliberately smaller: the stat-leader and award bumps above
+   * already pay the upside in whole points, and this is the slow half of it.
+   */
+  CEILING_RISE_RATE: 0.055,
+  /**
+   * EVIDENCE, NOT ABSENCE OF IT. Role index is a player's share of his own
+   * club's work at his position, times the number of men his club carries
+   * there — so 1.0 is an even split of the job and a full-time starter is
+   * comfortably above it. Below FLOOR a season says nothing about him and
+   * revises nothing in either direction; at FULL it counts for everything.
+   * A man who does not play has not shown you anything.
+   */
+  CEILING_ROLE_FLOOR: 0.4,
+  CEILING_ROLE_FULL: 1.0,
+  /** Same ramp on games played, so eleven weeks hurt counts as the part-season it is. */
+  CEILING_GP_FLOOR: 5,
+  CEILING_GP_FULL: 12,
+  /** Fewest men at a position with a real role before their production is a distribution worth fitting. */
+  CEILING_MIN_GROUP: 10,
+  /**
+   * How strongly rating is allowed to predict production when the residual is
+   * standardised. Capped below 1 because it never predicts perfectly, and an
+   * uncapped correlation divides by a vanishing residual spread.
+   */
+  CEILING_MAX_R: 0.9,
+  /** Below this correlation, rating did not predict production at that position this year and no expectation is credible. */
+  CEILING_MIN_R: 0.1,
+  /**
+   * A man sitting exactly on his ceiling still has something left to lose.
+   * Erosion is proportional to what is UNPROVEN, `potential - trueOvr`, and
+   * with growth converging as fast as it now does that quantity goes to nearly
+   * nothing for most players — which would freeze every ceiling the moment its
+   * owner caught up to it and switch the whole mechanism off. These are the
+   * points of projection a club never regards as banked.
+   *
+   * It also moves where the "no collapse" guarantee comes from, and the new
+   * source is the better one. It used to be geometry: room went to zero at the
+   * player's own rating so a ceiling could never cross him. It is now the
+   * FEEDBACK — as the ceiling comes down it takes the rating with it, the man
+   * is then producing at what he is rated, `deliveryZ` returns to zero and the
+   * erosion stops on its own. A club revises until the projection matches the
+   * player and then stops revising, which is what a front office actually does.
+   */
+  CEILING_RESIDUAL_ROOM: 4,
+  /** Smallest whole-point revision that earns a news item. */
+  CEILING_NEWS_MIN: 2,
+
+  /**
+   * CAREER BACKUPS DEVELOP SLOWER. A man with no role at all rolls his growth
+   * at (1 - PENALTY) of the rate; the taper closes fast, so a rotational
+   * player is nearly whole and a starter is whole. This slows growth and
+   * NOTHING else — it can never move a ceiling, because not playing is not a
+   * failure to produce.
+   */
+  PLAYTIME_GROWTH_PENALTY: 0.45,
+  /**
+   * THE ROOKIE YEAR IS THE EXCEPTION, AND IT IS THE ONE THE APP OWNER NAMED.
+   *
+   * *"idle players, especially in their rookie year can still develop (like a
+   * backup QB sitting behind a veteran)"* — and then, on how big the gap
+   * should be: *"i still think its fine to have a gap, play time shoudl equal
+   * faster results"*, *"Maybe for first year rookies thats 70% before going
+   * down to 55%?"*.
+   *
+   * So a man in his first professional season who never gets on the field
+   * still rolls 70% of a full growth roll; from his second season on, the
+   * ordinary 55% applies. A backup learning the game behind a starter is a
+   * real football path and the game now models it; a career backup in year
+   * five is not learning anything he has not already had five years to learn.
+   *
+   * PLAYING STILL WINS, ALWAYS. A full-time starter rolls a whole one, so the
+   * ladder is 1.00 for the man who takes the job, 0.70 for the rookie who sits
+   * and watches, 0.55 for the veteran who sits. Nothing here can invert that
+   * ordering, because both figures are floors under the same taper and the
+   * taper only ever climbs toward 1 as the role grows.
+   *
+   * This slows growth and nothing else — like the constant above it, it can
+   * never move a ceiling, because not playing is an absence of evidence rather
+   * than a failure to produce.
+   */
+  PLAYTIME_GROWTH_PENALTY_ROOKIE: 0.30,
+  /** Role index scale of that taper — at one scale-length of role, 63% of the penalty is already gone. */
+  PLAYTIME_GROWTH_SCALE: 0.55,
+
+  // -------------------------------------------------------------------------
+  // HOW FAST A MAN CLOSES ON HIS CEILING
+  // -------------------------------------------------------------------------
+  // Read by progressPlayer (lib/progression.ts). It used to be a bare `/ 30`
+  // inside a hard `clamp(..., -1, 1.2)`, and the two together were the reason
+  // no prospect ever became what he was projected to be.
+  //
+  // THE ARITHMETIC THAT CONDEMNED THEM. AGE_CURVE gives a player 3.2 + 3.2 +
+  // 2.0 + 2.0 + 0.9 + 0.9 = 12.2 units of growth across ages 22-27 and nothing
+  // after 29. At `/ 30`, a first-rounder entering at 74 with an 88 ceiling has
+  // a room factor of 0.47 and falling, so he spends about 40% of that budget
+  // and peaks near 79 — NINE POINTS SHORT, every time, on the mean. Star and
+  // Superstar traits reach 81 and 83. Measured over 12,890 season-over-season
+  // deltas at HEAD the same fact reads as: a rostered under-24 gains a median
+  // of +1, 17% of them DECLINE, and a +5 season happens once in 516
+  // player-seasons league-wide. There were no breakout years because there was
+  // no arithmetic that could produce one.
+  //
+  // A SOFT KNEE, NOT A CLAMP. `MAX * tanh(gap / SCALE)` is zero at the ceiling,
+  // negative above it (the pull back down that stops rating inflation, and
+  // harder now than the old -1 bound), and saturates smoothly toward MAX
+  // instead of hitting a wall — so no band of players shares one growth rate
+  // because they all landed on the same clamp. SCALE is the gap at which a
+  // player grows at 76% of the maximum.
+  //
+  // This changes the YOUNG half of the curve only. progressPlayer applies the
+  // room factor to positive growth alone (`mean >= 0 ? roomFactor : 1`), so
+  // ages 30+ decline exactly as hard as they did before — the teeth measured
+  // at -1.80 for 30-31 and -5.22 for 34+ are untouched by this.
+  GROWTH_ROOM_SCALE: 9,
+  GROWTH_ROOM_MAX: 1.5,
 };
 
 // ---------------------------------------------------------------------------
@@ -965,22 +1134,7 @@ export const PROGRESSION = {
 export const SIM = {
   /** Unit scores are normalized around this. A 50-rated unit scores 0 edge. */
   UNIT_BASELINE: 60,
-  /**
-   * DEAD, AND KEPT ONLY AS A WARNING — nothing reads this. Verified by
-   * grepping the whole tree: the only occurrence outside this file is none.
-   *
-   * The engine does not work in points per drive at all. `runDrive` in
-   * lib/sim/engine.ts computes a SCORING PROBABILITY from the unit edge
-   * (`SCORING_DRIVE_BASE + edge * EDGE_TO_SCORE_PROB`), then splits scoring
-   * drives between touchdowns and field goals with `TD_SHARE_BASE +
-   * edge * EDGE_TO_TD_SHARE`. Points fall out of those three constants and
-   * nothing else.
-   *
-   * Left in place with this note rather than deleted, because a constant this
-   * plausible-looking will be reinvented by the next person who goes looking
-   * for the scoring knob. It is not the scoring knob. If you want to move
-   * scoring, move SCORING_DRIVE_BASE or TD_SHARE_BASE.
-   */
+  /** Points per full drive at league-average offense vs league-average defense. */
   BASE_POINTS_PER_DRIVE: 1.85,
   /**
    * [TUNE] LIVE drives per team per game. Was 11 on the note "Real NFL ~11".
@@ -1011,16 +1165,7 @@ export const SIM = {
    * lib/gameShape.ts mirrors this as a literal and had to move with it.
    */
   DRIVES_PER_TEAM: 10,
-  /**
-   * DEAD — see BASE_POINTS_PER_DRIVE above. Nothing reads this either.
-   *
-   * This is the one that matters, because its name says it is the lever
-   * connecting a rating point to the scoreboard, and it is not. That job
-   * belongs to EDGE_TO_SCORE_PROB (0.012 of a scoring drive per edge point)
-   * and EDGE_TO_TD_SHARE (0.008). Measured through the real engine, one point
-   * of unit edge is worth about 0.74 points a game, and this constant has no
-   * part in that number.
-   */
+  /** How much a 1-point unit-rating edge moves expected points per drive. */
   RATING_TO_PPD: 0.028,
   /** Home field advantage, added to the home offense's unit score. */
   HOME_FIELD_EDGE: 2.0,
@@ -1875,14 +2020,26 @@ export const AI = {
    * [TUNE] 1.04, down from 1.06. This is the AI's negotiating margin — the
    * edge it wants for agreeing to a deal it did not propose — and it is not
    * the only tax on a trade: TRADE_VALUE.NEED_MULT already charges an
-   * incoming player the bottom of its band and an outgoing one the top, so
-   * the two compound to about 1.47x on a player-for-player swap. 4% keeps a
-   * visible thumb on the scale without that product reaching the point where
-   * a football-literate offer reads as lopsided. It is also inside the ~9%
-   * per-asset valuation noise, so a genuinely fair offer is answered
-   * differently by different clubs rather than uniformly — which is what
-   * shopping a player around should feel like. Note the noise is seeded per
-   * club, per season, per asset (see lib/trade.ts), so this is variety
+   * incoming player the bottom of its band and an outgoing one the top, and
+   * SPREAD.POACH_PREMIUM/DUMP_HAIRCUT charge the direction on top of that.
+   *
+   * THIS SENTENCE USED TO SAY "1.47x" AND THE BAND HAS MOVED SINCE. 1.47 was
+   * 0.85/1.20 x 1.04, and NEED_MULT_MAX has been 1.40 for some time — the
+   * arithmetic it quoted was 0.85/1.40 x 1.04 = 1.71x, while the note under
+   * NEED_MULT_MAX in this same file already said 1.65x for the band alone.
+   * Two numbers for one product, in one file, is the defect this codebase
+   * keeps shipping, so the figure is MEASURED now instead of derived: pricing
+   * the same man in both directions through evaluateTrade, the round trip
+   * costs 1.34x on average (n=6, range 1.14-1.42x), well under the algebraic
+   * worst case because SPREAD.FIT_WINDOW_MIN/MAX clamp the product and real
+   * depth charts do not sit at either end of the band.
+   *
+   * 4% keeps a visible thumb on the scale without that product reaching the
+   * point where a football-literate offer reads as lopsided. It is also
+   * inside the ~9% per-asset valuation noise, so a genuinely fair offer is
+   * answered differently by different clubs rather than uniformly — which is
+   * what shopping a player around should feel like. Note the noise is seeded
+   * per club, per season, per asset (see lib/trade.ts), so this is variety
    * between front offices, never a re-roll on the same one.
    */
   TRADE_ACCEPT_RATIO: 1.04,
@@ -2245,14 +2402,25 @@ export const TRADE_VALUE = {
    * receiver alive from a merely excellent one, and the trade screen quoted a
    * figure the football model had not produced.
    *
-   * Each ceiling is now where a compression curve begins (see
-   * CEILING_SOFTENING in lib/ai/gm.ts): identical below it, strictly
-   * increasing above it, asymptotic to LIMIT x it and never reaching that.
-   * So every anchor above still reads exactly as written — it is what the
-   * curve is calibrated through — and the true maximum is a fifth higher:
-   * QB 6000, PREMIUM 2520, MID 1800, LOW 900, MINIMAL 48. The ordering
-   * QB > PREMIUM > MID > LOW > MINIMAL survives it, since one shape is
-   * applied to all five.
+   * Each ceiling is the ANCHOR of a compression curve rather than a wall (see
+   * CEILING_SOFTENING in lib/ai/gm.ts): the finished valuation is identical
+   * below the knee, strictly increasing above it, asymptotic to LIMIT x the
+   * ceiling and never reaching that. The true maximum is a fifth higher than
+   * the ceiling — QB 6000, PREMIUM 2520, MID 1800, LOW 900, MINIMAL 48 — and
+   * the ordering QB > PREMIUM > MID > LOW > MINIMAL survives it, since one
+   * shape is applied to all five.
+   *
+   * THE KNEE IS NO LONGER THE CEILING ITSELF. It sits at 0.60 of it, because
+   * a knee at the bound left the entire run-up uncompressed, and the run-up
+   * is where the men who cost real draft capital live: measured through
+   * evaluateTrade, the ask for the top of the market (92+ and quarterbacks)
+   * ran 1.18x the largest real trade of its kind against 0.99x for everyone
+   * else. So every anchor above is still exactly what the BASE curve
+   * produces — that is what it is calibrated through and nothing in the table
+   * moved — but the FINISHED price of the dearest men is now compressed below
+   * it, which is the point. A 96 receiver's neutral price reads 1958 on this
+   * table and 1795 after the shape; a 94 reads 1456 and 1441; an 88 and
+   * everyone under him are untouched to the point.
    *
    * STEEPNESS IS SHARED ACROSS PREMIUM/MID/LOW (0.147) ON PURPOSE. Curves
    * with their own steepness made the gap between tiers swing with rating —
@@ -2656,3 +2824,115 @@ export const TRADE_VALUE = {
  * seasonal draw, both sized off a variance decomposition of real NFL play
  * calling, with no name, no bonus and nothing shown to the player.
  */
+
+// ---------------------------------------------------------------------------
+// Combine / pro-day testing [TUNE]
+// ---------------------------------------------------------------------------
+/*
+ * How much of a drill's z-score is what a man IS, how much is the physical
+ * profile his card shows, and how much is the day he had.
+ *
+ * WHY THESE THREE AND NOT ONE. Every drill used to be a linear read of a
+ * single scalar, so all six were the same number in different units — 16,000
+ * blindly-walked prospects gave forty-vs-trueOvr -0.543, vertical-vs-trueOvr
+ * +0.548 and bench-vs-trueOvr +0.527, three identical magnitudes because there
+ * was one variable. The weights below are squared-summed to 1 on purpose, so
+ * each drill's printed spread is the per-position sd in lib/gen/
+ * prospectProfile.ts COMBINE_ANCHOR rather than an accident of the arithmetic.
+ */
+export const COMBINE = {
+  /** Weight on how good he actually is (his trueOvr rank in his own position group). */
+  ABILITY_WEIGHT: 0.60,
+  /**
+   * Weight on the attributes the drill claims to measure, relative to his own
+   * grade. It is the LARGEST of the three on purpose: the card shows the
+   * stopwatch and the rating side by side, and a 40 that disagrees with the
+   * speed printed under it is worse than a 40 drawn from the wrong
+   * distribution — the reader can see both at once.
+   */
+  ATTR_WEIGHT: 0.72,
+  /**
+   * Day-of noise. Deliberately real and deliberately not large: workout
+   * warriors and "he plays faster than he times" guys both exist and that gap
+   * is the content the scouting layer trades on, but it is supplied by the
+   * OUTLIER_* archetypes below, not by making every man's stopwatch a coin
+   * flip. 0.60/0.72/0.34 squares to 0.994.
+   *
+   * 0.34 is a ninth of a drill's variance. The size is anchored on real
+   * test-retest: the same athlete's combine and pro-day 40 typically differ by
+   * 0.04-0.05s against a within-position sd near 0.10, which is this order.
+   */
+  NOISE_WEIGHT: 0.34,
+  /**
+   * Floor/ceiling on the ability percentile before its probit is taken. The
+   * class generator hands the best and worst man at each position exactly 1
+   * and 0, and probit(1) is infinity — see generateCombineTesting.
+   */
+  ABILITY_PCT_CLAMP: 0.03,
+  /** Top/bottom third boundary for an outlier roll, and the per-category odds. */
+  OUTLIER_TIER: 1 / 3,
+  OUTLIER_RATE: 0.12,
+  /** How extreme an outlier's whole testing day is, in sd. ~97th percentile. */
+  OUTLIER_Z: 1.9,
+  /** An outlier still carries a little of his own profile and a little noise, so his six numbers are not identical. */
+  OUTLIER_ATTR_WEIGHT: 0.25,
+  OUTLIER_NOISE_WEIGHT: 0.35,
+  /** Soft knee on |z|: identity below the knee, compressed toward the limit above it, never reaching it. NOT a clamp. */
+  SOFT_KNEE_Z: 2.5,
+  SOFT_LIMIT_Z: 4.5,
+  /**
+   * How hard playing weight above the position's reference pulls a drill, in
+   * sd per sd of weight. Costs time in everything that moves the body, pays in
+   * the bench. Inert until a caller passes a body — see generateCombineTesting.
+   */
+  WEIGHT_PULL: 0.30,
+  /**
+   * Shape of lib/gen/players.ts generateAttributes, read here so a combine
+   * z-score does not go stale the next time attribute generation is retuned:
+   * an unweighted attribute is sampled around this fraction of the target
+   * overall, and residual spread is ATTR_SD times these multipliers. Measured
+   * over 12,000 prospects: residual sd 6.0-7.4 weighted, 14.6-16.5 unweighted.
+   */
+  UNWEIGHTED_ATTR_LEVEL: 0.85,
+  RESID_SD_MULT_WEIGHTED: 0.94,
+  RESID_SD_MULT_UNWEIGHTED: 2.17,
+};
+
+// ---------------------------------------------------------------------------
+// Draft-board fog: the correlated half of scouting error [TUNE]
+// ---------------------------------------------------------------------------
+/*
+ * THE BIAS lib/scouting.ts's HEADER PROMISED AND observe() DID NOT HAVE.
+ *
+ * That file has said since it was written that two things are modelled — a
+ * BIAS (your read is centred wrong) and a SPREAD (how wide a range you quote)
+ * — and only the spread existed. Every attribute was drawn independently
+ * around its true value, so computeOverall averaged a dozen of them and the
+ * noise cancelled: measured over 150 blind classes of 400, an UNSCOUTED club's
+ * centre was out by sd 3.90 while the range it printed was +/-12.73, a band
+ * 3.26x wider than the error it was quoted around and one that held the truth
+ * 99.8% of the time. That is not a confidence interval, it is a guarantee, and
+ * it made the board a solved puzzle: rho 0.917 against the truth for free,
+ * rising only to 0.996 with every scouting point in the game spent.
+ *
+ * BIAS_SD_MAX is one correlated draw per player per observation, shared by
+ * every attribute, so it survives the average instead of cancelling in it.
+ * 6.0 was chosen by sweeping 0/3/4/5/5.5/6/6.5/7 against pre-registered bands:
+ * it puts the cold error at 6.28 (band/error 2.02, coverage 96.6%), drops the
+ * cold board to rho 0.811, and still leaves rho 0.993 and a 1.01 error on a
+ * full file — so the scouting tree buys 0.18 of rank correlation where it used
+ * to buy 0.08.
+ *
+ * IT IS NOT APPLIED TO POTENTIAL, and that is measured rather than an
+ * oversight: potential is a SINGLE observation, so its error never averaged
+ * down in the first place (sd 13.55 cold against a +/-19.25 band, ratio 1.42).
+ * Biasing it too would widen a number that was already honest.
+ */
+export const SCOUT_FOG = {
+  /** SD of the correlated per-player read error at 0 confidence, in rating points. */
+  BIAS_SD_MAX: 6.0,
+  /** SD of the same at 100 confidence. Never 0 — a complete file is still a human's. */
+  BIAS_SD_MIN: 0.3,
+  /** Convergence exponent, matching observationSd's so the two halves of the error shrink together. */
+  BIAS_CURVE: 0.7,
+};

@@ -68,6 +68,11 @@ const TYPE_WEIGHT: Record<string, number> = {
   // a GM has to catch as it scrolls past.
   ALL_STAR_SNUB: 16,
   DEV_MILESTONE: 10,
+  // A club revising what it thinks a player will become. Louder than the
+  // stat-leader filler above it and still under CUT, so it reaches the League
+  // Wire and never the breaking-news ticker: a ceiling moves once a year and
+  // is worth reading, but nobody has to catch it as it scrolls past.
+  DEV_PROJECTION: 14,
   INJURY: 5,
 };
 
