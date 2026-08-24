@@ -29,11 +29,17 @@ export interface AwardLine { code: string; label: string; name: string; teamAbbr
  * Rookie of the Year — was the reason he was easy to miss entirely. Every
  * other award keeps its place below, unchanged.
  */
-export function SeasonAnnouncement({ leagueId, seasonYear, championName, championTeamId, championAbbr, isUserChampion, userTeamId, userTeamName, userRecord, userResult, awards }: {
+export function SeasonAnnouncement({ leagueId, seasonYear, championName, championTeamId, championAbbr, isUserChampion, userTeamId, userTeamName, userRecord, userResult, awards, rebuildSeasons }: {
   leagueId: string; seasonYear: number;
   championName: string; championTeamId: string; championAbbr: string; isUserChampion: boolean;
   userTeamId: string; userTeamName: string; userRecord: string; userResult: string;
   awards: AwardLine[];
+  /**
+   * Seasons this title took, when the save is a Rebuild run that just finished
+   * one. Null on every other save and on a rebuild's SECOND title — the climb
+   * ended at the first, and so does the page this links to.
+   */
+  rebuildSeasons?: number | null;
 }) {
   const sbMvp = awards.find((a) => a.code === 'SB MVP');
   // Promoted only for the club that actually won it — another team's
@@ -90,6 +96,27 @@ export function SeasonAnnouncement({ leagueId, seasonYear, championName, champio
             ))}
           </div>
         </div>
+      )}
+
+      {/* THE REBUILD PAYOFF, ROUTED FROM WHERE THE TITLE IS ANNOUNCED. It is a
+          route rather than a second full-screen moment on purpose: the trophy
+          moment's budget is exactly one interruption a season (see
+          components/ds/TrophyMoment.tsx) and spending a second one here would
+          be the app shouting over its own best screen. This is the door, it is
+          the loudest thing on the panel, and it is still here tomorrow. */}
+      {rebuildSeasons != null && (
+        <Link
+          href={`/league/${leagueId}/rebuild`}
+          className="block panel p-4 border-gold/50 bg-gold/[0.06] hover:bg-gold/[0.10] transition-colors"
+        >
+          <div className="label-sm text-gold">The Rebuild is over</div>
+          <div className="font-display font-extrabold uppercase tracking-wide text-lg leading-tight mt-1">
+            You did it in {rebuildSeasons} {rebuildSeasons === 1 ? 'season' : 'seasons'} →
+          </div>
+          <p className="text-sm text-muted mt-1">
+            The worst roster in football to a championship. See the whole climb — and the card.
+          </p>
+        </Link>
       )}
 
       <Link href={`/league/${leagueId}/history`} className="text-xs text-accent2 hover:underline">View full franchise history →</Link>

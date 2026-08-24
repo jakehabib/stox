@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { getLeagueContext } from '@/lib/league-data';
+import { loadRebuildStanding } from '@/lib/rebuildState';
 import { teamCapSummary } from '@/lib/cap-summary';
 import { formatMoney } from '@/lib/cap';
 import { readJson } from '@/lib/json';
@@ -54,6 +55,10 @@ const ORDINAL = (n: number) => {
 
 export default async function TeamDashboard({ params }: { params: { id: string } }) {
   const { league, settings, userTeam } = await getLeagueContext(params.id);
+  // Where this save stands in the Rebuild state machine. Cheap on every other
+  // save — loadRebuildStanding reads the league once and returns before it
+  // touches history unless `leagueStart` is REBUILD.
+  const rebuildStanding = await loadRebuildStanding(params.id);
   const team = userTeam!;
 
   const [roster, upcomingGames, recentGames, picks, transactions, divisionTeams, conferenceTeams] = await Promise.all([
@@ -431,6 +436,13 @@ export default async function TeamDashboard({ params }: { params: { id: string }
           userRecord={`${userSeasonRecord?.wins ?? team.wins}-${userSeasonRecord?.losses ?? team.losses}${(userSeasonRecord?.ties ?? team.ties) ? `-${userSeasonRecord?.ties ?? team.ties}` : ''}`}
           userResult={userSeasonRecord?.playoffResult ?? 'MISSED'}
           awards={seasonAnnouncement.awards}
+          /* Only when the title being announced IS the one that ended the
+             rebuild. A second championship is a championship, not a climb. */
+          rebuildSeasons={
+            rebuildStanding.state === 'WON' && rebuildStanding.firstTitleYear === seasonAnnouncement.seasonYear
+              ? rebuildStanding.seasonsToTitle
+              : null
+          }
         />
       )}
       {seasonReview && (
