@@ -438,47 +438,77 @@ export function buildScoutedView(args: {
   });
 
   /*
-   * ERRORS AVERAGE. BANDS ADD. — the reason the two numbers on the draft
-   * board's OVR cell disagree about the same man, measured rather than argued.
+   * ERRORS AVERAGE. BANDS ADD. — why the two numbers on the draft board's OVR
+   * cell say different things about the same man, measured rather than argued.
    *
-   * The CENTRE is computeOverall of ~12 INDEPENDENT per-attribute observations,
-   * so its noise cancels down to sd_attr * sqrt(sum w^2) / sum w — about 0.38
-   * of one attribute's error for a QB, 0.53 for a left tackle. The BAND below
-   * is computeOverall(every attribute at its low) .. computeOverall(every
-   * attribute at its high): every attribute wrong in the SAME direction at
-   * once, which sums instead of cancelling and so keeps the full half-width.
+   * The CENTRE is computeOverall of ~12 per-attribute observations. The
+   * per-attribute NOISE in them is independent, so it cancels down to
+   * sd_attr * sqrt(sum w^2) / sum w — about 0.38 of one attribute's error for
+   * a QB, 0.53 for a left tackle. The BAND below is computeOverall(every
+   * attribute at its low) .. computeOverall(every attribute at its high):
+   * every attribute wrong in the SAME direction at once, which sums instead of
+   * cancelling and so keeps the full half-width.
    *
-   * The result, over a real 400-man class re-observed six times at each level:
+   * WHAT STOPS THE CENTRE BEING NEARLY RIGHT IS observe()'s CORRELATED TERM.
+   * It draws ONE bias per observation before the attribute loop and adds it to
+   * every attribute, so unlike the noise it does not cancel — it passes
+   * straight through the average and lands on the centre at close to full
+   * size. That is the whole reason "you think he's a 78, he's a 71" is
+   * possible at all; without it twelve independent draws leave the centre good
+   * to about half a point and the fog is decoration. See observationBiasSd.
+   *
+   * Re-measured over a 400-man class observed four times at each level:
    *
    *   confidence   displayed band   |centre - truth| rms   truth inside band
-   *        8            25 (+/-12.5)         3.75                 100.0%
-   *       40            16 (+/- 8.0)         2.45                  99.8%
-   *       82             7 (+/- 3.5)         1.12                  99.9%
-   *       95             4 (+/- 2.0)         0.83                  99.8%
+   *        8          25.5 (+/-12.7)        6.25                 97.3%
+   *       25          20.1 (+/-10.0)        4.87                 97.4%
+   *       40          16.0 (+/- 8.0)        3.88                 97.4%
+   *       60          11.6 (+/- 5.8)        2.72                 98.0%
+   *       82           6.9 (+/- 3.4)        1.58                 98.6%
+   *       95           4.5 (+/- 2.3)        1.00                 99.6%
    *
-   * A band that holds the truth 99.7% of the time is not a confidence interval,
-   * it is a guarantee, and it is 4.2x wider than the error it is quoted around.
-   * Two numbers on one cell, one of them theatre — the same shape as the
-   * potential band that opened below a man's own overall (see
-   * flatPotentialBand). Note also that observe() carries NO per-player bias
-   * despite the header of this file promising one: 240 redraws of the same
-   * prospect at confidence 8 leave a per-player mean error of sd 0.39 against
-   * the 0.23 pure noise predicts, i.e. nothing. "You think he's a 78, he's a
-   * 71" cannot happen through independent per-attribute noise on twelve
-   * attributes; it needs a correlated term this file does not have.
+   * The half-width runs about 2.0x the error it is quoted around and holds the
+   * truth 97-99% of the time. Generous, and no longer theatre: it was 4.2x and
+   * a flat 100% before the correlated term existed.
    *
-   * THIS IS LEFT EXACTLY AS IT WAS, deliberately. Both repairs are balance
-   * changes with their own measurements, and lib/tuning.ts is where they land:
-   *   - narrow the band to a quadrature aggregate (25 -> 12 cold, coverage
-   *     90.6%) and the RANGE becomes the leak the colour used to be: +/-6
-   *     around a centre good to 3.75 places every prospect in a tier for free;
-   *   - or give observe() the correlated bias its header claims (sd ~6.8 cold,
-   *     ~1.8 on a full file), which makes today's 25-point band a genuine 90%
-   *     interval, makes busts possible again, and drops an UNSCOUTED club's
-   *     board from rho 0.87 against the truth to 0.79 — against the 0.72 the
-   *     public consensus board every AI club drafts off already scores.
-   * The display is what was fixed today: ratingColorForRange (lib/ratings.ts)
-   * stops the cell claiming a tier this band cannot support.
+   * THIS NOTE USED TO SAY observe() CARRIED NO BIAS, AND PROPOSED TWO REPAIRS.
+   * Both statements are dead and are deleted rather than corrected in place,
+   * because a stale comment in the file that teaches everyone about the fog is
+   * how a wrong fact gets relayed as true — this one was, twice, in writing,
+   * before anybody re-ran the measurement.
+   *   - "Give observe() the correlated bias its header claims" — DONE, in
+   *     1858e9d. The table above is that change measured.
+   *   - "Narrow the band to a quadrature aggregate" — MEASURED AND REJECTED.
+   *     It aims at the wrong thing. The band's top is not what leaks: the top,
+   *     the bottom and the centre all correlate with the truth at 0.804 /
+   *     0.810 / 0.811 over 4,800 fogged prospects, i.e. they are one number
+   *     wearing three hats, and no width change touches that.
+   *
+   * WHAT IS ACTUALLY STILL WRONG HERE, so the next reader does not have to
+   * find it again. An unscouted club's book ranks a draft class at rho 0.81
+   * against the truth, and the PUBLIC consensus board every AI club drafts off
+   * scores 0.72-0.79. A free file beats the league's collective scouting,
+   * which is backwards, and it is why sorting a board by any of its three
+   * numbers recovers 83% of the gap between a random cohort and perfect
+   * information before a penny is spent. Widening the bias does not fix it:
+   * sweeping SCOUT_FOG.BIAS_SD_MAX 6 -> 9 -> 12 -> 20 walks rho 0.82 -> 0.73
+   * -> 0.64 -> 0.47 and the heuristic still recovers 83% -> 76% -> 67% -> 50%,
+   * while band coverage falls 96% -> 89% -> 79% -> 58%. There is no setting
+   * that closes it and keeps the band honest, because the leak is not the
+   * noise level — it is that a free per-player read of the truth ranks the
+   * class at all. The fix is a different shape: the free book built from
+   * PUBLIC facts (position, programme, testing, production) and the read of
+   * the truth bought. That is a redesign of how every player view is produced
+   * and it is deliberately not started here.
+   *
+   * ONE MORE THING WORTH KNOWING BEFORE ANYONE RETUNES THIS. The bias is drawn
+   * INSIDE observe(), and observe() re-runs every time confidence rises — so
+   * it is a per-OBSERVATION bias, not a per-PLAYER one. Buying a scout does
+   * not narrow you around a fixed wrong belief, it re-rolls which direction
+   * you are wrong in. Measured: 240 redraws of one prospect at confidence 8
+   * leave a per-player mean error of sd 0.70 against the 0.57 pure resampling
+   * predicts. That is not what "you think he's a 78, he's a 71" implies, and
+   * it probably belongs with the redesign above rather than before it.
    */
   const centerMap: AttrMap = Object.fromEntries(attrs.map((a) => [a.key, a.observed]));
   const lowMap: AttrMap = Object.fromEntries(attrs.map((a) => [a.key, a.low]));
