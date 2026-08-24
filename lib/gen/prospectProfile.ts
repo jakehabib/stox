@@ -66,9 +66,41 @@ export function aggregateCollegeGames(games: CollegeGameLine[], throughWeek: num
   return totals;
 }
 
-/** Maps the NFL calendar onto a college season so stats reveal progressively through the year instead of all at once. */
-export function collegeWeeksElapsed(leagueWeek: number): number {
-  return clamp(Math.round((leagueWeek * COLLEGE_WEEKS) / 17), 1, COLLEGE_WEEKS);
+/**
+ * How much of a prospect's college season you are allowed to see yet.
+ *
+ * IT TAKES THE PHASE, NOT JUST THE WEEK, AND THAT IS THE WHOLE FIX. This used
+ * to be `clamp(round(week * 13 / 17), 1, 13)` on `League.week` alone — which
+ * is only a regular-season week number in ONE phase. Every other phase counts
+ * its own weeks from 1, so the arithmetic silently ran on the wrong calendar
+ * the moment the season ended.
+ *
+ * The damage landed exactly where it hurt most. During DRAFT, `League.week` is
+ * 1, so this returned `round(13/17) = 1`: at the moment a GM is on the clock
+ * deciding who to take, he could see ONE college game out of thirteen. The app
+ * owner: *"During the draft the college players seem to not have a full
+ * season's stats. At the end of the season they should have a full college
+ * stat season to look at."*
+ *
+ * The intended design is unchanged and is worth keeping — a class arrives at
+ * the top of the NFL season and its college tape comes in through the autumn,
+ * so a GM who scouts early is reading an incomplete file. That progression
+ * belongs to the REGULAR season and nowhere else. Once the last whistle has
+ * gone, college football is over too and the file is closed: playoffs,
+ * offseason, re-sign, free agency and the draft all read the full thirteen.
+ *
+ * PRESEASON is the one deliberate zero-ish case: the class has just been put
+ * on the board and nobody has played a game. It returns 1 rather than 0
+ * because a scouting screen with no line at all reads as missing data, and one
+ * game is the truthful floor.
+ */
+export function collegeWeeksElapsed(league: { phase: string; week: number }): number {
+  if (league.phase === 'REGULAR') {
+    return clamp(Math.round((league.week * COLLEGE_WEEKS) / 17), 1, COLLEGE_WEEKS);
+  }
+  if (league.phase === 'PRESEASON') return 1;
+  // Playoffs and every offseason phase: the college season is in the books.
+  return COLLEGE_WEEKS;
 }
 
 function normGame(rng: Rng, mean: number, sd: number, min = 0): number {

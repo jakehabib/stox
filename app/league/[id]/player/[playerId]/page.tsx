@@ -204,7 +204,7 @@ export default async function PlayerPage({
           .filter((c): c is CombineTesting => !!c.venue),
       )
     : {};
-  const weeksElapsed = collegeWeeksElapsed(league.week);
+  const weeksElapsed = collegeWeeksElapsed(league);
   const collegeToDate = collegeProfile ? aggregateCollegeGames(collegeProfile.games, weeksElapsed) : null;
   const buzzNote = collegeProfile
     ? prospectBuzzNote(player.trueOvr, player.potential, view.scoutedOvr, view.confidence, collegeProfile.competitionGrade)
