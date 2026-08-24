@@ -4176,4 +4176,4 @@ ever force-pushed over, so every state below still exists in git history).
   engine reads nobody and a "WR5" would assert a difference the simulation
   does not make. No stale-chart warning, no snap percentages, no personnel
   packages: the engine has no personnel-grouping concept, and controls that
-  pretend otherwise are the thing this fix was about. Commit `HASHPLACEHOLDER`.
+  pretend otherwise are the thing this fix was about. Commit `ec7a591`.
