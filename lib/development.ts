@@ -475,7 +475,7 @@ export async function applyInSeasonProgression(
       projections.push({ id: p.id, name: `${p.firstName} ${p.lastName}`, age: p.age, from: p.potential, to: potential });
     }
 
-    const { attrs: rolled, ovr: rolledOvr } = progressPlayer(rng, p.position as Position, attrs, p.age, potential, p.devTrait, speedForPlayer, share * perfMult * focusMult * playtimeMult);
+    const { attrs: rolled, ovr: rolledOvr } = progressPlayer(rng, p.position as Position, attrs, p.age, potential, p.devTrait, speedForPlayer, share * perfMult * focusMult * playtimeMult, p.id);
 
     const categories = leaderCategoriesById.get(p.id);
     if (categories) {
@@ -644,7 +644,7 @@ export async function progressFreeAgents(
     const attrs = readJson<AttrMap>(p.trueAttrs, {});
     const { attrs: rolled, ovr } = progressPlayer(
       rng, p.position as Position, attrs, p.age, p.potential, p.devTrait,
-      opts.progressionSpeed, FREE_AGENCY.UNSIGNED_PROGRESSION_SCALE,
+      opts.progressionSpeed, FREE_AGENCY.UNSIGNED_PROGRESSION_SCALE, p.id,
     );
     updates.push({ id: p.id, attrs: writeJson(rolled), ovr });
   }

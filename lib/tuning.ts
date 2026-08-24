@@ -936,6 +936,53 @@ export const PROGRESSION = {
   BREAKOUT_GROWTH_MULT: 1.6,
   /** Growth multiplier for an established starter (trueOvr 65+) producing at the bottom of his position group. */
   SLUMP_GROWTH_MULT: 0.6,
+  /**
+   * =======================================================================
+   * THE DEVELOPMENT ARC — whether a man actually becomes what he was
+   * supposed to become
+   * =======================================================================
+   * Everything else in this block is a rate the game can see coming: age,
+   * position, dev trait, ceiling tier, playing time, production. Two players
+   * with the same row of those numbers developed identically, so a prospect
+   * who arrived good stayed good and a first pick could not fail.
+   *
+   * That was measurable and it was measured. The consensus board's number one
+   * peaked below 78 in 10% of drafts — but ONLY because the board sometimes
+   * crowned a man who could not play; sweeping the board's own ceiling-trust
+   * knob across its entire range (0.95 down to 0.45) moved his mean peak by
+   * 0.0 and his bust rate by 0.0%. Every bust in the game was a scouting
+   * accident. Fix the board and the busts vanish with it, which is exactly
+   * what happened when the fix was tried: 10% -> 0%.
+   *
+   * So the arc is the part nobody can see. Drawn once from a man's own id and
+   * never redrawn, it is how much of his development he actually converts —
+   * the work, the injuries that do not show up as an injury, the scheme that
+   * never fit, the league solving him in year two. Most players land near 1.
+   * DEV_ARC_BUST_ODDS of them are on a failing arc whose mean is NEGATIVE:
+   * they do not merely stall, they slide, which is the only way a man who
+   * arrives at 83 can finish under 78 and the only honest way a first pick
+   * busts once the board stops handing out frauds.
+   *
+   * IT IS A ROLL, NOT A LABEL. Nothing stores it, nothing renders it, no
+   * scout can buy it, and it is not in the schema — it is a pure function of
+   * the player id, so a save replays identically and the same man is the same
+   * story every time it is opened. That is deliberate: a bust you could look
+   * up would be a tax, and a bust you can only find out about by watching him
+   * play is a football season.
+   *
+   * WHAT IT MUST NOT DO. It must not accelerate DECLINE for a high-ceiling
+   * man: progressPlayer gates the potential-tier ladder on the sign of the
+   * arc-adjusted drift, not the raw age curve, so a failing arc never gets
+   * the Generational multiplier applied to its fall.
+   * =======================================================================
+   */
+  /** Spread of the ordinary arc, centred on 1 — the usual "he developed about as expected". */
+  DEV_ARC_SD: 0.3,
+  /** Share of players who never develop at all. */
+  DEV_ARC_BUST_ODDS: 0.11,
+  /** Mean of a failing arc. Negative: a man on one gets worse, not merely static. */
+  DEV_ARC_BUST_MEAN: -0.55,
+  DEV_ARC_BUST_SD: 0.45,
   /** OVR bump (spread across attributes) for leading the league in a major stat category at a checkpoint. */
   STAT_LEADER_OVR_BUMP: 1,
   /** Potential-ceiling bump for the same. */

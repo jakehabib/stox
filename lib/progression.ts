@@ -43,6 +43,22 @@ export function potentialTierGrowthMult(potential: number): number {
   return t.BASE;
 }
 
+/**
+ * How much of his development a man actually converts — see DEV_ARC_SD in
+ * lib/tuning.ts for what this is and why it exists.
+ *
+ * A pure function of the player id and nothing else: never stored, never
+ * shown, never buyable, identical on every replay of a save and on every
+ * process that opens it. Its own seeded stream, so adding another roll to
+ * this file later cannot reshuffle the arcs already in people's leagues.
+ */
+export function developmentArc(playerId: string): number {
+  const r = new Rng(`dev-arc-${playerId}`);
+  return r.float(0, 1) < PROGRESSION.DEV_ARC_BUST_ODDS
+    ? r.normal(PROGRESSION.DEV_ARC_BUST_MEAN, PROGRESSION.DEV_ARC_BUST_SD)
+    : r.normal(1, PROGRESSION.DEV_ARC_SD);
+}
+
 export function progressPlayer(
   rng: Rng,
   position: Position,
@@ -53,8 +69,20 @@ export function progressPlayer(
   speedMult: number,
   /** Fraction of a full roll to apply — 1 for a full offseason roll, less for an in-season checkpoint. */
   scale: number = 1,
+  /**
+   * The player's id, which is the only thing his hidden development arc is
+   * drawn from. Omit it and the arc is exactly 1 — every caller that does not
+   * know who it is holding develops a man at his stated rate, which is what
+   * every caller did before the arc existed.
+   */
+  playerId?: string,
 ): { attrs: AttrMap; ovr: number } {
-  const ageMean = growthMean(age, position);
+  // THE ARC COMES FIRST because the sign guard below has to see it. A man on
+  // a failing arc has a NEGATIVE drift even at 22, and the potential-tier
+  // ladder must not be applied to that — a Generational multiplier on a fall
+  // is the same sign error this file already fixed once.
+  const arc = playerId === undefined ? 1 : developmentArc(playerId);
+  const ageMean = growthMean(age, position) * arc;
   // THE TIER LADDER, AND THE SIGN GUARD THAT MAKES IT SAFE. A high ceiling buys
   // a man FASTER GROWTH, never faster decline: `ageMean` turns negative past his
   // peak, and applying a 1.45x there would have the best players in the league
@@ -62,6 +90,8 @@ export function progressPlayer(
   // codebase has now fixed at four separate cap gates. Past the peak the tier
   // multiplier is exactly 1 and a generational man ages like anybody else.
   const tierMult = ageMean > 0 ? potentialTierGrowthMult(potential) : 1;
+  // (ageMean already carries the arc, so this reads the sign of the drift the
+  // man is actually on rather than the sign of the age curve alone.)
   const mean = ageMean * (DEV_TRAIT_MULT[devTrait] ?? 1) * speedMult * scale * tierMult;
   const out: AttrMap = { ...attrs };
   const keys = attrsForPosition(position);
