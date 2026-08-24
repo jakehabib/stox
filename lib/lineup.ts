@@ -1,4 +1,4 @@
-import { POSITIONS, Position } from './tuning';
+import { POSITIONS, Position, UNIT_DEPTH_WEIGHTS } from './tuning';
 import { POSITION_GROUPS, PositionGroup, positionGroup } from './positionGroups';
 
 /**
@@ -216,6 +216,63 @@ export function starterAverageAtGroup(
   const slots = starterSlots(ovrsByPosition, group, replacement);
   if (slots.length === 0) return 0;
   return slots.reduce((s, v) => s + v, 0) / slots.length;
+}
+
+/**
+ * ===========================================================================
+ * WHAT TO CALL EACH RUNG OF A POSITION GROUP — WR1, WR2, CB3, EDGE4
+ * ===========================================================================
+ * The depth chart used to label its highlighted rows `ST`, or `ST1`/`ST2`/
+ * `ST3` where more than one man starts, and everything below them `#4`, `#5`.
+ * "ST2" is not a thing anybody says about a football team, and it told a GM
+ * nothing about what the second slot at that position is actually for. The
+ * app owner's call: *"we should label the, for example, WR1, WR2 instead of
+ * saying ST."*
+ *
+ * HOW MANY RUNGS GET A NAME IS NOT A DESIGN CHOICE — IT IS READ OFF THE
+ * ENGINE. `UNIT_DEPTH_WEIGHTS` (lib/tuning.ts) is the list of slots
+ * `positionUnitRating` in lib/sim/units.ts actually pays out against, and now
+ * that the engine plays the order it is handed rather than re-sorting it,
+ * those weights are exactly the rungs where naming a different man changes
+ * the football:
+ *
+ *     QB [1.0]                       RB [0.62, 0.28, 0.10]
+ *     WR [0.42, 0.31, 0.19, 0.08]    TE [0.7, 0.3]
+ *     EDGE [0.38, 0.32, 0.18, 0.12]  DT  [0.4, 0.33, 0.17, 0.10]
+ *     LB [0.45, 0.33, 0.22]          CB  [0.4, 0.32, 0.19, 0.09]
+ *     S  [0.55, 0.35, 0.10]          LT/LG/C/RG/RT/K/P [1.0]
+ *
+ * So four receivers get a name and the fifth does not, three backs and not the
+ * fourth, one quarterback and one of each offensive line spot. BEYOND THE
+ * WEIGHTED SLOTS THERE IS NO DISTINCTION — the engine reads nobody past the
+ * end of that array, so a fifth receiver and a sixth are worth precisely the
+ * same to it, and inventing "WR5" would be this codebase's own recurring
+ * defect: a label asserting a difference the system does not make. Those rows
+ * keep the bare `#n` they already had, which claims only a position in a list.
+ *
+ * This deliberately does NOT match `STARTERS_AT_POSITION` above, and the two
+ * are answering different questions. That table is who lines up in the base
+ * formation — three receivers in eleven personnel — and it decides the tint
+ * and the bench line on the chart. This one is how far down the engine counts.
+ * WR4 is therefore a real name on a bench row: he is not on the field on first
+ * down, and he is still worth 0.08 of what the receiver unit is rated at.
+ * Reconciling them by picking one number would make one of those two true
+ * things unsayable.
+ */
+export function weightedDepthSlots(position: string): number {
+  return (UNIT_DEPTH_WEIGHTS[position as Position] ?? []).length;
+}
+
+/**
+ * The name of one rung, or null for a rung the engine never reads.
+ *
+ * `index` is 0-based, the way the depth array is. Returns `WR1` for index 0 at
+ * WR and `null` from index 4 on. An unrecognised position — a save written
+ * before the fullback was retired — has no weights and therefore no named
+ * rungs at all, which is the honest answer rather than a crash.
+ */
+export function depthSlotLabel(position: string, index: number): string | null {
+  return index >= 0 && index < weightedDepthSlots(position) ? `${position}${index + 1}` : null;
 }
 
 /**

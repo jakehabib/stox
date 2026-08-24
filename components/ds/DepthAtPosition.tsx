@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { capCommitted, formatMoney } from '@/lib/cap';
 import { ratingColor } from '@/lib/ratings';
-import { splitStarters, startersAt } from '@/lib/lineup';
+import { splitStarters, startersAt, depthSlotLabel } from '@/lib/lineup';
 import { PlayerAvatar } from '../PlayerAvatar';
 import { positionBadgeClass } from './positionColor';
 
@@ -75,7 +75,14 @@ export function DepthList({ position, depth, capOn, subjectNote }: {
         const starts = i < starterCount;
         const row = (
           <>
-            <span className={`label-sm w-8 shrink-0 ${starts ? 'text-chalk' : ''}`}>{starts ? `ST${starterCount > 1 ? i + 1 : ''}` : `#${i + 1}`}</span>
+            {/* WR1, CB3, EDGE4 — the same rung names the Depth Chart screen
+                prints, from the same `depthSlotLabel`. This panel used to say
+                "ST2" for the row that screen called "ST2" and the engine calls
+                the second receiver; two surfaces naming one rung two ways is
+                how this codebase's numbers drift apart. Rows past the last
+                weighted slot keep `#n`, because the engine reads nobody there
+                and a name would assert a difference it does not make. */}
+            <span className={`label-sm w-11 shrink-0 ${starts ? 'text-chalk' : ''}`}>{depthSlotLabel(position, i) ?? `#${i + 1}`}</span>
             <PlayerAvatar seed={d.playerId} age={d.age} size={24} weightLb={d.weightLb} heightIn={d.heightIn} position={position} />
             <span className={`flex-1 truncate text-sm ${d.isSubject || starts ? 'font-semibold' : ''}`}>
               {d.name}{d.isSubject && subjectNote ? ` — ${subjectNote}` : ''}
@@ -109,9 +116,9 @@ export function DepthList({ position, depth, capOn, subjectNote }: {
           // scrollWidth exceeds its clientWidth by 4px and the panel scrolls
           // sideways inside the re-sign row.
           <div key={d.playerId} className="px-1">
-            {/* Where the lineup ends. The ST/# labels alone made the reader
-                count, and at WR — three starters — counting is exactly what
-                they were getting wrong. */}
+            {/* Where the lineup ends. The rung labels alone made the reader
+                count, and at WR — three starters named WR1..WR4 — counting is
+                exactly what they were getting wrong. */}
             {i === starterCount && starterCount > 0 && (
               <div className="flex items-center gap-2 pt-1.5 pb-1">
                 <span className="label-sm text-[10px]">Bench</span>

@@ -1068,19 +1068,28 @@ export async function dropOrphanDepthChartSlots(leagueId: string): Promise<numbe
  *     mean gap   1.12  2.28  3.32  6.74 10.27 11.56 11.33   rating points
  *     clubs >=5   8%   17%   25%   45%   59%   75%   58%
  *
- * WHAT THAT COSTS, HONESTLY. It is NOT wins, and it is now not wins at all.
- * `positionUnitRating` in lib/sim/units.ts re-sorts its input by rating, so
- * every unit-weighted term the engine scores a game with is order-INVARIANT.
- * There used to be exactly one exception — `schemeFit` read `depth[pos][0]`,
- * so chart order moved off/def by a mean of 0.19 and a maximum of 3.57 rating
- * points across 1,216 clubs (scripts/_dc_effect.ts). That term is deleted (see
- * lib/sim/units.ts), so the chart's effect on the SCOREBOARD is now exactly
- * zero. What it costs is entirely the BOX SCORE:
- * `allocateStats` hands targets, carries, tackles and the passing line to
- * `units.depth[pos]` in chart order, and on those same 1,216 clubs 5.9% were
- * about to give their passing line to a quarterback who was not their best,
- * 15.1% their WR1 targets to the wrong receiver, 13.5% their CB1 snaps to the
- * wrong corner. Awards, leaderboards and career lines are all downstream.
+ * WHAT THAT COSTS, AND IT IS WINS NOW. This paragraph used to open "It is NOT
+ * wins, and it is now not wins at all", on the grounds that
+ * `positionUnitRating` in lib/sim/units.ts re-sorted its input by rating and
+ * every unit-weighted term the engine scored a game with was therefore
+ * order-INVARIANT. THAT SORT IS GONE. The engine plays the man the chart
+ * names, at every slot UNIT_DEPTH_WEIGHTS pays out to — so a stale AI chart is
+ * now a worse football team and not merely a wrong box score, which is exactly
+ * why this sweep matters more than it did when it was written.
+ *
+ * Measured across all 8,576 clubs in the 271 saves on this machine at the
+ * moment the sort came out: honouring the order moves a club's engine rating
+ * for 50.6% of them, by a mean of -0.065 rating points (p05 -0.292, worst
+ * -3.010). AI clubs move -0.0650 and user clubs -0.0718 — the sweep below is
+ * doing its job, and the human is handed no edge by the change.
+ *
+ * The BOX SCORE cost it always had is unchanged and still real: `allocateStats`
+ * hands targets, carries, tackles and the passing line to `units.depth[pos]`
+ * in chart order, and on 1,216 clubs 5.9% were about to give their passing
+ * line to a quarterback who was not their best, 15.1% their WR1 targets to the
+ * wrong receiver, 13.5% their CB1 snaps to the wrong corner. Awards,
+ * leaderboards and career lines are all downstream. The difference is that the
+ * scoreboard is downstream of it now too.
  *
  * WHY THE USER'S CLUB IS EXEMPT, AND THAT IS NOT A HALF-FIX. His order is a
  * decision. `autoDepthChart` used to run on every draft pick and threw away

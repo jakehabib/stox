@@ -4141,3 +4141,39 @@ ever force-pushed over, so every state below still exists in git history).
   gave about career totals: it listed the same year-and-trophy pairs the hero
   pill counts and the record now dates, which made three tellings of one fact.
   Commit `2c580ef`.
+- **2026-08-24 — Benching your best quarterback made no difference to how your
+  team played.** The Depth Chart looked like a football decision and was not
+  one. Your named order decided who got the touches, the tackles and the
+  passing line, and then the engine threw it away: `positionUnitRating` in
+  `lib/sim/units.ts` re-sorted every position group by rating before it scored
+  anything, so a GM who started his 73-overall quarterback ahead of his 89
+  saw the 73 in the box score while the offence went on being powered by the
+  89. **Measured on a real save before the fix**: naming the 73 as the starter
+  moved the quarterback unit by 0.000, the offence by 0.000, and 800 simulated
+  games came back 473-323-4 either way, to the point. **After it**: the unit
+  drops 16.000, the offence 5.667, the team 2.833, and the same 800 games go
+  473-323-4 to 377-421-2 — twelve percentage points of win rate, 25.28 points
+  a game down to 20.98. The named starter is now the man the simulation uses,
+  at every slot `UNIT_DEPTH_WEIGHTS` actually reads. **The rest of the league
+  did not get worse for it.** Walked across all 8,576 clubs in the 271 saves
+  on the development database: honouring the order moves a club's engine
+  rating for 50.6% of them, by a mean of -0.065 points — AI clubs -0.0650 and
+  user clubs -0.0718, the same direction and the same size, so the human is
+  handed no edge he did not earn. Replayed as football over 39 real 32-club
+  leagues x 3 seasons (3,744 club-seasons, identical rosters, schedule and
+  seeds in both arms), the win distribution is unchanged — mean 8.479 wins
+  either way, sd 3.140 against 3.142 — while the club holding the trophy
+  changes in 24% of seasons. It is the same league; it is decided by different
+  players. **Injuries needed nothing built.** `computeUnits` already drops
+  hurt men before it applies the chart, so the next healthy man moves up while
+  a starter is out and the untouched chart restores him the week he is fit —
+  verified on 74,440 (club, position) cases across 8,832 clubs, promoted
+  74,440/74,440, slot restored 74,440/74,440, chart rewritten 0. A second
+  mechanism would have been two mechanisms for one rule. **The slots are
+  named for what they are** — `QB1`, `RB1`..`RB3`, `WR1`..`WR4`, `CB1`..`CB4`,
+  `EDGE1`..`EDGE4` instead of `ST` and `ST2` — one label for every rung
+  `UNIT_DEPTH_WEIGHTS` pays out to and none past it, because beyond those the
+  engine reads nobody and a "WR5" would assert a difference the simulation
+  does not make. No stale-chart warning, no snap percentages, no personnel
+  packages: the engine has no personnel-grouping concept, and controls that
+  pretend otherwise are the thing this fix was about. Commit `HASHPLACEHOLDER`.

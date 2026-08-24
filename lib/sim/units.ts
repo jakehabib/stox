@@ -51,18 +51,62 @@ export function effectiveRating(p: SimPlayer): number {
 export const REPLACEMENT_LEVEL = 48;
 
 /**
- * Weighted positional unit rating: the starter carries most of the weight, but
- * depth matters (see UNIT_DEPTH_WEIGHTS). If a team is short-handed at a
- * position, the missing slots are filled with a replacement-level value so a
- * roster hole actually hurts.
+ * ===========================================================================
+ * WEIGHTED POSITIONAL UNIT RATING — READ IN THE ORDER IT IS HANDED
+ * ===========================================================================
+ * The starter carries most of the weight, but depth matters (see
+ * UNIT_DEPTH_WEIGHTS). If a team is short-handed at a position, the missing
+ * slots are filled with a replacement-level value so a roster hole actually
+ * hurts.
+ *
+ * THE MAN AT INDEX 0 IS THE MAN THE CHART NAMED. This function used to open
+ * with
+ *
+ *     const sorted = [...players].sort((a, b) => effectiveRating(b) - effectiveRating(a));
+ *
+ * and that one line was the whole of the depth chart's dishonesty. The named
+ * order is built from DepthChartSlot rows in lib/season.ts, handed to
+ * `computeUnits` through lib/sim/engine.ts, and APPLIED there by
+ * `mergeUnnamed` — three layers of machinery that carried a GM's decision all
+ * the way to this function, which then threw it away and re-derived the order
+ * from rating. So a GM who started his 74-overall quarterback ahead of his 89
+ * got the box score he asked for — `allocateStats` walks `units.depth[pos]` in
+ * chart order — while every unit-weighted term the SCOREBOARD is computed from
+ * went on being powered by the 89. The screen said "Set who starts. The sim
+ * engine uses this order every game" and the engine did not. That is this
+ * codebase's recurring defect exactly: a displayed number that is not the
+ * number the system used.
+ *
+ * Measured over all 8,576 clubs in 271 real saves before the sort came out
+ * (scripts-equivalent probe, id-ordered walk of every club, no rating-ordered
+ * sample): 50.6% of clubs' engine rating moves once the order is honoured,
+ * mean -0.065 rating points, p05 -0.292, worst -3.010. AI clubs move -0.0650
+ * and user clubs -0.0718 — the same direction and the same size, so honouring
+ * the chart hands the human no edge over the thirty-one clubs he plays.
+ *
+ * THE CONTRACT THIS NOW HAS. `players` must already be in the order the club
+ * intends to play them, and it always is: `computeUnits` below is the only
+ * production caller, and it orders every group — through `mergeUnnamed` when a
+ * chart exists, by rating when one does not — before it gets here. An unset or
+ * empty chart therefore still falls back cleanly to best-available, which was
+ * measured too: of the 33 clubs in those saves carrying no chart at all, zero
+ * changed rating.
+ *
+ * INJURIES NEED NO MACHINERY HERE AND MUST NOT GROW ANY. `computeUnits`
+ * filters through `isAvailable` BEFORE it applies the chart, so an injured
+ * starter is simply not in this array, the next healthy man is at index 0 for
+ * as long as he is out, and the chart — untouched on disk — puts the starter
+ * back the week he returns. Verified on 74,440 (club, weighted position) cases
+ * across 8,832 clubs: promoted 74,440/74,440, slot restored on return
+ * 74,440/74,440, chart mutated 0. A second mechanism to "auto-promote" would
+ * be two mechanisms for one rule.
  */
 export function positionUnitRating(players: SimPlayer[], position: Position): number {
   const weights = UNIT_DEPTH_WEIGHTS[position] ?? [1];
-  const sorted = [...players].sort((a, b) => effectiveRating(b) - effectiveRating(a));
   let sum = 0;
   let wTotal = 0;
   for (let i = 0; i < weights.length; i++) {
-    const rating = sorted[i] ? effectiveRating(sorted[i]) : REPLACEMENT_LEVEL;
+    const rating = players[i] ? effectiveRating(players[i]) : REPLACEMENT_LEVEL;
     sum += rating * weights[i];
     wTotal += weights[i];
   }
@@ -156,10 +200,22 @@ export function computeUnits(
   players: SimPlayer[],
   staff: SimStaff[],
   /**
-   * User-set depth chart: position -> ordered player ids. A player the chart
-   * does not name is slotted in ON MERIT rather than dumped at the bottom —
-   * see the sort below. Injured players are skipped regardless of where the
-   * chart puts them.
+   * User-set depth chart: position -> ordered player ids, and THE ORDER THE
+   * ENGINE ACTUALLY PLAYS. Everything downstream of this function reads
+   * `depth[pos]` positionally — `positionUnitRating` above pays out
+   * UNIT_DEPTH_WEIGHTS against index 0, 1, 2… and `allocateStats` in
+   * lib/sim/engine.ts hands out the passing line, the targets and the tackles
+   * the same way — so naming a man first is what makes him the starter, on the
+   * scoreboard as well as in the box score.
+   *
+   * A player the chart does not name is slotted in ON MERIT rather than dumped
+   * at the bottom (see `mergeUnnamed`). Injured players are skipped regardless
+   * of where the chart puts them, because the filter below runs BEFORE the
+   * override is applied: that, and nothing else, is the whole of injury
+   * promotion — the next healthy man moves up while the starter is out and the
+   * chart, never rewritten, restores him the week he is fit.
+   *
+   * No chart, or an empty one for a position, falls back to best-available.
    */
   depthOrder?: Record<string, string[]>,
 ): UnitRatings {

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState, useTransition } from 'react';
 import { setDepthChartAction } from '@/app/actions/roster';
 import { ratingColor } from '@/lib/ratings';
-import { startersAt } from '@/lib/lineup';
+import { startersAt, depthSlotLabel } from '@/lib/lineup';
 import { capCommitted, formatMoney } from '@/lib/cap';
 import { PlayerAvatar } from './PlayerAvatar';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -98,6 +98,13 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order, ca
   };
 
   const starterCount = startersAt(position);
+  /**
+   * WHAT TO CALL EACH ROW. `depthSlotLabel` names every rung the engine pays a
+   * UNIT_DEPTH_WEIGHTS entry to and nothing past it, so this card cannot
+   * invent a "WR5" the simulation has no opinion about. It is a different
+   * count from `starterCount` on purpose — see lib/lineup.ts.
+   */
+  const slotLabel = (idx: number) => depthSlotLabel(position, idx);
 
   const ovrOf = (id: string) => byId.get(id)?.ovr ?? 0;
 
@@ -211,8 +218,12 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order, ca
                   ? { borderColor: teamColor, background: `${teamColor}14` }
                   : { borderColor: 'transparent' }}
               >
-                <span className={`w-7 shrink-0 text-[10px] font-semibold tracking-wide ${starts ? 'text-chalk' : 'text-muted font-normal'}`}>
-                  {starts ? (starterCount > 1 ? `ST${idx + 1}` : 'ST') : `#${idx + 1}`}
+                {/* WR1, WR2, CB3 — the rung, in the words a football team
+                    uses, for every slot the engine actually reads. See
+                    `depthSlotLabel` in lib/lineup.ts for why the count comes
+                    off UNIT_DEPTH_WEIGHTS and why rows past it stay `#n`. */}
+                <span className={`w-11 shrink-0 text-[10px] font-semibold tracking-wide ${starts ? 'text-chalk' : slotLabel(idx) ? 'text-muted' : 'text-muted font-normal'}`}>
+                  {slotLabel(idx) ?? `#${idx + 1}`}
                 </span>
                 <PlayerAvatar seed={p.id} age={p.age} size={22} teamColor={teamColor} weightLb={p.weightLb} heightIn={p.heightIn} position={position} />
                 <span className={`stat-value text-xs w-8 ${ratingColor(p.ovr)}`}>{p.ovr}</span>
@@ -285,8 +296,8 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order, ca
             href={`/league/${leagueId}/free-agency?pos=${position}`}
             className="flex items-center gap-2 rounded-lg px-2 py-1.5 border-l-2 border-dashed border-bad/60 bg-bad/[0.06] hover:bg-bad/[0.12] transition-colors"
           >
-            <span className="w-7 shrink-0 text-[10px] font-semibold tracking-wide text-bad">
-              {starterCount > 1 ? `ST${localOrder.length + i + 1}` : 'ST'}
+            <span className="w-11 shrink-0 text-[10px] font-semibold tracking-wide text-bad">
+              {slotLabel(localOrder.length + i) ?? `#${localOrder.length + i + 1}`}
             </span>
             <span className="text-xs text-bad flex-1">Unmanned — nobody to start here</span>
             <span className="text-[10px] text-bad/80 shrink-0">Sign a {position} →</span>
