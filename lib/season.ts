@@ -2706,7 +2706,14 @@ export async function resignDecisionsForTeam(
     // minimum for every roster slot still short of a legal roster.
     const openSlots = Math.max(0, rosterMin - projected);
     const reserve = capMode === 'OFF' ? 0 : RESIGN.CAP_RESERVE + openSlots * CAP.MIN_SALARY;
-    if (newHit - oldHit > capSpace - reserve) {
+    // WHAT IT ADDS, AND WHETHER IT ADDS ANYTHING AT ALL. The same two
+    // questions `assertCapRoom` asks, and the second one was missing here as
+    // well: a club that is over the cap has a negative `capSpace`, so a
+    // re-sign that LOWERED its commitment still failed this test and the man
+    // walked for nothing. An AI club deep in the red could not keep anybody,
+    // however cheap the deal, which is the ratchet that keeps it in the red.
+    const capDelta = newHit - oldHit;
+    if (capDelta > 0 && capDelta > capSpace - reserve) {
       record(p, expired ? 'WALKING' : 'HELD', { note: 'no cap room for the deal he would want' });
       if (expired) released++;
       continue;
@@ -2718,7 +2725,7 @@ export async function resignDecisionsForTeam(
     if (ok) {
       record(p, expired ? 'RESIGNED' : 'EXTENDED', { years, apy });
       kept++;
-      capSpace -= newHit - oldHit;
+      capSpace -= capDelta;
       if (expired) {
         projected++;
         // He is no longer the hole he was — later players at his position are

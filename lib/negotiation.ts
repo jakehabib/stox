@@ -1,6 +1,6 @@
 import { Rng } from './rng';
 import {
-  buildContract, buildExtension, capHit, capHitSchedule, deadMoneyOnCut, formatMoney,
+  buildContract, buildExtension, capHit, capHitSchedule, CAP_GATE_TOLERANCE, deadMoneyOnCut, formatMoney,
   guaranteedMoney as totalGuaranteed,
   willingnessHorizon, prorationYears as capProrationYears, TERM, type ContractLike,
 } from './cap';
@@ -1638,8 +1638,36 @@ function acceptanceRoll(ctx: NegotiationContext, offer: Offer): number {
  */
 export interface NegotiationGate {
   capMode: CapMode;
-  /** Room this deal's YEAR-1 cap hit has to fit inside. */
+  /**
+   * THE CLUB'S ROOM THIS SEASON, off `teamCapSummary`, with nothing folded
+   * into it. NEGATIVE when the club is over the cap, and that sign is the
+   * whole reason it is kept separate from the credit below — see
+   * `capCreditBack`.
+   */
   capSpace: number;
+  /**
+   * WHAT THIS SEASON ALREADY COSTS FOR THIS MAN — the cap hit on the contract
+   * he is on right now, which the club stops paying the moment this deal
+   * replaces or absorbs it. Zero on the open market, where there is no old
+   * deal to credit.
+   *
+   * THIS USED TO BE ADDED INTO `capSpace` AND SHIPPED AS ONE NUMBER, and that
+   * is the bug. `year1CapHit > capSpace + oldHit` is algebraically the right
+   * test — it rearranges to `newHit - oldHit > room` — but written that way
+   * the SIGN of the change is invisible at the place that has to test it, and
+   * the sign is what decides. `assertCapRoom` lets any move through that adds
+   * nothing (`if (delta <= 0) continue`); this gate could not, because over
+   * the cap `room` is negative, so an extension that LOWERED a man's hit by
+   * $9.56M still failed `-9.56M > -12.0M` and was refused — with the panel
+   * beside it printing the saving. Measured on 20 clubs put $12.0M over: 3,803
+   * of 3,990 offers that lower or hold the club's commitment were blocked.
+   * That is the app owner's report exactly — *"trying to extend someone and it
+   * not allowing it. Even tho the game says it will reduce his cap hit"*.
+   *
+   * Kept apart, `decideOffer` can ask the two questions the enforcement asks:
+   * does this ADD money, and if so does the added money fit.
+   */
+  capCreditBack: number;
   minSalary: number;
   /** Slider ceiling. Not a rule — just where the control stops. */
   maxSalary: number;
@@ -2244,6 +2272,13 @@ export function decideOffer(
   const priced = { ...c, baseSalaries: JSON.stringify(c.baseSalaries) };
   const schedule = capHitSchedule(priced, gate.capMode);
   const year1CapHit = schedule[0] ?? 0;
+  // WHAT THIS DEAL CHANGES, which is not what it costs. The club is already
+  // paying `gate.capCreditBack` for him this season and stops the moment this
+  // is signed, so the only money the cap has to find is the difference — and
+  // on an extension that converts salary into bonus the difference is
+  // routinely NEGATIVE. See `capCreditBack` for what reading the gross figure
+  // here cost. Same subtraction `assertCapRoom` performs on the way in.
+  const capDelta = year1CapHit - gate.capCreditBack;
   const totalValue = c.baseSalaries.reduce((a, b) => a + b, 0) + c.signingBonus;
   // What he is agreeing to, as against what the contract is worth in total.
   // On a fresh deal they are the same figure; on an extension they are not,
@@ -2288,7 +2323,12 @@ export function decideOffer(
       : ctx.willingYears <= 1
         ? `He is ${ctx.age} and will only go year to year now — he does not intend to play past ${ctx.intendedFinalAge}.`
         : `He is ${ctx.age} and has no intention of playing past ${ctx.intendedFinalAge}. ${ctx.willingYears} years is as long as he will commit, at any price.`;
-  } else if (gate.capMode !== 'OFF' && year1CapHit > gate.capSpace) {
+  } else if (gate.capMode !== 'OFF' && capDelta > 0 && capDelta > gate.capSpace + CAP_GATE_TOLERANCE) {
+    // TWO QUESTIONS, IN THE ORDER `assertCapRoom` ASKS THEM. Does this deal
+    // add money to this season at all, and if it does, is there room for what
+    // it adds. A club that is already over the cap may still sign anything
+    // that costs it nothing more — that is how a save that has gone wrong is
+    // dug out of the hole, and refusing it was what trapped one.
     blocked = 'CAP';
     // "or lower the deal" is not advice when the deal is already at the league
     // minimum — there is nothing left to lower, and the only route is room.
@@ -2300,11 +2340,23 @@ export function decideOffer(
     // convert — an offer already at 100% has no third option and being told it
     // had one would be worse than the shorter sentence.
     const leftToConvert = ext ? Math.max(0, ext.convertibleBase - ext.converted) : 0;
+    // WHAT IT ADDS, not what it costs — the two are different numbers on any
+    // deal with a man already on the books, and the one the cap is refusing is
+    // the difference. Printing the gross year-1 figure here beside a panel
+    // showing his hit coming down was the sentence that made no sense.
+    const cost = gate.capCreditBack > 0
+      ? `This adds ${formatMoney(capDelta)} to this season`
+      : `Year 1 costs ${formatMoney(year1CapHit)}`;
+    // And say where the club actually stands. "$-8.2M of room" is not a
+    // sentence anybody reads twice.
+    const room = gate.capSpace >= 0
+      ? `against ${formatMoney(gate.capSpace)} of room`
+      : `and you are already ${formatMoney(-gate.capSpace)} over the cap`;
     reason = offer.apy <= gate.minSalary
-      ? `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room, and this is already the league minimum — the only way to sign him is to clear space.`
+      ? `${cost} ${room}, and this is already the league minimum — the only way to sign him is to clear space.`
       : leftToConvert > 0
-        ? `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room — clear space, lower the deal, or push more of the ${formatMoney(leftToConvert)} he is still owed this season into the bonus.`
-        : `Year 1 costs ${formatMoney(year1CapHit)} against ${formatMoney(gate.capSpace)} of room — clear space or lower the deal.`;
+        ? `${cost} ${room} — clear space, lower the deal, or push more of the ${formatMoney(leftToConvert)} he is still owed this season into the bonus.`
+        : `${cost} ${room} — clear space or lower the deal.`;
   }
 
   // THE CONTEST. One comparison, on one scale, against the same evaluation
@@ -2466,7 +2518,11 @@ export function sessionFingerprint(s: NegotiationSession): string {
     s.ctx.currentContract
       ? `${s.ctx.currentContract.years}/${s.ctx.currentContract.yearsRemaining}/${s.ctx.currentContract.signingBonus}/${s.ctx.currentContract.baseSalaries}`
       : '-',
-    s.gate.capMode, s.gate.capSpace, s.gate.minSalary, s.gate.maxYears,
+    // Both halves of the cap gate. The credit is as much a term of the
+    // negotiation as the room is — a restructure or a trade between opening
+    // the panel and pressing the button moves it, and the meter was drawn
+    // against the old one.
+    s.gate.capMode, s.gate.capSpace, s.gate.capCreditBack, s.gate.minSalary, s.gate.maxYears,
     // THE WHOLE RIVAL PACKAGE, not just its headline. It is scored now, so a
     // rival who dropped a year or moved his guarantee has changed the contest
     // the meter was describing every bit as much as one who raised his bid.

@@ -2803,14 +2803,18 @@ export async function resolveNegotiationSession(opts: {
     rng: new Rng(`nego-${playerId}-${seasonYear}`),
   });
 
-  // Cap room. An extension credits back the deal it replaces, exactly as
-  // assertCapRoom will when it runs for real — the gate has to measure
-  // against the same number the enforcement does or the meter would refuse
-  // deals the server would have allowed.
+  // Cap room, and the credit an extension gets, AS TWO NUMBERS.
+  //
+  // The gate has to measure what the enforcement measures or the meter refuses
+  // deals the server would have allowed. It does — but these used to be added
+  // together here and shipped as a single `capSpace`, which hid the sign of
+  // the change from the one place that had to test it and cost exactly that:
+  // over the cap, a deal that LOWERED a man's hit was refused. The full
+  // account, with the measurement, is on `capCreditBack` in lib/negotiation.ts.
   const oldHit = incumbent && player.contract ? capHit(player.contract, capMode) : 0;
   const capSpace = capMode === 'OFF'
     ? Number.MAX_SAFE_INTEGER
-    : (await teamCapSummary(teamId, seasonYear, capMode)).capSpace + oldHit;
+    : (await teamCapSummary(teamId, seasonYear, capMode)).capSpace;
 
   // The LEAGUE's ceiling is flat now (12, see maxYearsForAge) and the age
   // ladder that used to be here belongs to the player — `ctx.willingYears`,
@@ -2831,6 +2835,9 @@ export async function resolveNegotiationSession(opts: {
   const gate: NegotiationGate = {
     capMode,
     capSpace,
+    // Nothing to credit on the open market: he is not on your books, so the
+    // whole year-1 hit is new money and the gate tests it gross.
+    capCreditBack: capMode === 'OFF' ? 0 : oldHit,
     minSalary: CAP.MIN_SALARY,
     // The ceiling has to clear a rival's bid, or the one control that could
     // win the auction would stop short of the number that wins it. A re-sign

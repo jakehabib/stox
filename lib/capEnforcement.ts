@@ -3,6 +3,7 @@ import { CapMode } from './types';
 import { CAP, Position } from './tuning';
 import { readJson, writeJson } from './json';
 import {
+  CAP_GATE_TOLERANCE,
   capHit,
   capSavingsOnCut,
   deadMoneyOnCut,
@@ -40,8 +41,12 @@ import { teamCapSummary } from './cap-summary';
  * ===========================================================================
  */
 
-/** Rounding slack, matching the pre-existing signFreeAgent check. */
-const TOLERANCE = 1;
+/**
+ * Rounding slack, matching the pre-existing signFreeAgent check — and shared
+ * with the negotiation panel's own gate, which has to reach the same verdict
+ * on the same offer. See CAP_GATE_TOLERANCE in lib/cap.ts.
+ */
+const TOLERANCE = CAP_GATE_TOLERANCE;
 
 /** How many relief suggestions an error message / panel carries. */
 const SUGGESTION_COUNT = 3;

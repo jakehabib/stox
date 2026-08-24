@@ -217,6 +217,23 @@ function yearIndex(c: ContractLike): number {
  */
 
 /**
+ * ROUNDING SLACK ON EVERY CAP COMPARISON, in dollars.
+ *
+ * It lives here, in the pure-math module, because two different places have to
+ * answer "does this fit?" and they have to answer it the same way: the gate
+ * that WRITES (assertCapRoom, lib/capEnforcement.ts, which needs the database)
+ * and the gate that DRAWS (decideOffer, lib/negotiation.ts, which runs in the
+ * browser for every pixel of every slider). A private copy in each was a
+ * second definition of the rule waiting to drift; a meter that refuses a deal
+ * the server would have taken, or takes one the server refuses, is the
+ * lying-metric failure this codebase exists to remove.
+ *
+ * A dollar, because proration and escalation both round and the two sides can
+ * land a dollar apart on the same contract.
+ */
+export const CAP_GATE_TOLERANCE = 1;
+
+/**
  * Cap hit for the CURRENT year of a contract, by mode (design doc section 8).
  *
  * REALISTIC — base salary + prorated signing bonus. Cuts leave dead money.
