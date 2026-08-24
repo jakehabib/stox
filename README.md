@@ -4034,3 +4034,24 @@ ever force-pushed over, so every state below still exists in git history).
   rather than the same box as any other title: a dedicated run page with every
   move, the record and the game won, and a pop-out GM card. Commits `d7b54c6`,
   `98f2caa`, `8688641`.
+- **2026-08-24 — The best receivers in the game cost four first-round picks and
+  two seconds.** The owner's read after the trade retune — "slightly
+  overvaluing" — measured out as exactly that: slight, and confined to the top.
+  `CEILING_SOFTENING.KNEE` was 1.0, so compression began only AT the tier
+  ceiling and the whole run-up to it was uncompressed. Run through
+  `evaluateTrade` against the largest real trade of each kind (Ramsey 1640,
+  Mack 1765 net, Tunsil ~2350, three mid-firsts for a franchise quarterback),
+  the ask for the top of the market ran **1.18×** while everyone else sat at
+  **0.99×**. A 96 receiver wanted four firsts and two seconds; a 92 corner on a
+  rookie deal wanted three firsts and a second. The knee is 0.60 now: top end
+  **1.07×**, still a premium over the dearest deals the sport has made, and the
+  rest of the league does not move — 97.4% of 8,275 blind-sampled valuations
+  come back bit-for-bit identical and nothing at or below a 92 shifts by more
+  than 0.3%. `LIMIT` is untouched at 1.20, so this thins the approach rather
+  than lowering the wall, and the top gets *less* flat: 96-to-99 goes from 72
+  points to 114. `df979f3` stands — of 205 corners and safeties rated 88+
+  walked across 22 leagues, 97.1% are worth a first, 68.8% a mid-first and
+  48.3% a top-ten pick, identical before and after. Commit `843c6c7`. Its
+  `lib/tuning.ts` half was swept into `8a3786c` by another session's pathspec
+  commit while still in the working tree, which is why the comment landed one
+  commit ahead of the constant it describes.
