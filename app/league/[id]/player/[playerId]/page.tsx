@@ -182,8 +182,16 @@ export default async function PlayerPage({
   // Older test data predates this feature — collegeStats/combineTesting
   // parse fine as "{}" (not a parse failure, so readJson's fallback never
   // kicks in) but with no real fields, so check for actual content.
-  const collegeProfileRaw = player.isDraftee ? readJson<Partial<CollegeProfile>>(player.collegeStats, {}) : null;
-  const collegeProfile = collegeProfileRaw?.games?.length ? (collegeProfileRaw as CollegeProfile) : null;
+  //
+  // NOT GATED ON isDraftee. It used to be, and being drafted therefore erased
+  // a man's college career from his own card: lib/draft.ts flips isDraftee to
+  // false on the pick, the blob stays in the database untouched, and the page
+  // simply stopped reading it. Measured on the live data: 26,852 rostered
+  // players are holding a full thirteen-game college season nobody can see.
+  // The `games?.length` test below is what the comment above is actually
+  // describing, and it already rejects the empty "{}" blobs on its own.
+  const collegeProfileRaw = readJson<Partial<CollegeProfile>>(player.collegeStats, {});
+  const collegeProfile = collegeProfileRaw.games?.length ? (collegeProfileRaw as CollegeProfile) : null;
   const combineRaw = player.isDraftee ? readJson<Partial<CombineTesting>>(player.combineTesting, {}) : null;
   const combineTesting = combineRaw?.venue ? (combineRaw as CombineTesting) : null;
   // Testing numbers are PUBLIC — every team watches the same combine — so
@@ -430,7 +438,10 @@ export default async function PlayerPage({
     K: [['fgMade', 'FG Made'], ['fgAtt', 'FG Att'], ['xpMade', 'XP Made']],
     P: [['punts', 'Punts'], ['puntYds', 'Punt Yds']],
   };
-  const collegeHeadline = collegeToDate
+  // Prospects only. The hero shows college production INSTEAD of an NFL line,
+  // so letting this fire for a rostered player would replace a ten-year
+  // veteran's season with what he did at university.
+  const collegeHeadline = player.isDraftee && collegeToDate
     ? (COLLEGE_HEADLINE[player.position] ?? [])
         .map(([key, lbl]) => [lbl, collegeToDate[key] ?? 0] as const)
         .filter(([, v]) => v > 0)
@@ -914,7 +925,7 @@ export default async function PlayerPage({
 
       {/* A prospect's production is his college tape, and it leads his card the
           way a professional's season line leads his. */}
-      {collegeProfile && collegeToDate && combineTesting && (
+      {collegeProfile && collegeToDate && (
         <div className="section">
           <SectionHeading
             title={`College Profile — ${player.college}`}
@@ -922,7 +933,11 @@ export default async function PlayerPage({
           />
           <div className="panel overflow-hidden">
             {/* Testing gets its own full-width band of equal tiles — six
-                measurements read as one workout, not a cramped 3x2 grid. */}
+                measurements read as one workout, not a cramped 3x2 grid.
+                Its own guard now: the college line above outlives the draft,
+                but combine ranks are computed against prospects still on the
+                board, so they stop being meaningful once the class is gone. */}
+            {combineTesting && (<>
             <div className="px-5 pt-4 pb-3 border-b border-line/60">
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
                 <div className="label-sm inline-flex items-center gap-1.5">
@@ -973,6 +988,7 @@ export default async function PlayerPage({
                 );
               })}
             </div>
+            </>)}
 
             <div className="p-5">
               <div className="label-sm mb-2">College Season — through week {weeksElapsed} of {COLLEGE_WEEKS}</div>
