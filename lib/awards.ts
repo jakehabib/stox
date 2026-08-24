@@ -81,6 +81,9 @@ export function offensiveScore(s: SeasonStats): number {
  * shape on a smaller sample, taken before SACKS_PER_GAME went back to the 2.3
  * the NFL actually runs and before the probe behind it was fixed to serialize
  * `trueAttrs`, without which every club in it played to the same scheme fit.
+ * (Scheme fit has since been deleted outright — see lib/sim/units.ts. The note
+ * is kept because it explains where the older, smaller-sample figures came
+ * from, not because the mechanism still exists.)
  *
  * That is a distribution target, not an outcome rule: this is still a pure
  * function of a stat line, a great safety season still beats a poor edge

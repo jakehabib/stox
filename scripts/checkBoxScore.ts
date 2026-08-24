@@ -38,7 +38,6 @@
  * ===========================================================================
  */
 import { generateRoster } from '../lib/gen/players';
-import { OFF_SCHEMES, DEF_SCHEMES } from '../lib/tuning';
 import { simulateGame, SimTeamInput } from '../lib/sim/engine';
 import { SimPlayer, SimStaff } from '../lib/sim/units';
 import { buildSchedule } from '../lib/schedule';
@@ -110,8 +109,11 @@ function canary(): void {
 /**
  * A league built the way `createLeague`'s RANDOM_ROSTERS branch builds one,
  * minus the database: same team-strength roll, same `generateRoster`, same
- * staff roll, same scheme pick. No depth chart is written, which is what the
- * engine sees for a club whose chart is empty — it sorts on merit.
+ * staff roll. No depth chart is written, which is what the engine sees for a
+ * club whose chart is empty — it sorts on merit. No pass rate is supplied
+ * either, so the engine falls back to `passTendency(team.id)` — the club's
+ * centre with no season attached, which is exactly what this harness wants:
+ * conservation is a property of the arithmetic, not of any one rate.
  *
  * `trueAttrs` MUST be serialized on the way in, exactly as lib/gen/players.ts
  * does when it writes a real row. `generateRoster` hands back an `AttrMap`
@@ -129,18 +131,13 @@ function synthLeague(seed: string): SimTeamInput[] {
   for (let c = 0; c < 2; c++) for (let d = 0; d < 4; d++) for (let k = 0; k < 4; k++) {
     const idx = out.length;
     const strength = rng.normal(0, 4);
-    const offScheme = rng.pick(OFF_SCHEMES as unknown as string[]);
-    const defScheme = rng.pick(DEF_SCHEMES as unknown as string[]);
     const roster = generateRoster(rng, strength);
-    const staff: SimStaff[] = [
-      { role: 'HC', scheme: 'Balanced' }, { role: 'OC', scheme: offScheme },
-      { role: 'DC', scheme: defScheme }, { role: 'ST', scheme: 'Balanced' },
-    ].map((r) => {
+    const staff: SimStaff[] = [{ role: 'HC' }, { role: 'OC' }, { role: 'DC' }, { role: 'ST' }].map((r) => {
       const rating = rng.normalClamped(55, 12, 25, 95);
-      return { role: r.role, scheme: r.scheme, rating, playCalling: rng.normalClamped(rating, 8, 20, 99) };
+      return { role: r.role, rating, playCalling: rng.normalClamped(rating, 8, 20, 99) };
     });
     out.push({
-      id: `T${idx}`, abbr: `T${idx}`, name: `Team ${idx}`, isUser: false, offScheme, defScheme, staff,
+      id: `T${idx}`, abbr: `T${idx}`, name: `Team ${idx}`, isUser: false, staff,
       players: roster.map((p, i): SimPlayer => ({
         id: `T${idx}-${i}`, firstName: p.firstName, lastName: p.lastName, position: p.position,
         trueOvr: p.trueOvr, trueAttrs: writeJson(p.trueAttrs), status: 'ACTIVE', injuryWeeks: 0, fatigue: 0,

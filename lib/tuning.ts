@@ -796,8 +796,37 @@ export const SIM = {
   TURNOVER_RATE_BASE: 0.11,
   /** Unit-score points granted per 10 points of coordinator skill above 50. */
   COORD_WEIGHT: 0.6,
-  /** Scheme fit bonus applied to unit score when roster matches scheme. */
-  SCHEME_FIT_MAX: 2.5,
+  /**
+   * [TUNE] A constant added to every club's OFFENSIVE unit score, and to no
+   * club's defensive one.
+   *
+   * THIS IS CALIBRATION RESIDUE MADE EXPLICIT, NOT A MECHANIC. It replaces
+   * SCHEME_FIT_MAX, which paid a roster-match bonus of up to 2.5 rating points
+   * on both sides of the ball through `schemeFit` (deleted — see the note in
+   * lib/sim/units.ts for why, and for the measurement showing a Balanced club
+   * was 1.2 points behind the field under a comment claiming it never was).
+   *
+   * The drive loop only ever reads `off - def`, so a term on both sides mostly
+   * cancelled. What did not cancel: the offensive emphasis lists scored +1.01
+   * mean where the defensive ones scored +0.64, leaving a net +0.37 rating
+   * points of offensive edge baked into the 137a1e2 calibration. Deleting the
+   * term without replacing it moved league scoring -0.34 points and total yards
+   * -2.31 a game, consistently on all three seed-sets.
+   *
+   * 0.40 OFF A SWEEP, not off the +0.37 the mechanism predicts — close enough
+   * to each other to be a good check on both. Three seed-sets x 8 seasons,
+   * against the frozen HEAD engine on identical rosters and seeds:
+   *
+   *   baseline   points/g          total yds/g        verdict
+   *   +0.00      22.06  (-0.34)    342.88  (-2.31)    consistent on all 3 seeds
+   *   +0.25      22.32  (-0.08)    344.80  (-0.39)    no consistent shift
+   *   +0.30      22.25  (-0.14)    344.45  (-0.74)    no consistent shift
+   *   +0.35      22.28  (-0.12)    344.56  (-0.63)    no consistent shift
+   *   +0.40      22.40  (+0.00)    345.23  (+0.04)    no consistent shift
+   *
+   * BASE was 22.396 and 345.19, so +0.40 lands on it to three decimal places.
+   */
+  OFFENSE_BASELINE: 0.40,
   /** Fatigue accrued per game; reduces effective rating next week if unrested. */
   FATIGUE_PER_GAME: 18,
   FATIGUE_RECOVERY: 22,
@@ -2240,19 +2269,19 @@ export const TRADE_VALUE = {
 // ---------------------------------------------------------------------------
 // Schemes [SAFE]
 // ---------------------------------------------------------------------------
-export const OFF_SCHEMES = ['Balanced', 'Air Raid', 'West Coast', 'Power Run', 'Spread Option'] as const;
-export const DEF_SCHEMES = ['4-3 Base', '3-4 Base', 'Nickel Heavy', 'Cover 3 Zone', 'Man Press'] as const;
-
-/** Which attributes a scheme leans on. Fit bonus scales with roster match. */
-export const SCHEME_EMPHASIS: Record<string, { pos: Position; attr: string }[]> = {
-  'Air Raid':      [{ pos: 'QB', attr: 'armStrength' }, { pos: 'WR', attr: 'speed' }, { pos: 'WR', attr: 'route' }],
-  'West Coast':    [{ pos: 'QB', attr: 'accuracy' }, { pos: 'TE', attr: 'catching' }, { pos: 'RB', attr: 'catching' }],
-  'Power Run':     [{ pos: 'RB', attr: 'power' }, { pos: 'LG', attr: 'runBlock' }, { pos: 'RG', attr: 'runBlock' }],
-  'Spread Option': [{ pos: 'QB', attr: 'speed' }, { pos: 'RB', attr: 'elusiveness' }, { pos: 'WR', attr: 'speed' }],
-  'Balanced':      [],
-  '4-3 Base':      [{ pos: 'EDGE', attr: 'passRush' }, { pos: 'LB', attr: 'tackling' }],
-  '3-4 Base':      [{ pos: 'DT', attr: 'strength' }, { pos: 'LB', attr: 'passRush' }],
-  'Nickel Heavy':  [{ pos: 'CB', attr: 'coverage' }, { pos: 'S', attr: 'coverage' }],
-  'Cover 3 Zone':  [{ pos: 'S', attr: 'awareness' }, { pos: 'CB', attr: 'awareness' }],
-  'Man Press':     [{ pos: 'CB', attr: 'press' }, { pos: 'CB', attr: 'speed' }],
-};
+/*
+ * THERE ARE NO NAMED SCHEMES. OFF_SCHEMES, DEF_SCHEMES and SCHEME_EMPHASIS all
+ * lived here and are deleted.
+ *
+ * The five offensive names carried play-call pass rates from 0.46 to 0.68, and
+ * across 192 real team-seasons not one reached 0.68 — the league-wide spread
+ * was 1.54x the real one, and it was frozen at league creation and never
+ * changed. The emphasis table paid a rating bonus for matching a scheme, which
+ * is the thing the app owner ruled out: *"I don't like the bonus points for
+ * scheme fits. Lets just have everyone balanced, no indications needed to the
+ * player it's just background."*
+ *
+ * How often a club throws it is now lib/sim/tendency.ts — a club centre plus a
+ * seasonal draw, both sized off a variance decomposition of real NFL play
+ * calling, with no name, no bonus and nothing shown to the player.
+ */

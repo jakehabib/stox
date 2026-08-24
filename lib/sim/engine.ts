@@ -3,6 +3,7 @@ import { SIM } from '../tuning';
 import { LeagueSettings, DIFFICULTY_MODS } from '../settings';
 import { BoxScore, BoxLine, DriveResult, SeasonStats, TeamGameStats } from '../types';
 import { computeUnits, SimPlayer, SimStaff, UnitRatings, effectiveRating, isAvailable, REPLACEMENT_LEVEL } from './units';
+import { passTendency, PASS_TENDENCY } from './tendency';
 import { readJson } from '../json';
 import { AttrMap } from '../ratings';
 
@@ -46,8 +47,13 @@ export interface SimTeamInput {
   abbr: string;
   name: string;
   isUser: boolean;
-  offScheme: string;
-  defScheme: string;
+  /**
+   * The share of play calls this club passes on, this season. Supplied by the
+   * caller because it depends on the league year, which the engine has no
+   * other way to know; `passTendency(team.id)` is the fallback and returns the
+   * club's centre with no particular season attached. See lib/sim/tendency.ts.
+   */
+  passRate?: number;
   players: SimPlayer[];
   staff: SimStaff[];
   /** Optional user-set depth chart (position -> ordered player ids). */
@@ -75,8 +81,8 @@ export function simulateGame(
   const variance = Math.max(0, settings.simVariance);
   const diff = DIFFICULTY_MODS[settings.difficulty];
 
-  const homeUnits = computeUnits(home.players, home.staff, home.offScheme, home.defScheme, home.depthOrder);
-  const awayUnits = computeUnits(away.players, away.staff, away.offScheme, away.defScheme, away.depthOrder);
+  const homeUnits = computeUnits(home.players, home.staff, home.depthOrder);
+  const awayUnits = computeUnits(away.players, away.staff, away.depthOrder);
 
   // Difficulty tilts every AI team, never the user's.
   const aiTilt = (t: SimTeamInput) => (t.isUser ? 0 : diff.aiUnitBonus);
@@ -401,12 +407,6 @@ function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
 
-/** Pass/run split by scheme, as a share of PLAY CALLS. [TUNE] */
-const SCHEME_PASS_RATE: Record<string, number> = {
-  'Air Raid': 0.68, 'West Coast': 0.60, 'Spread Option': 0.55,
-  'Power Run': 0.46, 'Balanced': 0.57,
-};
-
 /**
  * ---------------------------------------------------------------------------
  * WHY YARDS ARE NOT SPLIT BY THE PLAY-CALL RATE
@@ -436,15 +436,20 @@ function passYardShareFor(rate: number): number {
 }
 
 /**
- * The mean of `passYardShareFor` across the schemes, DERIVED rather than
- * written down, so that editing SCHEME_PASS_RATE cannot silently move the
- * league-wide pass/run touchdown split off PASS_TD_SHARE. See
- * TD_SPLIT_SCHEME_SLOPE for what it anchors.
+ * The league-average share of yardage that goes through the air, DERIVED from
+ * PASS_TENDENCY.LEAGUE_MEAN rather than written down, so that retuning the
+ * league's play-call rate cannot silently move the pass/run touchdown split off
+ * PASS_TD_SHARE. See TD_SPLIT_SCHEME_SLOPE for what it anchors.
+ *
+ * This used to be the mean of `passYardShareFor` across the five scheme rates,
+ * which came to 0.6602; anchored on the league mean it is 0.6624. The gap is
+ * Jensen's inequality — `passYardShareFor` is concave, so the mean of the
+ * function over a spread of rates sits below the function of the mean. Computed
+ * exactly over the tendency distribution it would be 0.6617, a further 0.0007
+ * away, which is immaterial against a per-game noise term of sd 0.06 and is not
+ * worth an integral in a hot path.
  */
-const LEAGUE_PASS_YARD_SHARE = (() => {
-  const shares = Object.values(SCHEME_PASS_RATE).map(passYardShareFor);
-  return shares.reduce((a, b) => a + b, 0) / shares.length;
-})();
+const LEAGUE_PASS_YARD_SHARE = passYardShareFor(PASS_TENDENCY.LEAGUE_MEAN);
 
 /**
  * [TUNE] How many tackles a game the fourteen defenders this sim actually
@@ -495,22 +500,24 @@ const PASS_TD_SHARE = 0.62;
 
 /**
  * ---------------------------------------------------------------------------
- * A TEAM'S TOUCHDOWNS FOLLOW ITS YARDS, WHICH FOLLOW ITS SCHEME
+ * A TEAM'S TOUCHDOWNS FOLLOW ITS YARDS, WHICH FOLLOW HOW OFTEN IT RUNS
  * ---------------------------------------------------------------------------
  * The pass/run touchdown split used to be a flat PASS_TD_SHARE for every club
  * in the league, while the pass/run YARDAGE split ten lines above it already
- * moved with the scheme. Two halves of one box score disagreeing about whether
- * a team runs the ball.
+ * moved with how often the club threw it. Two halves of one box score
+ * disagreeing about whether a team runs the ball.
  *
  * Measured over 120 league-seasons, that is what a lead back's touchdown column
- * looked like across the five schemes:
+ * looked like. These rows are labelled with the five named schemes the game
+ * carried at the time, since deleted — read them as five points on the
+ * play-call-rate axis that lib/sim/tendency.ts now supplies continuously:
  *
- *   scheme          team rush att/g   his rush yds   his rush TD   yds per TD
- *   Power Run                  32.3           1349           8.3          163
- *   Spread Option              27.1           1072           8.5          126
- *   Balanced                   25.7            990           8.1          122
- *   West Coast                 24.0            926           8.6          108
- *   Air Raid                   19.3            689           8.6           80
+ *   (pass rate)     team rush att/g   his rush yds   his rush TD   yds per TD
+ *   0.46                       32.3           1349           8.3          163
+ *   0.55                       27.1           1072           8.5          126
+ *   0.57                       25.7            990           8.1          122
+ *   0.60                       24.0            926           8.6          108
+ *   0.68                       19.3            689           8.6           80
  *
  * The yardage column doubles and the touchdown column does not move at all: a
  * back's rushing touchdowns were independent of how much his team ran the ball,
@@ -532,11 +539,12 @@ const PASS_TD_SHARE = 0.62;
  * 62.8 / 62.8% before and 62.8 / 62.5 / 62.8% after, on three seed-sets.
  *
  * 0.8, OFF A SWEEP, AND THE COLUMN THAT CHOSE IT IS THE PASSING ONE. Every
- * touchdown this takes off an Air Raid running back is handed to that club's
- * quarterback, so the price of the fix is paid in the passing record book.
- * Over the same 120 league-seasons:
+ * touchdown this takes off a pass-heavy club's running back is handed to that
+ * club's quarterback, so the price of the fix is paid in the passing record
+ * book. Over the same 120 league-seasons (the two TD columns are the most
+ * run-heavy and most pass-heavy of the five rates tabulated above):
  *
- *   slope   PowRun TD  AirRaid TD  ratio   rush TD leader  pass TD leader  13TD&<700yd
+ *   slope    run-hvy TD  pass-hvy TD  ratio  rush TD leader  pass TD leader  13TD&<700yd
  *   0.0           8.3         8.6  0.97x            15.4            42.5           17
  *   0.4           9.3         7.7  1.21x            15.7            42.8            3
  *   0.6           9.8         7.3  1.34x            16.0            43.2            1
@@ -557,8 +565,9 @@ const PASS_TD_SHARE = 0.62;
  * makes the seeded record beatable in year one. At 0.8 the best of 120 is 58,
  * exactly where the unchanged engine's own tail already sits on a second
  * seed-set, so the tail is not made worse than it was. 0.4 and 0.6 are rejected
- * from the other end: they leave the scheme spread at 1.21-1.34x against a real
- * ~1.9x and still leave the 13-touchdown-on-650-yards season on the table.
+ * from the other end: they leave the run-heavy-to-pass-heavy spread at
+ * 1.21-1.34x against a real ~1.9x and still leave the 13-touchdown-on-650-yards
+ * season on the table.
  *
  * 0.8's 1.55x is deliberately short of the real ~1.9x. That last stretch costs
  * more in the passing record book than it buys in the rushing one, and the two
@@ -774,7 +783,7 @@ function allocateStats(
   opp: Accumulator,
 ): BoxLine[] {
   const lines: BoxLine[] = [];
-  const passRate = SCHEME_PASS_RATE[team.offScheme] ?? 0.57;
+  const passRate = team.passRate ?? passTendency(team.id);
   const totalYards = Math.max(120, own.yards);
   // Yards follow yards-per-attempt, not the play-call rate. See above.
   const passYardShare = (passRate * YARDS_PER_PASS)
@@ -789,8 +798,8 @@ function allocateStats(
   // actually had rather than a league-wide constant — see
   // TD_SPLIT_SCHEME_SLOPE. Read off the REALISED yardage split rather than off
   // `passYardShare`, so a game a team happened to run the ball in is a game it
-  // happened to score on the ground in; the deterministic scheme value was the
-  // alternative and it throws that coupling away for nothing.
+  // happened to score on the ground in; the club's flat season pass rate was
+  // the alternative and it throws that coupling away for nothing.
   const passTdShare = clamp(
     PASS_TD_SHARE + TD_SPLIT_SCHEME_SLOPE * (passYards / totalYards - LEAGUE_PASS_YARD_SHARE),
     0.2, 0.9,

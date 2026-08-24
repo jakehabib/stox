@@ -1,6 +1,6 @@
 import { prisma } from '../db';
 import { Rng, clamp } from '../rng';
-import { LEAGUE, CAP, OFF_SCHEMES, DEF_SCHEMES, Position, POSITIONS, ROSTER_TARGETS, SCOUTING, GENERATION, FREE_AGENCY } from '../tuning';
+import { LEAGUE, CAP, Position, POSITIONS, ROSTER_TARGETS, SCOUTING, GENERATION, FREE_AGENCY } from '../tuning';
 import { LeagueSettings, serializeSettings, DEFAULT_SETTINGS } from '../settings';
 import { TEAM_SEEDS, COACH_FIRST, COACH_LAST, FIRST_NAMES, LAST_NAMES, NameRegistry } from './names';
 import { generateRoster, generatePlayer, toPlayerCreate, GeneratedPlayer } from './players';
@@ -283,8 +283,6 @@ export async function createLeague(opts: {
     division: t.division,
     isUser: t.abbr === opts.userTeamAbbr,
     prestige: rng.int(30, 80),
-    offScheme: rng.pick(OFF_SCHEMES),
-    defScheme: rng.pick(DEF_SCHEMES),
     gmProfile: writeJson(defaultGmProfile(rng, strengthByAbbr.get(t.abbr))),
   }));
   await prisma.team.createMany({ data: teamRows });
@@ -304,11 +302,11 @@ export async function createLeague(opts: {
   const staffRows: any[] = [];
   const scoutRows: any[] = [];
   for (const team of teams) {
-    const roles: { role: string; scheme: string }[] = [
-      { role: 'HC', scheme: 'Balanced' },
-      { role: 'OC', scheme: team.offScheme },
-      { role: 'DC', scheme: team.defScheme },
-      { role: 'ST', scheme: 'Balanced' },
+    // A coordinator no longer carries a scheme string. It was a copy of his
+    // club's `offScheme`/`defScheme`, it was read only by the deleted
+    // `schemeFit`, and it was never rendered on any screen.
+    const roles: { role: string }[] = [
+      { role: 'HC' }, { role: 'OC' }, { role: 'DC' }, { role: 'ST' },
     ];
     for (const r of roles) {
       // [TUNE] staff ratings cluster around 55 with a long tail of good coaches.
@@ -320,7 +318,6 @@ export async function createLeague(opts: {
         rating,
         playCalling: rng.normalClamped(rating, 8, 20, 99),
         development: rng.normalClamped(rating, 10, 20, 99),
-        scheme: r.scheme,
         contractYears: rng.int(1, 5),
         salary: Math.round(rng.float(1.5, 9) * 1_000_000),
       });
@@ -727,12 +724,14 @@ export async function dropOrphanDepthChartSlots(leagueId: string): Promise<numbe
  *     mean gap   1.12  2.28  3.32  6.74 10.27 11.56 11.33   rating points
  *     clubs >=5   8%   17%   25%   45%   59%   75%   58%
  *
- * WHAT THAT COSTS, HONESTLY. It is NOT wins. `positionUnitRating` in
- * lib/sim/units.ts re-sorts its input by rating, so every unit-weighted term
- * the engine scores a game with is order-INVARIANT; the only channel from the
- * chart to the scoreboard is `schemeFit`, which reads `depth[pos][0]`, and
- * that moved off/def by a mean of 0.19 and a maximum of 3.57 rating points
- * across 1,216 clubs (scripts/_dc_effect.ts). What it costs is the BOX SCORE:
+ * WHAT THAT COSTS, HONESTLY. It is NOT wins, and it is now not wins at all.
+ * `positionUnitRating` in lib/sim/units.ts re-sorts its input by rating, so
+ * every unit-weighted term the engine scores a game with is order-INVARIANT.
+ * There used to be exactly one exception — `schemeFit` read `depth[pos][0]`,
+ * so chart order moved off/def by a mean of 0.19 and a maximum of 3.57 rating
+ * points across 1,216 clubs (scripts/_dc_effect.ts). That term is deleted (see
+ * lib/sim/units.ts), so the chart's effect on the SCOREBOARD is now exactly
+ * zero. What it costs is entirely the BOX SCORE:
  * `allocateStats` hands targets, carries, tackles and the passing line to
  * `units.depth[pos]` in chart order, and on those same 1,216 clubs 5.9% were
  * about to give their passing line to a quarterback who was not their best,

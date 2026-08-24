@@ -5,6 +5,7 @@ import { CAP, CONTRACT, FREE_AGENCY, LEAGUE, Position, PROGRESSION, RESIGN, ROST
 import { parseSettings, LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { simulateGame, SimTeamInput } from './sim/engine';
+import { passTendency } from './sim/tendency';
 import { generateRecap } from './sim/recap';
 import { SimPlayer, SimStaff } from './sim/units';
 import { retirementChance, bumpForMilestone } from './progression';
@@ -900,7 +901,9 @@ async function maybeMakeAiTradeOffer(leagueId: string, seasonYear: number, week:
 
 export async function simulateAndSaveGame(leagueId: string, gameId: string, settings: ReturnType<typeof parseSettings>, rng: Rng) {
   const game = await prisma.game.findUniqueOrThrow({ where: { id: gameId } });
-  const [home, away] = await Promise.all([loadSimTeam(game.homeTeamId), loadSimTeam(game.awayTeamId)]);
+  const [home, away] = await Promise.all([
+    loadSimTeam(game.homeTeamId, game.seasonYear), loadSimTeam(game.awayTeamId, game.seasonYear),
+  ]);
 
   const result = simulateGame(home, away, settings, rng, { allowTie: true });
   const recap = generateRecap(result.boxScore, settings, rng);
@@ -1036,7 +1039,13 @@ function fatigueMapToInjuries(result: Awaited<ReturnType<typeof simulateGame>>) 
   return map;
 }
 
-async function loadSimTeam(teamId: string): Promise<SimTeamInput> {
+/**
+ * `seasonYear` is passed in because a club's play-call pass rate is a fact
+ * about the SEASON as well as the club — see lib/sim/tendency.ts, where a
+ * stable club centre is combined with a seasonal draw. The engine has no way to
+ * know the league year on its own.
+ */
+async function loadSimTeam(teamId: string, seasonYear: number): Promise<SimTeamInput> {
   const [team, players, staff, depthSlots] = await Promise.all([
     prisma.team.findUniqueOrThrow({ where: { id: teamId } }),
     prisma.player.findMany({ where: { teamId, status: 'ACTIVE' } }),
@@ -1049,12 +1058,12 @@ async function loadSimTeam(teamId: string): Promise<SimTeamInput> {
 
   return {
     id: team.id, abbr: team.abbr, name: `${team.city} ${team.nickname}`, isUser: team.isUser,
-    offScheme: team.offScheme, defScheme: team.defScheme,
+    passRate: passTendency(team.id, seasonYear),
     players: players.map((p): SimPlayer => ({
       id: p.id, firstName: p.firstName, lastName: p.lastName, position: p.position,
       trueOvr: p.trueOvr, trueAttrs: p.trueAttrs, status: p.status, injuryWeeks: p.injuryWeeks, fatigue: p.fatigue,
     })),
-    staff: staff.map((s): SimStaff => ({ role: s.role, playCalling: s.playCalling, rating: s.rating, scheme: s.scheme })),
+    staff: staff.map((s): SimStaff => ({ role: s.role, playCalling: s.playCalling, rating: s.rating })),
     depthOrder,
   };
 }

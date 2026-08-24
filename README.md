@@ -121,12 +121,13 @@ npm run build         # production build: generates the Prisma client,
    season box score (revealed progressively across the NFL season) plus
    combine/pro-day testing and a competition-strength grade.
 4. **Depth Chart** — reorder each position group with the ▲/▼ buttons. This is
-   the order the sim allocates the ball and the tackles in, and it feeds scheme
-   fit — so it decides who leads your team in receiving, not who wins you the
+   the order the sim allocates the ball and the tackles in — so it decides who
+   leads your team in receiving, not who wins you the
    game. The unit ratings that actually decide a game read the best available
-   man at each position regardless of chart order (measured: moving a chart
-   around moves a club's offensive and defensive ratings by 0.19 points on
-   average, entirely through scheme fit). Unavailable men are filtered out
+   man at each position regardless of chart order. Chart order used to move a
+   club's offensive and defensive ratings by 0.19 points on average through
+   scheme fit; that term is deleted, so its effect on the scoreboard is now
+   exactly zero. Unavailable men are filtered out
    *before* the order is read, so an injured starter is not something to
    reorder around — his backup starts on his own.
    Every row carries its cap hit and every group header carries "$X committed

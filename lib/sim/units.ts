@@ -1,10 +1,6 @@
 import {
-  SIM, OFFENSE_UNIT_WEIGHTS, DEFENSE_UNIT_WEIGHTS, UNIT_DEPTH_WEIGHTS,
-  SCHEME_EMPHASIS, Position,
+  SIM, OFFENSE_UNIT_WEIGHTS, DEFENSE_UNIT_WEIGHTS, UNIT_DEPTH_WEIGHTS, Position,
 } from '../tuning';
-import { readJson } from '../json';
-import { AttrMap } from '../ratings';
-import { clamp } from '../rng';
 
 export interface SimPlayer {
   id: string;
@@ -22,7 +18,6 @@ export interface SimStaff {
   role: string;
   playCalling: number;
   rating: number;
-  scheme: string;
 }
 
 export interface UnitRatings {
@@ -32,8 +27,6 @@ export interface UnitRatings {
   byPosition: Record<string, number>;
   /** Who is actually on the field, in depth order, per position. */
   depth: Record<string, SimPlayer[]>;
-  schemeFitOff: number;
-  schemeFitDef: number;
 }
 
 export function isAvailable(p: SimPlayer): boolean {
@@ -76,21 +69,40 @@ export function positionUnitRating(players: SimPlayer[], position: Position): nu
   return wTotal > 0 ? sum / wTotal : REPLACEMENT_LEVEL;
 }
 
-/** 0..1 measure of how well the roster matches the chosen scheme. */
-export function schemeFit(depth: Record<string, SimPlayer[]>, scheme: string): number {
-  const emphasis = SCHEME_EMPHASIS[scheme] ?? [];
-  if (emphasis.length === 0) return 0.5; // Balanced schemes are never a bad fit.
-  let total = 0;
-  for (const e of emphasis) {
-    const starter = depth[e.pos]?.[0];
-    if (!starter) { total += 0.35; continue; }
-    const attrs = readJson<AttrMap>(starter.trueAttrs, {});
-    const v = attrs[e.attr] ?? 60;
-    // 60 is a neutral fit, 90 is a perfect fit. [TUNE]
-    total += clamp((v - 55) / 35, 0, 1);
-  }
-  return total / emphasis.length;
-}
+/*
+ * ---------------------------------------------------------------------------
+ * THERE IS NO SCHEME FIT ANY MORE, AND THE COMMENT THAT USED TO SIT HERE WAS
+ * WRONG ON ITS OWN ARITHMETIC
+ * ---------------------------------------------------------------------------
+ * `schemeFit` returned 0..1 for how well a roster matched one of five named
+ * schemes, and `computeUnits` paid it out as `(fit - 0.5) * 2 * SCHEME_FIT_MAX`
+ * on BOTH sides of the ball. Its docstring read "Balanced schemes are never a
+ * bad fit", justifying the hard-coded 0.5 it returned for an empty emphasis
+ * list. That claim was false in the only sense that mattered. Measured over 96
+ * clubs, the rating points the term actually added:
+ *
+ *     Air Raid +1.04   West Coast +1.34   Balanced 0.00
+ *     Spread Option +1.13   Power Run +1.28
+ *
+ * A Balanced club was not "never a bad fit" — it was 1.2 rating points behind
+ * the field, every week, because 0.5 is only neutral on the 0..1 scale and a
+ * typical 75-rated starter scores about 0.7. Four fifths of the league drew an
+ * unconditional bonus and the other fifth paid for it.
+ *
+ * The app owner's ruling was to delete rather than repair: *"I don't like the
+ * bonus points for scheme fits."* So the term, the five scheme names and
+ * SCHEME_EMPHASIS are all gone. How often a club throws it now lives in
+ * lib/sim/tendency.ts, where it is a play-call rate and not a rating bonus.
+ *
+ * WHAT THAT COST, AND WHY OFFENSE_BASELINE EXISTS. The term was on both sides
+ * of a subtraction — the drive loop only ever reads `off - def` — so most of it
+ * cancelled. What did not cancel is that the OFFENSIVE emphasis lists happened
+ * to score higher than the DEFENSIVE ones: +1.01 mean against +0.64, a net
+ * +0.37 rating points of offensive edge that the 137a1e2 calibration was
+ * performed with. Deleting the term without replacing that constant moved
+ * league scoring by -0.34 points and total yards by -2.31 a game, consistently
+ * on all three seed-sets. See SIM.OFFENSE_BASELINE.
+ */
 
 /**
  * Order one position group against a depth chart that may not mention
@@ -143,8 +155,6 @@ export function mergeUnnamed(players: SimPlayer[], override: string[]): SimPlaye
 export function computeUnits(
   players: SimPlayer[],
   staff: SimStaff[],
-  offScheme: string,
-  defScheme: string,
   /**
    * User-set depth chart: position -> ordered player ids. A player the chart
    * does not name is slotted in ON MERIT rather than dumped at the bottom —
@@ -191,16 +201,14 @@ export function computeUnits(
   const coordBonus = (s?: SimStaff) => (s ? ((s.playCalling - 50) / 10) * SIM.COORD_WEIGHT : 0);
   const hcBonus = hc ? ((hc.rating - 50) / 10) * SIM.COORD_WEIGHT * 0.5 : 0;
 
-  const fitOff = schemeFit(depth, offScheme);
-  const fitDef = schemeFit(depth, defScheme);
-
   return {
-    off: weightedSum(OFFENSE_UNIT_WEIGHTS) + coordBonus(oc) + hcBonus + (fitOff - 0.5) * 2 * SIM.SCHEME_FIT_MAX,
-    def: weightedSum(DEFENSE_UNIT_WEIGHTS) + coordBonus(dc) + hcBonus + (fitDef - 0.5) * 2 * SIM.SCHEME_FIT_MAX,
+    // OFFENSE_BASELINE replaces the net offensive edge the deleted scheme-fit
+    // term used to carry. It is calibration residue made explicit, not a new
+    // mechanic: it is the same number for every club in every game.
+    off: weightedSum(OFFENSE_UNIT_WEIGHTS) + coordBonus(oc) + hcBonus + SIM.OFFENSE_BASELINE,
+    def: weightedSum(DEFENSE_UNIT_WEIGHTS) + coordBonus(dc) + hcBonus,
     special: (byPosition.K ?? REPLACEMENT_LEVEL) * 0.6 + (byPosition.P ?? REPLACEMENT_LEVEL) * 0.4,
     byPosition,
     depth,
-    schemeFitOff: fitOff,
-    schemeFitDef: fitDef,
   };
 }

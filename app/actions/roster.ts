@@ -619,12 +619,3 @@ export async function autoSortDepthChartAction(teamId: string) {
   revalidatePath(`/league/${team.leagueId}/depth-chart`);
 }
 
-export async function setTeamSchemeAction(teamId: string, offScheme?: string, defScheme?: string) {
-  await assertTeamOwner(teamId);
-  const data: any = {};
-  if (offScheme) data.offScheme = offScheme;
-  if (defScheme) data.defScheme = defScheme;
-  await prisma.team.update({ where: { id: teamId }, data });
-  const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
-  revalidatePath(`/league/${team.leagueId}`, 'layout');
-}

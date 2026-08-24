@@ -180,8 +180,6 @@ model Team {
 
   // Team identity / AI personality --------------------------------------------
   prestige  Int    @default(50) // 0-100, drives FA attraction. PLACEHOLDER weight.
-  offScheme String @default("Balanced") // see lib/tuning.ts SCHEMES
-  defScheme String @default("4-3 Base")
   // AI GM personality knobs, JSON string: { aggression, winNow, valueDraftPicks, ... }
   gmProfile String @default("{}")
 
@@ -240,7 +238,6 @@ model Staff {
   rating        Int    @default(50)
   playCalling   Int    @default(50) // in-game boost to unit score
   development   Int    @default(50) // offseason progression boost
-  scheme        String @default("Balanced")
   contractYears Int    @default(3)
   salary        Int    @default(3000000)
 
