@@ -186,6 +186,67 @@ export async function buildFrontOfficeBrief(
    * (lib/season.ts). Those are different facts on different screens, and only
    * the "go and do something about him now" prompt is answered by parking him.
    */
+  /**
+   * ===========================================================================
+   * A FIFTH-YEAR OPTION IS WAITING ON AN ANSWER
+   * ===========================================================================
+   * This is the item the feature needs, and it is the reason the option did not
+   * get a press of its own in `OFFSEASON_STEPS`. The decision is live in exactly
+   * one window, it is answered once and never again, and it lives on the
+   * player's own card — which nobody opens unless something sends them there.
+   * The brief is this game's standing home for "things waiting on you", so it is
+   * what sends them.
+   *
+   * IT IS EMITTED BEFORE THE EXPIRING-CONTRACT ITEM RATHER THAN SORTED ABOVE
+   * IT. Both are `Contracts` and the urgency ordering is by CATEGORY, so within
+   * one category the emission order is the ranking — and the one with a hard
+   * deadline has to come first. An expiring contract can be worked next week and
+   * the week after; an option that is not answered before the window shuts is
+   * answered by the calendar, in the expensive direction, with nothing on any
+   * screen having said so.
+   *
+   * AND IT TAKES THE MAN OFF THE EXPIRING LIST BELOW, which is not tidiness —
+   * it is that the two items disagree. His deal does not simply "expire soon":
+   * whether it does is the question this item is asking, and the answer is a
+   * button on the card both items link to. Measured on a live save before the
+   * exclusion, the brief carried "Ignacio Hidalgo's fifth-year option is due"
+   * and "Ignacio Hidalgo's contract expires soon" one above the other, which is
+   * the same man read twice on one panel — principle 7's actual definition of
+   * clutter. He rejoins the expiring list the moment the option is declined,
+   * because then it is true.
+   *
+   * IT NAMES ONE MAN AND COUNTS THE REST, the same shape as every other item
+   * here: a headline a GM can act on and a door out of it, not a list. The door
+   * is his contract face, which is where the control and the price actually are.
+   */
+  const dueOptions = league.phase === 'RESIGN'
+    ? await prisma.player.findMany({
+      where: {
+        teamId, status: 'ACTIVE', draftRound: 1,
+        contract: { isRookieDeal: true, yearsRemaining: 1, fifthYearOption: null },
+      },
+      orderBy: { trueOvr: 'desc' },
+      select: { id: true, firstName: true, lastName: true },
+    })
+    : [];
+  if (dueOptions.length > 0) {
+    const man = dueOptions[0];
+    const others = dueOptions.length - 1;
+    items.push({
+      category: 'Contracts',
+      headline: `${man.firstName} ${man.lastName}'s fifth-year option is due`
+        + (others > 0 ? ` — and ${others} more` : ''),
+      detail: `He is a first-round pick with one year of his rookie deal left, so his option has to be answered `
+        + `now or not at all. Pick it up and you control him for a fifth season at a price his position sets, `
+        + `fully guaranteed from the moment you say yes. Turn it down and he is a free agent a year early.`,
+      action: 'Answer it',
+      // Straight to the money, the same as the expiring-contract item below:
+      // the button says "answer it", and without ?view=contract the card opens
+      // on his passing yards.
+      href: `/player/${man.id}?view=contract`,
+    });
+  }
+
   const setAside = await prisma.negotiationTalks.findMany({
     where: { teamId, seasonYear, dismissedAt: { not: null } },
     select: { playerId: true },
@@ -193,7 +254,12 @@ export async function buildFrontOfficeBrief(
   const expiring = await prisma.player.findFirst({
     where: {
       teamId, contract: { yearsRemaining: { lte: 1 } }, status: 'ACTIVE',
-      ...(setAside.length > 0 ? { id: { notIn: setAside.map((r) => r.playerId) } } : {}),
+      // Parked men, and men whose fifth-year option is the live question about
+      // their deal — see the option item above for why the second exclusion is
+      // correctness rather than tidiness.
+      ...(setAside.length + dueOptions.length > 0
+        ? { id: { notIn: [...setAside.map((r) => r.playerId), ...dueOptions.map((p) => p.id)] } }
+        : {}),
     },
     orderBy: { trueOvr: 'desc' },
   });

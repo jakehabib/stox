@@ -8,6 +8,7 @@ import { CapMode } from '@/lib/types';
 import { DeltaChip, deltaTint, useDeltaWatch } from './ds/DeltaChip';
 import { formatMoney } from '@/lib/cap';
 import { FranchiseTagButton } from './FranchiseTagButton';
+import { FifthYearOptionButton } from './FifthYearOptionButton';
 import { contractClockSentence } from '@/lib/contractClock';
 
 interface ContractShape {
@@ -71,7 +72,7 @@ interface ContractShape {
  */
 export function ContractActions({
   leagueId, playerId, playerName, ovr, position, age, contract,
-  availableSpaceForExtension, capSpace, capMode, resignHref, tag,
+  availableSpaceForExtension, capSpace, capMode, resignHref, tag, option,
 }: {
   leagueId: string; playerId: string; playerName: string; ovr: number; position: string; age: number;
   contract: ContractShape; availableSpaceForExtension: number; capSpace: number; capMode: CapMode;
@@ -90,6 +91,14 @@ export function ContractActions({
    * pressed and a sentence naming the reason when it cannot.
    */
   tag: { blocked: string | null; isTagged: boolean };
+  /**
+   * NULL FOR ALMOST EVERY MAN IN THE GAME, and that is the rule rather than a
+   * default: only a first-round pick still on his rookie deal has a fifth-year
+   * option at all, so there is nothing to grey out or explain on anybody else's
+   * card. Non-null carries the answer already given, or `blocked` naming why it
+   * cannot be given yet — the same sentence the server refuses with.
+   */
+  option: { blocked: string | null; decided: 'EXERCISED' | 'DECLINED' | null; optionYear: number } | null;
 }) {
   const [mode, setMode] = useState<'none' | 'extend' | 'restructure'>('none');
   const cap = useDeltaWatch(capSpace);
@@ -155,7 +164,23 @@ export function ContractActions({
             // Suppressed for a tagged man: the tag control's own line already
             // says what his season is, and two sentences about the same year
             // is how a card starts reading like a form.
-            !tag.isTagged && <p className="text-sm text-muted">{contractClockSentence(contract.yearsRemaining)}</p>
+            //
+            // Suppressed for a man with an option on his deal for a stronger
+            // reason than tidiness — this sentence would be FALSE. It reads
+            // "he is next offseason's question, not this one's", which is
+            // exactly right for an ordinary man at one year left and exactly
+            // wrong for a first-rounder whose option is answered in this
+            // window and never again. The option control owns his clock.
+            !tag.isTagged && !option && <p className="text-sm text-muted">{contractClockSentence(contract.yearsRemaining)}</p>
+          )}
+          {/* ABOVE THE TAG, because for the man who has both it is the only one
+              of the two that can actually be pressed: the tag is for a deal
+              that is UP, and his has a season to run. */}
+          {option && (
+            <FifthYearOptionButton
+              leagueId={leagueId} playerId={playerId} playerName={playerName}
+              blocked={option.blocked} decided={option.decided} optionYear={option.optionYear}
+            />
           )}
           {/* WHERE THE TAG LIVES NOW. In the box with the other contract
               decisions, at their size, live or greyed — and never for a man
@@ -169,10 +194,23 @@ export function ContractActions({
           />
         </div>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          <button onClick={() => setMode('extend')} className="btn-primary">Negotiate Extension</button>
-          {capMode === 'REALISTIC' && (
-            <button onClick={() => setMode('restructure')} className="btn-secondary">Restructure</button>
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => setMode('extend')} className="btn-primary">Negotiate Extension</button>
+            {capMode === 'REALISTIC' && (
+              <button onClick={() => setMode('restructure')} className="btn-secondary">Restructure</button>
+            )}
+          </div>
+          {/* A man whose option has just been PICKED UP has two years left and
+              lands here rather than in the expiring branch. The control renders
+              its standing line — under contract through the option year, that
+              year guaranteed — which is the single most important fact about
+              his deal and would otherwise vanish the moment it became true. */}
+          {option && (
+            <FifthYearOptionButton
+              leagueId={leagueId} playerId={playerId} playerName={playerName}
+              blocked={option.blocked} decided={option.decided} optionYear={option.optionYear}
+            />
           )}
         </div>
       )}

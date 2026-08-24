@@ -78,7 +78,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
         // ...AWARD_TYPES rather than the trophies spelled out again: the
         // ticker is where a new award is least likely to be missed by a
         // reader and most likely to be missed by a maintainer.
-        type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'POSITION', 'DRAFT', 'FIRE', 'CHAMPION', 'ALL_STAR_ROSTER', ...AWARD_TYPES] },
+        type: { in: ['TRADE', 'SIGN', 'RESIGN', 'CUT', 'TAG', 'OPTION', 'POSITION', 'DRAFT', 'FIRE', 'CHAMPION', 'ALL_STAR_ROSTER', ...AWARD_TYPES] },
         seasonYear: { gte: league.seasonYear - 1 },
       },
       orderBy: { createdAt: 'desc' },

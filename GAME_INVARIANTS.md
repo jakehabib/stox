@@ -155,6 +155,32 @@ other — `lib/invariants.ts` reports violations by ID.
     into the new row and must therefore book nothing, and billing both would
     charge the same money twice. Reports 118 failures against the old
     behaviour.
+  - `scripts/checkFifthYearOption.ts`
+    (`npx tsx scripts/checkFifthYearOption.ts`) — the same rule on the path that
+    ADDS a year rather than replacing one. `exerciseFifthYearOption` appends a
+    fifth season to a first-rounder's four-year rookie deal, and
+    `prorationYears()` is derived from `years` — so pushing a 4-year deal to 5
+    silently re-spreads a signing bonus that three already-played seasons have
+    already been billed against. On pick 1.01's real rookie deal ($15.2M bonus)
+    that is $17.5M of cap charged against $15.2M of cash, $2.28M invented by a
+    move that is supposed to buy a year of football. The option year is
+    therefore held OUTSIDE the proration window
+    (`Contract.fifthYearOption`, read by `prorationYears`), which is also the
+    real rule: no new signing bonus is paid for an option year.
+    A database harness rather than a clause in `checkRestructure.ts` for the
+    reason the tag's is: half of what must hold is not arithmetic. "The option
+    year is fully guaranteed" is a claim about what a WRITE stores in
+    `guaranteed`, which is read bonus-inclusive and filled EARLIEST YEAR FIRST —
+    so adding the option salary to the stored figure spreads it over seasons he
+    has already played and leaves the option year itself holding nothing, and
+    dead money on a cut inside that year reads $0 against a fully guaranteed
+    salary. Sweeps 56 shapes through the real functions against a real database,
+    drives a release through `cutPlayer` and reads the charge back off the
+    ledger, and holds nine clauses: conservation, the fourth-year hit unmoved to
+    the dollar, the option year charging its salary and no proration, a real
+    premium over the fourth year, the guarantee, a decline moving nothing at
+    all, one answer per option, round one only enforced by the write path, and
+    the three tier bands being the real CBA's.
   - `scripts/checkRestructureWrite.ts`
     (`npx tsx scripts/checkRestructureWrite.ts`) — the database sibling to
     `checkRestructure.ts`, for the half of the restructure that is not

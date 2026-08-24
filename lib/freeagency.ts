@@ -14,6 +14,7 @@ import {
   type NegotiationOutcome, type NegotiationSession, type Offer, type ResignWindow, type Suitor,
 } from './negotiation';
 import { maxOffer, parseGmProfile, teamNeeds, RosterPlayer } from './ai/gm';
+import type { FifthYearOptionDecision, FifthYearOptionTier } from './fifthYearOption';
 import { teamCapSummary } from './cap-summary';
 import { assertCapRoom } from './capEnforcement';
 import { reconcileDepthChart } from './gen/league';
@@ -738,6 +739,15 @@ export async function signExtension(opts: {
         // as — the fifth-year option and the rookie-scale rules stop applying
         // the moment new money is added on top.
         isRookieDeal: false,
+        // ...and the answer goes with the question. `buildExtension` rebases
+        // the whole deal onto the years that are left plus the new ones, so
+        // there is no longer a trailing year that bought no signing bonus —
+        // leaving 'EXERCISED' on the row would hold `prorationYears` one year
+        // short of the window this contract actually has (lib/cap.ts), and the
+        // card would go on describing an option year inside a contract that no
+        // longer has one. A declined answer goes too: it was about a deal that
+        // has just been replaced.
+        fifthYearOption: null,
       },
     });
     // Same rule as everywhere else: putting his name on a deal ends the talks.
@@ -916,6 +926,365 @@ export async function applyFranchiseTag(opts: {
   });
 
   return { tagValue, deadMoney: accelerated };
+}
+
+/**
+ * ===========================================================================
+ * THE FIFTH-YEAR OPTION — WHAT IT COSTS, AND THE TWO WAYS TO ANSWER IT
+ * ===========================================================================
+ * `lib/fifthYearOption.ts` holds the rule and the price; this is the half that
+ * needs a database — which tier he has earned, what his position is actually
+ * paying this league year, and the two writes. It sits beside
+ * `applyFranchiseTag` because it is the same kind of move made out of the same
+ * window on the same screen, and because the two are priced off one shared
+ * band function (`positionSalaryBand`, lib/cap.ts) rather than two.
+ *
+ * WHEN IT IS ANSWERED, AND WHY THAT PHASE.
+ * The real rule is "after his third season, before his fourth". In this
+ * calendar that is the RESIGN step: the offseason roll has already run
+ * PROGRESS, RESET_STANDINGS and AGE_CONTRACTS, so a man drafted in year Y has
+ * `yearsRemaining === 1` — three seasons played, his fourth ahead of him — and
+ * `League.seasonYear` is already Y+3, the year he is about to play. It is the
+ * one window in the calendar where the game stops and asks a GM about
+ * contracts, so the option does not need a press of its own.
+ *
+ * REJECTED: a step of its own in OFFSEASON_STEPS. Commit 50f9129 collapsed six
+ * offseason presses into three precisely because a press with no decision in it
+ * is a worse game, and this would have been a seventh — one that is a decision
+ * for the two or three clubs with a first-rounder coming due that year and an
+ * Advance for the other twenty-nine.
+ *
+ * REJECTED: putting these men on the re-sign LIST. That list is deliberately
+ * pinned to `yearsRemaining === 0` during the offseason cycle (see
+ * resignListCutoff, lib/contractClock.ts) because showing a man with a season
+ * still to run beside men who walk in three clicks cost the app owner a
+ * contract he did not need to give — *"i just gave a huge extension to someone
+ * thinking they needed it but really i had 1 more year after to decide"*. A
+ * first-rounder in the option window is exactly that man. So the decision
+ * lives on his own card, where the rest of his contract does, and the
+ * front-office brief is what tells a GM it is waiting.
+ * ===========================================================================
+ */
+
+export interface FifthYearOptionQuote {
+  /** False in OFF mode — the preview then shows the year and no dollar figures. */
+  capEnabled: boolean;
+  playerName: string;
+  position: string;
+  /** The league year he is about to play — the fourth of his rookie deal. */
+  seasonYear: number;
+  /** The league year the option would buy. */
+  optionYear: number;
+  tier: FifthYearOptionTier;
+  /** What he did to earn that tier, and what the band is, for the preview. */
+  tierEarned: string;
+  tierBand: string;
+  /** The one-year salary the option pays, fully guaranteed. */
+  optionSalary: number;
+  /** The cap hits that band was averaged over, biggest first — what it is MADE of. */
+  bandSalaries: number[];
+  /** What he already costs in the fourth year, which the option does NOT change. */
+  fourthYearHit: number;
+  /** Committed cap and room in the option year, as the Cap page's own outlook reads them. */
+  optionYearCommitted: number;
+  optionYearCap: number;
+  optionYearRoomBefore: number;
+  optionYearRoomAfter: number;
+  /** The option would leave the club over the ceiling in the year it lands. */
+  leavesOverCapThen: boolean;
+  /** What releasing him would cost AFTER the option is picked up. */
+  deadMoneyIfCutAfter: number;
+  /** Non-null when the decision cannot be taken; the sentence the greyed control carries. */
+  blocked: string | null;
+  /** Null until his club answers. */
+  decided: FifthYearOptionDecision | null;
+}
+
+/**
+ * WHAT THE OPTION WOULD DO, BEFORE IT IS TAKEN.
+ *
+ * `franchiseTagImpactAction` for the option, and built the same way and for the
+ * same reason: every figure is resolved server-side from the exact functions
+ * the commit path writes with, so the preview cannot quote a number the action
+ * does not charge. On a once-per-player, cannot-be-undone move that is the
+ * worst possible place for a lying metric.
+ *
+ * THE COST LANDS IN A YEAR THE CAP GATE IS NOT LOOKING AT, and that is the
+ * whole shape of this decision rather than a wrinkle in it. Exercising changes
+ * nothing about the season in front of him — his fourth-year cap hit is
+ * whatever his rookie deal already said, and `prorationYears` is held on the
+ * four years the bonus was paid against (lib/cap.ts) — so `assertCapRoom` for
+ * THIS year has nothing to refuse. The bill is a whole league year away. So
+ * the preview reads the option year out of `capSheet`, the same multi-year
+ * outlook the Cap page's Advanced view renders, rather than inventing a second
+ * projection: it is the only honest way to show a GM what he is signing up for.
+ */
+export async function fifthYearOptionQuote(opts: {
+  leagueId: string;
+  playerId: string;
+}): Promise<FifthYearOptionQuote | null> {
+  const {
+    fifthYearOptionApplies, fifthYearOptionBlockReason, fifthYearOptionTier, fifthYearOptionValue,
+    FIFTH_YEAR_OPTION_TIERS,
+  } = await import('./fifthYearOption');
+  const { capHitSchedule, deadMoneyOnCut, positionSalaryBand } = await import('./cap');
+  const { allStarYearsFor } = await import('./allStars');
+  const { capSheet } = await import('./cap-summary');
+  const { PHASE_LABELS } = await import('./season');
+  const { parseSettings } = await import('./settings');
+
+  const player = await prisma.player.findUniqueOrThrow({
+    where: { id: opts.playerId }, include: { contract: true },
+  });
+  // NOT A FIRST-ROUNDER ON HIS ROOKIE DEAL — null, and no control anywhere.
+  // "You cannot exercise an option he was never given" is not a rule worth
+  // greying a button for on every player page in the game.
+  if (!player.contract || !player.teamId) return null;
+  if (!fifthYearOptionApplies({ draftRound: player.draftRound, isRookieDeal: player.contract.isRookieDeal })) return null;
+
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: opts.leagueId } });
+  const settings = parseSettings(league.settings);
+  const capMode = settings.capMode;
+  const decided = (player.contract.fifthYearOption as FifthYearOptionDecision | null) ?? null;
+
+  const blocked = fifthYearOptionBlockReason({
+    phase: league.phase,
+    phaseLabel: PHASE_LABELS[league.phase] ?? league.phase,
+    yearsRemaining: player.contract.yearsRemaining,
+    decided,
+  });
+
+  // THE TIER, from the two facts this game can answer honestly for every
+  // position on the field. See FIFTH_YEAR_OPTION_TIERS for what each one is
+  // standing in for in the real rule and what was rejected.
+  const allStarYears = await allStarYearsFor(opts.leagueId, player);
+  // Bounded to the seasons of THIS contract. A veteran who was an All-Star at
+  // 29 is not on a rookie deal; the bound only ever matters for a man traded
+  // onto one, and a rule that reads a man's whole career would price an option
+  // off seasons the option has nothing to do with.
+  const rookieYears = new Set(
+    Array.from({ length: player.contract.years }, (_, i) => player.contract!.signedYear + i),
+  );
+  const allStarSelections = allStarYears.filter((y) => rookieYears.has(y)).length;
+
+  // "He starts" is lib/lineup.ts's answer and nobody else's: the best men at
+  // the position on this roster, which is what the sim itself fields. Read off
+  // trueOvr because that is what starterSlots ranks on, and because a man on
+  // your own roster is never fogged anyway (lib/scouting.ts).
+  const { startersAt } = await import('./lineup');
+  const atPosition = await prisma.player.findMany({
+    where: { teamId: player.teamId, status: 'ACTIVE', position: player.position },
+    select: { id: true, trueOvr: true },
+    orderBy: { trueOvr: 'desc' },
+  });
+  const isStarter = atPosition.slice(0, startersAt(player.position)).some((p) => p.id === player.id);
+
+  const tier = fifthYearOptionTier({ allStarSelections, isStarter });
+  const spec = FIFTH_YEAR_OPTION_TIERS[tier];
+
+  const peers = await prisma.player.findMany({
+    where: { leagueId: opts.leagueId, position: player.position, status: 'ACTIVE' },
+    include: { contract: true },
+  });
+  const salaries = peers.map((p) => capHit(p.contract, capMode)).filter((v) => v > 0).sort((a, b) => b - a);
+
+  // His fourth year, off the same schedule the ledger charges — index 0 of
+  // what is left, which in the option window IS the fourth year.
+  const schedule = capHitSchedule(player.contract, capMode);
+  const fourthYearHit = schedule[0] ?? capHit(player.contract, capMode);
+  const optionSalary = fifthYearOptionValue({ positionSalaries: salaries, tier, fourthYearHit });
+  const bandSalaries = salaries.slice(Math.max(0, spec.from - 1), spec.to);
+
+  // What he costs to walk away from once the year is guaranteed — priced on
+  // the contract the write below actually produces, not on a description of it.
+  //
+  // ONLY SYNTHESISED WHILE THE ANSWER IS STILL OPEN. On a deal whose option has
+  // already been picked up the extra year is on the row, so building a second
+  // one here would price a SIXTH season nobody can buy — and this function is
+  // read by the AI wave and by the card's standing state as well as by the
+  // preview, so "the caller will not ask in that state" is not good enough.
+  const after = decided === null
+    ? {
+      ...player.contract,
+      years: player.contract.years + 1,
+      yearsRemaining: player.contract.yearsRemaining + 1,
+      baseSalaries: writeJson([...readJson<number[]>(player.contract.baseSalaries, []), optionSalary]),
+      guaranteed: guaranteedAfterExercise(player.contract, optionSalary),
+      fifthYearOption: 'EXERCISED',
+    }
+    : player.contract;
+  const deadMoneyIfCutAfter = deadMoneyOnCut(after, capMode);
+
+  // The season the option buys: the one after the last he is currently owed —
+  // which on an already-exercised deal is the year sitting on the row. The same
+  // arithmetic the player card does, so the preview, the standing status line
+  // and the contract table can never name three different years.
+  const optionYear = decided === 'EXERCISED'
+    ? player.contract.signedYear + player.contract.years - 1
+    : league.seasonYear + Math.max(1, player.contract.yearsRemaining);
+  const sheet = capMode === 'OFF' ? null : await capSheet(player.teamId, league, capMode);
+  const nextYear = sheet?.years.find((y) => y.year === optionYear) ?? null;
+
+  return {
+    capEnabled: capMode !== 'OFF',
+    playerName: `${player.firstName} ${player.lastName}`,
+    position: player.position,
+    seasonYear: league.seasonYear,
+    optionYear,
+    tier,
+    tierEarned: spec.earned,
+    tierBand: spec.band,
+    optionSalary,
+    bandSalaries,
+    fourthYearHit,
+    optionYearCommitted: nextYear?.committed ?? 0,
+    optionYearCap: nextYear?.capTotal ?? 0,
+    optionYearRoomBefore: nextYear?.room ?? 0,
+    optionYearRoomAfter: (nextYear?.room ?? 0) - optionSalary,
+    leavesOverCapThen: nextYear != null && nextYear.room - optionSalary < 0,
+    deadMoneyIfCutAfter,
+    blocked,
+    decided,
+  };
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * WHAT EXERCISING GUARANTEES, AND WHY IT IS THE WHOLE REST OF THE DEAL
+ * ---------------------------------------------------------------------------
+ * The real rule guarantees the option year for injury the moment it is picked
+ * up and in full at the start of the fifth league year. A first-round rookie
+ * deal is fully guaranteed already, so once the option is taken the club is on
+ * the hook for his fourth year and his fifth alike — and that is exactly what
+ * this stores.
+ *
+ * `guaranteed` is bonus-INCLUSIVE and is only ever read by subtracting the
+ * bonus back out and filling the years EARLIEST FIRST (`guaranteedBaseByYear`,
+ * lib/cap.ts). So "guarantee the option year" cannot be expressed by adding the
+ * option salary to whatever is stored: measured on pick 1.01's deal, adding
+ * $20.0M to a stored $17.1M spreads earliest-first across bases of
+ * [4.8, 5.3, 6.0, 6.7, 20.0] and leaves the FIFTH year holding nothing — dead
+ * money on a cut in the option year would have read $0 against a fully
+ * guaranteed $20.0M salary. Filling the frame completely is the only shape that
+ * says what it means in the one direction that field is read.
+ *
+ * REJECTED: the real two-stage injury-then-full guarantee. This game has no
+ * concept of releasing an injured man, so the first stage would be a rule with
+ * no way to observe it, and a guarantee that depends on something the GM cannot
+ * see is worse than a harsher one he can. Exercising is a commitment here, and
+ * the preview says so before he presses.
+ */
+function guaranteedAfterExercise(
+  contract: { baseSalaries: string; signingBonus: number; guaranteed: number },
+  optionSalary: number,
+): number {
+  const bases = readJson<number[]>(contract.baseSalaries, []);
+  const full = contract.signingBonus + bases.reduce((a, b) => a + b, 0) + optionSalary;
+  // Never DOWN. A deal that somehow already promised more keeps its promise.
+  return Math.max(contract.guaranteed, full);
+}
+
+/**
+ * Pick the option up: a fifth contract year at the option salary, fully
+ * guaranteed, carrying no signing-bonus proration (see `prorationYears`).
+ *
+ * NO CAP GATE FOR THIS SEASON, AND THAT IS NOT AN OVERSIGHT. Every other
+ * acquisition path calls `assertCapRoom` because it adds money to the year
+ * being enforced; this one adds none — the fourth year's hit is unchanged to
+ * the dollar, which is checked rather than asserted
+ * (scripts/checkFifthYearOption.ts). The bill lands a league year later, where
+ * the ceiling is not enforced yet and where a club has a whole offseason of
+ * cuts, trades and restructures to answer it with. Refusing the option today on
+ * next year's books would be refusing a move real clubs make every April, and
+ * it would be enforcing a ceiling the game does not enforce against anything
+ * else. What the game does instead is SHOW him: the preview reads the option
+ * year off `capSheet`, and the AI budgets against the same figure before it
+ * commits (`decideFifthYearOptions`, lib/season.ts).
+ */
+export async function exerciseFifthYearOption(opts: {
+  leagueId: string;
+  playerId: string;
+  seasonYear: number;
+  capMode: LeagueSettings['capMode'];
+  week: number;
+}) {
+  const quote = await fifthYearOptionQuote({ leagueId: opts.leagueId, playerId: opts.playerId });
+  if (!quote) throw new Error('He has no fifth-year option — those belong to first-round picks on their rookie deal.');
+  if (quote.blocked) throw new Error(quote.blocked);
+
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId }, include: { contract: true } });
+  if (!player.contract || !player.teamId) throw new Error('He has no contract to add a year to.');
+  const bases = readJson<number[]>(player.contract.baseSalaries, []);
+
+  await prisma.$transaction(async (tx) => {
+    // CONDITIONAL ON THE ROW STILL BEING UNDECIDED. This is the claim, and it
+    // is why the update is a `updateMany` with the old value in the `where`:
+    // two clicks, or a click racing the AI wave, would otherwise both read
+    // null, both append a year, and leave a six-year rookie deal with two
+    // option salaries on it and nothing on any screen saying so.
+    const claimed = await tx.contract.updateMany({
+      where: { playerId: opts.playerId, fifthYearOption: null },
+      data: {
+        years: player.contract!.years + 1,
+        yearsRemaining: player.contract!.yearsRemaining + 1,
+        baseSalaries: writeJson([...bases, quote.optionSalary]),
+        guaranteed: guaranteedAfterExercise(player.contract!, quote.optionSalary),
+        fifthYearOption: 'EXERCISED',
+      },
+    });
+    if (claimed.count === 0) throw new Error('That option has already been answered.');
+    await tx.transaction.create({
+      data: {
+        leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week, type: 'OPTION',
+        teamId: player.teamId, playerId: opts.playerId,
+        headline: `${player.firstName} ${player.lastName}'s fifth-year option picked up`,
+        // Both halves, because the year and its price are one fact and the
+        // wire is where a GM goes back to ask what a move actually cost him.
+        detail: `${quote.optionYear} at ${formatMoney(quote.optionSalary)}, fully guaranteed`,
+      },
+    });
+  });
+
+  return { optionSalary: quote.optionSalary, optionYear: quote.optionYear, tier: quote.tier };
+}
+
+/**
+ * Turn it down. Nothing about the deal changes — that IS what declining is —
+ * so the only write is the answer itself, and the cost is a year of him.
+ *
+ * IT IS STORED RATHER THAN INFERRED FROM SILENCE. Once the window shuts the
+ * two are the same outcome, but inside it they are not: without a row the
+ * control comes straight back after he has pressed it and the front-office
+ * brief puts a decision he has already made back on his desk next week.
+ */
+export async function declineFifthYearOption(opts: {
+  leagueId: string;
+  playerId: string;
+  seasonYear: number;
+  week: number;
+}) {
+  const quote = await fifthYearOptionQuote({ leagueId: opts.leagueId, playerId: opts.playerId });
+  if (!quote) throw new Error('He has no fifth-year option — those belong to first-round picks on their rookie deal.');
+  if (quote.blocked) throw new Error(quote.blocked);
+
+  const player = await prisma.player.findUniqueOrThrow({ where: { id: opts.playerId }, include: { contract: true } });
+  await prisma.$transaction(async (tx) => {
+    const claimed = await tx.contract.updateMany({
+      where: { playerId: opts.playerId, fifthYearOption: null },
+      data: { fifthYearOption: 'DECLINED' },
+    });
+    if (claimed.count === 0) throw new Error('That option has already been answered.');
+    await tx.transaction.create({
+      data: {
+        leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week, type: 'OPTION',
+        teamId: player.teamId, playerId: opts.playerId,
+        headline: `${player.firstName} ${player.lastName}'s fifth-year option declined`,
+        detail: `${formatMoney(quote.optionSalary)} turned down — he is a free agent after ${opts.seasonYear}`,
+      },
+    });
+  });
+
+  return { optionSalary: quote.optionSalary, tier: quote.tier };
 }
 
 /**

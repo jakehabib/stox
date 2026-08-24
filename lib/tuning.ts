@@ -1099,6 +1099,31 @@ export const CAP = {
   ROOKIE_SCALE_SHAPE: 0.40,
   ROOKIE_DEAL_YEARS: 4,
   /**
+   * [TUNE] THE FLOOR UNDER A FIFTH-YEAR OPTION, AS A MULTIPLE OF HIS OWN
+   * FOURTH YEAR.
+   *
+   * The three tiers are priced off the position's own market (see
+   * FIFTH_YEAR_OPTION_TIERS in lib/fifthYearOption.ts), which is the real rule
+   * and is right nearly everywhere. It is not right at the bottom: the base
+   * tier averages the 3rd-through-20th cap hits, and at a position where this
+   * league happens to be paying nobody, that band reaches down into backup
+   * money. An option priced at or under what the man already costs is not a
+   * decision — it is a free year, and the whole feature stops being a bet.
+   *
+   * So the price is never less than his fourth-year cap hit times this. 1.60
+   * rather than a flat dollar floor because the thing that must not happen is
+   * relative: a $3.0M fourth year and a $12.0M fourth year need different
+   * floors under them, and a constant that stops mattering the moment the cap
+   * grows is a floor that quietly disappears.
+   *
+   * Measured on a generated league at league year 4 (scripts/_fy_price.ts,
+   * reported in the pass that shipped this): the floor binds only on the base
+   * tier and only at the shallowest positions; every ALL_STAR and STARTER
+   * price in the sample came off the position band with the floor well below
+   * it.
+   */
+  FIFTH_YEAR_OPTION_MIN_PREMIUM: 1.60,
+  /**
    * [TUNE] Years of NFL experience that still counts as "on a rookie deal".
    * League generation uses it to put every young player on a real
    * ROOKIE_DEAL_YEARS contract — it used to flag isRookieDeal on a coin flip
@@ -1178,6 +1203,43 @@ export const RESIGN = {
   REBUILD_BAR_SPAN: 8,
   /** A sitting incumbent gets this much benefit of the doubt vs. the next man up. */
   INCUMBENT_EDGE: 2,
+  /**
+   * [TUNE] What an AI club will pay for a fifth-year option, as a multiple of
+   * what the man is worth on the open market in the season it buys.
+   *
+   * WELL ABOVE 1, AND THE MEASUREMENT IS THE ARGUMENT. `marketValue` is the
+   * APY of a MULTI-YEAR deal; an option is one fully guaranteed season with no
+   * negotiation, no signing bonus, no dead-money tail and no bidding war, on a
+   * 24-year-old who is still improving. Those are not the same good and they do
+   * not cost the same money — which is exactly why real clubs exercise options
+   * on players whose current APY is below the option price.
+   *
+   * Measured on 52 first-round options answered across two scratch leagues
+   * driven four seasons apiece by the game's own `advanceWeek`
+   * (scripts/_fy_ai.ts). The ratio of option price to market APY, and what each
+   * candidate ceiling would have exercised:
+   *
+   *     ratio   p10 1.13   p25 1.30   p50 1.90   p75 2.58   p90 4.50
+   *
+   *     1.00 -> 4%     1.50 -> 29%     2.00 -> 56%
+   *     1.10 -> 8%     1.75 -> 44%     2.50 -> 75%
+   *     1.25 -> 13%                    3.00 -> 81%
+   *
+   * The real sport picks up about half. 1.75 rather than 2.00 because erring
+   * low makes the AI a slightly tougher grader than a real front office instead
+   * of a rubber stamp, and a club that declines an option it should have taken
+   * loses a player — a club that takes one it should not have is stuck with the
+   * salary, which is the worse of the two mistakes to make thirty-two times a
+   * year.
+   *
+   * THE SHAPE OF THAT DISTRIBUTION IS THE FEATURE WORKING, not a knob needing
+   * turning, and it is why one number is enough. The cheapest options in the
+   * sample are the hits — LT 87 at 0.80x, RT 88 at 0.96x, C 90 at 1.04x, QB 90
+   * at 1.05x — and the dearest are the misses: QB 74 at 6.60x, CB 66 at 8.07x,
+   * QB 67 at 27.07x. A bust's option is ruinous and a star's is a bargain,
+   * which is what a fifth-year option is FOR.
+   */
+  FIFTH_YEAR_OPTION_TOLERANCE: 1.75,
   /** Offer = market x (FLOOR + willingness x SPAN), then +/- NOISE. */
   OFFER_FLOOR_MULT: 0.95,
   OFFER_WILLINGNESS_SPAN: 0.22,

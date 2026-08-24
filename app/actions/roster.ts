@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { assertLeagueOwner, assertTeamOwner, assertPlayerOnUserTeam, userTeamId } from '@/lib/owner';
-import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFranchiseTag, fillRosterForTeam, planRosterFill, resolveNegotiationSession, negotiateOffer, type FillRosterPlan } from '@/lib/freeagency';
+import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFranchiseTag, fillRosterForTeam, planRosterFill, resolveNegotiationSession, negotiateOffer, fifthYearOptionQuote, exerciseFifthYearOption, declineFifthYearOption, type FillRosterPlan } from '@/lib/freeagency';
 import { decideOffer, type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer } from '@/lib/negotiation';
 import { parseSettings } from '@/lib/settings';
 import { teamCapSummary } from '@/lib/cap-summary';
@@ -419,6 +419,73 @@ export async function applyFranchiseTagAction(leagueId: string, playerId: string
     };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : 'Franchise tag failed.' };
+  }
+}
+
+/**
+ * ===========================================================================
+ * THE FIFTH-YEAR OPTION — THE PRICE BEFORE THE PRESS, AND THE TWO ANSWERS
+ * ===========================================================================
+ * `franchiseTagImpactAction` for the option, and built the same way for the
+ * same reason: the preview is resolved by the server from the exact functions
+ * the commit path writes with (`fifthYearOptionQuote`, lib/freeagency.ts), so
+ * it cannot quote a figure the action does not charge. The tag learned that
+ * the hard way — the number on its button stopped being the number on its bill
+ * the day it started booking the old deal's bonus.
+ *
+ * There is deliberately no second computation in this file. The tag's impact
+ * action re-derives its figures here because it predates having one place to
+ * ask; this one asks once, and the AI wave (`decideFifthYearOptions`,
+ * lib/season.ts) asks the same function. Three callers, one price.
+ */
+export type FifthYearOptionImpact = Awaited<ReturnType<typeof fifthYearOptionQuote>>;
+
+export async function fifthYearOptionImpactAction(leagueId: string, playerId: string): Promise<FifthYearOptionImpact> {
+  await assertLeagueOwner(leagueId);
+  return fifthYearOptionQuote({ leagueId, playerId });
+}
+
+/**
+ * Answer it. One action for both directions, because they are one decision and
+ * a GM who could reach only half of it would be looking at a control that can
+ * say yes and not no.
+ *
+ * THE GUARDS ARE HERE AND NOT ONLY IN THE UI. A Server Action is a POST
+ * endpoint whether or not a button points at it, and this one appends a
+ * guaranteed year to a contract. Ownership, then the library's own gate — which
+ * is `fifthYearOptionQuote`'s `blocked`, the same sentence the greyed control
+ * carries and in the same order — then the conditional write that makes a
+ * double click impossible (`updateMany ... where fifthYearOption: null`).
+ */
+export async function fifthYearOptionAction(
+  leagueId: string, playerId: string, decision: 'EXERCISE' | 'DECLINE',
+): Promise<{ ok: boolean; message: string }> {
+  await assertLeagueOwner(leagueId);
+  try { await assertPlayerOnUserTeam(leagueId, playerId); }
+  catch (err) { return { ok: false, message: err instanceof Error ? err.message : 'Not your player.' }; }
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+  const settings = parseSettings(league.settings);
+  try {
+    if (decision === 'EXERCISE') {
+      const r = await exerciseFifthYearOption({
+        leagueId, playerId, seasonYear: league.seasonYear, capMode: settings.capMode, week: league.week,
+      });
+      revalidatePath(`/league/${leagueId}`, 'layout');
+      return {
+        ok: true,
+        // The receipt names the year AND the guarantee, because the guarantee is
+        // the half that costs money later: cutting him after this owes it.
+        message: `Option picked up — he is under contract through ${r.optionYear} at ${formatMoney(r.optionSalary)}, fully guaranteed.`,
+      };
+    }
+    const r = await declineFifthYearOption({ leagueId, playerId, seasonYear: league.seasonYear, week: league.week });
+    revalidatePath(`/league/${leagueId}`, 'layout');
+    return {
+      ok: true,
+      message: `Option turned down — you save ${formatMoney(r.optionSalary)} and he is a free agent when this deal runs out.`,
+    };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'That option could not be answered.' };
   }
 }
 

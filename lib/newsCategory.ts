@@ -11,7 +11,12 @@ export function transactionCategory(type: string, headline: string): NewsCategor
   if (headline.startsWith('League Record')) return 'RECORD';
   switch (type) {
     case 'TRADE': return 'TRADE';
-    case 'SIGN': case 'RESIGN': case 'TAG': return 'SIGNING';
+    // OPTION is a fifth-year option answered either way. It reads as a
+    // signing because that is what it is when it is picked up — a year of
+    // football bought at a stated price — and a decline belongs beside it
+    // rather than in the league-admin bucket: the two are one decision and
+    // splitting them would file the same move under two kickers.
+    case 'SIGN': case 'RESIGN': case 'TAG': case 'OPTION': return 'SIGNING';
     // Its own kicker, NOT folded in with the signings above: a club that moves
     // a lineman inside did not sign anybody, and the coarse vocabulary this
     // file maps into was missing the concept entirely until position changes

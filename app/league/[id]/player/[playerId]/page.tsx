@@ -19,6 +19,7 @@ import {
 import { CutButton } from '@/components/CutButton';
 import { resignListCutoff } from '@/lib/contractClock';
 import { franchiseTagBlockReason } from '@/lib/franchiseTag';
+import { fifthYearOptionApplies, fifthYearOptionBlockReason, type FifthYearOptionDecision } from '@/lib/fifthYearOption';
 import { ContractActions } from '@/components/ContractActions';
 import { ContractLedger } from '@/components/ds/ContractLedger';
 import { FullScoutButton } from '@/components/FullScoutButton';
@@ -646,6 +647,46 @@ export default async function PlayerPage({
   })();
 
   /**
+   * ===========================================================================
+   * THE FIFTH-YEAR OPTION — ONLY WHERE ONE EXISTS
+   * ===========================================================================
+   * Null for every man who is not a first-round pick on his rookie deal, which
+   * is almost everybody, and null is the whole rule: there is no control to
+   * grey and no sentence to print on a seventh-rounder's card, because "you
+   * cannot pick up an option he was never given" is not a rule worth teaching
+   * on three hundred pages.
+   *
+   * Where one DOES exist the card asks the shared rule (lib/fifthYearOption.ts)
+   * in the order `fifthYearOptionAction` refuses in, exactly as it does for the
+   * tag. What the option would COST is not resolved here — the control fetches
+   * that from the server when its confirm step opens
+   * (`fifthYearOptionImpactAction`), which keeps a page that mostly renders
+   * other things from pricing an option nobody is going to answer, and is the
+   * same shape CutButton and FranchiseTagButton use.
+   */
+  const optionCard = (() => {
+    const c = player.contract;
+    if (!c || !isOwnRoster || !userTeam) return null;
+    if (!fifthYearOptionApplies({ draftRound: player.draftRound, isRookieDeal: c.isRookieDeal })) return null;
+    const decided = (c.fifthYearOption as FifthYearOptionDecision | null) ?? null;
+    return {
+      decided,
+      blocked: fifthYearOptionBlockReason({
+        phase: league.phase,
+        phaseLabel,
+        yearsRemaining: c.yearsRemaining,
+        decided,
+      }),
+      // The season it buys: the one after the last he is currently owed. On an
+      // exercised deal that is the year already on the row, so the standing
+      // line and the contract table name the same year.
+      optionYear: decided === 'EXERCISED'
+        ? c.signedYear + c.years - 1
+        : league.seasonYear + Math.max(1, c.yearsRemaining),
+    };
+  })();
+
+  /**
    * HIS re-sign, not the list of them. The button under his contract used to
    * point at /resign and stop there. It names him now — and it is null in the
    * one case where that page would not have him: a man with a season still to
@@ -1093,6 +1134,16 @@ export default async function PlayerPage({
                 Franchise Tagged<Tooltip text={tip('franchiseTag')} />
               </span>
             )}
+            {/* PAST TENSE, LIKE THE TAG BESIDE IT, because it is a state and
+                not an offer — the offer is a button in the box below. It sits
+                next to the Rookie Deal badge on purpose: the option year IS the
+                fifth year of that deal, and the "through YYYY" line to the
+                right has already moved to say so. */}
+            {player.contract?.fifthYearOption === 'EXERCISED' && (
+              <span className="pill border-accent2/30 text-accent2 bg-accent2/10 gap-1.5">
+                Option Exercised<Tooltip text={tip('fifthYearOption')} />
+              </span>
+            )}
             {player.contract && (
               <span className="text-xs text-muted">
                 {player.contract.years} year{player.contract.years === 1 ? '' : 's'} · through{' '}
@@ -1170,6 +1221,7 @@ export default async function PlayerPage({
                   // Non-null wherever this renders: the same three conditions
                   // that gate this block are the ones tagCard resolves under.
                   tag={tagCard!}
+                  option={optionCard}
                 />
                 {restructureFrees > 0 && (
                   <p className="text-sm text-muted">
@@ -1226,6 +1278,10 @@ export default async function PlayerPage({
           // Named on the stats face only while it can actually be taken. A tag
           // is the rarest move on this card and the one nobody found.
           ...(tagCard && !tagCard.blocked && !tagCard.isTagged ? [{ key: 'tag', label: 'Franchise Tag' }] : []),
+          // Same rule, and it matters more here: the option is answered in one
+          // window and never again, and a GM reading his young star's stats is
+          // exactly the reader who would otherwise let the window shut.
+          ...(optionCard && !optionCard.blocked && !optionCard.decided ? [{ key: 'option', label: 'Fifth-Year Option' }] : []),
           ...(restructureFrees > 0 ? [{ key: 'restructure', label: 'Restructure' }] : []),
           { key: 'release', label: 'Release' },
         ] : undefined}

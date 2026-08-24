@@ -1789,8 +1789,36 @@ async function runOffseasonStepClaimed(
       // having a plan by the time the window opens.
       const kept = await runAiResignWave(leagueId, league.seasonYear, league.week, settings.capMode, rng);
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'RESIGN', week: 1 } });
+      /**
+       * AFTER THE PHASE FLIP, AND THAT IS NOT A STYLE CHOICE.
+       *
+       * This step still reads `OFFSEASON` on the League row while it runs — the
+       * line above is what opens the window — and the option's shared rule
+       * refuses outside RESIGN, in the same order and with the same sentence
+       * the user's greyed control carries (lib/fifthYearOption.ts). Run before
+       * the flip it was blocked on every single man: measured on a scratch
+       * league driven three seasons by `advanceWeek`, 31 clubs' first-rounders
+       * came due and the wave answered **zero** of them, silently, because
+       * every quote came back "the option is answered in the re-sign window.
+       * Right now: Offseason." That is precisely the greyed-for-a-reason-the-
+       * server-does-not-hold defect in reverse, and the only thing that caught
+       * it was driving the real path.
+       *
+       * The re-sign wave above is unaffected by its own position because it
+       * takes no view on phase, and it stays where it was rather than being
+       * moved to keep it: it is the older path and this is the new one.
+       */
+      const options = await decideFifthYearOptions(leagueId, league.seasonYear, league.week, settings.capMode);
+      // Said out loud for the reason the re-sign count is: it is a fact about
+      // the market a GM can act on. Every option picked up around the league is
+      // a first-rounder who will NOT be a free agent next spring, and every one
+      // turned down is a man who will.
+      const optionLine = options.exercised + options.declined > 0
+        ? `Clubs picked up ${options.exercised} fifth-year option${options.exercised === 1 ? '' : 's'} and turned down ${options.declined}. `
+        : '';
       return {
-        summary: (kept > 0 ? `Around the league, clubs have already re-signed ${kept} of their own expiring players. ` : '')
+        summary: optionLine
+          + (kept > 0 ? `Around the league, clubs have already re-signed ${kept} of their own expiring players. ` : '')
           + 'Re-sign yours, then advance to open free agency.',
       };
     }
@@ -2648,6 +2676,101 @@ export async function resignDecisionsForTeam(
     }
   }
   return { kept, released, decisions };
+}
+
+/**
+ * ===========================================================================
+ * AI CLUBS ANSWER THEIR OWN FIFTH-YEAR OPTIONS
+ * ===========================================================================
+ * `#62 in the backlog is "AI clubs never use the franchise tag"` — a feature
+ * only the user can operate is a competitive advantage he did not earn, and
+ * the tag has spent long enough being the one example of it. This wave is
+ * written so that the option never becomes the second: every non-user club
+ * decides on every first-rounder whose option is due, in the same step, before
+ * the user reaches his own.
+ *
+ * WHAT A CLUB IS ACTUALLY WEIGHING, and it is the same question the user is:
+ * one guaranteed season at the option price, against what that man would cost
+ * on the open market a year later. So the test is the price against
+ * `marketValue` for the season the option buys — his age plus one, since that
+ * is the season he would play it in — with a small tolerance, because control
+ * of a known player is worth a premium over the same money spent on a stranger.
+ *
+ * AND IT HAS TO FIT. The bill lands a whole league year out, where nothing
+ * enforces a ceiling yet, so `assertCapRoom` has nothing to say about it (see
+ * exerciseFifthYearOption). A club that took every option it liked would walk
+ * into the next league year over the cap and hand the compliance gate a
+ * problem it did not make. So the wave reads the option year off `capSheet` —
+ * the same multi-year outlook the Cap page renders and the user's own preview
+ * quotes — and a club that cannot fit the year turns the option down however
+ * much it likes the player. The quote is re-read per man rather than batched
+ * per club, which is not an oversight: a club with two first-rounders coming
+ * due must see the first option on its books before it prices the second.
+ *
+ * REJECTED: leaving this for a later pass and shipping the control on the
+ * player card alone. Measured on the tag, that decision is worth about $50M of
+ * room a season to whichever side of the league has it — a 99 quarterback
+ * walked to the market from a club holding $50.9M because no AI path could
+ * tag him.
+ * ===========================================================================
+ */
+async function decideFifthYearOptions(
+  leagueId: string,
+  seasonYear: number,
+  week: number,
+  capMode: LeagueSettings['capMode'],
+): Promise<{ exercised: number; declined: number }> {
+  const { fifthYearOptionQuote, exerciseFifthYearOption, declineFifthYearOption } = await import('./freeagency');
+  const { marketValue } = await import('./cap');
+
+  const due = await prisma.player.findMany({
+    where: {
+      leagueId,
+      status: 'ACTIVE',
+      draftRound: 1,
+      team: { isUser: false },
+      contract: { isRookieDeal: true, yearsRemaining: 1, fifthYearOption: null },
+    },
+    select: { id: true, trueOvr: true, position: true, age: true, potential: true },
+    // Best man first, so when a club's room runs out it is the cheaper option
+    // it loses rather than whichever row Postgres handed over first — the same
+    // defect the re-sign wave was measured at 51.5% inverted on.
+    orderBy: { trueOvr: 'desc' },
+  });
+
+  let exercised = 0;
+  let declined = 0;
+  for (const p of due) {
+    const quote = await fifthYearOptionQuote({ leagueId, playerId: p.id });
+    // Null or blocked means the man is not really due — a state this query
+    // should not produce, and one the write path would refuse anyway. Skipping
+    // rather than declining, because "we never answered" and "we said no" are
+    // different facts and only one of them is true here.
+    if (!quote || quote.blocked) continue;
+
+    // The season the option actually buys, which is a year older than he is
+    // now. Pricing it at today's age would systematically over-value every
+    // option in the league by one year of ageing curve.
+    const worth = marketValue({
+      ovr: p.trueOvr, position: p.position as Position, age: p.age + 1, potential: p.potential,
+    });
+    const fits = !quote.capEnabled || quote.optionYearRoomAfter >= 0;
+    const worthIt = quote.optionSalary <= worth * RESIGN.FIFTH_YEAR_OPTION_TOLERANCE;
+
+    if (fits && worthIt) {
+      const done = await exerciseFifthYearOption({ leagueId, playerId: p.id, seasonYear, capMode, week })
+        .then(() => true).catch(() => false);
+      if (done) { exercised++; continue; }
+      // The write path is the authority and it refused. He is answered rather
+      // than left hanging, for the same reason the re-sign wave records every
+      // man it weighs: an unanswered option silently becomes a decline at the
+      // roll and nothing anywhere says a club ever looked at him.
+    }
+    const said = await declineFifthYearOption({ leagueId, playerId: p.id, seasonYear, week })
+      .then(() => true).catch(() => false);
+    if (said) declined++;
+  }
+  return { exercised, declined };
 }
 
 /**

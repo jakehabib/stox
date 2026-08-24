@@ -161,6 +161,17 @@ npm run build         # production build: generates the Prisma client,
      cap hits it is averaged from, his old deal coming off the books, the
      dead money that accelerates, the net cost, and cap space before and
      after — then a confirm with the price in the button label.
+   - A **first-round pick's rookie deal carries a fifth-year option**, and it
+     is answered in this same window, after his third season and before his
+     fourth. The control is on his contract tab beside the tag, priced the
+     same way and confirmed the same way — the tier he has earned and what
+     earned it, the option salary and the band of position cap hits it is
+     averaged from, the season it lands in and that year's room before and
+     after, and what releasing him would cost once it is guaranteed — with
+     BOTH answers as buttons, because turning it down is a real move with a
+     real cost: he plays his fourth year out and reaches free agency a year
+     early. The front-office brief on the dashboard is what tells you it is
+     waiting. AI clubs answer their own in the same step.
    - **Draft** is a year-round scouting hub, not just a DRAFT-phase screen —
      the incoming class exists from week 1 and is fully browsable
      (sortable, filterable, ★ shortlist-able) all season. It carries a
@@ -225,6 +236,16 @@ npm run build         # production build: generates the Prisma client,
   both, in the same order the server action refuses in (tags off in settings,
   wrong phase, deal not up, tag already spent), so a greyed control can never
   name a reason the server does not hold
+- `lib/fifthYearOption.ts` — the fifth-year option on a first-round pick's
+  rookie deal: who has one, when it is answered, and the three tiers it is
+  priced by. A leaf like `lib/franchiseTag.ts` and for the same reason — the
+  player card, the front-office brief, the impact preview and the server action
+  all read one six-branch rule, in the order the server refuses in. The tiers
+  are the real CBA's own bands (top 5 / top 10 / 3rd-20th of the position's cap
+  hits) over the SAME `positionSalaryBand` the franchise tag is priced with, so
+  the two can never disagree about what a position pays. The database half —
+  which tier he has earned, and the two writes — is `fifthYearOptionQuote`,
+  `exerciseFifthYearOption` and `declineFifthYearOption` in `lib/freeagency.ts`
 - `lib/contractClock.ts` — the words for where a deal sits on its clock, in
   one place: "Expiring this offseason" (nothing left after this league year)
   and "One season left". They differ in exactly the fact that matters — when
@@ -331,7 +352,13 @@ npm run build         # production build: generates the Prisma client,
   tag's gate, and deliberately NOT a clause inside the restructure one: that
   defect lived in a pure function, this one never lived in the arithmetic at
   all, so it drives the real write path against a real database over 320
-  contract shapes, 3,104 checks; `scripts/simHealth.ts` — the invariant-checking
+  contract shapes, 3,104 checks;   `scripts/checkFifthYearOption.ts` — the same rule on the path that ADDS a
+  contract year instead of replacing one, 56 shapes and 629 checks against a
+  real database: the option year is held outside the signing-bonus proration
+  window, the fourth-year cap hit does not move by a dollar, the option year is
+  guaranteed and a release through the real `cutPlayer` pays for it, and
+  declining moves nothing at all;
+  `scripts/simHealth.ts` — the invariant-checking
   harness (see `GAME_INVARIANTS.md`), which builds every third league as a
   fantasy draft so both start types are exercised
 
@@ -503,6 +530,34 @@ something here, the principle wins and the change is wrong.
   used, and a sentence is no different.
 - Stat lines are allocated top-down from team drive totals (so the score and
   box score can never disagree) rather than simulated play-by-play.
+- **The AI operates the fifth-year option, but the AI's PICK valuation still
+  does not know it exists.** `decideFifthYearOptions` (lib/season.ts) runs in
+  the RESIGN step and every non-user club answers every option it holds, priced
+  and gated off the same functions the user's own control uses — so this is not
+  a second instance of the franchise-tag defect below. What is NOT wired is the
+  other half of why the option matters: `AI.DRAFT_POSITION_VALUE` and the
+  draft-pick chart still price round one over round two on talent alone, when
+  in the real sport a first-rounder is also five years of control instead of
+  four. Folding that in means re-anchoring the pick chart, which is a balance
+  change that reaches every trade in the game and is deliberately not being
+  made in the same pass as the feature it would be pricing.
+- **An exercised option is fully guaranteed the moment it is picked up.** The
+  real rule guarantees it for injury on exercise and in full at the start of the
+  fifth league year. This game has no concept of releasing an injured man, so
+  the first stage would be a rule with no way to observe it — and a guarantee
+  that depends on something the GM cannot see is worse than a harsher one he
+  can. The preview says so before he presses, and the harsher version is the one
+  that makes the decision a real bet.
+- **The option's middle tier reads "is he a starter", not "did he play 75% of
+  the snaps in two of three seasons".** There are no snap counts in this game
+  and there is no honest way to invent them: `PlayerSeason` is reconstructed
+  from box scores and a box score names no offensive linemen at all, so a
+  playing-time test built on it would put every first-round tackle in the
+  cheapest tier by construction. `lib/lineup.ts` — the single definition of who
+  starts, read as the best men at the position rather than the depth chart's
+  order, which is what stops it being a free click — is the closest honest
+  answer. It fires more often than the real rule's playing-time leg does, so
+  more first-rounders reach the transition-tag tier here than in the real sport.
 - No AI club has ever used the franchise tag. `applyFranchiseTag` exists and
   the user can use it, but no AI path calls it — measured, a 99 QB whose club
   held $50.9M of room walked to the market because it could not fit his ask

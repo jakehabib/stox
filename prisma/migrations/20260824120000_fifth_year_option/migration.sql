@@ -1,0 +1,39 @@
+-- A FIRST-ROUND ROOKIE DEAL CARRIES AN OPTION ON A FIFTH SEASON.
+--
+-- One nullable column on Contract, holding 'EXERCISED', 'DECLINED', or NULL.
+-- NULL is the state of every contract that already exists and the state of a
+-- decision still open, and those two must read identically: a rookie already
+-- on a four-year deal keeps exactly the deal he has, which is checked rather
+-- than asserted (scripts/checkFifthYearOption.ts, and the untouched-save probe
+-- reported with it).
+--
+-- PURELY ADDITIVE, and checked rather than assumed: `prisma migrate diff`
+-- against the live database emitted exactly the statement below and nothing
+-- else. No existing table, column, constraint or row is read or altered, so
+-- there is no row this can reject and nothing for it to lose — unlike the
+-- CapCharge cascade (20260823124600), which had to clear orphans before its
+-- ADD CONSTRAINT could validate.
+--
+-- WHY A COLUMN AT ALL, when an exercised option is visible in the contract
+-- itself (`years` becomes 5). Two reasons, and the second is the arithmetic:
+--
+--   A DECLINE HAS NO OTHER TRACE. Turning the option down changes nothing
+--   about the deal — he plays his fourth year and leaves — so without a stored
+--   answer "declined" and "not yet asked" are the same row, the control comes
+--   straight back after the GM has pressed it, and the front-office brief
+--   keeps putting a decision he has already made back on his desk.
+--
+--   THE OPTION YEAR CARRIES NO BONUS PRORATION. prorationYears() (lib/cap.ts)
+--   is derived from `years`, so a 4-year deal pushed to 5 would re-spread a
+--   signing bonus that three seasons have already been billed against — on a
+--   $15.2M rookie bonus, $17.5M of cap charged against $15.2M of cash. This
+--   column is what tells the divisor that the fifth year bought no bonus.
+--
+-- Applied with `prisma migrate diff` + `prisma migrate deploy`, the way
+-- 20260823140000_champion_roster and 20260823124600_cap_charge_team_cascade
+-- were: `migrate dev` is unusable on this database (a rolled-back duplicate row
+-- in _prisma_migrations with a stale checksum makes it demand a full reset,
+-- which would destroy every save).
+
+-- AlterTable
+ALTER TABLE "Contract" ADD COLUMN     "fifthYearOption" TEXT;

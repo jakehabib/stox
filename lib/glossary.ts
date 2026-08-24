@@ -199,8 +199,13 @@ export const GLOSSARY = {
   },
   rookieDeal: {
     term: 'Rookie deal',
-    definition: 'The four-year contract a drafted player signs, priced by where he was taken rather than negotiated.',
-    why: 'The cheapest good football in the sport. A first-round starter on a rookie deal is worth two of the same player on a second contract, which is most of the argument for building through the draft.',
+    definition: 'The four-year contract a drafted player signs, priced by where he was taken rather than negotiated. A first-round pick\'s carries a club option on a fifth season on top of it.',
+    why: 'The cheapest good football in the sport. A first-round starter on a rookie deal is worth two of the same player on a second contract, which is most of the argument for building through the draft — and the option year is the fifth of them.',
+  },
+  fifthYearOption: {
+    term: 'Fifth-year option',
+    definition: 'A club option on a fifth season, carried only by a first-round pick\'s rookie deal. It is answered in the re-sign window after his third season, and the price is set by his position and by what he has done with those three years: an All-Star costs what a franchise tag on him would, a starter the average of the ten biggest cap hits at his position, and everyone else the average of the third through twentieth.',
+    why: 'It is most of what separates a first-round pick from a second-round one — five years of a good player at a price you fixed on draft night, instead of four. Picking it up guarantees that season the moment you press it, so releasing him afterwards costs you the whole salary; turning it down saves the money and sends him to free agency a year early, where thirty-one other clubs get a bid.',
   },
   rookieScale: {
     term: 'Rookie scale',

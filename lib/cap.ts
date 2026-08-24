@@ -14,6 +14,15 @@ export interface ContractLike {
   /** Cap-only trailing years (see schema comment) — optional so older call sites without it still work. */
   voidYears?: number;
   isRookieDeal?: boolean;
+  /**
+   * `Contract.fifthYearOption` — 'EXERCISED' once a first-rounder's option
+   * year has been picked up, 'DECLINED' once his club has said no, null
+   * everywhere else. Read HERE, and only here, by `prorationYears`: the option
+   * year is the one contract year in this game that carries no signing-bonus
+   * proration (see there). Optional so every existing call site that builds a
+   * ContractLike by hand keeps its exact behaviour.
+   */
+  fifthYearOption?: string | null;
 }
 
 /**
@@ -67,12 +76,51 @@ export function capForYear(
 }
 
 /**
+ * Contract years that carry NO share of the signing bonus. Exactly one shape
+ * produces them: a first-round rookie deal whose fifth-year option has been
+ * picked up (`exerciseFifthYearOption`, lib/freeagency.ts).
+ *
+ * WHY THE OPTION YEAR IS OUTSIDE THE WINDOW, AND WHY IT HAD TO BE.
+ * A rookie's signing bonus was paid once, at the draft, and prorates over the
+ * four years he signed for. The option adds a fifth year at a salary decided
+ * three seasons later; no new bonus is paid for it, so it charges its salary
+ * and nothing else. That is the real rule, and here it is also the only
+ * arrangement that conserves money. `prorationYears` is derived from `years`,
+ * so simply pushing a 4-year deal to 5 re-spreads a bonus that three seasons
+ * have already been billed against: on a $15.2M bonus (pick 1.01) the seasons
+ * played charged 3 x $3.80M = $11.4M, and years four and five would then charge
+ * $3.04M each — $17.5M of cap against $15.2M of cash, $2.28M invented. That is
+ * INV-21 clause two, the identical hole the franchise tag (eb7d87b) and the
+ * re-sign both had, arriving through the divisor instead of through a deleted
+ * row.
+ *
+ * REJECTED: rewriting `signingBonus` down to 0.625 of itself so the five-year
+ * divisor happens to bill the right remainder. It conserves — but the number
+ * the contract card prints under "Signing bonus" is then not the cheque the
+ * club wrote, and `guaranteed` is stored bonus-inclusive so it would have to
+ * be restated in the same breath or the gap between them re-reads as salary
+ * still owed (see THE GUARANTEE STAYS IN THE SAME FRAME AS THE BONUS).
+ * REJECTED: rebasing the deal onto its last two years the way a restructure
+ * does. It conserves too, and it quietly moves $1.90M of proration out of his
+ * fourth year into his fifth — exercising an option would have been a free
+ * restructure, and `signedYear` would stop naming the year he was drafted.
+ */
+function optionYears(c: ContractLike): number {
+  return c.fifthYearOption === 'EXERCISED' ? 1 : 0;
+}
+
+/**
  * How many SEASONS FROM SIGNING a bonus is charged over. The real rule: five,
  * whatever the length of the deal (CAP.MAX_PRORATION_YEARS). Void years extend
- * the divisor up to that same ceiling.
+ * the divisor up to that same ceiling; an exercised fifth-year option shortens
+ * it back, because that year buys no bonus (see `optionYears`).
+ *
+ * The floor of 1 is not new behaviour — `years` is at least 1 everywhere a
+ * contract exists, so this returned at least 1 before the option term could
+ * subtract anything, and it still does.
  */
 export function prorationYears(c: ContractLike): number {
-  return Math.min(c.years + (c.voidYears ?? 0), CAP.MAX_PRORATION_YEARS);
+  return Math.max(1, Math.min(c.years - optionYears(c) + (c.voidYears ?? 0), CAP.MAX_PRORATION_YEARS));
 }
 
 /**
@@ -1279,11 +1327,38 @@ export function rookieScaleApy(overallPick: number, totalPicks: number): number 
   return Math.max(CAP.MIN_SALARY, Math.round(apy / 50_000) * 50_000);
 }
 
+/**
+ * ===========================================================================
+ * WHAT A POSITION PAYS — ONE BAND, ONE AVERAGE, THREE PRICES
+ * ===========================================================================
+ * The franchise tag was written as "average the top five cap hits at the
+ * position". The fifth-year option is the same sentence with a different band
+ * on each of its three tiers, which is not a coincidence: in the real CBA the
+ * tag, the transition tag and the option's own base tier are literally defined
+ * as averages of the 5, 10 and 3rd-20th biggest salaries at a position. So
+ * this is the shape, written once, and the tiers are ranks into it rather than
+ * a second pricing model living beside the first.
+ *
+ * `from` and `to` are 1-based and inclusive, so they read as the rule reads —
+ * (1, 5) is "the top five", (3, 20) is "the third through the twentieth". Both
+ * ends are clamped to what the position actually has, so a league year where
+ * only nine men at a position are under contract still returns the average of
+ * the nine rather than dividing by twenty and quoting a price nobody pays.
+ */
+export function positionSalaryBand(positionSalaries: number[], from: number, to: number): number {
+  const sorted = [...positionSalaries].sort((a, b) => b - a);
+  const band = sorted.slice(Math.max(0, from - 1), Math.max(0, to));
+  // The fallback the tag has always used, kept rather than re-derived: a
+  // position with nobody under contract has no market to average, and five
+  // league minimums is the game's standing answer for "we have to name a
+  // number and there is no evidence".
+  if (band.length === 0) return CAP.MIN_SALARY * 5;
+  return Math.round(band.reduce((a, b) => a + b, 0) / band.length);
+}
+
 /** Franchise tag value = average of the top-N cap hits at the position. */
 export function franchiseTagValue(positionSalaries: number[]): number {
-  const top = [...positionSalaries].sort((a, b) => b - a).slice(0, CAP.FRANCHISE_TAG_TOP_N);
-  if (top.length === 0) return CAP.MIN_SALARY * 5;
-  return Math.round(top.reduce((a, b) => a + b, 0) / top.length);
+  return positionSalaryBand(positionSalaries, 1, CAP.FRANCHISE_TAG_TOP_N);
 }
 
 export function formatMoney(n: number): string {

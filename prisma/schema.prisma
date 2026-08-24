@@ -475,6 +475,26 @@ model Contract {
   guaranteed     Int     @default(0)
   isRookieDeal   Boolean @default(false)
   isFranchiseTag Boolean @default(false)
+  // THE FIFTH-YEAR OPTION ON A FIRST-ROUND ROOKIE DEAL: 'EXERCISED',
+  // 'DECLINED', or null for "nobody has answered yet" — which is also what
+  // every contract in the game that never had an option carries.
+  //
+  // NULL IS LOAD-BEARING IN TWO DIRECTIONS. It is the state of a save written
+  // before this column existed, and it is the state of a decision still open,
+  // and those have to read the same way: an existing four-year rookie deal
+  // must keep exactly the deal it has (see lib/fifthYearOption.ts).
+  //
+  // THE ONE PLACE THIS IS READ BY THE ARITHMETIC is prorationYears()
+  // (lib/cap.ts). An exercised option adds a contract year that carries NO
+  // signing-bonus proration — no new bonus is paid for it — so the divisor has
+  // to stay on the four years the bonus was actually paid against. Bumping
+  // `years` to 5 without it re-spreads a bonus three seasons have already been
+  // billed for, which is INV-21's second clause and the identical hole the
+  // franchise tag had in eb7d87b.
+  //
+  // A string rather than an enum, matching this schema's existing style
+  // (Player.status, Game.kind, Transaction.type are all bare strings).
+  fifthYearOption String?
   // Cap-only trailing years tacked on (usually via a restructure) purely to
   // spread signing-bonus proration further — the player is never actually
   // on the roster for these. All remaining proration accelerates as dead
@@ -604,6 +624,7 @@ model Transaction {
   week       Int
   // SIGN | CUT | TRADE | DRAFT | INJURY | RESIGN | TAG | PROGRESS | NEWS
   // | CHAMPION | FIRE (coordinator fired for a poor record)
+  // | OPTION (a first-rounder's fifth-year option answered — either way)
   type       String
   teamId     String?
 
