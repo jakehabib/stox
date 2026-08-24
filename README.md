@@ -505,9 +505,13 @@ something here, the principle wins and the change is wrong.
   bidding against you, which is the one loyalty concept in `lib/negotiation.ts`.
   What is still not modelled is a separate legal-tampering period before that
   window opens.
-- There's no autonomous AI-vs-AI trading — AI teams only trade with the
-  user (via the trade screen, or an unsolicited offer the AI proposes).
-  Two AI teams never make a deal with each other in the background.
+- AI-vs-AI trading now runs on its own (`lib/aiMarket.ts`), so this is no
+  longer a hole — but it is deliberately QUIET on its first ship. The
+  in-season market is deadline-weighted and aims well under the real NFL's
+  35-40 trades a year, plus one pass at the top of free agency and one on
+  draft day. What is still not modelled: trades DURING the draft itself
+  (clubs move up before the board opens, not between selections), three-team
+  deals, and any trade involving cash or conditional picks.
 - College stats/combine testing are procedurally generated at class
   creation, not the output of an actually-simulated college season — see
   the header comment in `lib/gen/prospectProfile.ts` for exactly what's
@@ -4098,3 +4102,42 @@ ever force-pushed over, so every state below still exists in git history).
   first three, both enforced by redrawing rather than clipping. The club wins
   **1.13 to 5.75 games, mean 2.88**; that is harder than before and it is the
   point. Commit `7955804`.
+- **2026-08-24 — The player card carries a career record.** A man's card
+  showed what he had done and never what had happened to him: the year-by-year
+  table had no draft line, no signing, no release, no trophy dated against the
+  season that earned it. The app owner sketched a career as a list of years
+  with a sentence beside each — *"2027 — Drafted #19 by Chicago / 2029 —
+  Breakout: 14.5 sacks / 2030 — First All-Pro / 2032 — Championship"* — and,
+  shown four ways to build it, chose the one where **the season table is the
+  spine and the events hang off the years**: *"Option A, the record is what we
+  need to add to the player cards."* So the Career Stat Line is now the
+  **Career Record**: the same season rows, plus what he was rated when each
+  season finished, plus a right-hand column of dated events — gold for an
+  honour (the row is tinted for it), blue for a move, grey otherwise.
+  **It was designed against the quiet careers, not the loud one.** Measured
+  first: the longest career in the development database is a twenty-season
+  punter with four recorded events, all of them re-signings, and no draft row
+  at all; only about half of all transactions name the player they are about;
+  and an offensive lineman has no season row in any year of his career because
+  the sim writes him no box line. All three now read as deliberate. The punter
+  gets eighteen honest season rows and four lines beside them — a quiet career,
+  not a broken screen. The lineman gets no stat columns at all (the card
+  already refused to invent them) and his record column carries the page. A
+  year with an event and no season line — a draft, a release in a year he never
+  suited up — still gets a row, and says *"no line recorded"* rather than
+  claiming he did not play. **Every line is one stored row restated.** The
+  draft slot comes off the player's own draft columns; the terms of a signing
+  are the transaction's own words, verbatim, never re-totalled into a headline
+  number; and the trophies, All-Star seasons and rings are **the same rows the
+  pill beside his name is drawn from**, so a count and the record under it
+  cannot disagree. The end-of-season overall goes through the scouted view like
+  every other rating, and the column is not drawn at all for a save that never
+  wrote one down. Injuries are absent and stay absent: 82,440 injury rows in
+  the database and not one names the player it happened to. Weekly recaps and
+  development notes are excluded on purpose — one career carries 95 of them,
+  and a record book is not a feed. Trades and franchise tags are wired and will
+  appear the moment those rows start carrying a player id. **The standalone
+  Career & Honors panel is gone**, for the reason its own code comment already
+  gave about career totals: it listed the same year-and-trophy pairs the hero
+  pill counts and the record now dates, which made three tellings of one fact.
+  Commit `2c580ef`.
