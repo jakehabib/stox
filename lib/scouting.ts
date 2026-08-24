@@ -1,5 +1,5 @@
 import { Rng, clamp } from './rng';
-import { SCOUTING } from './tuning';
+import { SCOUTING, SCOUT_FOG } from './tuning';
 import type { Position } from './tuning';
 import { ATTRIBUTE_BY_KEY, AttrMap, attrsForPosition, computeOverall } from './ratings';
 import { readJson } from './json';
@@ -14,19 +14,33 @@ import type { DynastyScoutMods } from './dynasty';
  *   - an OBSERVED value: truth + noise, where noise shrinks as confidence rises
  *   - a RANGE around it: observed +/- error(confidence, attribute difficulty)
  *
- * Two separate things were meant to be modeled:
+ * Two separate things are modeled:
  *   1. Bias  — your observation may be centered wrong (you think he's a 78; he's a 71)
  *   2. Spread— how wide a range you're willing to quote
  *
- * ONLY THE SECOND ONE EXISTS. observe() draws each attribute independently
- * around its true value, and computeOverall then averages a dozen of those
- * draws, so the noise cancels: at zero scouting the centre of a prospect's
- * OVR is out by 3.75 rms and the displayed band is +/-12.5. Re-scouting the
- * same man 240 times moves his mean read by nothing measurable — there is no
- * correlated term that could hold a club at 78 on a 71. What makes a bust
- * today is the RANGE being wide, not the read being wrong, and the two are not
- * the same story. The full measurement, and the two ways of reconciling it,
- * are in buildScoutedView below, at the lowMap/highMap aggregation.
+ * FOR A LONG TIME ONLY THE SECOND ONE EXISTED, AND THIS PARAGRAPH SAID SO
+ * WITHOUT SAYING IT WAS A DEFECT. observe() drew each attribute independently
+ * around its true value and computeOverall averaged a dozen of those draws, so
+ * the noise cancelled: measured over 150 blind classes of 400, an unscouted
+ * club's centre was out by sd 3.90 while the band it printed was +/-12.73 — a
+ * range 3.26x wider than the error it was quoted around, holding the truth
+ * 99.8% of the time. That is not a confidence interval, it is a guarantee.
+ * Re-scouting the same man 240 times moved his mean read by nothing
+ * measurable: "you think he's a 78, he's a 71" cannot happen through
+ * independent per-attribute noise on twelve attributes.
+ *
+ * The consequence was the app owner's, in his own words: *"we should widen the
+ * range of scouted overalls on the draft board. its too easy to just pick the
+ * highest one."* A cold board scored rho 0.917 against the truth for free and
+ * rose only to 0.996 with every scouting point in the game spent — the tree
+ * bought 0.08 of rank correlation.
+ *
+ * observe() now draws ONE correlated bias per player per observation, shared
+ * by every attribute, so it survives the average instead of cancelling in it
+ * (SCOUT_FOG in lib/tuning.ts, and the measurement that sized it). Cold error
+ * sd 6.28, band/error 2.02, coverage 96.6%, board rho 0.811 — rising to 0.993
+ * on a full file. The band did NOT move: what changed is that the number it is
+ * quoted around is now wrong by roughly what the band says it might be.
  *
  * Attributes carry a scoutDifficulty (ratings.ts). A 4.4 forty is measurable;
  * "decision making" is not. So physical attributes converge fast and mental
@@ -134,12 +148,30 @@ export function errorBand(confidence: number, difficulty: number, extraPenalty =
   return Math.max(0.5, (max - (max - min) * Math.pow(t, 0.65)) + extraPenalty);
 }
 
-/** SD of the observation error (how wrong your center point can be). */
+/** SD of the INDEPENDENT part of the observation error, per attribute. */
 export function observationSd(confidence: number, difficulty: number): number {
   const t = clamp(confidence / 100, 0, 1);
   const max = SCOUTING.OBSERVE_SD_MAX * (0.5 + difficulty);
   const min = SCOUTING.OBSERVE_SD_MIN * (0.5 + difficulty);
   return max - (max - min) * Math.pow(t, 0.7);
+}
+
+/**
+ * SD of the CORRELATED part — one draw per player, added to every attribute of
+ * his file at once, which is what makes a club sit on a wrong number instead
+ * of averaging its way onto the right one.
+ *
+ * It carries no difficulty term and that is deliberate. Difficulty says how
+ * hard one TRAIT is to measure; this says how wrong the building is about the
+ * MAN, and a room that has him a tier too high is a tier too high on his
+ * stopwatch and his instincts alike. Difficulty still shapes the independent
+ * half above, which is where a 4.4 forty converging faster than "decision
+ * making" belongs.
+ */
+export function observationBiasSd(confidence: number): number {
+  const t = clamp(confidence / 100, 0, 1);
+  const { BIAS_SD_MAX: max, BIAS_SD_MIN: min, BIAS_CURVE } = SCOUT_FOG;
+  return max - (max - min) * Math.pow(t, BIAS_CURVE);
 }
 
 /**
@@ -162,12 +194,26 @@ export function observe(
   const out: AttrMap = {};
   // A better scout effectively raises confidence for observation purposes.
   const effective = clamp(confidence + (scoutAccuracy - 50) * 0.25 + specialtyBonus * 100, 0, 100);
+  // ONE draw, before the loop, shared by every attribute below. Drawn from the
+  // same stream so a caller that observes a whole class in a loop gets an
+  // independent read per player and identical bytes on a replayed seed.
+  const bias = rng.normal(0, observationBiasSd(effective));
   for (const key of attrsForPosition(position)) {
     const def = ATTRIBUTE_BY_KEY[key];
     const sd = observationSd(effective, def?.scoutDifficulty ?? 0.5);
-    out[key] = clamp(Math.round(rng.normal(trueAttrs[key] ?? 50, sd)), 20, 99);
+    out[key] = clamp(Math.round(rng.normal((trueAttrs[key] ?? 50) + bias, sd)), 20, 99);
   }
   if (truePotential !== undefined) {
+    /*
+     * POTENTIAL DOES NOT GET THE BIAS, AND THAT IS MEASURED RATHER THAN AN
+     * OVERSIGHT. The overall needed it because it is an AVERAGE of a dozen
+     * observations and averaging is what killed the error. Potential is a
+     * SINGLE observation, so nothing ever cancelled: at confidence 8 its
+     * centre is already out by sd 13.55 against a +/-19.25 band, a ratio of
+     * 1.42 — an honest interval before this change and still one after it.
+     * Adding a correlated term to a number that never averaged would just
+     * widen a range that was not lying.
+     */
     const sd = observationSd(effective, SCOUTING.POTENTIAL_DIFFICULTY);
     out[POTENTIAL_OBS_KEY] = clamp(Math.round(rng.normal(truePotential, sd)), 40, 99);
   }
