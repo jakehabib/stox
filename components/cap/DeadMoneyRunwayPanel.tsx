@@ -27,8 +27,9 @@ import type { DeadMoneyItem, DeadMoneyRunway } from '@/lib/cap-summary';
  * outlook counted forward from `league.seasonYear`, the runway dates its void
  * bills off `capChargeYear` — and nothing reconciled them.
  *
- * MultiYearOutlookPanel is a bar chart now, and its bars are the COMPLETE
- * picture: active salary and dead money stacked together against each year's
+ * MultiYearOutlookPanel is a column chart now — four seasons stacked from zero
+ * to a stepped ceiling line — and its columns are the COMPLETE picture: active
+ * salary and dead money in one stack, measured against that season's own
  * ceiling. Every figure it stacks and every figure this panel lists comes from
  * ONE `capSheet` call (lib/cap-summary.ts) — the top chart's dead segment is
  * `years[i].deadBooked + deadScheduled`, this panel is `sheet.dead`, and both
@@ -93,8 +94,24 @@ export function DeadMoneyRunwayPanel({ runway, leagueId, seasonYear }: {
   seasonYear: number;
 }) {
   const { years, total, thisYear, lastYear, largest, beyondWindow, beyondItems } = runway;
-  // A panel that reports nothing is clutter by the app's own rule, and the
-  // masthead tile already says "none on the books" when it is empty.
+  /**
+   * THIS PANEL STILL DELETES ITSELF ON A CLEAN LEDGER, AND THAT IS NOW A
+   * DEFENSIBLE ANSWER RATHER THAN A SILENCE.
+   *
+   * It was not, before. The app owner reported *"the dead cap is missing from
+   * the advanced tab"* — and he was right about what he saw: with nothing dead
+   * on the books this returned null, the masthead tile is a small figure among
+   * eight, and "your club owes nothing" was indistinguishable from "we forgot
+   * to draw it".
+   *
+   * What changed is the top of the tab. MultiYearOutlookPanel's X axis now
+   * prints THAT SEASON'S DEAD MONEY under every column for every club, at $0
+   * exactly as loudly as at $59.2M, and its legend keys both kinds whether or
+   * not the club carries either. The question this panel exists for — *when
+   * does it leave, and whose deal is it?* — has no answer on a clean ledger,
+   * and a panel drawn to say "no rows" is the clutter the house rule is about.
+   * So the guard stays, and the chart above carries the standing answer.
+   */
   if (total <= 0 || lastYear === null) return null;
 
   // The scale is taken over the DRAWN columns only. Folding `beyondWindow`

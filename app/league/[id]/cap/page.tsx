@@ -451,11 +451,15 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       {/* THE FOOT OF THE ADVANCED TAB — *"lets move the dead money towards the
           bottom of the advanced cap tab"*. This is the panel that shipped in
           b5a91c1, restored unchanged and taking the same prop; what moved is
-          where it sits and what it is now the DETAIL OF. The top bar chart
-          stacks this same money as a segment of every year (both read one
-          `capSheet`), so this is the itemisation of that segment rather than a
-          second, rival account of the future — which is what it and the old
-          line chart were when they sat side by side.
+          where it sits and what it is now the DETAIL OF. The column chart at
+          the top stacks this same money into every season and prints the
+          season's total under its own column, at $0 as loudly as at $59.2M
+          (both read one `capSheet`), so this is the itemisation of that
+          segment rather than a second, rival account of the future — which is
+          what it and the old line chart were when they sat side by side. It
+          still renders nothing on a club with a clean ledger, which is why
+          that X-axis line exists: there is no runway to draw, and the chart
+          above says so rather than leaving a silence.
           Below the analytics grid and above the Contracts table rather than
           dead last: Contracts is the page's reference table, it closes the
           page on Basic too, and an Advanced panel after it would strand it. */}
