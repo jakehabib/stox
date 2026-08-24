@@ -479,6 +479,61 @@ something here, the principle wins and the change is wrong.
    already server-rendered when the page paints, so a navigation would buy
    nothing and cost the reader his scroll position.
 
+## Working on this repo alongside other agents
+
+This tree is often shared by several sessions at once. Two rules exist because
+both were learned by breaking the deploy branch, not by reasoning about it.
+
+**Never stage by path on a shared tree.** `git add lib/season.ts` stages the
+file *as it currently is*, including whatever an agent you cannot see wrote
+into it thirty seconds ago. That is how a commit once swept an `import
+{ runAiTradeMarket } from './aiMarket'` into `lib/season.ts` while
+`lib/aiMarket.ts` was still untracked — every route touching the league layout
+threw `Module not found` until it was rebuilt from `HEAD`.
+
+`git update-index --cacheinfo` is worse, because it looks surgical and is not:
+it writes the *whole index entry*, silently discarding anything another agent
+had staged at that path. It has already destroyed a sibling's staged
+`lib/tuning.ts` once, recovered only because the blob was still reachable
+through `git fsck --unreachable`.
+
+**Use a temporary index.** It cannot touch anyone else's staging because it
+never opens their index:
+
+```sh
+export GIT_INDEX_FILE=/tmp/idx-$$
+git read-tree HEAD                       # start from committed state, not the shared index
+git hash-object -w path/to/file          # -> <blob>
+git update-index --add --cacheinfo 100644,<blob>,path/to/file
+tree=$(git write-tree)
+commit=$(git commit-tree "$tree" -p HEAD -m "message")
+git update-ref refs/heads/<branch> "$commit"
+unset GIT_INDEX_FILE
+```
+
+To change one hunk of a contended file, read the committed version first
+(`git show HEAD:path`), apply the hunk to *that*, and hash the result — never
+the working copy.
+
+**Verify in an isolated worktree, never in the shared tree.** A `tsc` run in
+the shared tree measures a mix of everyone's in-flight work and will report
+failures that do not exist on the branch, and hide ones that do. A false alarm
+of exactly this shape cost an afternoon:
+
+```sh
+git worktree add --detach /tmp/vfy origin/<branch>
+ln -s "$PWD/node_modules" /tmp/vfy/node_modules
+cd /tmp/vfy && npx tsc --noEmit -p tsconfig.json | grep -E '^(lib|app|components)/'
+```
+
+Note that `tsc` will **not** catch importing a `'use client'` module into a
+Server Component. That one only shows up at runtime, as a 500.
+
+**The shared database is shared too.** It has hit `too many clients already`
+(100/100) with sibling sessions' processes. Delete scratch leagues **by
+collected id, never by name prefix** — a prefix sweep once destroyed another
+session's live harness mid-run.
+
 ## Known simplifications (documented, not bugs)
 
 - ~~Negotiation patience is per-session, not stored.~~ **Fixed — this entry
@@ -591,6 +646,22 @@ always a plain-English trail back to "what did this look like before." To
 undo anything, ask to revert to a commit below (or the app owner can do it
 directly: `git revert <hash>`, or check out an earlier commit — nothing is
 ever force-pushed over, so every state below still exists in git history).
+
+- **2026-08-24 — Two agents broke the shared tree the same way, so the
+  procedure is now written down instead of re-learned.** A new *Working on
+  this repo alongside other agents* section records the three hazards that
+  have actually cost time here: staging by path on a shared tree sweeps
+  another session's uncommitted work into your commit (this took the deploy
+  branch down once, via an import of a file that was still untracked);
+  `git update-index --cacheinfo` looks surgical but writes the whole index
+  entry and silently discards what someone else had staged there; and
+  typechecking in the shared tree measures everybody's in-flight mix at once,
+  which produced a false `aiMarket.ts` build failure that origin never had.
+  The section gives the temporary-index recipe that is immune to all three,
+  the isolated-worktree verification command, the reminder that `tsc` cannot
+  see a `'use client'` module imported into a Server Component, and the rule
+  that scratch leagues in the shared database are deleted by collected id and
+  never by name prefix. No product code changes.
 
 - **2026-08-24 — A four-point ceiling band next to a forty-point one told you
   which prospect was elite.** The scouted POTENTIAL range was clamped to the
