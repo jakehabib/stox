@@ -390,24 +390,107 @@ export const ROSTER_TARGETS: Record<Position, { min: number; ideal: number; max:
    *    the composition is IDENTICAL to two decimal places — K per club
    *    {"1":400} both times. The binding number is `ideal`, not `max`.
    *
-   * 2. AND `max` IS NOT ONLY A CEILING. lib/ai/gm.ts reads `max > 1` twice as
-   *    a different question — "is this a one-man job" — because K and P are the
-   *    only rows in this table where the two answers differ. `teamNeeds` skips
-   *    its depth term for them and `rosterFit` gives them no bench snap
-   *    weights. Setting max: 2 flips both: measured, a club with a perfectly
-   *    good kicker goes from needs.K 0.000 to 0.293, which is over free
-   *    agency's 0.15 bid gate, so all 32 clubs would shop for a backup kicker
-   *    in every wave forever; and a spare kicker's rosterFit gain goes from
-   *    0.00 to 2.64, pricing a man who takes no snaps as though he took some.
+   * 2. AND `max` USED NOT TO BE ONLY A CEILING — THAT HALF IS NOW DONE.
+   *    lib/ai/gm.ts read `max > 1` twice as a different question, "is this a
+   *    one-man job", because K and P are the only rows in this table where the
+   *    two answers differ: `teamNeeds` skipped its depth term for them and
+   *    `rosterFit` gave them no bench snap weights. Setting max: 2 flipped
+   *    both — measured, a club with a perfectly good kicker went from needs.K
+   *    0.000 to 0.293, over free agency's 0.15 bid gate, so all 32 clubs would
+   *    shop for a backup kicker in every wave forever; and a spare kicker's
+   *    rosterFit gain went from 0.00 to 2.64, pricing a man who takes no snaps
+   *    as though he took some. Both call sites now ask `carriesDepth()` in
+   *    lib/rosterConstruction.ts, off the ONE_MAN_JOB set below, so `max` means
+   *    the roster ceiling and only that. The swap is behaviour-identical today
+   *    by construction — every other row here has max >= 2 — and
+   *    scripts/_rc_probe.ts asserts the equivalence position by position.
    *
-   * So the roster half of a specialist market is not a change here. It needs
-   * lib/ai/gm.ts to stop reading `max > 1` as "carries depth" — a ONE_MAN_JOB
-   * set, which lib/gen/players.ts already keeps under that exact name — and
-   * only then can this become 2 without side effects. The half that IS a
-   * constant is ROSTER_NEED_QUALITY_WEIGHT below, and that one moved.
+   * So the roster half of a specialist market is now only this constant: with
+   * gm.ts no longer keyed off it, K/P could become max: 2 on its own merits.
+   * It has not been changed here because nothing has measured that a league
+   * WANTS 32 backup kickers; the blocker is gone, the decision is open. The
+   * other half that IS a constant is ROSTER_NEED_QUALITY_WEIGHT below, and
+   * that one moved.
    */
   K:    { min: 1, ideal: 1, max: 1 },
   P:    { min: 1, ideal: 1, max: 1 },
+};
+
+/**
+ * The positions that field exactly one man, so the roster behind them is a
+ * spare rather than depth that plays.
+ *
+ * THIS IS NOT `max === 1` AND MUST NOT GO BACK TO BEING READ OFF IT. It is a
+ * different question that happens to have the same answer today, and the
+ * entanglement cost a real measurement (see point 2 above): every consumer
+ * that wants "does a backup here take snaps" asks `carriesDepth()` in
+ * lib/rosterConstruction.ts, which reads this, while `max` is free to mean the
+ * roster ceiling. lib/gen/players.ts keeps its own ONE_JOB list for the star
+ * seeding, and that one deliberately includes QB — a second GOOD quarterback
+ * is a luxury even though a backup quarterback certainly plays. Three
+ * questions, not one.
+ */
+export const ONE_MAN_JOB: ReadonlySet<Position> = new Set<Position>(['K', 'P']);
+
+/**
+ * ---------------------------------------------------------------------------
+ * HOW HARD IT GETS TO ADD ONE MORE BODY AT A POSITION YOU ALREADY HAVE  [TUNE]
+ * ---------------------------------------------------------------------------
+ * `max` above is a ceiling nothing used to enforce. These two numbers are what
+ * enforce it, and they do it as a compounding penalty rather than a cliff,
+ * because the house rule on outliers is to make the crazy ones "increasingly
+ * less and less likely as they go on" — never to forbid them. A club with a 92
+ * starter must still be able to take a falling elite prospect at that spot;
+ * it just has to be worth a real value gap. See lib/rosterConstruction.ts
+ * `positionSaturation` for the shape and the football argument.
+ *
+ * SWEPT over 200 replayed drafts — twenty blind-sampled real leagues x ten
+ * generated classes, 44,800 picks (scripts/_rc_probe.ts). Reading the share of
+ * all picks spent at a position the club was already at or over `max` in, the
+ * share of club-positions left over max AFTER the draft (against 7.1% already
+ * over max BEFORE it, which the draft inherits and cannot fix), and the
+ * deepest quarterback room and left-tackle room any club ended with:
+ *
+ *   past-ideal / past-max   picks at a full room   over max after   worst QB/LT
+ *      1.00  1.00 (before)          33.2%              16.9%          13 / 9
+ *      0.90  0.45                    6.4%               9.9%          11 / 7
+ *      0.90  0.35   <- shipped       4.8%               9.2%          11 / 7
+ *      0.90  0.30                    4.0%               8.9%          11 / 7
+ *      0.90  0.20                    2.9%               8.4%          11 / 7
+ *
+ * The "worst" column is the one that settles the shape: from 0.45 down, the
+ * deepest room a club ENDS a draft with is the deepest room it STARTED with.
+ * The draft stops making a bad room worse at all; what is left in the second
+ * column is clubs crossing their ceiling by exactly one.
+ *
+ * WHY 0.35 AND NOT 0.45. Nothing in the game ever unwinds an over-max room.
+ * `trimRostersToLimit` (lib/season.ts) cuts by cheapest-to-release lowest-
+ * rated and is position-blind, so a sixth quarterback survives cut-down day
+ * whenever he outranks somebody at a position the club is thin at. Over-max is
+ * a one-way ratchet — measured across the whole dev database, brand-new
+ * leagues sit at 0.4% of club-positions over max and by their fifth season
+ * 44.8% of clubs are over max at quarterback — so the draft's own contribution
+ * has to be near zero rather than merely smaller.
+ *
+ * WHY NOT 0.20, WHICH IS BETTER ON EVERY COLUMN. Because those columns are not
+ * the only thing being bought. At 0.35 a club still spends 4.8% of its picks —
+ * about eleven a draft, league-wide — on a room that is already full, and 37%
+ * of those are at a position where its existing starter grades 85+: that is
+ * the falling elite prospect a real front office takes anyway, and lib/ai/gm.ts
+ * is explicit that an AI without that is "unbeatable and boring". By 0.20 the
+ * required value gap is 5x at a fourth quarterback and that behaviour is gone
+ * rather than rare.
+ *
+ * IT COSTS NO BOARD FIDELITY, which was the thing at risk: Spearman(board
+ * rank, pick order) 0.910 before and 0.921 after, round-one |board rank - pick|
+ * median 10 either way and p90 33 -> 30. A club knocked off a stacked position
+ * does not reach further down the board; it takes the next name on it.
+ */
+export const ROSTER_SATURATION = {
+  /** Per body past `ideal`, while still at or under `max`. A thumb on the scale. */
+  PAST_IDEAL_DECAY: 0.90,
+  /** Per body past `max`, compounding ON TOP of the mild decay above. */
+  PAST_MAX_DECAY: 0.35,
 };
 
 /**

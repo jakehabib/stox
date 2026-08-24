@@ -12,6 +12,7 @@ import { consensusBoardMap, CONSENSUS_EVAL, type ConsensusRead } from './consens
 import type { CapMode, GmProfile } from './types';
 import { reconcileDepthChart, rosterCapTarget } from './gen/league';
 import { runAiPositionConversions } from './ai/positionChange';
+import { heldAt, positionCounts, positionSaturation } from './rosterConstruction';
 
 /**
  * ===========================================================================
@@ -948,15 +949,66 @@ export function clubReadOf(teamId: string, prospect: { id: string; publicGrade: 
 /**
  * Who this club takes, given what is left on the public board. Pure — no
  * database, no truth — so the draft it produces can be measured over hundreds
- * of classes offline (scripts/_dr_replay.ts) against exactly the code that
- * ships.
+ * of classes offline (scripts/_dr_replay.ts, scripts/_rc_probe.ts) against
+ * exactly the code that ships.
+ *
+ * ===========================================================================
+ * IT DRAFTS A ROSTER, NOT A LIST  [TUNE]
+ * ===========================================================================
+ * The app owner's report: *"we just had our save run 6 QBs in a row off the
+ * board all to teams who already had stacked QB rooms."* He sent the receipt —
+ * one club holding six quarterbacks at 94/93/92/88/83/76, about $129M of a
+ * $255M cap on one position, and the 88 was the man it had just drafted.
+ *
+ * Everything below this club's own board was working. What was missing is that
+ * NOTHING IN THE PICK ASKED HOW MANY OF HIM THE CLUB ALREADY HAD. `teamNeeds`
+ * comes closest and it saturates at zero — a club with three good quarterbacks
+ * and a club with eleven are the same club to it — and zero need is only a
+ * 15% discount (TRADE_VALUE.NEED_MULT_MIN 0.85), against a QB tier curve and
+ * an AI.DRAFT_POSITION_VALUE of 1.5 pulling the other way. Fifteen percent
+ * never beat that, so quarterbacks kept winning boards at clubs that had no
+ * use for one. Measured over 200 replayed drafts off twenty blind-sampled real
+ * leagues: 33.2% of ALL 224 picks were spent at a position the drafting club
+ * was already at or over `ROSTER_TARGETS.max` in.
+ *
+ * SO THE COUNT IS PRICED, AND IT IS PRICED AS A CURVE. `positionSaturation`
+ * (lib/rosterConstruction.ts) multiplies each candidate's value by a factor
+ * that is 1 while the room is still filling, takes a mild haircut per body
+ * past `ideal`, and then compounds hard past `max` — for a quarterback, 0.315
+ * for a fourth, 0.031 for a sixth, 0.0098 for a seventh. It never reaches
+ * zero. That is deliberate and it is the house rule on outliers: *"make it
+ * less likely that those really crazy outliers occur, and they get
+ * increasingly less and less likely as they go on."* A club with a 92 starter
+ * can still take an elite prospect who falls to it — 4.8% of picks still go to
+ * a full room, and 37% of those are at a position the club already starts an
+ * 85+ at — but it now costs a real value gap instead of being the default.
+ *
+ * MEASURED, same 200 drafts, before -> after: picks at a full room 33.2% ->
+ * 4.8%; picks inside a run of three-plus consecutive same-position selections
+ * made by clubs already full there 2.52 a draft -> 0.14; the longest such run
+ * anywhere 9 -> 6; and the deepest quarterback room any club ended a draft
+ * with 13 -> 11, which is the room it walked in with. Board fidelity is
+ * unharmed and slightly better — Spearman(board rank, pick order) 0.910 ->
+ * 0.921 — because a club knocked off a stacked position takes the next name on
+ * the board rather than reaching past it.
+ *
+ * THE ROSTER IS OPTIONAL and the fallback is the old behaviour, not a crash:
+ * scripts/_dr_replay.ts's board-fidelity harness calls this without one, and
+ * a caller that cannot see a roster should get a board pick rather than a
+ * saturation charge computed from nothing.
+ * ===========================================================================
  */
 export function clubDraftPick<T extends BoardCandidate>(
   available: T[],
-  opts: { teamId: string; profile: GmProfile; needs: Record<string, number>; rng: Rng },
+  opts: {
+    teamId: string; profile: GmProfile; needs: Record<string, number>; rng: Rng;
+    /** The drafting club's roster as it stands at this pick. Omit to draft off the board alone. */
+    roster?: { position: string }[];
+  },
 ): { prospect: T; read: ClubRead; reached: boolean } | null {
   if (available.length === 0) return null;
   const { teamId, profile, needs, rng } = opts;
+  const held = opts.roster ? positionCounts(opts.roster) : null;
 
   // The window is drawn on the PUBLIC board, before this club has an opinion —
   // a club looks down the board it shares with everyone else and decides among
@@ -980,7 +1032,13 @@ export function clubDraftPick<T extends BoardCandidate>(
       const valueRng = new Rng(`draft-value-${teamId}-${p.id}`);
       const base = playerValue(shadow, { profile, needs, rng: valueRng }) * (1 - profile.bpaBias * 0.15)
         + read.now * profile.bpaBias * 0.6;
-      return { prospect: p, read, value: base * posValue };
+      // How many of him this club already has. Applied to the WHOLE value,
+      // the BPA term included, because that term is the one that was winning:
+      // a club whose GM leans best-player-available was the club most likely
+      // to take a fourth quarterback, since `bpaBias` deliberately routes
+      // around the need multiplier.
+      const saturation = held ? positionSaturation(p.position, heldAt(held, p.position)) : 1;
+      return { prospect: p, read, value: base * posValue * saturation };
     })
     .sort((a, b) => b.value - a.value);
 
@@ -1091,7 +1149,7 @@ async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng, kin
       if (!read) return [];
       return [{ ...p, publicGrade: read.boardScore - read.positionPull, boardScore: read.boardScore }];
     });
-    const choice = clubDraftPick(candidates, { teamId, profile, needs, rng });
+    const choice = clubDraftPick(candidates, { teamId, profile, needs, rng, roster });
     if (choice) return choice.prospect;
   }
 
@@ -1105,11 +1163,18 @@ async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng, kin
   });
   if (veterans.length === 0) return null;
 
+  // Same roster-construction charge the rookie path takes. It matters MORE
+  // here, not less: a fantasy draft builds all thirty-two rosters from nothing
+  // in one sitting, so it is the one path where a club can run its entire room
+  // at a position off a single board. Every position starts at zero held, so
+  // this is inert until a club has actually filled a room.
+  const heldByPos = positionCounts(roster);
+
   const board = veterans
     .map((p) => {
       const posValue = AI.DRAFT_POSITION_VALUE[p.position as Position] ?? 1;
       const base = playerValue(p as unknown as RosterPlayer, { profile, needs, rng }) * (1 - profile.bpaBias * 0.15) + p.trueOvr * profile.bpaBias * 0.6;
-      return { p, value: base * posValue };
+      return { p, value: base * posValue * positionSaturation(p.position, heldAt(heldByPos, p.position)) };
     })
     .sort((a, b) => b.value - a.value);
 

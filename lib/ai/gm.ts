@@ -7,6 +7,7 @@ import { REPLACEMENT_LEVEL } from '../sim/units';
 import { CapMode } from '../types';
 import { readJson } from '../json';
 import { assertNoProfitableConversion, relatedPositions, positionMove, attrsForPosition, computeOverall } from '../ratings';
+import { carriesDepth, positionSaturation } from '../rosterConstruction';
 
 /**
  * A POSITION CHANGE MAY NOT PAY FOR ITSELF.
@@ -222,7 +223,41 @@ export function acceptableStarter(pos: Position): number {
 
 /**
  * Need score per position, 0 (stacked) .. 1 (desperate).
- * Combines "do we have enough bodies" with "is the starter any good".
+ * Combines "do we have enough bodies" with "is the starter any good" — and
+ * then with "how many of him are we already carrying", which is the term that
+ * was missing.
+ *
+ * ===========================================================================
+ * WHY A THIRD TERM, AND WHY IT IS A MULTIPLIER
+ * ===========================================================================
+ * The first two terms only ever look DOWNWARD: below the roster minimum is an
+ * emergency, and a poor starter is a hole. Neither can see a club that already
+ * has too many. So a club carrying five quarterbacks behind a 78 still scored
+ * `(84 - 78) / 18 * 0.75 = 0.25` at quarterback — over free agency's 0.15 bid
+ * gate — and went shopping for a sixth. The same arithmetic is why the
+ * OFFENSIVE LINE was the worst offender in the database after quarterback:
+ * `acceptableStarter` is 80 there and interior linemen genuinely median 79-80
+ * (measured, see the note on that constant), so a large share of clubs sit
+ * permanently just under the bar at five separate positions, score a standing
+ * quality need at each, and keep buying linemen. Measured across every club in
+ * every league in the dev database, 1,595 clubs were over `max` at some line
+ * spot and 1,160 of those were carrying more than ten offensive linemen in
+ * total — bloat, not a reshuffle. One roster held twenty-five.
+ *
+ * A MULTIPLIER RATHER THAN A SUBTRACTED TERM because "we have plenty" does not
+ * cancel out "our starter is bad" — it makes the whole reading irrelevant. A
+ * club with eleven receivers does not half-want a receiver; it does not want
+ * one, whatever the twelfth-best one on the roster grades. Multiplying also
+ * keeps the output in its documented 0..1 range with no re-clamping, so every
+ * existing consumer (free agency's 0.15 bid gate, `maxOffer`'s overpay term,
+ * the draft board, the roster-needs widget) reads the same scale it always did.
+ *
+ * IT REACHES EVERY ACQUISITION PATH BY CONSTRUCTION, which is the point:
+ * lib/freeagency.ts calls into this file through exactly two functions, this
+ * one and `maxOffer`, so the wave's bid gate, the in-season signings, the
+ * minimum-roster fill and the user's own "Fill Roster" button all inherit the
+ * same notion of a full room without a line changing over there.
+ * ===========================================================================
  */
 /**
  * Takes the two fields it actually reads rather than a whole RosterPlayer, so
@@ -247,13 +282,24 @@ export function teamNeeds(players: Pick<RosterPlayer, 'position' | 'trueOvr'>[])
     const qualityNeed = clamp((acceptableStarter(pos) - starter) / STARTER_GAP_DIVISOR, 0, 1) * qualityWeight;
 
     // Depth need: second body matters more at high-snap positions. Positions
-    // that only ever roster one player (K, P, FB) never carry a "backup" —
-    // that's not a hole, it's the position, so skip this term entirely for
-    // them.
+    // that only ever roster one player (K, P) never carry a "backup" — that's
+    // not a hole, it's the position, so skip this term entirely for them.
+    //
+    // ASKED OFF `ONE_MAN_JOB`, NOT OFF `target.max > 1`, and that is not a
+    // cosmetic swap. `max` is the roster CEILING and this is a question about
+    // whether a bench plays; the two happened to agree only because K and P
+    // are the one place the answers coincide, and reading one off the other
+    // meant any change to the ceiling silently rewrote this. Behaviour is
+    // identical today by construction — every other position has max >= 2 —
+    // and scripts/_rc_probe.ts asserts that position by position.
     const backup = group[1]?.trueOvr ?? 40;
-    const depthNeed = target.max > 1 ? clamp((62 - backup) / 30, 0, 1) * 0.4 : 0;
+    const depthNeed = carriesDepth(pos) ? clamp((62 - backup) / 30, 0, 1) * 0.4 : 0;
 
-    needs[pos] = clamp(countNeed * 1.4 + qualityNeed * 0.75 + depthNeed, 0, 1);
+    // How full the room already is. See the block above this function, and
+    // lib/rosterConstruction.ts for the curve and the football argument.
+    const saturation = positionSaturation(pos, group.length);
+
+    needs[pos] = clamp(countNeed * 1.4 + qualityNeed * 0.75 + depthNeed, 0, 1) * saturation;
   }
   return needs;
 }
@@ -426,12 +472,14 @@ export function rosterFit(p: RosterPlayer, roster: RosterPlayer[]): RosterFit {
   // The slots that play, and how much. Every starting slot counts fully;
   // bench slots count for the share of snaps a backup really takes. Positions
   // that only ever roster one man (K, P) carry no bench slots at all — the
-  // same rule, off the same table, that teamNeeds uses to skip its depth term
+  // same rule, from the same place, that teamNeeds uses to skip its depth term
   // for them, because for those a second body is not depth, it is a spare.
-  const carriesDepth = (ROSTER_TARGETS[p.position as Position]?.max ?? 1) > 1;
+  // `ONE_MAN_JOB` rather than `max > 1` for the reason recorded there: the
+  // ceiling and "does the bench play" are two questions and were being read
+  // off one number.
   const weights = [
     ...Array<number>(starters).fill(1),
-    ...(carriesDepth ? UPGRADE.DEPTH_SNAP_WEIGHTS : []),
+    ...(carriesDepth(p.position) ? UPGRADE.DEPTH_SNAP_WEIGHTS : []),
   ];
   // An unfilled slot is scored at what the sim would actually field there
   // (lib/sim/units.ts REPLACEMENT_LEVEL), not at a second opinion about it.
