@@ -8,6 +8,7 @@ import { currentViewer } from '@/lib/owner';
 import {
   LEADERBOARD_CAVEAT,
   PER_SEASON_MIN_SEASONS,
+  REBUILD_SORT_BLURB,
   SORTS,
   parseSort,
   readLeaderboard,
@@ -84,6 +85,14 @@ export default async function LeaderboardPage({
             { label: 'Top Level', value: topLevel > 0 ? String(topLevel) : '—', color: topLevel > 0 ? 'text-accent' : undefined },
             { label: 'Championships', value: String(board.totals.championships), detail: 'won by listed GMs' },
             { label: 'Seasons Played', value: board.totals.seasons.toLocaleString(), detail: 'the denominator' },
+            ...(sort === 'REBUILD'
+              ? [{
+                label: 'Fastest Rebuild',
+                value: board.rows.length > 0 ? String(board.rows[0].seasonsToTitle ?? '—') : '—',
+                detail: 'seasons, worst roster to champion',
+                color: board.rows.length > 0 ? 'text-gold' : undefined,
+              }]
+              : []),
           ]}
         />
 
@@ -93,6 +102,17 @@ export default async function LeaderboardPage({
         <div className="panel p-4 border-warn/30">
           <div className="label-sm text-warn">What this board is</div>
           <p className="text-sm text-chalk/90 mt-1.5 leading-relaxed max-w-3xl">{LEADERBOARD_CAVEAT}</p>
+          {/* THE SAME HONESTY NOTE, FOR THE ONE COLUMN THE CAVEAT ABOVE DOES
+              NOT DESCRIBE. Everything else here can be padded by playing
+              longer, and the caveat is about that; this column cannot, and its
+              risk is the opposite one — a small number that does not say what
+              it excludes. So it says it, in the same place and at the same
+              weight, rather than in the tab blurb alone. */}
+          {sort === 'REBUILD' && (
+            <p className="text-sm text-chalk/90 mt-3 pt-3 border-t border-line/60 leading-relaxed max-w-3xl">
+              {REBUILD_SORT_BLURB}
+            </p>
+          )}
         </div>
 
         {/* Sort tabs -------------------------------------------------------- */}
@@ -138,7 +158,12 @@ export default async function LeaderboardPage({
             <p className="text-sm text-muted mt-2 max-w-md mx-auto">
               {sort === 'PER_SEASON'
                 ? `This board needs ${PER_SEASON_MIN_SEASONS} completed seasons before a per-season rate means anything. Nobody has qualified yet.`
-                : 'The board is empty because it is opt-in and brand new. Be the first franchise on it.'}
+                : sort === 'REBUILD'
+                  /* Not "nobody has played one" — runs may well be under way.
+                     What is true is that none has FINISHED, and saying which
+                     is the difference between an empty board and a wrong one. */
+                  ? 'Nobody has taken the worst roster in football and won a championship with it yet. A run only appears here once the title is on the books.'
+                  : 'The board is empty because it is opt-in and brand new. Be the first franchise on it.'}
             </p>
           </div>
         ) : (
@@ -278,7 +303,19 @@ function BoardRow({
 
       {/* The metric being sorted on, at display scale, plus the level always. */}
       <div className="shrink-0 text-right">
-        {sort === 'PER_SEASON' ? (
+        {sort === 'REBUILD' ? (
+          <>
+            {/* The whole point of the column, at display scale. `seasonsToTitle`
+                is never null on this board — readLeaderboard filters the sort
+                to rows that have one — and the em dash is the honest render if
+                that ever stops being true, rather than a 0 or an Infinity. */}
+            <div className="stat-value text-stat-sm leading-none text-gold">
+              {row.seasonsToTitle ?? '—'}
+            </div>
+            <div className="label-sm mt-1">{row.seasonsToTitle === 1 ? 'Season' : 'Seasons'}</div>
+            <div className="text-xs text-muted mt-0.5">to first title</div>
+          </>
+        ) : sort === 'PER_SEASON' ? (
           <>
             <div className="stat-value text-stat-sm leading-none text-accent">
               {Math.round(row.xpPerSeason ?? 0).toLocaleString()}

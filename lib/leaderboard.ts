@@ -7,6 +7,8 @@ import {
   levelFromXp,
   type LevelProgress,
 } from './dynasty';
+import { parseSettings } from './settings';
+import { rebuildState, seasonsToFirstTitle } from './rebuild';
 
 /**
  * ===========================================================================
@@ -100,7 +102,38 @@ const MAX_ROWS = 1000;
 /** A completed season must be on the board before a RATE means anything. */
 export const PER_SEASON_MIN_SEASONS = 3;
 
-export type LeaderboardSort = 'LEVEL' | 'TITLES' | 'PER_SEASON';
+export type LeaderboardSort = 'LEVEL' | 'TITLES' | 'PER_SEASON' | 'REBUILD';
+
+/**
+ * ===========================================================================
+ * THE REBUILD BOARD — THE ONE COLUMN WHERE LOWER IS BETTER
+ * ===========================================================================
+ * Everything else here rewards accumulation, which is why the caveat above
+ * exists. This one cannot be accumulated at all: it is how many seasons it
+ * took to win a first championship starting from the worst roster in football,
+ * and playing longer only ever makes it worse.
+ *
+ * WHO IS ON IT. Only a save founded as a REBUILD (`settings.leagueStart`),
+ * that has actually won a title, and that never took the ironman rules off.
+ * A normal save has not done the same thing, so it has no number here at all
+ * — not a large one, not a zero, none.
+ *
+ * A RUN STILL GOING IS NOT LISTED, AND THE BOARD SAYS SO RATHER THAN
+ * IMPLYING IT. There is no honest rank for a climb that has not finished:
+ * every unwon run is potentially a 1, and putting it at the bottom would say
+ * the opposite. The empty state and the blurb both state the rule outright,
+ * and a GM's own in-progress run is shown to HIM on /account, where it can be
+ * labelled as unfinished instead of ranked against finished ones.
+ *
+ * AN ABANDONED RUN IS NEVER LISTED, EVEN IF IT LATER WINS. The measurement is
+ * of a title won under locked rules; a save that unlocked them has not made
+ * that measurement. See lib/rebuild.ts.
+ * ===========================================================================
+ */
+export const REBUILD_SORT_BLURB =
+  'Seasons taken to win a first championship from the worst roster in football, under locked rules. '
+  + 'Lower is better — the only column here that time cannot pad. '
+  + 'Runs still in progress are not listed, and a run whose GM unlocked the rules never is.';
 
 export const SORTS: { id: LeaderboardSort; label: string; blurb: string }[] = [
   {
@@ -117,6 +150,11 @@ export const SORTS: { id: LeaderboardSort; label: string; blurb: string }[] = [
     id: 'PER_SEASON',
     label: 'Per Season',
     blurb: `XP per completed season, minimum ${PER_SEASON_MIN_SEASONS} seasons. Simming a decade of .500 football moves you DOWN this one.`,
+  },
+  {
+    id: 'REBUILD',
+    label: 'The Rebuild',
+    blurb: REBUILD_SORT_BLURB,
   },
 ];
 
@@ -163,6 +201,11 @@ export interface ComputedEntry {
   wins: number;
   losses: number;
   championships: number;
+  /**
+   * Seasons taken to a first title on an unabandoned REBUILD run, else null.
+   * Null is "no ranked answer here", never a zero — see THE REBUILD BOARD.
+   */
+  seasonsToTitle: number | null;
   teamName: string;
   teamAbbr: string;
   crestSeed: string;
@@ -192,7 +235,12 @@ export async function computeFootballEntries(
 ): Promise<ComputedEntry[]> {
   const leagues = await prisma.league.findMany({
     where,
-    select: { id: true, seasonYear: true, startYear: true, userTeamId: true, userId: true },
+    select: {
+      id: true, seasonYear: true, startYear: true, userTeamId: true, userId: true,
+      // The Rebuild column needs two facts a franchise's RECORD cannot carry:
+      // how the save was founded, and whether its GM took the handcuffs off.
+      settings: true, rebuildAbandonedAt: true,
+    },
   });
 
   const teamIds = leagues.map((l) => l.userTeamId).filter((id): id is string => !!id);
@@ -250,6 +298,24 @@ export async function computeFootballEntries(
     const hasCurrentRow = seasons.some((s) => s.year === league.seasonYear);
     const played = team.wins + team.losses;
 
+    /**
+     * THE REBUILD NUMBER, DERIVED HERE LIKE THE XP TOTAL BESIDE IT, from the
+     * same `seasons` array and the same tenure cut-off — so the seasons a row
+     * SHOWS and the seasons its rebuild count is MEASURED over can never be
+     * two different sets. `seasonsToFirstTitle` is the only place that
+     * arithmetic exists, and `rebuildState` is the only place the three
+     * outcomes are decided; this reads both rather than re-deciding either.
+     *
+     * Non-null in exactly one state: a REBUILD save that won a title and never
+     * unlocked its rules.
+     */
+    const titleIn = seasonsToFirstTitle(seasons, tenureStartYear);
+    const rebuildRank = rebuildState({
+      leagueStart: parseSettings(league.settings).leagueStart,
+      rebuildAbandonedAt: league.rebuildAbandonedAt,
+      hasChampionship: titleIn !== null,
+    }) === 'WON' ? titleIn : null;
+
     const breakdown = computeDynastyXp({
       seasons,
       inProgress: !hasCurrentRow && played > 0 ? { wins: team.wins, losses: team.losses } : null,
@@ -267,6 +333,7 @@ export async function computeFootballEntries(
       wins: breakdown.wins,
       losses: breakdown.losses,
       championships: seasons.filter((s) => s.playoffResult === 'CHAMPION').length,
+      seasonsToTitle: rebuildRank,
       teamName: `${team.city} ${team.nickname}`,
       teamAbbr: team.abbr,
       crestSeed: team.id,
@@ -300,7 +367,7 @@ export async function refreshFootballRanks(): Promise<RefreshResult> {
   const existing = new Map(
     (await prisma.dynastyRank.findMany({
       where: { sport: FOOTBALL },
-      select: { saveKey: true, userId: true, xp: true, seasons: true, wins: true, losses: true, championships: true, teamName: true, teamAbbr: true, crestSeed: true },
+      select: { saveKey: true, userId: true, xp: true, seasons: true, wins: true, losses: true, championships: true, seasonsToTitle: true, teamName: true, teamAbbr: true, crestSeed: true },
     })).map((r) => [r.saveKey, r]),
   );
 
@@ -368,6 +435,8 @@ export interface LeaderboardRow {
   championships: number;
   /** XP per completed season, or null with no completed season to divide by. */
   xpPerSeason: number | null;
+  /** Seasons to a first title on a ranked REBUILD run, else null. */
+  seasonsToTitle: number | null;
   teamName: string;
   teamAbbr: string;
   crestSeed: string;
@@ -412,7 +481,7 @@ export async function readLeaderboard(opts: {
     take: MAX_ROWS,
     select: {
       sport: true, saveKey: true, userId: true, xp: true, seasons: true,
-      wins: true, losses: true, championships: true, teamName: true,
+      wins: true, losses: true, championships: true, seasonsToTitle: true, teamName: true,
       teamAbbr: true, crestSeed: true, updatedAt: true,
       user: { select: { username: true } },
     },
@@ -433,6 +502,7 @@ export async function readLeaderboard(opts: {
     losses: r.losses,
     championships: r.championships,
     xpPerSeason: r.seasons > 0 ? r.xp / r.seasons : null,
+    seasonsToTitle: r.seasonsToTitle,
     teamName: r.teamName,
     teamAbbr: r.teamAbbr,
     crestSeed: r.crestSeed,
@@ -445,7 +515,14 @@ export async function readLeaderboard(opts: {
   // one rather than dropped.
   const eligible = opts.sort === 'PER_SEASON'
     ? candidates.filter((c) => c.seasons >= PER_SEASON_MIN_SEASONS)
-    : candidates;
+    // THE REBUILD BOARD IS A FILTER, NOT AN ORDERING WITH NULLS AT THE BACK.
+    // A run with no number is not last on this board, it is not on it — see
+    // THE REBUILD BOARD above. Applied before the one-row-per-GM reduction, so
+    // a GM with one rebuild save and three normal ones is represented by the
+    // rebuild rather than dropped.
+    : opts.sort === 'REBUILD'
+      ? candidates.filter((c) => c.seasonsToTitle !== null)
+      : candidates;
 
   const ordered = eligible.sort(comparatorFor(opts.sort));
 
@@ -479,6 +556,16 @@ export async function readLeaderboard(opts: {
  */
 function comparatorFor(sort: LeaderboardSort): (a: LeaderboardRow, b: LeaderboardRow) => number {
   switch (sort) {
+    case 'REBUILD':
+      // ASCENDING — the only column on this board where lower wins. Every row
+      // reaching this comparator has a number (the filter above guarantees it);
+      // the `?? Infinity` is a belt-and-braces so a null could never sort to
+      // the TOP, which is the one way this could lie.
+      return (a, b) =>
+        (a.seasonsToTitle ?? Number.POSITIVE_INFINITY) - (b.seasonsToTitle ?? Number.POSITIVE_INFINITY) ||
+        b.championships - a.championships ||
+        b.xp - a.xp ||
+        a.saveKey.localeCompare(b.saveKey);
     case 'TITLES':
       return (a, b) =>
         b.championships - a.championships ||
@@ -521,6 +608,24 @@ function comparatorFor(sort: LeaderboardSort): (a: LeaderboardRow, b: Leaderboar
 export interface OwnStanding {
   /** Their best franchise by XP, or null if they have no rankable save. */
   best: LeaderboardRow | null;
+  /**
+   * THEIR REBUILD RUNS, AND THE ONE PLACE AN UNFINISHED ONE IS SHOWN AT ALL.
+   *
+   * The public board lists only finished climbs, because there is no honest
+   * rank for one still going. A GM's OWN screen is different: here the run can
+   * be named as unfinished, with the seasons it has taken so far, which is a
+   * true statement rather than a position it has not earned.
+   */
+  rebuild: {
+    /** Their fastest ranked run — a title won without unlocking the rules. */
+    best: LeaderboardRow | null;
+    /** Where that would sit on the public Rebuild board right now. */
+    wouldBeRank: number | null;
+    /** How many runs are still live: founded REBUILD, unabandoned, no title. */
+    inProgress: number;
+    /** Seasons on the books across those live runs, longest first. */
+    inProgressSeasons: number[];
+  };
   /** Their live position on the public board, or null when not published. */
   rank: number | null;
   /** Where they would land if they published right now. */
@@ -530,14 +635,20 @@ export interface OwnStanding {
 }
 
 export async function ownStanding(userId: string): Promise<OwnStanding> {
-  const [entries, published] = await Promise.all([
+  const [entries, published, rebuild] = await Promise.all([
     // Their own saves, opt-in irrelevant: a preview must work while private.
     computeFootballEntries({ userId, userTeamId: { not: null } }),
     readLeaderboard({ sort: 'LEVEL', sport: FOOTBALL }),
+    readLeaderboard({ sort: 'REBUILD', sport: FOOTBALL }),
   ]);
 
+  const liveRuns = await ownLiveRebuildRuns(userId);
+
   if (entries.length === 0) {
-    return { best: null, rank: null, wouldBeRank: null, eligibleSaves: 0 };
+    return {
+      best: null, rank: null, wouldBeRank: null, eligibleSaves: 0,
+      rebuild: { best: null, wouldBeRank: null, inProgress: liveRuns.length, inProgressSeasons: liveRuns },
+    };
   }
 
   const rows = entries
@@ -552,7 +663,61 @@ export async function ownStanding(userId: string): Promise<OwnStanding> {
   // count itself and read one place worse than it is.
   const ahead = published.rows.filter((r) => r.userId !== userId && comparatorFor('LEVEL')(r, best) < 0).length;
 
-  return { best, rank, wouldBeRank: ahead + 1, eligibleSaves: entries.length };
+  // Their fastest FINISHED run, by the board's own comparator rather than a
+  // second copy of the rule.
+  const ranked = entries
+    .filter((e) => e.seasonsToTitle !== null)
+    .map((e, i) => toRow(e, i + 1))
+    .sort(comparatorFor('REBUILD'));
+  const bestRebuild = ranked.length > 0 ? { ...ranked[0], rank: 0 } : null;
+  const rebuildAhead = bestRebuild
+    ? rebuild.rows.filter((r) => r.userId !== userId && comparatorFor('REBUILD')(r, bestRebuild) < 0).length
+    : null;
+
+  return {
+    best,
+    rank,
+    wouldBeRank: ahead + 1,
+    eligibleSaves: entries.length,
+    rebuild: {
+      best: bestRebuild,
+      wouldBeRank: rebuildAhead === null ? null : rebuildAhead + 1,
+      inProgress: liveRuns.length,
+      inProgressSeasons: liveRuns,
+    },
+  };
+}
+
+/**
+ * Seasons played on each of this account's LIVE rebuild runs — founded as a
+ * REBUILD, never abandoned, no title yet — longest first.
+ *
+ * Its own small query rather than a field on ComputedEntry, and that is not
+ * fussiness: `refreshFootballRanks` spreads a ComputedEntry straight into the
+ * DynastyRank upsert, so every field on that interface has to BE a column.
+ * This is a fact about a save, not a published figure, and it has no business
+ * on the public table.
+ */
+async function ownLiveRebuildRuns(userId: string): Promise<number[]> {
+  const leagues = await prisma.league.findMany({
+    where: { userId, userTeamId: { not: null }, rebuildAbandonedAt: null },
+    select: { id: true, seasonYear: true, startYear: true, settings: true, userTeamId: true },
+  });
+
+  const out: number[] = [];
+  for (const league of leagues) {
+    if (parseSettings(league.settings).leagueStart !== 'REBUILD') continue;
+    const tenureStartYear = await resolveStartYear(league);
+    const seasons = await prisma.teamSeasonRecord.findMany({
+      where: { teamId: league.userTeamId!, year: { gte: tenureStartYear } },
+      select: { year: true, playoffResult: true },
+    });
+    // A run with a title is finished, and finished runs are on the board
+    // proper. This list is the unfinished ones only.
+    if (seasonsToFirstTitle(seasons, tenureStartYear) !== null) continue;
+    out.push(seasons.length);
+  }
+  return out.sort((a, b) => b - a);
 }
 
 /** ComputedEntry -> LeaderboardRow. The level is derived here and only here. */
@@ -570,6 +735,7 @@ function toRow(e: ComputedEntry, rank: number): LeaderboardRow {
     losses: e.losses,
     championships: e.championships,
     xpPerSeason: e.seasons > 0 ? e.xp / e.seasons : null,
+    seasonsToTitle: e.seasonsToTitle,
     teamName: e.teamName,
     teamAbbr: e.teamAbbr,
     crestSeed: e.crestSeed,

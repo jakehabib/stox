@@ -1,12 +1,24 @@
 import { prisma } from '../db';
 import { Rng, clamp } from '../rng';
 import { LEAGUE, CAP, Position, POSITIONS, ROSTER_TARGETS, SCOUTING, GENERATION, FREE_AGENCY } from '../tuning';
-import { LeagueSettings, serializeSettings, DEFAULT_SETTINGS } from '../settings';
+import type { LeagueStart } from '../types';
+import { LeagueSettings, serializeSettings, DEFAULT_SETTINGS, capGrowthRate } from '../settings';
+import {
+  ageRebuildRoster,
+  applyRebuildPins,
+  chooseAlbatrosses,
+  rebuildActiveTarget,
+  rebuildDeadMoney,
+  rebuildDeadTailShare,
+  rebuildHandoverNote,
+  rebuildTeamStrength,
+  type Albatross,
+} from '../rebuild';
 import { TEAM_SEEDS, COACH_FIRST, COACH_LAST, FIRST_NAMES, LAST_NAMES, NameRegistry } from './names';
 import { generateRoster, generatePlayer, toPlayerCreate, GeneratedPlayer } from './players';
 import { generateLeagueHistory } from './leagueHistory';
 import { buildSchedule } from '../schedule';
-import { buildContract, marketValue, suggestedYears } from '../cap';
+import { buildContract, capForYear, capHit, formatMoney, marketValue, suggestedYears } from '../cap';
 import { defaultGmProfile, parseGmProfile } from '../ai/gm';
 import { observe } from '../scouting';
 import { writeJson } from '../json';
@@ -229,8 +241,8 @@ export async function createLeague(opts: {
    */
   onLeagueCreated?: (leagueId: string) => void;
 }): Promise<string> {
-  const settings: LeagueSettings = { ...DEFAULT_SETTINGS, ...opts.settings };
-  const seed = opts.seed || settings.simSeed || `${Date.now()}`;
+  const requested: LeagueSettings = { ...DEFAULT_SETTINGS, ...opts.settings };
+  const seed = opts.seed || requested.simSeed || `${Date.now()}`;
   const rng = new Rng(seed);
   const seasonYear = new Date().getFullYear();
 
@@ -238,7 +250,27 @@ export async function createLeague(opts: {
   // any team the file left empty), so a fantasy draft over the top of it would
   // be drafting players who already have teams. Import is always a
   // randomized-rosters start; the import UI says so.
-  const fantasy = settings.leagueStart === 'FANTASY_DRAFT' && !opts.plan;
+  const fantasy = requested.leagueStart === 'FANTASY_DRAFT' && !opts.plan;
+  const rebuild = requested.leagueStart === 'REBUILD' && !opts.plan;
+
+  /**
+   * THE SAVE RECORDS THE START IT ACTUALLY GOT.
+   *
+   * An imported file arrives with its own rosters, so there is no hand to
+   * deal — and a save stamped REBUILD without one would have its rules locked
+   * (see IRONMAN in lib/rebuild.ts) over a league that was never made hard.
+   * The setting is written down as what happened, not as what was asked for.
+   */
+  const leagueStart: LeagueStart =
+    requested.leagueStart === 'REBUILD' && !rebuild ? 'RANDOM_ROSTERS' : requested.leagueStart;
+
+  // A REBUILD save is played under pinned rules from its very first row rather
+  // than from the first time somebody opens the Settings screen — see
+  // REBUILD_PINS. Applied here, so a league created by a script or a test is
+  // dealt the same rules as one created from the form.
+  const settings: LeagueSettings = rebuild
+    ? applyRebuildPins({ ...requested, leagueStart }, 'LOCKED')
+    : { ...requested, leagueStart };
 
   const league = await prisma.league.create({
     data: {
@@ -273,7 +305,44 @@ export async function createLeague(opts: {
    * Rolling it first lets the window and the books both be consistent with
    * the team. [TUNE] spread: about -6..+6 rating points around the mean.
    */
+  /**
+   * WHICH CLUB IS THE USER'S, DECIDED ONCE.
+   *
+   * This used to be answered twice with two different fallbacks: `isUser`
+   * below matched `opts.userTeamAbbr` against TEAM_SEEDS, and the resolution
+   * further down fell back to `teams[0]` — which is read back ordered by
+   * ABBR. An abbr matching no club therefore flagged nobody and handed the
+   * player the alphabetically first club, and those are two different answers.
+   * Harmless while both were only fallbacks; not harmless at all once the
+   * REBUILD hand has to be dealt to the club the player is actually given, and
+   * it is how the first measured REBUILD league handed its wreck to a club
+   * nobody was running.
+   */
+  const userAbbr = teamSeeds.some((t) => t.abbr === opts.userTeamAbbr)
+    ? opts.userTeamAbbr
+    : teamSeeds.map((t) => t.abbr).sort()[0];
+
   const strengthByAbbr = new Map<string, number>(teamSeeds.map((t) => [t.abbr, rng.normal(0, 4)]));
+
+  /**
+   * THE REBUILD HAND, PART ONE: ONE CLUB IS GENERATED TO BE THE WORST.
+   *
+   * Drawn from the same seeded Rng as the other thirty-one, immediately after
+   * them, so a REBUILD league still reproduces exactly from its seed — and
+   * rolled HERE, with the rest, so the club's declared window, its books and
+   * the roster it gets stay the one consistent picture the comment above is
+   * about. The GM profile that follows reads this and correctly describes the
+   * club as a teardown, because it is one.
+   *
+   * It is handed every OTHER club's roll because the hand is defined partly in
+   * relation to them — "the worst roster in the league" is a claim about this
+   * league, not about a number. See rebuildTeamStrength.
+   */
+  const rebuildAbbr = rebuild ? userAbbr : null;
+  if (rebuildAbbr !== null) {
+    const others = [...strengthByAbbr].filter(([abbr]) => abbr !== rebuildAbbr).map(([, v]) => v);
+    strengthByAbbr.set(rebuildAbbr, rebuildTeamStrength(rng, others));
+  }
   const teamRows = teamSeeds.map((t) => ({
     leagueId: league.id,
     city: t.city,
@@ -281,7 +350,7 @@ export async function createLeague(opts: {
     abbr: t.abbr,
     conference: t.conference,
     division: t.division,
-    isUser: t.abbr === opts.userTeamAbbr,
+    isUser: t.abbr === userAbbr,
     prestige: rng.int(30, 80),
     gmProfile: writeJson(defaultGmProfile(rng, strengthByAbbr.get(t.abbr))),
   }));
@@ -407,7 +476,11 @@ export async function createLeague(opts: {
       // Rolled up front with the club's window — see strengthByAbbr above.
       const strength = strengthByAbbr.get(team.abbr) ?? rng.normal(0, 4);
       // Topped up to a legal roster before it is written — see topUpRoster.
-      for (const p of topUpRoster(rng, generateRoster(rng, strength, names), strength, names)) {
+      const roster = topUpRoster(rng, generateRoster(rng, strength, names), strength, names);
+      // THE REBUILD HAND, PART TWO: the men at the top of this depth chart are
+      // the last regime's, and they are older than they look on paper. Ratings
+      // are untouched — see ageRebuildRoster.
+      for (const p of team.abbr === rebuildAbbr ? ageRebuildRoster(rng, roster) : roster) {
         registerPlayer(p, { teamId: team.id, status: 'ACTIVE' }, true);
       }
     }
@@ -439,6 +512,12 @@ export async function createLeague(opts: {
   }
   const players = await prisma.player.findMany({ where: { leagueId: league.id } });
 
+  // What the REBUILD club's cap sheet actually opened at, carried out of the
+  // contract block so the founding note quotes the figures that were written
+  // rather than a second set computed from the same intentions.
+  let rebuildBooks: { capSpace: number; deadMoney: number; albatrosses: number } | null = null;
+  let rebuildCeiling: number | null = null;
+
   // Contracts: match players back up by (name, position, ovr) — unique enough
   // in practice, and this avoids 1,700 individual inserts.
   if (!fantasy) {
@@ -469,19 +548,77 @@ export async function createLeague(opts: {
       const apy = override?.apy
         ?? marketValue({ ovr: p.trueOvr, position: p.position as Position, age: p.age, potential: p.potential });
       nominalByPlayer.set(p.id, apy);
-      nominalByTeam.set(p.teamId!, (nominalByTeam.get(p.teamId!) ?? 0) + apy);
+    }
+
+    /**
+     * THE REBUILD HAND, PART THREE: THE CONTRACTS YOU INHERITED.
+     *
+     * A handful of the club's veterans are on the deal they earned three or
+     * four years ago and are nowhere near worth now, with two or three years
+     * still to run and a fat signing bonus so cutting one costs real dead
+     * money rather than being free. Chosen and priced in lib/rebuild.ts —
+     * `marketValue` at the player he WAS, which is why the numbers are large
+     * without anything being invented. Applied here, before the totals, so
+     * everything downstream — the club's payroll, its cap sheet, the trade
+     * screen's valuation of these men — is computed from the deal he actually
+     * has.
+     *
+     * NOTE WHAT THIS DOES **NOT** DO: it does not touch the other forty-odd
+     * contracts on the roster. They are at market, exactly like every other
+     * club's. A rebuild is a few ruinous deals and a bad roster, not fifty men
+     * all quietly overpaid, and the difference is what makes the ruinous ones
+     * findable on the cap page.
+     */
+    const albatrosses = rebuildAbbr === null
+      ? new Map<string, Albatross>()
+      : chooseAlbatrosses(
+        rng,
+        rostered
+          .filter((p) => p.teamId === userTeam.id)
+          .map((p) => ({
+            id: p.id,
+            age: p.age,
+            position: p.position as Position,
+            trueOvr: p.trueOvr,
+            potential: p.potential,
+            marketValue: nominalByPlayer.get(p.id) ?? 0,
+          })),
+      );
+    for (const [playerId, alb] of albatrosses) nominalByPlayer.set(playerId, alb.apy);
+
+    for (const p of rostered) {
+      nominalByTeam.set(p.teamId!, (nominalByTeam.get(p.teamId!) ?? 0) + nominalByPlayer.get(p.id)!);
     }
     // How much of the ceiling this club means to spend — see rosterCapTarget.
     const winNowByTeam = new Map(teams.map((t) => [t.id, parseGmProfile(t.gmProfile).winNow]));
     const scaleByTeam = new Map<string, number>();
     for (const [teamId, total] of nominalByTeam) {
+      // THE REBUILD CLUB IS NOT SCALED. Every man on it is paid what he is
+      // worth (bar the inherited deals above, which are the point), and the
+      // gap between that and a real cap sheet is booked as dead money rather
+      // than by inventing a payroll — see rebuildDeadMoney for why that is the
+      // honest instrument and a uniform scale-up is not.
+      if (teamId === userTeam.id && rebuildAbbr !== null) { scaleByTeam.set(teamId, 1); continue; }
       const target = CAP.BASE_CAP * rosterCapTarget(winNowByTeam.get(teamId) ?? 0.5);
       scaleByTeam.set(teamId, total > target ? target / total : 1);
     }
 
-    const contractRows = rostered.map((p) => {
-      const scale = scaleByTeam.get(p.teamId!) ?? 1;
-      const apy = Math.max(CAP.MIN_SALARY, Math.round((nominalByPlayer.get(p.id)! * scale) / 100_000) * 100_000);
+    /**
+     * ONE RNG PASS FOR THE SHAPE OF EVERY DEAL, THEN A PURE FUNCTION FOR ITS
+     * PRICE.
+     *
+     * The two used to be one `.map`, which was fine while every club's scale
+     * was known before pricing began. The REBUILD club's is not: its scale is
+     * whatever lands its cap sheet on the share of the ceiling the mode
+     * promises, and that can only be known by MEASURING what the deals
+     * actually cost — an APY is not a cap hit, and a plan that assumes it is
+     * has invented the one number the whole mode rests on. Splitting the pass
+     * lets the price be recomputed as many times as it takes without drawing
+     * a single extra random number, so terms, stagger and rookie flags are
+     * identical whatever the club ends up paying, and a league still
+     * reproduces exactly from its seed.
+     */
+    const shapes = rostered.map((p) => {
       // Young players are on real rookie deals, not veteran deals: full
       // CAP.ROOKIE_DEAL_YEARS term, and they are exactly as many years into
       // it as they have years of experience. This used to be
@@ -493,36 +630,136 @@ export async function createLeague(opts: {
       // A deal written by hand is never relabelled as a rookie contract — the
       // author gave it a length and a remaining term, and isRookieDeal would
       // otherwise overwrite both.
-      const isRookieDeal = !override && p.experience <= CAP.ROOKIE_EXPERIENCE_MAX;
-      const years = override?.years ?? (isRookieDeal ? CAP.ROOKIE_DEAL_YEARS : suggestedYears(p.trueOvr, p.age));
+      const alb = albatrosses.get(p.id);
+      const isRookieDeal = !override && !alb && p.experience <= CAP.ROOKIE_EXPERIENCE_MAX;
+      // An inherited deal is written as a longer contract already part-served,
+      // so what is LEFT is what lib/rebuild.ts asked for. That matters: the
+      // signing bonus prorates over the whole term, so the years already gone
+      // are years of proration the club has paid for and has nothing to show
+      // for — which is exactly why cutting him now still costs.
+      const albRun = alb?.yearsServed ?? 0;
+      const years = override?.years
+        ?? (alb ? alb.yearsRemaining + albRun : isRookieDeal ? CAP.ROOKIE_DEAL_YEARS : suggestedYears(p.trueOvr, p.age));
       // Stagger how far into each deal we are so contracts expire on a curve.
       // A rookie's stagger isn't random — it's his experience. An imported
       // deal's stagger is whatever the file said is left to run.
       const elapsed = override
         ? Math.max(0, Math.min(override.years - override.yearsRemaining, years - 1))
-        : isRookieDeal
-          ? Math.min(p.experience, years - 1)
-          : rng.int(0, Math.max(0, years - 1));
-      // Flat escalation + a smaller bonus share: these contracts are being
-      // dropped straight into a random mid-deal year, not signed fresh, so a
-      // backloaded structure would land players in their single most
-      // expensive year with none of the cap-friendly early years ever
-      // having applied — see buildContract's `escalation` doc comment.
-      const c = buildContract({ apy, years, signedYear: seasonYear - elapsed, escalation: 1.0, bonusPct: 0.15 });
+        : alb
+          ? albRun
+          : isRookieDeal
+            ? Math.min(p.experience, years - 1)
+            : rng.int(0, Math.max(0, years - 1));
+      // A bigger bonus share on an inherited deal, and it is the whole reason
+      // one is hard to escape: proration is what accelerates as dead money the
+      // day you cut him, so a 0.15 deal is a mistake you can walk away from and
+      // a 0.30 deal is one you have to plan around.
+      return { playerId: p.id, teamId: p.teamId!, nominal: nominalByPlayer.get(p.id)!, years, elapsed, isRookieDeal, bonusPct: alb ? 0.30 : 0.15 };
+    });
+
+    // Flat escalation on all of them: these contracts are being dropped
+    // straight into a random mid-deal year, not signed fresh, so a backloaded
+    // structure would land players in their single most expensive year with
+    // none of the cap-friendly early years ever having applied — see
+    // buildContract's `escalation` doc comment.
+    type Shape = (typeof shapes)[number];
+    const rowFor = (sh: Shape, scale: number) => {
+      const apy = Math.max(CAP.MIN_SALARY, Math.round((sh.nominal * scale) / 100_000) * 100_000);
+      const c = buildContract({
+        apy, years: sh.years, signedYear: seasonYear - sh.elapsed, escalation: 1.0, bonusPct: sh.bonusPct,
+      });
       return {
-        playerId: p.id,
-        teamId: p.teamId,
+        playerId: sh.playerId,
+        teamId: sh.teamId,
         years: c.years,
-        yearsRemaining: Math.max(1, c.years - elapsed),
+        yearsRemaining: Math.max(1, c.years - sh.elapsed),
         signedYear: c.signedYear,
         baseSalaries: writeJson(c.baseSalaries),
         signingBonus: c.signingBonus,
         guaranteed: c.guaranteed,
-        isRookieDeal,
+        isRookieDeal: sh.isRookieDeal,
       };
-    });
+    };
+
+    /**
+     * =====================================================================
+     * THE REBUILD HAND, PART FOUR: WHAT THE PAYROLL IS BUILT TO
+     * =====================================================================
+     * The same `scale = min(1, target / total)` every other club in the loop
+     * above gets, against a target that says "this club pays like a contender"
+     * — see rebuildActiveTarget. Never above market for anybody, so the cap
+     * page, the extension screen and the trade valuation all keep telling the
+     * truth about deals the generator did not invent; the only men above
+     * market are the inherited ones, and their price is a real market value
+     * for a real (past) player.
+     *
+     * SOLVED BY MEASUREMENT, NOT BY ASSUMPTION. `activeSalary` is the sum of
+     * the actual `capHit` of the actual rows — the same function the cap page,
+     * the compliance gate and INV-19 run. An APY is not a cap hit, and the gap
+     * between the two is exactly where a wrong number would live. The loop
+     * runs until the measurement stops moving rather than a fixed number of
+     * times; the only nonlinearities are 100K rounding and the league-minimum
+     * floor, so it settles in one or two passes.
+     */
+    if (rebuildAbbr !== null) {
+      const capTotal = capForYear(seasonYear, seasonYear, capGrowthRate(settings));
+      const targetActive = rebuildActiveTarget(capTotal);
+      const mine = shapes.filter((sh) => sh.teamId === userTeam.id);
+      const measure = (scale: number) =>
+        mine.reduce((sum, sh) => sum + capHit(rowFor(sh, scale), settings.capMode), 0);
+
+      let scale = 1;
+      for (let step = 0; step < 6; step++) {
+        const at = measure(scale);
+        if (at <= targetActive || at <= 0) break;
+        const next = Math.min(1, scale * (targetActive / at));
+        if (Math.abs(next - scale) < 1e-9) break;
+        scale = next;
+      }
+      scaleByTeam.set(userTeam.id, scale);
+      rebuildCeiling = capTotal;
+    }
+
+    const contractRows = shapes.map((sh) => rowFor(sh, scaleByTeam.get(sh.teamId) ?? 1));
     for (let i = 0; i < contractRows.length; i += CHUNK) {
       await prisma.contract.createMany({ data: contractRows.slice(i, i + CHUNK) });
+    }
+
+    /**
+     * ...AND WHAT THE LAST REGIME LEFT BEHIND.
+     *
+     * A drawn share of the ceiling, bounded by a bend rather than a clamp —
+     * see rebuildDeadMoney. It is NOT derived from the payroll, and that is
+     * the fix for the first version of this: a plan that made dead money the
+     * plug between a cheap roster and a fixed cap-used target booked $131.7M
+     * of it against a $107.1M payroll, because a genuinely bad roster is
+     * cheap and the plug has to grow to cover it. Two independent terms with
+     * independent bounds behave under every roll.
+     *
+     * The bill runs out in two seasons: the whole charge this year, a
+     * shrinking tail next year, nothing after that. That is "rough but not
+     * impossible" expressed as a date — you cannot spend your way clear in one
+     * offseason and you can see the end of it from the first.
+     */
+    if (rebuildAbbr !== null && rebuildCeiling !== null) {
+      const activeSalary = contractRows
+        .filter((r) => r.teamId === userTeam.id)
+        .reduce((sum, r) => sum + capHit(r, settings.capMode), 0);
+
+      const deadThisYear = rebuildDeadMoney(rng, rebuildCeiling);
+      const deadNextYear = Math.round(deadThisYear * rebuildDeadTailShare(rng));
+
+      const charges = [
+        { teamId: userTeam.id, year: seasonYear, amount: deadThisYear, label: 'Previous regime — released contracts' },
+        { teamId: userTeam.id, year: seasonYear + 1, amount: deadNextYear, label: 'Previous regime — released contracts' },
+      ].filter((c) => c.amount > 0);
+      if (charges.length > 0) await prisma.capCharge.createMany({ data: charges });
+
+      rebuildBooks = {
+        capSpace: rebuildCeiling - activeSalary - deadThisYear,
+        deadMoney: deadThisYear,
+        albatrosses: albatrosses.size,
+      };
     }
   }
 
@@ -614,9 +851,16 @@ export async function createLeague(opts: {
       week: 0,
       type: 'SIGN',
       headline: `${league.name} founded`,
-      detail: `You are the GM of the ${userTeam.city} ${userTeam.nickname}. ${
-        fantasy ? 'A fantasy draft will fill every roster from scratch.' : 'Rosters have been randomized league-wide.'
-      }`,
+      detail: rebuildBooks
+        ? rebuildHandoverNote({
+          clubName: `${userTeam.city} ${userTeam.nickname}`,
+          deadMoney: formatMoney(rebuildBooks.deadMoney),
+          capSpace: formatMoney(rebuildBooks.capSpace),
+          albatrosses: rebuildBooks.albatrosses,
+        })
+        : `You are the GM of the ${userTeam.city} ${userTeam.nickname}. ${
+          fantasy ? 'A fantasy draft will fill every roster from scratch.' : 'Rosters have been randomized league-wide.'
+        }`,
     },
   });
 

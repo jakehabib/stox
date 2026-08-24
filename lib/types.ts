@@ -75,4 +75,21 @@ export interface GmProfile {
 
 export type CapMode = 'REALISTIC' | 'SIMPLIFIED' | 'OFF';
 export type Difficulty = 'EASY' | 'NORMAL' | 'HARD';
-export type LeagueStart = 'RANDOM_ROSTERS' | 'FANTASY_DRAFT';
+/**
+ * How a league is dealt on day one.
+ *
+ * RANDOM_ROSTERS  every club opens with a full, ready-made roster.
+ * FANTASY_DRAFT   all 32 rosters are emptied into one pool and drafted from
+ *                 scratch (a one-time pre-PRESEASON phase — see lib/season.ts).
+ * REBUILD         RANDOM_ROSTERS with one club — yours — dealt the worst
+ *                 roster in the league and a cap sheet to match, and the
+ *                 league's rules locked until you win something. It is the
+ *                 same generator and the same season machine throughout; see
+ *                 lib/rebuild.ts for the starting hand and the ironman rules.
+ *
+ * THIS FIELD IS THE ONLY RECORD OF WHICH ONE A SAVE CHOSE, and it is written
+ * once, at creation. Nothing in the app writes it afterwards, which is what
+ * makes "a normal save can never become a REBUILD" a property of the code
+ * rather than a promise.
+ */
+export type LeagueStart = 'RANDOM_ROSTERS' | 'FANTASY_DRAFT' | 'REBUILD';

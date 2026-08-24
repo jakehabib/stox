@@ -109,6 +109,25 @@ model League {
   // Full settings blob (see lib/settings.ts -> LeagueSettings). JSON string.
   settings String
 
+  /// THE ONE-WAY DOOR OUT OF A REBUILD RUN. Null on every league ever made and
+  /// on every REBUILD save still wearing the handcuffs; stamped once, with the
+  /// moment the GM chose to stop playing under them.
+  ///
+  /// It is not the same fact as `settings.leagueStart`, and that is the whole
+  /// reason it is a column rather than a flag. `leagueStart` records how the
+  /// save was FOUNDED and is never rewritten, so a normal save can never
+  /// become a REBUILD; this records what became of that run. Together they
+  /// distinguish three outcomes a single boolean cannot:
+  ///
+  ///   founded REBUILD, null here, no title   -> locked, in progress, unranked
+  ///   founded REBUILD, stamped               -> unlocked, forfeit, unranked forever
+  ///   founded REBUILD, null here, title won  -> unlocked, RANKED
+  ///
+  /// The forfeit is permanent on purpose: the leaderboard measures a title won
+  /// under ironman rules, and a save that took them off has not done that. See
+  /// the state machine in lib/rebuild.ts.
+  rebuildAbandonedAt DateTime?
+
   teams           Team[]
   players         Player[]
   games           Game[]
@@ -1244,6 +1263,25 @@ model DynastyRank {
   wins          Int @default(0)
   losses        Int @default(0)
   championships Int @default(0)
+
+  /// HOW MANY SEASONS IT TOOK TO WIN THE FIRST TITLE, on a save that was
+  /// founded as a REBUILD and never took the handcuffs off. Lower is better,
+  /// and it is the only column on this table where that is true.
+  ///
+  /// NULL IS THE COMMON CASE AND IT IS NOT A ZERO. It means "this save has no
+  /// ranked answer": every save that is not a REBUILD run, every REBUILD run
+  /// that has not won yet, and every REBUILD run whose GM abandoned the
+  /// ironman rules before winning. The board never renders a null as a number
+  /// — a run still going shows as in progress and is not ranked at all, which
+  /// is the same honesty rule as the seasons denominator two lines up.
+  ///
+  /// DERIVED, LIKE EVERY OTHER COLUMN HERE. It is `firstChampionYear -
+  /// tenureStartYear + 1` recomputed from TeamSeasonRecord on every board
+  /// load — see seasonsToFirstTitle() in lib/rebuild.ts, which is the one
+  /// place that arithmetic exists. Nothing stamps it at the moment of the
+  /// win, because a stamped number is a number that can drift from the
+  /// history it claims to describe.
+  seasonsToTitle Int?
 
   /// Enough identity to render the franchise the way the rest of the app does:
   /// a crest, a city and a nickname. `crestSeed` is whatever that sport's logo

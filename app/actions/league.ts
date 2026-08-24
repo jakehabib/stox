@@ -7,6 +7,12 @@ import { assertCanCreateLeague, assertLeagueOwner, currentViewer, ensureOwnerKey
 import { createLeague } from '@/lib/gen/league';
 import { CAP_GROWTH_MODES, DEFAULT_SETTINGS, LeagueSettings, parseSettings, serializeSettings } from '@/lib/settings';
 import { advanceWeek } from '@/lib/season';
+import { loadRebuildStanding } from '@/lib/rebuildState';
+// A plain string, so it CANNOT live in this file: a 'use server' module may
+// only export async functions, and Next throws at request time — not at build
+// and not under tsc — the moment one exports anything else. Caught by a
+// scripted page load, which is the only thing that can catch it.
+import { IRONMAN_REFUSAL } from '@/lib/rebuild';
 
 /**
  * Whitelists for the three enum-ish fields. These arrive as raw FormData, and
@@ -16,7 +22,7 @@ import { advanceWeek } from '@/lib/season';
  * the codebase handles, which then fails much later, somewhere else, in a
  * league that already exists.
  */
-const LEAGUE_STARTS = ['RANDOM_ROSTERS', 'FANTASY_DRAFT'] as const;
+const LEAGUE_STARTS = ['RANDOM_ROSTERS', 'FANTASY_DRAFT', 'REBUILD'] as const;
 const CAP_MODES = ['REALISTIC', 'SIMPLIFIED', 'OFF'] as const;
 const DIFFICULTIES = ['EASY', 'NORMAL', 'HARD'] as const;
 /** Read off the rung table itself, so a fourth rung cannot be added there and
@@ -78,6 +84,33 @@ export async function createLeagueAction(formData: FormData) {
   redirect(`/start/${leagueId}`);
 }
 
+/**
+ * ===========================================================================
+ * THE ONE-WAY DOOR OUT OF A REBUILD RUN
+ * ===========================================================================
+ * Always available while the run is live, and it costs the leaderboard entry
+ * permanently — see the state machine in lib/rebuild.ts for why that is the
+ * strict answer rather than a harsh one.
+ *
+ * A no-op in every state but LOCKED, and that is deliberate in both
+ * directions. A save that has already WON is already unlocked, so stamping it
+ * here would forfeit an entry it earned; a save already abandoned is already
+ * through the door. `updateMany` gated on `rebuildAbandonedAt: null` makes it
+ * idempotent against a double click and against two tabs at once — the second
+ * write matches no row rather than moving the timestamp.
+ */
+export async function abandonRebuildAction(leagueId: string) {
+  await assertLeagueOwner(leagueId);
+  const standing = await loadRebuildStanding(leagueId);
+  if (standing.state !== 'LOCKED') return;
+
+  await prisma.league.updateMany({
+    where: { id: leagueId, rebuildAbandonedAt: null },
+    data: { rebuildAbandonedAt: new Date() },
+  });
+  revalidatePath(`/league/${leagueId}`, 'layout');
+}
+
 export async function deleteLeagueAction(leagueId: string) {
   await assertLeagueOwner(leagueId);
   await prisma.league.delete({ where: { id: leagueId } });
@@ -113,6 +146,24 @@ export type AdvanceMode = 'week' | '3weeks' | 'midseason' | 'playoffs' | 'offsea
 
 export async function updateSettingsAction(leagueId: string, formData: FormData) {
   await assertLeagueOwner(leagueId);
+
+  /**
+   * THE IRONMAN LOCK, AND IT LIVES HERE RATHER THAN ON THE SCREEN.
+   *
+   * A Server Action is a public POST endpoint — the form is not the only thing
+   * that can call it, which is the same reason the three enum whitelists above
+   * exist. The Settings screen renders no controls for a locked run, and that
+   * is presentation; THIS is the rule. The authority is a database read
+   * (loadRebuildStanding), never anything the request carried.
+   *
+   * It refuses the WHOLE write, not the three pinned fields, because the owner
+   * asked for an ironman mode with no changeable settings rather than three
+   * locked ones — and a partial refusal would silently save the rest, which is
+   * the worst of both answers.
+   */
+  const standing = await loadRebuildStanding(leagueId);
+  if (standing.ironman) throw new Error(IRONMAN_REFUSAL);
+
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const current: LeagueSettings = JSON.parse(league.settings);
 
@@ -150,6 +201,12 @@ export async function updateSettingsAction(leagueId: string, formData: FormData)
     // on the form — no system reads them, so the screen stopped offering
     // controls that do nothing. The `...current` spread above keeps whatever
     // an existing save already stored.
+    //
+    // AND NOTE WHAT IS NOT IN THIS OBJECT: `leagueStart`. It is carried by the
+    // `...current` spread and never taken from `formData`, on any path, which
+    // is what makes "a save that was not founded as a Rebuild can never become
+    // one" a property of the code rather than a promise. Adding it here would
+    // open a door the mode is designed not to have.
   };
 
   await prisma.league.update({ where: { id: leagueId }, data: { settings: serializeSettings(next) } });

@@ -10,6 +10,20 @@ import { previewAccent, previewCrestSeed, type FranchiseSeed } from './ds/Franch
 // constant rather than copying it, which is why a percentage rendered here is
 // the percentage the ceiling actually compounds at.
 import { CAP_GROWTH_MODES, DEFAULT_SETTINGS, type CapGrowth } from '@/lib/settings';
+// The mode's name and its one-line pitch come from the module that deals it,
+// so the screen cannot come to describe a hand the generator stopped giving.
+import { REBUILD_BLURB, REBUILD_LABEL, REBUILD_PINS } from '@/lib/rebuild';
+
+/**
+ * Why each pinned control is pinned, from the GM's chair. The VALUES come from
+ * REBUILD_PINS itself, so a rung renamed or retuned there cannot leave this
+ * screen selecting the old one; only the reasons are written here.
+ */
+const PIN_NOTE: Record<string, string> = {
+  capMode: 'A rebuild is a cap problem. Dead money has to be real or there is nothing to dig out of.',
+  capGrowth: 'The ceiling does not move for the length of the run. Nothing you regret signing inflates its way off the books.',
+  difficulty: 'Every club plays exactly what its roster is worth, yours included. A run you could dial down would not measure anything.',
+};
 
 const CAP_GROWTH_ORDER: CapGrowth[] = ['FLAT', 'SLOW', 'FAST'];
 const CAP_GROWTH_OPTIONS: [string, string][] = CAP_GROWTH_ORDER.map((k) => [k, CAP_GROWTH_MODES[k].label]);
@@ -51,6 +65,18 @@ export function CreateLeagueForm({
     () => (initialAbbr && seeds.some((s) => s.abbr === initialAbbr) ? initialAbbr : seeds[0]?.abbr) ?? '',
   );
   const [pending, setPending] = useState(false);
+  /**
+   * LIFTED OUT OF ITS OWN `Field` BECAUSE THREE OTHER CONTROLS DEPEND ON IT.
+   *
+   * A Rebuild run is played on pinned rules (REBUILD_PINS in lib/rebuild.ts)
+   * and the server re-applies them on every write, so leaving Difficulty and
+   * Cap growth looking adjustable would be offering a choice the game intends
+   * to ignore — the exact class of control this project keeps deleting. When
+   * this is REBUILD those three render as fixed, post the pinned value, and
+   * say why.
+   */
+  const [leagueStart, setLeagueStart] = useState<string>('RANDOM_ROSTERS');
+  const ironman = leagueStart === 'REBUILD';
 
   const club = seeds.find((s) => s.abbr === picked);
   const accent = picked ? previewAccent(picked) : undefined;
@@ -173,16 +199,34 @@ export function CreateLeagueForm({
               />
             </div>
 
+            {/* THE THIRD RUNG SITS WITH THE OTHER TWO because it IS one of
+                them — the same generator, the same season machine, one club
+                dealt a different hand (see lib/rebuild.ts). Putting it
+                anywhere else on this form, or behind its own screen, would
+                claim it forks the game, and it does not.
+
+                The hint is written as a handover, not as a difficulty
+                tooltip: what it says is what the founding note in the save
+                will say an hour later, and every claim in it is one the
+                generator actually keeps — the roster IS last in the league,
+                the cap sheet IS buried, and every pick IS still yours. */}
             <Field
               label="Starting situation"
               name="leagueStart"
+              value={leagueStart}
+              onChange={setLeagueStart}
               options={[
                 ['RANDOM_ROSTERS', 'Randomized rosters'],
                 ['FANTASY_DRAFT', 'Fantasy draft'],
+                ['REBUILD', REBUILD_LABEL],
               ]}
               hint={{
                 RANDOM_ROSTERS: 'Every club starts with a full, ready-made roster.',
                 FANTASY_DRAFT: 'All 32 rosters are emptied into one pool and drafted from scratch.',
+                REBUILD: REBUILD_BLURB,
+              }}
+              note={{
+                REBUILD: 'Normal difficulty, no forced trades, a cap that never moves — and none of it changeable until you have won a title. Walking away from those rules is a one-way door and it ends your claim on the Rebuild leaderboard.',
               }}
             />
             <Field
@@ -190,6 +234,7 @@ export function CreateLeagueForm({
               name="capMode"
               options={[['OFF', 'Off'], ['SIMPLIFIED', 'Simplified'], ['REALISTIC', 'Realistic']]}
               defaultValue="REALISTIC"
+              pinned={ironman ? { value: 'REALISTIC', note: PIN_NOTE.capMode } : undefined}
               hint={{
                 OFF: 'Sign anyone. No cap accounting at all.',
                 SIMPLIFIED: 'A cap ceiling, without dead money and proration.',
@@ -219,6 +264,7 @@ export function CreateLeagueForm({
               name="capGrowth"
               options={CAP_GROWTH_OPTIONS}
               defaultValue={DEFAULT_SETTINGS.capGrowth}
+              pinned={ironman ? { value: REBUILD_PINS.capGrowth, note: PIN_NOTE.capGrowth } : undefined}
               hint={CAP_GROWTH_HINTS}
             />
             {/* NORMAL, not "PRO". Difficulty used to be the four-rung console
@@ -246,6 +292,7 @@ export function CreateLeagueForm({
               name="difficulty"
               options={[['EASY', 'Easy'], ['NORMAL', 'Normal'], ['HARD', 'Hard']]}
               defaultValue="NORMAL"
+              pinned={ironman ? { value: REBUILD_PINS.difficulty, note: PIN_NOTE.difficulty } : undefined}
               hint={{
                 EASY: 'The rest of the league plays a little under what its roster is worth, and your scouts come back surer of a prospect than they have any right to be.',
                 NORMAL: 'Every club plays what its roster is worth, and your scouts report exactly what they have on a man.',
@@ -429,22 +476,60 @@ function Field({
   name,
   options,
   defaultValue,
+  value: controlled,
+  onChange,
   hint,
+  note,
+  pinned,
 }: {
   label: string;
   name: string;
   options: [string, string][];
   defaultValue?: string;
+  /** Lift the state out when another control on the form depends on it. */
+  value?: string;
+  onChange?: (v: string) => void;
+  /**
+   * The value the league will actually be played on, whatever is clicked.
+   * Renders the control fixed rather than merely overriding it on the server:
+   * a control that quietly discards your click is worse than one that says it
+   * is not yours to set.
+   */
+  pinned?: { value: string; note: string };
   /** One line per option explaining what it actually changes. */
   hint?: Record<string, string>;
+  /**
+   * A second line, for an option that commits the player to something he
+   * cannot undo. Separated from `hint` and given weight rather than folded
+   * into it, because "here is what this is" and "here is what you cannot take
+   * back" are different sentences and the second one has to survive a skim.
+   */
+  note?: Record<string, string>;
 }) {
-  const [value, setValue] = useState(defaultValue ?? options[0][0]);
+  const [own, setOwn] = useState(defaultValue ?? options[0][0]);
+  const raw = controlled ?? own;
+  const set = onChange ?? setOwn;
+  const value = pinned?.value ?? raw;
   return (
     <div>
-      <label className="label-sm block mb-1.5">{label}</label>
+      <label className="label-sm block mb-1.5 flex items-center gap-2">
+        {label}
+        {pinned && <span className="pill bg-warn/15 text-warn border-warn/30">Fixed</span>}
+      </label>
       <input type="hidden" name={name} value={value} />
-      <Segmented value={value} onChange={setValue} options={options} full />
-      {hint?.[value] && <p className="text-[11px] text-muted mt-1.5 leading-relaxed">{hint[value]}</p>}
+      <Segmented value={value} onChange={set} options={options} full disabled={!!pinned} />
+      {pinned
+        ? <p className="text-[11px] text-muted mt-1.5 leading-relaxed">{pinned.note}</p>
+        : (
+          <>
+            {hint?.[value] && <p className="text-[11px] text-muted mt-1.5 leading-relaxed">{hint[value]}</p>}
+            {note?.[value] && (
+              <p className="text-[11px] text-warn/90 mt-1.5 leading-relaxed border-l-2 border-warn/40 pl-2">
+                {note[value]}
+              </p>
+            )}
+          </>
+        )}
     </div>
   );
 }
@@ -454,11 +539,13 @@ function Segmented({
   onChange,
   options,
   full,
+  disabled,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: [string, string][];
   full?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <div className={`inline-flex rounded-md border border-line overflow-hidden ${full ? 'w-full' : ''}`}>
@@ -468,9 +555,18 @@ function Segmented({
           type="button"
           onClick={() => onChange(v)}
           aria-pressed={v === value}
-          className={`px-3 py-1.5 text-xs whitespace-nowrap border-r border-line last:border-r-0 transition-colors ${
+          disabled={disabled}
+          /* `whitespace-nowrap` used to be here and clipped the first option
+             the moment a third arrived — "Randomized rosters" rendered as
+             "ized rosters" in a 21rem column. Wrapping inside the cell is the
+             fix that keeps working at any label length and any column width. */
+          className={`px-2.5 py-1.5 text-xs leading-tight text-center border-r border-line last:border-r-0 transition-colors ${
             full ? 'flex-1' : ''
-          } ${v === value ? 'bg-raised text-chalk font-semibold' : 'text-muted hover:text-chalk'}`}
+          } ${disabled ? 'cursor-default' : ''} ${
+            v === value
+              ? `bg-raised font-semibold ${disabled ? 'text-chalk/70' : 'text-chalk'}`
+              : `text-muted ${disabled ? 'opacity-50' : 'hover:text-chalk'}`
+          }`}
         >
           {label}
         </button>

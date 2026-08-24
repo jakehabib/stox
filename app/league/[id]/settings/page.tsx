@@ -1,6 +1,9 @@
 import Link from 'next/link';
 import { getLeagueContext } from '@/lib/league-data';
-import { updateSettingsAction } from '@/app/actions/league';
+import { abandonRebuildAction, updateSettingsAction } from '@/app/actions/league';
+import { loadRebuildStanding } from '@/lib/rebuildState';
+import { RebuildLock } from '@/components/RebuildLock';
+import { REBUILD_LABEL } from '@/lib/rebuild';
 import { Tooltip } from '@/components/Tooltip';
 import { leagueFileName } from '@/lib/leagueFile';
 import { CAP_GROWTH_MODES, formatCapGrowthRate } from '@/lib/settings';
@@ -10,12 +13,86 @@ export default async function SettingsPage({ params }: { params: { id: string } 
   const { league, settings } = await getLeagueContext(params.id);
   const action = updateSettingsAction.bind(null, league.id);
 
+  /**
+   * WHAT THIS SCREEN IS ALLOWED TO OFFER, decided by a database read.
+   *
+   * The same read `updateSettingsAction` runs before it writes, so the screen
+   * and the rule cannot disagree — and the rule is the one on the server. If
+   * this render is somehow stale, the write is still refused.
+   */
+  const rebuild = await loadRebuildStanding(league.id);
+  const abandon = abandonRebuildAction.bind(null, league.id);
+
+  if (rebuild.ironman) {
+    return (
+      <div className="max-w-3xl space-y-6">
+        <div>
+          <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">League Settings</h1>
+          <p className="text-muted text-sm mt-1">
+            This league is a {REBUILD_LABEL.toLowerCase()} run. Its rules were set the day you took the job.
+          </p>
+        </div>
+
+        {/* THE WHOLE SCREEN IN THIS STATE. Dead controls with no explanation
+            read as a broken page; a page that says why reads as a rule. */}
+        <div className="panel p-5 space-y-4 border-warn/30">
+          <div className="label-sm text-warn">Locked</div>
+          <p className="text-sm text-chalk/90 leading-relaxed max-w-2xl">
+            You took this job on the understanding that nothing about the league would bend for you. Every club
+            plays what its roster is worth, no trade goes through that the other side did not agree to, and the
+            ceiling is the same number next year that it is today — so there is no waiting for the money to
+            catch up with your mistakes. Win a championship and every one of these settings is yours again.
+          </p>
+          <ul className="text-sm text-muted space-y-1.5">
+            <li>· Difficulty is Normal, and stays Normal.</li>
+            <li>· Forced trades are off. The other club always gets a vote.</li>
+            <li>· The salary cap does not move from season to season.</li>
+            <li>· Nothing else on this screen can be changed either.</li>
+          </ul>
+          <p className="text-xs text-muted">
+            {rebuild.seasonsPlayed === 0
+              ? 'Season one is not on the books yet.'
+              : `${rebuild.seasonsPlayed} season${rebuild.seasonsPlayed === 1 ? '' : 's'} played so far. The board records the season you win your first title in — nothing after it.`}
+          </p>
+          <div className="pt-1"><RebuildLock action={abandon} /></div>
+        </div>
+
+        <ShareLeague leagueId={league.id} leagueName={league.name} />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl space-y-6">
       <div>
         <h1 className="font-display font-extrabold text-3xl uppercase tracking-wide">League Settings</h1>
         <p className="text-muted text-sm mt-1">How this league plays. Changes take effect from your next advance — nothing already on the books is rewritten.</p>
       </div>
+
+      {/* A rebuild run that is over. The screen says which of the two ways it
+          ended, because they are not the same thing and only one of them is on
+          the board. */}
+      {rebuild.state === 'WON' && (
+        <div className="panel p-4 border-accent/40">
+          <div className="label-sm text-accent">The rebuild is over</div>
+          <p className="text-sm text-chalk/90 mt-1.5 max-w-2xl">
+            You won it in {rebuild.seasonsToTitle === 1 ? 'your first season' : `season ${rebuild.seasonsToTitle}`}, and
+            the league is yours to run however you like from here. The number stands whatever you do next.
+          </p>
+          <Link href={`/league/${league.id}/rebuild`} className="btn-secondary text-sm mt-3 inline-flex">
+            See the whole climb →
+          </Link>
+        </div>
+      )}
+      {rebuild.state === 'ABANDONED' && (
+        <div className="panel p-4">
+          <div className="label-sm">The rebuild was ended</div>
+          <p className="text-sm text-muted mt-1.5 max-w-2xl">
+            This save is an ordinary league now. It keeps its history and its dynasty level; what it does not keep
+            is a claim on the Rebuild board, and there is no route back to those rules.
+          </p>
+        </div>
+      )}
 
       <SettingsForm action={action}>
         <Section title="Core Rules">
@@ -130,24 +207,34 @@ export default async function SettingsPage({ params }: { params: { id: string } 
 
       </SettingsForm>
 
-      {/* Sharing. Outside the settings <form> on purpose — it is a download and
-          an outbound link, not a setting, and nesting it would make Save
-          responsible for it. See docs/custom-leagues.md. */}
-      <div className="panel p-4 space-y-3">
-        <h2 className="label-sm">Share This League</h2>
-        <p className="text-sm text-muted">
-          Export the 32 franchises and every player on them as a single league file. Send it to anyone and they
-          can import it and play the same league — same teams, same names, same rosters. It is a starting point,
-          not a save game: the file carries teams, players and contracts, not your schedule, standings, scouting
-          book or league history.
-        </p>
-        <div className="flex flex-wrap items-center gap-3">
-          <a href={`/api/league/export/${league.id}`} download className="btn-secondary">
-            Export League File ↓
-          </a>
-          <span className="text-xs text-muted">{leagueFileName(league.name)}</span>
-          <Link href="/import" className="btn-ghost text-sm">Import a league file →</Link>
-        </div>
+      <ShareLeague leagueId={league.id} leagueName={league.name} />
+
+    </div>
+  );
+}
+
+/**
+ * Export/import, lifted out of the page body so the locked screen and the
+ * ordinary one show the same block rather than two copies free to drift. It is
+ * not a setting — it is a download and an outbound link — which is why it was
+ * outside the settings <form> to begin with. See docs/custom-leagues.md.
+ */
+function ShareLeague({ leagueId, leagueName }: { leagueId: string; leagueName: string }) {
+  return (
+    <div className="panel p-4 space-y-3">
+      <h2 className="label-sm">Share This League</h2>
+      <p className="text-sm text-muted">
+        Export the 32 franchises and every player on them as a single league file. Send it to anyone and they
+        can import it and play the same league — same teams, same names, same rosters. It is a starting point,
+        not a save game: the file carries teams, players and contracts, not your schedule, standings, scouting
+        book or league history.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <a href={`/api/league/export/${leagueId}`} download className="btn-secondary">
+          Export League File ↓
+        </a>
+        <span className="text-xs text-muted">{leagueFileName(leagueName)}</span>
+        <Link href="/import" className="btn-ghost text-sm">Import a league file →</Link>
       </div>
     </div>
   );

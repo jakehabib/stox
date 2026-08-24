@@ -140,6 +140,41 @@ export default async function AccountPage() {
               )}
             </div>
 
+            {/* THE REBUILD BOARD, WHICH IS THE ONE PLACE AN UNFINISHED RUN IS
+                SHOWN AT ALL. The public board lists only climbs that ended in
+                a title; here the run can honestly be called unfinished, with
+                the seasons it has taken so far, instead of being given a rank
+                it has not earned. Rendered only when this account has
+                something to say about it — an empty panel advertising a mode
+                is clutter. */}
+            {(standing.rebuild.best || standing.rebuild.inProgress > 0) && (
+              <div className="rounded-md border border-line/70 bg-raised/40 px-4 py-3">
+                <div className="label-sm mb-2">The Rebuild board</div>
+                {standing.rebuild.best ? (
+                  <p className="text-sm text-chalk/90">
+                    You took the {standing.rebuild.best.teamName} from the worst roster in football to a
+                    championship in{' '}
+                    <strong className="font-semibold text-gold">
+                      {standing.rebuild.best.seasonsToTitle}
+                      {standing.rebuild.best.seasonsToTitle === 1 ? ' season' : ' seasons'}
+                    </strong>
+                    .{' '}
+                    {listed
+                      ? `That sits at about #${standing.rebuild.wouldBeRank} on the Rebuild board.`
+                      : `Publishing would put it at about #${standing.rebuild.wouldBeRank} on the Rebuild board.`}
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted">
+                    {standing.rebuild.inProgress === 1 ? 'A rebuild run is' : `${standing.rebuild.inProgress} rebuild runs are`}
+                    {' '}under way —{' '}
+                    {standing.rebuild.inProgressSeasons.map((n) => `${n} season${n === 1 ? '' : 's'}`).join(', ')}{' '}
+                    on the books. Nothing about an unfinished run is published: it appears on that board the
+                    season you win the title, with the number of seasons it took, and not before.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* A plain form posting a Server Action — no client component, so
                 this works with JavaScript disabled, same as sign-out.
                 The state travels on the BUTTON rather than in a checkbox: an
