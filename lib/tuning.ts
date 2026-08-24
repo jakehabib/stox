@@ -1092,6 +1092,54 @@ export const PROGRESSION = {
    * than a failure to produce.
    */
   PLAYTIME_GROWTH_PENALTY_ROOKIE: 0.30,
+
+  /**
+   * ===========================================================================
+   * TALENT CLIMBS FASTER — the ladder that lets entry ratings come down
+   * ===========================================================================
+   * A growth multiplier keyed on the man's CEILING, not his current rating. The
+   * app owner's design, in his words: *"If a player is star - they get a small
+   * multiplier added to their growth, all star is a bit higher, franchise is a
+   * bit higher, and generational is the fastest."*
+   *
+   * WHY THIS IS THE PIECE THAT WAS MISSING. Rookie entry overalls are too high
+   * — a first-rounder arrived at roughly the league's 78th percentile before he
+   * took a snap — and the obvious fix, generating everyone lower, was measured
+   * and REFUSED: it flattened the draft, cut the seventh round's star-or-better
+   * count 1.55 -> 0.85, and walked the whole league down, because nothing
+   * replaced what was taken away. This replaces it. Lower the door and let the
+   * talented climb through it: the stars separate themselves over five seasons
+   * instead of arriving pre-separated on day one, which is both better football
+   * and the arc the owner has been asking for all along.
+   *
+   * It also attacks the realization defect head on. Four of every five drafted
+   * men never got within three points of the ceiling printed on their own card,
+   * and the men furthest from theirs were the ones with the highest ceilings —
+   * exactly the players this speeds up.
+   *
+   * KEYED ON THE BANDS THE PLAYER CAN SEE (lib/ratings.ts RATING_BANDS), so the
+   * tier his card names is the tier that develops him. A step at a band edge is
+   * safe here in a way a clamp never is: potential is a fixed property of one
+   * man, so this shifts individuals between ladders rather than piling a
+   * distribution up against a wall.
+   *
+   * ONLY EVER APPLIED TO GROWTH, NEVER TO DECLINE. `growthMean` goes negative
+   * past a man's peak, and multiplying a negative by 1.45 would make the best
+   * players in the league fall apart fastest — the exact sign error this
+   * codebase has shipped four times in other guises. progressPlayer guards it.
+   */
+  POTENTIAL_TIER_GROWTH: {
+    /** Ceiling 99. The one-in-a-draft man, and he gets there quickest. */
+    GENERATIONAL: 1.45,
+    /** Ceiling 95-98. */
+    FRANCHISE: 1.30,
+    /** Ceiling 90-94. */
+    ALL_STAR: 1.18,
+    /** Ceiling 85-89. */
+    STAR: 1.08,
+    /** Everyone else develops at the ordinary rate — this is a bonus, not a tax. */
+    BASE: 1.0,
+  },
   /** Role index scale of that taper — at one scale-length of role, 63% of the penalty is already gone. */
   PLAYTIME_GROWTH_SCALE: 0.55,
 

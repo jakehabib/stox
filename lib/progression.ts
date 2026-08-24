@@ -1,6 +1,6 @@
 import { Rng, clamp } from './rng';
 import { AGE_CURVE, DEV_TRAIT_MULT, POSITION_AGE_PROFILE, DEFAULT_AGE_PROFILE, PROGRESSION, Position } from './tuning';
-import { AttrMap, attrsForPosition, computeOverall, POSITION_WEIGHTS } from './ratings';
+import { AttrMap, attrsForPosition, computeOverall, POSITION_WEIGHTS, RATING_BANDS } from './ratings';
 
 /**
  * Player development (design doc section 13). Growth is applied in scaled
@@ -22,6 +22,27 @@ export function growthMean(age: number, position?: Position): number {
   return growth < 0 ? growth * profile.declineMult : growth;
 }
 
+/**
+ * HOW MUCH FASTER A MAN WITH THIS CEILING CLIMBS.
+ *
+ * Keyed on his POTENTIAL, and on the same `RATING_BANDS` the player's own card
+ * is labelled from — so the tier the game calls him is the tier that develops
+ * him, and the two cannot drift apart. See POTENTIAL_TIER_GROWTH in
+ * lib/tuning.ts for the design and for why this exists at all.
+ *
+ * A bonus, never a tax: everybody below the Star band develops at exactly the
+ * rate they always did, so this can only ever speed the game's best prospects
+ * up. And it is applied to GROWTH ONLY — see the guard in progressPlayer.
+ */
+export function potentialTierGrowthMult(potential: number): number {
+  const t = PROGRESSION.POTENTIAL_TIER_GROWTH;
+  if (potential >= RATING_BANDS.GENERATIONAL) return t.GENERATIONAL;
+  if (potential >= RATING_BANDS.SUPERSTAR) return t.FRANCHISE;
+  if (potential >= RATING_BANDS.ELITE) return t.ALL_STAR;
+  if (potential >= RATING_BANDS.STAR) return t.STAR;
+  return t.BASE;
+}
+
 export function progressPlayer(
   rng: Rng,
   position: Position,
@@ -33,7 +54,15 @@ export function progressPlayer(
   /** Fraction of a full roll to apply — 1 for a full offseason roll, less for an in-season checkpoint. */
   scale: number = 1,
 ): { attrs: AttrMap; ovr: number } {
-  const mean = growthMean(age, position) * (DEV_TRAIT_MULT[devTrait] ?? 1) * speedMult * scale;
+  const ageMean = growthMean(age, position);
+  // THE TIER LADDER, AND THE SIGN GUARD THAT MAKES IT SAFE. A high ceiling buys
+  // a man FASTER GROWTH, never faster decline: `ageMean` turns negative past his
+  // peak, and applying a 1.45x there would have the best players in the league
+  // falling apart quickest — the same sign error, in a fourth costume, that this
+  // codebase has now fixed at four separate cap gates. Past the peak the tier
+  // multiplier is exactly 1 and a generational man ages like anybody else.
+  const tierMult = ageMean > 0 ? potentialTierGrowthMult(potential) : 1;
+  const mean = ageMean * (DEV_TRAIT_MULT[devTrait] ?? 1) * speedMult * scale * tierMult;
   const out: AttrMap = { ...attrs };
   const keys = attrsForPosition(position);
   const noiseSd = 2.4 * Math.sqrt(Math.max(0.05, scale));
