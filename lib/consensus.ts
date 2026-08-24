@@ -434,6 +434,84 @@ export const CONSENSUS_EVAL = {
    */
   GRADE_SOFT_KNEE_HI: 96,
   GRADE_SOFT_KNEE_LO: 28,
+
+  /**
+   * =========================================================================
+   * SCRUTINY — the top of a board is the most examined place in the sport
+   * =========================================================================
+   * EXPOSURE above is how much football the room watched BEFORE it had an
+   * opinion. This is the other half: what happens to a man BECAUSE it has one.
+   *
+   * The consensus number one is the most scrutinised player in football. Every
+   * club sends its area scout, then its coordinator, then its general manager;
+   * he is dissected on television for four months; a workout warrior with
+   * nothing behind him gets found out well before draft day, because the whole
+   * industry goes looking. That is not true of the man the board has 140th,
+   * and it is exactly why a sleeper misjudged in the fifth round is football
+   * and a nobody crowned first overall is not.
+   *
+   * Measured over 600 generated classes on the shipped board BEFORE this: the
+   * board's number one carried a sub-Star ceiling in 24.2% of drafts, and the
+   * worst one seen was a 57 overall with a 58 ceiling, graded 94. The centre
+   * of the board was healthy — median #1 was an 83 overall with a 90 ceiling —
+   * so this is a tail, and the tail is the part a user actually looks at.
+   *
+   * HOW IT WORKS, AND WHY IT IS TWO PASSES. Scrutiny follows the board, and
+   * the board follows the grade, so the grade has to exist before scrutiny can
+   * be applied to it. consensusGradeFor therefore grades a prospect once with
+   * no scrutiny, reads how high that provisional grade sits, and grades him
+   * again with the room's error narrowed in proportion. It is two evaluations
+   * of a pure function, not a fixed point: the second pass never feeds a
+   * third, so there is nothing to converge and nothing to oscillate. Below the
+   * knee the second pass is skipped entirely, which is most of any class.
+   *
+   * WHAT IT NARROWS, AND WHAT IT DELIBERATELY DOES NOT. It narrows the room's
+   * MISS — the width of its error about what a man is today — and NOTHING
+   * ELSE. It does not touch CEILING_SD and it does not touch CEILING_TRUST,
+   * so nobody's crystal ball gets better for being looked at:
+   * the room can still be certain what a prospect IS and badly wrong about
+   * what he BECOMES, which is the ordinary way a first pick goes bad and the
+   * reason the 1.01 still busts. It does not touch the bias stack either — a
+   * blue chip still slides on a medical flag, which happens every real April.
+   *
+   * WHAT IT ACTUALLY DID, over 600 classes for the board numbers and 40 rolled
+   * through lib/progression.ts for the rest:
+   *
+   *                                          before      after
+   *   board #1 with a sub-Star ceiling        24.2%       2.8%
+   *   board #1 with a sub-Day-One ceiling      7.5%       0.3%
+   *   worst board #1 seen                  57ovr/58pot  72ovr/77pot
+   *   board #1 rated below his class mean      2.7%       0.0%
+   *   board #1 rating   median / MIN            83 / 53    87 / 69
+   *   board #1 ceiling  median / MIN            90 / 58    95 / 77
+   *   ceiling gap, class best minus #1     mean 9.7/max 41  mean 4.9/max 22
+   *   a Generational prospect goes #1          5.6%      22.0%
+   *   ... in the top five                     14.8%      34.5%
+   *   ... in the first round                  60.4%      81.7%
+   *
+   * WHAT IT COSTS. It makes the very top of the board a better ordering, and
+   * that is a real cost against a fog this file exists to protect. It is aimed
+   * as narrowly as it can be: SCRUTINY_KNEE sits above the 98th percentile of
+   * the grade distribution, so the middle and the back of the board — where
+   * the fifth-round steal lives — do not move at all. Measured, the fog rails
+   * hold: Spearman(board rank, career peak) -0.692 -> -0.688 against the
+   * -0.815 lookup-table state this mechanic exists to avoid, and somebody
+   * outside the top 96 still out-peaks the consensus 1.01 in 45% of drafts.
+   *
+   * IT COULD ONLY LAND AFTER THE BUST WAS REHOMED, and that ordering was not
+   * optional. Before PROGRESSION.DEV_ARC_* existed, every bust in the game was
+   * this defect: the 1.01 "busted" 10% of the time purely because the board
+   * sometimes crowned a man who could not play, so cleaning the top of the
+   * board deleted busts along with the frauds. Development now fails players
+   * on its own and the first pick can be wrong for a football reason.
+   * =========================================================================
+   */
+  /** Provisional grade at which the room is giving a man half the extra looks. */
+  SCRUTINY_KNEE: 88,
+  /** Grade points the logistic takes to go from barely-examined to examined. */
+  SCRUTINY_WIDTH: 4,
+  /** Share of the room's remaining read error a fully scrutinised man loses. */
+  SCRUTINY_RELIEF: 0.95,
 } as const;
 
 /**
@@ -452,7 +530,7 @@ function roomExposure(trueOvr: number): number {
   return 1 / (1 + Math.exp(-(trueOvr - CONSENSUS_EVAL.EXPOSURE_MID) / CONSENSUS_EVAL.EXPOSURE_WIDTH));
 }
 
-function roomReadOf(p: ConsensusInput): RoomRead {
+function roomReadOf(p: ConsensusInput, scrutiny: number): RoomRead {
   const E = CONSENSUS_EVAL;
 
   // How much football the room has actually watched — see EXPOSURE above.
@@ -473,10 +551,25 @@ function roomReadOf(p: ConsensusInput): RoomRead {
       : roll < blindOdds + misfileOdds ? E.MISFILE_MULT
         : 1;
   const spread = regime * (1 - E.EXPOSURE_ERROR_RELIEF * exposure);
+  // SCRUTINY NARROWS ONE OF THE TWO ERRORS AND NOT THE OTHER, and that split
+  // is the whole of why it is safe. Extra looks tell a room what a man IS —
+  // more tape, more interviews, a second and third opinion on the same
+  // Saturdays. They do not tell it what he BECOMES; no amount of examination
+  // is a crystal ball. So the read of today narrows and the projection keeps
+  // its full width, which is what leaves the consensus 1.01 able to be exactly
+  // the player everyone thought he was and still never get there.
+  //
+  // Applied to both (the first version of this did), the number one pick
+  // stopped busting at all: 10% of 1.01s peaked below 78 before, 0% after,
+  // and the share of classes where somebody outside the top 96 out-peaked him
+  // fell from 70% to 30%. That is the fog this file exists to protect, undone
+  // by a fix aimed at something else.
+
 
   // The read itself. The miss is symmetric for a man the room has watched and
   // skewed to the downside for one it has not — see UNSEEN_UPSIDE.
-  const miss = new Rng(`consensus-read-${p.id}`).normal(0, E.EVAL_SD * spread);
+  const readSpread = spread * (1 - E.SCRUTINY_RELIEF * scrutiny);
+  const miss = new Rng(`consensus-read-${p.id}`).normal(0, E.EVAL_SD * readSpread);
   const skewed = miss > 0 ? miss * (E.UNSEEN_UPSIDE + (1 - E.UNSEEN_UPSIDE) * exposure) : miss;
   const now = clamp(p.trueOvr + skewed, 20, 99);
 
@@ -673,12 +766,24 @@ const GRADE_MIN = 20;
  * no team, no scouting report, no cost.
  */
 export function consensusGradeFor(p: ConsensusInput): ConsensusGrade {
+  // ONE PASS TO FORM AN OPINION, ONE TO EXAMINE IT — see SCRUTINY. The first
+  // grade is what the room thinks before anybody goes looking; how high it
+  // lands is what decides how hard the industry then looks. A man the first
+  // pass leaves in the middle of the board is returned untouched, which is
+  // most of a class.
+  const provisional = gradeOnce(p, 0);
+  const E = CONSENSUS_EVAL;
+  const scrutiny = 1 / (1 + Math.exp(-(provisional.boardScore - provisional.positionPull - E.SCRUTINY_KNEE) / E.SCRUTINY_WIDTH));
+  return scrutiny < 1e-3 ? provisional : gradeOnce(p, scrutiny);
+}
+
+function gradeOnce(p: ConsensusInput, scrutiny: number): ConsensusGrade {
   const trueAttrs = readJson<AttrMap>(p.trueAttrs, {});
   const college = readJson<Partial<CollegeProfile>>(p.collegeStats, {});
   const testing = readJson<Partial<CombineTesting>>(p.combineTesting, {});
 
   // THE ONE PLACE THE TRUTH ENTERS. Everything below grades `room`, not `p`.
-  const room = roomReadOf(p);
+  const room = roomReadOf(p, scrutiny);
   const base =
     CONSENSUS.CURRENT_WEIGHT * room.now +
     CONSENSUS.POTENTIAL_WEIGHT * room.ceiling;
