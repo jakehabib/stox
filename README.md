@@ -647,6 +647,27 @@ undo anything, ask to revert to a commit below (or the app owner can do it
 directly: `git revert <hash>`, or check out an earlier commit — nothing is
 ever force-pushed over, so every state below still exists in git history).
 
+- **2026-08-24 — The seventh clamp: a 0.85 catch rate was the most common rate
+  in the upper tail.** A receiver's catch rate is drawn as a bell around 0.62
+  and was then truncated to [0.35, 0.85]. Truncation does not cap a tail, it
+  *piles* it: measured over four million draws, the 0.85 bucket held 0.249% of
+  them while 0.84 held 0.153% and 0.83 held 0.172% — a clean decline, then a
+  step back up at the wall, so the most extreme catch rate in the game was also
+  the most frequent one. The draw now passes through a soft bound: everything
+  inside two standard deviations is untouched (95.7% of draws, bit-identical to
+  the raw bell), and only what lies beyond is bent asymptotically into the
+  headroom that remains, so the limit is approached and never reached and each
+  further standard deviation buys less movement than the last. The decline is
+  monotone all the way out and no draw lands exactly on a bound. **Not one game
+  result changed** — verified by hashing every score across 3,264 simulated
+  games in an isolated worktree, patched and unpatched: same SHA-256, same
+  148,179 points, because the transform reads a value already drawn and
+  consumes no randomness of its own. What did change is the extreme tail, which
+  thinned as intended: the highest catch rate seen fell from 0.900 to 0.889.
+  The helper (`softBound` in `lib/rng.ts`) carries the reasoning and the
+  measurement so the eighth instance is caught by reading rather than by
+  rediscovery. Shipped in `HASHPLACEHOLDER`.
+
 - **2026-08-24 — Cap space jumped $8M between two screens and nothing said
   why.** Four screens across the end of a season read $918K, $9.07M, $27.0M and
   $43.3M, every figure correct and none of them explained: contracts age the

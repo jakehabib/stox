@@ -1,4 +1,4 @@
-import { Rng, clamp } from '../rng';
+import { Rng, clamp, softBound } from '../rng';
 import { SIM } from '../tuning';
 import { LeagueSettings, DIFFICULTY_MODS } from '../settings';
 import { BoxScore, BoxLine, DriveResult, SeasonStats, TeamGameStats } from '../types';
@@ -941,7 +941,10 @@ function allocateStats(
   // slice of the same pie. See REC_YPC_PRIOR.
   const recCounts = receivers.map((p, i) => {
     const tgt = Math.round(passAtt * recWeights[i]);
-    return { tgt, rec: Math.round(tgt * clamp(0.62 + rng.normal(0, 0.08), 0.35, 0.85)) };
+    // Soft-bounded, not clamped: truncating here made a 0.85 catch rate the most
+    // common rate in the upper tail, ahead of 0.84 and 0.83. See softBound.
+    const rate = softBound(0.62 + rng.normal(0, 0.08), 0.62, 0.08, 0.35, 0.85);
+    return { tgt, rec: Math.round(tgt * rate) };
   });
   const recYpcMean = receivers.reduce((a, p, i) => a + effectiveRating(p) * recCounts[i].rec, 0)
     / Math.max(1, recCounts.reduce((a, c) => a + c.rec, 0)) || 1;
