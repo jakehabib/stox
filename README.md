@@ -647,6 +647,24 @@ undo anything, ask to revert to a commit below (or the app owner can do it
 directly: `git revert <hash>`, or check out an earlier commit — nothing is
 ever force-pushed over, so every state below still exists in git history).
 
+- **2026-08-24 — Cap space jumped $8M between two screens and nothing said
+  why.** Four screens across the end of a season read $918K, $9.07M, $27.0M and
+  $43.3M, every figure correct and none of them explained: contracts age the
+  instant the final whistle blows, the ceiling grows a rung with the league
+  year, and everyone who is not re-signed takes his salary with him when the
+  window shuts. The header's Cap Space tile now carries the change the NEXT
+  press of Advance will make — `+$42.5M pending` — with the causes on the
+  hover, in the ledger's own words: *"Your next Advance plays the final, and
+  the books roll to 2028: $41.4M of 2027 dead money goes with the season, the
+  ceiling rises $2.58M to $260.1M, and $1.50M goes on as contracts age into
+  their next year's salary."* It is deliberately silent on the advances whose
+  effect cannot be quoted exactly — the offseason press runs a retirement roll,
+  and a predicted figure that does not arrive would be worse than none — so it
+  appears twice a league year and the strip is unchanged the rest of the time.
+  Verified by predicting the change, pressing Advance and comparing: 96
+  club-seasons at the final and 95 at the re-sign window, zero residual at
+  $0.000001. Shipped in `32d669b`.
+
 - **2026-08-24 — A receiver caught 158 passes for 1,444 yards and every man on
   his club averaged the same yards a catch.** Yards per reception was flat
   across a whole offence: measured over 24 replayed league-seasons, WR1 10.81,
