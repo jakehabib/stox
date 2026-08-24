@@ -134,3 +134,118 @@ export function passTendency(teamId: string, seasonYear?: number): number {
     : centre + new Rng(`offTendencySeason:${seasonYear}:${teamId}`).normal(0, PASS_TENDENCY.SEASON_SD);
   return Math.min(PASS_TENDENCY.RAIL_HI, Math.max(PASS_TENDENCY.RAIL_LO, rate));
 }
+
+/**
+ * ===========================================================================
+ * HOW A CLUB SPREADS THE BALL AROUND
+ * ===========================================================================
+ * The second half of "none of them is balanced in exactly the same way".
+ * `passTendency` above says how often a club throws it; this says who it throws
+ * it to, and who it hands it to.
+ *
+ * WHAT THIS FIXES. lib/sim/engine.ts shared out targets and carries from ONE
+ * league-wide vector — TARGET_SHARE and CARRY_SHARE — tilted only by rating.
+ * Every club in the league therefore fed its lead back the same share of its
+ * carries and its number one receiver the same share of its targets, give or
+ * take how good they were. Measured over 24 replayed league-seasons, that is
+ * what it did to the record book:
+ *
+ *   leader                 median    p90     max     real NFL
+ *   rush attempts             260    266     272     300-380
+ *   rushing yards           1,373  1,505   1,515     1,700-2,000
+ *   TE receiving yards        749    823     824     1,000-1,200
+ *
+ * Look at the spread, not the level: 260 / 266 / 272 is a five per cent gap
+ * between the median league-year's leading rusher and the best of twenty-four.
+ * A real leader board has a long tail because a real league has workhorses —
+ * clubs built around one back or one tight end — and this league had none. The
+ * leading rusher was simply "the best club's starter", every single year.
+ *
+ * The level follows from the spread and cannot be fixed without it. In 2022
+ * Josh Jacobs carried 340 times for 1,653 yards, which was 82% of the Raiders'
+ * rushing yardage; the flat vector's best case is a back on 57% of his own
+ * backfield's carries. No amount of raising the league-wide share reaches an
+ * 82% workhorse without making every club in the league one.
+ *
+ * THE SHAPE. One draw per club per season per axis, lognormal about 1, applied
+ * as an EXPONENT on the depth prior (`focus`) or as a MULTIPLIER on one
+ * position's slice of it (`teEmphasis`). Lognormal because the exponent has to
+ * stay positive: at 0 the prior flattens to an even committee, which is a real
+ * offence, and below 0 it would invert the depth chart, which is not. It
+ * therefore shapes the distribution instead of clamping it, which is the app
+ * owner's standing rule on outliers.
+ *
+ * THE SPREADS ARE FITTED TO REAL SHARES, one per axis:
+ *   BACKFIELD  a lead back's share of his backfield's carries. Real clubs run
+ *              about 0.40 to 0.88 with sd ~0.13; sigma 0.50 puts the league's
+ *              leading rusher on 379 carries for 1,668 yards against a real
+ *              300-380 and 1,700-2,000.
+ *   TE         a club's tight ends' share of its targets. Real clubs run 0.12
+ *              to 0.30 about a mean of 0.21; sigma 0.32 puts the leading tight
+ *              end on 1,022 receiving yards against a real 1,000-1,200, from
+ *              749 before.
+ *
+ * THERE IS NO THIRD AXIS FOR THE NUMBER ONE RECEIVER, AND THAT IS MEASURED
+ * RATHER THAN OVERLOOKED. A `targetFocus` exponent on the receiving prior was
+ * built and swept alongside these two, over 12 replayed league-seasons:
+ *
+ *   sigma   leader receptions   leader receiving yards   real
+ *   0.00                  133                    1,727   110-135 / 1,700-1,900
+ *   0.05                  137                    1,722
+ *   0.10                  145                    1,782
+ *   0.12                  147                    1,807
+ *   0.30                  199                    2,280
+ *
+ * It was rejected at every non-zero value because the number it moves is the
+ * one number on the receiving line that was already right. The engine's WR1
+ * takes 30% of his club's targets before any of this, which is already the top
+ * of the real range — CeeDee Lamb led the NFL in 2023 on 30.7% — so the club-
+ * to-club spread the exponent adds has nowhere to go but past it, and at three
+ * standard deviations over 384 club-seasons it produces a 199-catch season.
+ * The receiving record book needed yards per catch, not more catches, and that
+ * is REC_YPC_PRIOR in lib/sim/engine.ts rather than anything here.
+ * ===========================================================================
+ */
+export const ROLE_TENDENCY = {
+  /** [TUNE] Workhorse-vs-committee backfield, lognormal sigma. */
+  BACKFIELD_SIGMA: 0.50,
+  /** [TUNE] How tight-end-centric the club is, lognormal sigma. */
+  TE_SIGMA: 0.32,
+};
+
+/** A club's role profile for one season. Both are multipliers about 1. */
+export interface RoleTendency {
+  /** Exponent on the backfield carry prior. Above 1 is a workhorse. */
+  carryFocus: number;
+  /** Multiplier on the tight ends' slice of the target prior. */
+  teEmphasis: number;
+}
+
+/**
+ * The role profile a club plays to in a given season.
+ *
+ * `seasonKey` rather than a season year, and that is a compromise worth stating
+ * plainly. lib/sim/engine.ts has no idea what year it is — see the note on
+ * `SimTeamInput.passRate`, which exists for exactly that reason — and the one
+ * season-varying number already in its hands is that pass rate, which is
+ * `passTendency(id, year)`: a club centre plus a seasonal draw, and therefore a
+ * fingerprint of the pair. Hashing it gives a role draw that moves with the
+ * season and is statistically independent of the rate's VALUE, because the hash
+ * destroys the ordering.
+ *
+ * If a season year is ever plumbed into `SimTeamInput`, pass it here instead;
+ * nothing else has to change. What must NOT change is that the key varies by
+ * season, or every club is frozen into one role forever — the defect
+ * `passTendency` documents as design A and rejects.
+ *
+ * The two draws use separate seed namespaces for the same reason
+ * `passTendency`'s two do.
+ */
+export function roleTendency(teamId: string, seasonKey: string | number): RoleTendency {
+  const draw = (axis: string, sigma: number) =>
+    Math.exp(new Rng(`role${axis}:${seasonKey}:${teamId}`).normal(0, sigma));
+  return {
+    carryFocus: draw('Backfield', ROLE_TENDENCY.BACKFIELD_SIGMA),
+    teEmphasis: draw('TightEnd', ROLE_TENDENCY.TE_SIGMA),
+  };
+}

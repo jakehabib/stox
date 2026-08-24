@@ -3,7 +3,7 @@ import { SIM } from '../tuning';
 import { LeagueSettings, DIFFICULTY_MODS } from '../settings';
 import { BoxScore, BoxLine, DriveResult, SeasonStats, TeamGameStats } from '../types';
 import { computeUnits, SimPlayer, SimStaff, UnitRatings, effectiveRating, isAvailable, REPLACEMENT_LEVEL } from './units';
-import { passTendency, PASS_TENDENCY } from './tendency';
+import { passTendency, PASS_TENDENCY, roleTendency } from './tendency';
 import { readJson } from '../json';
 import { AttrMap } from '../ratings';
 
@@ -608,15 +608,112 @@ const TARGET_SHARE = {
  *
  * Three entries against a ROSTER_TARGETS.RB of {min 3, ideal 4, max 5}, and
  * `allocateStats` slices the depth chart to three before this is applied, so
- * nothing renormalises across a variable count: the lead back's realised share
- * of his backs' carries is 57.3% measured over 120 league-seasons (real lead
- * backs take 55-70%), and a fourth back takes none at all. That is 13.9% of
- * RB-seasons finishing on zero carries, which is a defensible way to describe
- * a gameday scratch and is left alone deliberately — a fourth slot here also
- * lands him a share of TARGET_SHARE.RB's receiving work, which he should not
- * have, and that is a separate change with its own measurement to do.
+ * nothing renormalises across a variable count, and a fourth back takes no
+ * carries at all. That is a defensible way to describe a gameday scratch and is
+ * left alone deliberately — a fourth slot here also lands him a share of
+ * TARGET_SHARE.RB's receiving work, which he should not have, and that is a
+ * separate change with its own measurement to do.
+ *
+ * THIS IS THE LEAGUE'S PRIOR AND NO LONGER EVERY CLUB'S. It used to be both,
+ * and the lead back's realised share of his backfield's carries was 57.3% for
+ * every club in the league, give or take how good he was. Real clubs run
+ * anywhere from a 40% committee to an 88% workhorse; `roleTendency`'s
+ * `carryFocus` is the exponent that puts that spread back, and `shapePrior`
+ * below is where it is applied. The league-wide mean is unchanged.
  */
 const CARRY_SHARE = [0.55, 0.31, 0.14];
+
+/**
+ * ---------------------------------------------------------------------------
+ * A REAL LEAGUE HAS WORKHORSES; THIS ONE HAD NONE
+ * ---------------------------------------------------------------------------
+ * TARGET_SHARE and CARRY_SHARE above are the LEAGUE's priors, and until this
+ * landed they were also every individual club's. Tilted by rating and by
+ * nothing else, that made the leading rusher in any league-year simply "the
+ * best club's starting back", and it showed in the one place a league's stat
+ * page looks at — the spread of the leader board. Measured over 24 replayed
+ * league-seasons:
+ *
+ *   leader                 median    p90     max     real NFL
+ *   rush attempts             260    266     272     300-380
+ *   rushing yards           1,373  1,505   1,515     1,700-2,000
+ *   receptions                126    128     130     110-135
+ *   TE receiving yards        749    823     824     1,000-1,200
+ *
+ * Twelve yards separate the median league-year's leading rusher from the best
+ * of twenty-four. Real leader boards have long tails because real clubs choose
+ * very different offences with the same personnel: in 2022 Josh Jacobs carried
+ * 340 times for 1,653 yards, 82% of his club's rushing yardage, and the flat
+ * vector's best case is a back on 57% of his own backfield's carries. The
+ * level cannot be fixed without the spread — raising the league-wide share far
+ * enough to reach an 82% workhorse would make every club in the league one, and
+ * would delete the second and third backs from the box score entirely.
+ *
+ * So the prior is shaped per club per season by lib/sim/tendency.ts's
+ * `roleTendency`, which is `passTendency`'s opposite number: that one says how
+ * often a club throws it, this one says who it throws it to. `carryFocus` is an
+ * EXPONENT on the backfield prior — above 1 concentrates on the starter, below
+ * 1 flattens towards a committee, and it cannot reorder the depth chart —
+ * and `teEmphasis` is a multiplier on the tight ends' slice of the receiving
+ * prior. Both are renormalised afterwards by `shareWeights`, so this moves work
+ * BETWEEN teammates and never creates a carry or a target: the club's plays are
+ * decided upstream in the drive loop and never see this at all. Measured over
+ * 12 replayed league-seasons, every score in the league is BIT-IDENTICAL before
+ * and after, which is the property that separation is supposed to have.
+ *
+ * There is deliberately no equivalent axis for the number one receiver; see
+ * lib/sim/tendency.ts for the sweep that rejected it.
+ */
+function shapePrior(prior: number[], focus: number): number[] {
+  return prior.map((w) => Math.pow(Math.max(0, w), focus));
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * YARDS PER CATCH IS A FACT ABOUT THE RECEIVER
+ * ---------------------------------------------------------------------------
+ * The receiving half of the defect RB_YPC_TILT above fixed for the run, and it
+ * survived that pass untouched because it lives in a different line of code.
+ * A receiver's yards were `passYards * recWeights[i]` and his catches were
+ * `passAtt * recWeights[i] * catchRate` — one weight vector for both — so every
+ * man on a club averaged the same yards per reception, to the hundredth,
+ * exactly as the three backs used to average the same yards per carry.
+ * Measured over 12 replayed league-seasons, per-game means:
+ *
+ *   slot   rec/g   recYds/g   yards per catch
+ *   WR1     6.37       68.9        10.81
+ *   WR2     4.16       45.0        10.80
+ *   WR3     2.47       26.7        10.80
+ *   TE1     3.12       33.7        10.79
+ *   RB1     2.54       27.4        10.78
+ *
+ * A checkdown to the third-down back was worth the same as a go route. Real
+ * football is nothing like that and the gap is not subtle: NFL receivers run
+ * about 12.9 yards a catch, tight ends 10.8 and running backs 7.6. That flat
+ * column is also what capped the receiving record book — the leading receiver's
+ * total is his catches times this number, so with the volume already right at
+ * 120 catches there was nowhere for 1,700 yards to come from.
+ *
+ * The prior below is those three real figures as ratios. It is applied to each
+ * man's ACTUAL receptions and then renormalised against the reception-weighted
+ * mean, exactly as RB_YPC_TILT is renormalised against the carry-weighted one,
+ * so the club's passing yardage is conserved to the yard and this is a
+ * redistribution and cannot be anything else. A back gaining less per catch is
+ * a receiver gaining more, on the same throw.
+ *
+ * [TUNE] Real yards per reception by position, as a ratio to a wide receiver's.
+ */
+const REC_YPC_PRIOR: Record<string, number> = { WR: 1.00, TE: 0.90, RB: 0.59 };
+
+/**
+ * [TUNE] How hard a receiver's rating bends his yards per catch away from his
+ * teammates'. Deliberately gentler than RB_YPC_TILT's 0.9: the positional
+ * spread above is doing most of the separating here, where the backfield had
+ * no positional axis at all and the rating was the only thing available.
+ * Floored at 0.45 for the same reason — a replacement-level fill-in gains less
+ * per catch, he does not go backwards.
+ */
+const REC_YPC_TILT = 0.5;
 
 /**
  * ---------------------------------------------------------------------------
@@ -821,9 +918,14 @@ function allocateStats(
     ...(units.depth.TE ?? []).slice(0, 2),
   ];
   const receivers = [...targets, ...rbs];
+  // What kind of offence this club is running this season — a workhorse
+  // backfield or a committee, a tight-end offence or a wide receiver one.
+  const roles = roleTendency(team.id, passRate);
+  const nWr = Math.min(4, (units.depth.WR ?? []).length);
+  const nTe = Math.min(2, (units.depth.TE ?? []).length);
   const recPrior = [
-    ...TARGET_SHARE.WR.slice(0, Math.min(4, (units.depth.WR ?? []).length)),
-    ...TARGET_SHARE.TE.slice(0, Math.min(2, (units.depth.TE ?? []).length)),
+    ...TARGET_SHARE.WR.slice(0, nWr),
+    ...TARGET_SHARE.TE.slice(0, nTe).map((w) => w * roles.teEmphasis),
     ...TARGET_SHARE.RB.slice(0, rbs.length),
   ];
   // A tight end sees fewer targets than his rating alone would suggest; that
@@ -834,22 +936,38 @@ function allocateStats(
     recPrior,
   );
   const recTds = allocateCounts(passTd, concentrate(recWeights, SCORING_CONCENTRATION), rng);
-  const recLine = receivers.map((p, i) => {
+  // Receptions first, because the yards follow them: a man's receiving total is
+  // his catches times what a catch is worth to HIM, not a second independent
+  // slice of the same pie. See REC_YPC_PRIOR.
+  const recCounts = receivers.map((p, i) => {
     const tgt = Math.round(passAtt * recWeights[i]);
-    return {
-      p,
-      stats: {
-        targets: tgt,
-        rec: Math.round(tgt * clamp(0.62 + rng.normal(0, 0.08), 0.35, 0.85)),
-        recYds: Math.round(passYards * recWeights[i]),
-        recTd: recTds[i],
-      } as SeasonStats,
-    };
+    return { tgt, rec: Math.round(tgt * clamp(0.62 + rng.normal(0, 0.08), 0.35, 0.85)) };
   });
+  const recYpcMean = receivers.reduce((a, p, i) => a + effectiveRating(p) * recCounts[i].rec, 0)
+    / Math.max(1, recCounts.reduce((a, c) => a + c.rec, 0)) || 1;
+  const recYardRaw = receivers.map((p, i) => recCounts[i].rec
+    * (REC_YPC_PRIOR[p.position] ?? 1)
+    * Math.max(0.45, 1 + REC_YPC_TILT * (effectiveRating(p) / recYpcMean - 1)));
+  const recYardSum = recYardRaw.reduce((a, b) => a + b, 0) || 1;
+  const recLine = receivers.map((p, i) => ({
+    p,
+    stats: {
+      targets: recCounts[i].tgt,
+      rec: recCounts[i].rec,
+      // A man who caught nothing gained nothing. The old form sliced the club's
+      // passing yards by TARGET share, so the third back's 0.01 of the targets
+      // rounded to no catches and still rounded to two yards, every game.
+      recYds: Math.round(passYards * (recYardRaw[i] / recYardSum)),
+      recTd: recTds[i],
+    } as SeasonStats,
+  }));
 
   // --- Quarterback ---------------------------------------------------------
   const qb = units.depth.QB?.[0];
-  const rushTdWeights = shareWeights(rbs.map((p) => effectiveRating(p)), CARRY_SHARE);
+  const rushTdWeights = shareWeights(
+    rbs.map((p) => effectiveRating(p)),
+    shapePrior(CARRY_SHARE.slice(0, rbs.length), roles.carryFocus),
+  );
   // The quarterback is a goal-line runner too — he used to be structurally
   // incapable of scoring on the ground, which handed the lead back every
   // rushing touchdown his team scored and left him with 28 of them a season

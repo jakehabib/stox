@@ -238,11 +238,49 @@ export const HISTORY = {
  * keeps whatever the original calibration knew — it was taken with playoff
  * box scores in it, which accumulate into the same season line and which a
  * regular-season replay cannot see.
+ *
+ * RE-FITTED AGAIN WHEN THE BALL STOPPED BEING SHARED OUT THE SAME WAY BY EVERY
+ * CLUB. lib/sim/engine.ts gained two things this file has to follow: a lead
+ * back's share of his backfield's carries now varies club to club the way a
+ * real league's does (it was 57.3% for everybody), and yards per catch became a
+ * fact about the receiver rather than a single number every man on a club
+ * shared. Measured over 24 league-seasons replayed through both engines on
+ * IDENTICAL rosters and seeds — every score in all 6,528 games is bit-identical
+ * across the pair, so this is a paired replay and not two samples:
+ *
+ *   leader-mean          before    after    ratio
+ *   passing yards         4,829    4,829    x1.000
+ *   passing TD               43       43    x1.000
+ *   rushing yards         1,385    1,771    x1.279
+ *   receiving yards       1,455    1,744    x1.199
+ *   TE receiving yards      748    1,018    x1.361
+ *   sacks                    18       18    x1.000
+ *
+ * The tight end is scaled on his own ratio and not the receivers', because the
+ * change that moved him is not the change that moved them: `teEmphasis` gives
+ * some clubs a tight-end offence, where the wide receivers gained from yards
+ * per catch alone. Scaling a TE by x1.199 would have left the seeded Ring of
+ * Honour tight end 13% short of the live one — which is the 724-yard tight end
+ * the app owner was looking at when he reported this, and it is a SEEDED row:
+ * of 996,059 completed player-seasons in the development database, 803,798 are
+ * fabricated backstory. Four out of five rows on a stat leaders page never went
+ * through the sim at all, so a backstory whose ratios are wrong IS the leaders
+ * page being wrong.
  */
 export const SEASON_RECORD_BAND: Record<RecordCategory, { lo: number; hi: number }> = {
   passYds: { lo: 5980, hi: 6410 },  // was 6900-7400, x0.867
   passTd:  { lo: 53,   hi: 58 },    // was 58-63,     x0.916
-  rushYds: { lo: 1900, hi: 2070 },  // was 2250-2450, x0.845
+  // Raised from 1900-2070 when the backfield stopped being a committee at
+  // every club in the league — see the note below. That band was set when the
+  // best rushing season 768 replayed team-seasons could produce was 1,613; it
+  // is now 2,110, so the twenty-year-old record a new save is founded on had
+  // become one its own first year would beat. 2150-2300 sits just above the
+  // live ceiling, which is what a record is for.
+  rushYds: { lo: 2150, hi: 2300 },
+  // NOT scaled with the receiving means below, and that is measured. The
+  // receiving record moved because yards per catch did, not because anyone
+  // caught more, and the best of 768 replayed team-seasons is 1,973 — still
+  // under this band's floor, exactly as it was before at 1,595.
   recYds:  { lo: 2020, hi: 2150 },  // was 2350-2500, x0.860
   tackles: { lo: 168,  hi: 178 },   // unscaled — measured x1.001
   sacks:   { lo: 24,   hi: 27 },    // unscaled — measured x1.017
@@ -261,8 +299,8 @@ export const CAREER_RECORD_BAND: Record<RecordCategory, { lo: number; hi: number
   // in the units this sim now actually produces.
   passYds: { lo: 46800, hi: 57200 },  // was 54000-66000, x0.867
   passTd:  { lo: 366,   hi: 476 },    // was 400-520,     x0.916
-  rushYds: { lo: 9550,  hi: 12340 },  // was 11300-14600, x0.845
-  recYds:  { lo: 13330, hi: 17630 },  // was 15500-20500, x0.860
+  rushYds: { lo: 12215, hi: 15783 },  // x1.279 with the season means below
+  recYds:  { lo: 15983, hi: 21138 },  // x1.199 with the season means below
   tackles: { lo: 1550,  hi: 1950 },   // unscaled, as above
   sacks:   { lo: 139,   hi: 181 },    // unscaled, as above
   defInt:  { lo: 47,    hi: 65 },     // unscaled, as above
@@ -945,7 +983,11 @@ function coreSeason(
   switch (position) {
     case 'QB': {
       const passYds = cap('passYds', n(2340 + q * 2860, 347) * vol);  // x0.867
-      const passAtt = Math.round(passYds / rng.float(5.5, 6.5));
+      // Net yards per attempt, 6.66 over 768 replayed team-seasons. It was
+      // 5.5-6.5, which is 5.96 — a passer with a live season's yardage and a
+      // seeded season's attempts, and therefore a Ring of Honour quarterback
+      // who threw it 60 times a game.
+      const passAtt = Math.round(passYds / rng.float(6.15, 7.20));
       return {
         gp, passAtt, passCmp: Math.round(passAtt * clamp(0.56 + q * 0.10 + rng.normal(0, 0.02), 0.5, 0.72)),
         // Yards per touchdown pass: x0.921. Interceptions: x0.913, and for the
@@ -965,23 +1007,40 @@ function coreSeason(
     // sitting on the same screen as this year's rushing table. Both numbers
     // are now the live league's, measured over 120 replayed league-seasons.
     case 'RB': {
-      const rushYds = cap('rushYds', n(397 + q * 1107, 161) * vol);  // x0.845
+      const rushYds = cap('rushYds', n(508 + q * 1416, 206) * vol);  // x1.279
       const rec = Math.round(rng.int(8, 55) * vol);
       return {
-        // Yards per carry x1.056 and yards per rushing TD x0.931 — see the
-        // note above on why these two move in opposite directions.
-        gp, rushAtt: Math.round(rushYds / rng.float(4.3, 5.5)), rushYds,
+        // Yards per carry: 4.55, carry-weighted across the three backs a box
+        // score names, over 768 replayed team-seasons. It was 4.3-5.5, which is
+        // 4.90, and it was the reason a seeded back's carry column read low
+        // against a live one's for the same ground gained.
+        gp, rushAtt: Math.round(rushYds / rng.float(4.15, 4.98)), rushYds,
         rushTd: Math.round(rushYds / rng.float(79, 144)),
-        rec, recYds: Math.round(rec * rng.float(2.5, 5.8)),
+        // A BACK'S CATCH IS NOT A RECEIVER'S CATCH, AND IT USED TO BE WORTH
+        // HALF OF ONE. This was `rec * rng.float(2.5, 5.8)` — a mean of 4.15
+        // yards a reception, against the 7.07 the sim now gives a lead back and
+        // the 7.6 the NFL gives one. Backs are a fifth of the receptions in
+        // this backstory, so four yards a catch is most of why the whole
+        // fabricated population averaged 8.87 yards a catch where real football
+        // averages 10.5.
+        rec, recYds: Math.round(rec * rng.float(6.00, 8.15)),
       };
     }
     case 'WR': case 'TE': {
-      const base = position === 'WR' ? 430 + q * 1135 : 241 + q * 516;  // x0.860
-      const recYds = cap('recYds', n(base, 129) * vol);
-      // Yards per reception x1.040, yards per receiving TD x0.921. The
-      // catch rate that turns receptions back into targets is untouched: it is
-      // a share, and the correction did not move it.
-      const rec = Math.round(recYds / rng.float(8.5, 11.2));
+      // x1.199 and x1.361 — the two positions moved by different amounts and
+      // are scaled by their own measured ratios. See SEASON_RECORD_BAND.
+      const base = position === 'WR' ? 516 + q * 1361 : 328 + q * 702;
+      const recYds = cap('recYds', n(base, 152) * vol);
+      // YARDS PER RECEPTION, BY POSITION, because the sim no longer gives every
+      // man on a club the same one: 12.07 for a receiver and 10.73 for a tight
+      // end over 768 replayed team-seasons, against a real 12.9 and 10.8. One
+      // shared 8.5-11.2 stood in for both, which is 9.75 — so a seeded tight
+      // end's catch column ran high and a seeded receiver's ran a third too
+      // high for the yards beside it. The catch rate that turns receptions back
+      // into targets is untouched: it is a share, and none of this moved it.
+      const rec = Math.round(recYds / (position === 'TE'
+        ? rng.float(9.80, 11.70)
+        : rng.float(11.00, 13.20)));
       return {
         gp, targets: Math.round(rec / rng.float(0.58, 0.68)), rec, recYds,
         recTd: Math.round(recYds / rng.float(106, 193)),
@@ -1120,16 +1179,23 @@ function calibrateSeasonRecords(rng: Rng, stars: HistPlayer[], abbrOf: (teamId: 
  */
 function redriveLines(rng: Rng, position: Position, lines: CoreLine[]) {
   for (const l of lines) {
+    // The same ratios `coreSeason` derives its own companion numbers from. They
+    // are repeated rather than shared because this pass runs AFTER a headline
+    // stat was moved onto a record band, and a record season is allowed to be a
+    // slightly better one than the mean — but they must not DISAGREE, which is
+    // what they did while this path still divided by 5.5-6.5 and 8.2-10.8.
     if (position === 'QB' && l.passYds != null) {
-      l.passAtt = Math.round(l.passYds / rng.float(5.5, 6.5));
+      l.passAtt = Math.round(l.passYds / rng.float(6.15, 7.20));
       l.passCmp = Math.round(l.passAtt * rng.float(0.58, 0.68));
     }
     if (position === 'RB' && l.rushYds != null) {
-      l.rushAtt = Math.round(l.rushYds / rng.float(4.6, 6.1));
+      l.rushAtt = Math.round(l.rushYds / rng.float(4.15, 4.98));
       l.rushTd = Math.round(l.rushYds / rng.float(85, 155));
     }
     if ((position === 'WR' || position === 'TE') && l.recYds != null) {
-      l.rec = Math.round(l.recYds / rng.float(8.2, 10.8));
+      l.rec = Math.round(l.recYds / (position === 'TE'
+        ? rng.float(9.80, 11.70)
+        : rng.float(11.00, 13.20)));
       l.targets = Math.round(l.rec / rng.float(0.58, 0.68));
       l.recTd = Math.round(l.recYds / rng.float(115, 210));
     }

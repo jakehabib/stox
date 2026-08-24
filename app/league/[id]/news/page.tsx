@@ -71,7 +71,7 @@ const TYPE_WEIGHT: Record<string, number> = {
 };
 
 export default async function NewsPage({ params, searchParams }: { params: { id: string }; searchParams: { type?: string; page?: string } }) {
-  const { league } = await getLeagueContext(params.id);
+  const { league, phaseLabel } = await getLeagueContext(params.id);
   const type = FILTERS.includes(searchParams.type ?? '') ? searchParams.type! : 'ALL';
 
   // Paged rather than a flat 80. Unfiltered, the wire is dominated by
@@ -117,7 +117,9 @@ export default async function NewsPage({ params, searchParams }: { params: { id:
   return (
     <div className="space-y-5">
       <PageMasthead
-        eyebrow={`${league.seasonYear} · Week ${league.week}`}
+        // The same masthead, and it had the same defect — see the note in
+        // app/league/[id]/stats/page.tsx.
+        eyebrow={`${league.seasonYear} · ${phaseLabel} · Week ${league.week}`}
         title="League News"
         subtitle="Everything the league's transaction wire has picked up, newest first."
         facts={[

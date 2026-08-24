@@ -223,7 +223,7 @@ const UNIT_SECTIONS: { title: string; blurb: string; positions: readonly string[
 ];
 
 export default async function StatsPage({ params, searchParams }: { params: { id: string }; searchParams: { view?: string; scope?: string; split?: string } }) {
-  const { league, userTeam } = await getLeagueContext(params.id);
+  const { league, userTeam, phaseLabel } = await getLeagueContext(params.id);
   const statScope = parseStatScope(searchParams[STAT_SCOPE_PARAM]);
   const playoffs = statScope === 'PLAYOFFS';
   const myTeam = searchParams.scope === 'myteam' && !!userTeam;
@@ -650,7 +650,13 @@ export default async function StatsPage({ params, searchParams }: { params: { id
       <PageMasthead
         teamId={myTeam ? userTeam?.id : undefined}
         teamAbbr={myTeam ? userTeam?.abbr : undefined}
-        eyebrow={`${league.seasonYear} · Week ${league.week}`}
+        // WEEK 1 OF WHAT. `league.week` restarts at 1 in every phase, so a
+        // masthead printing it bare said "2028 · Week 1" in the first week of
+        // the regular season and again in the first week of the playoffs, with
+        // nothing on the page to tell the two apart. `getLeagueContext` has
+        // handed back `phaseLabel` all along and app/league/[id]/analytics
+        // already reads it; this one did not.
+        eyebrow={`${league.seasonYear} · ${phaseLabel} · Week ${league.week}`}
         title="Stats"
         subtitle={
           myTeam
