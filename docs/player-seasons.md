@@ -384,3 +384,91 @@ load-bearing for correctness *because* of this bug. It no longer is — the
 totals it reads are regular season whenever it runs — but the timing stays,
 because January is when the real thing is named. The comment now says it is a
 choice rather than a workaround.
+
+---
+
+## 7. What he was RATED that season (`endOvr`)
+
+> Owner's ask: *"I like just a simple +1 this year, -2 this year... etc. we
+> dont need the other text just the boxes on the player card"*
+
+The player card now carries one small chip beside the overall saying how his
+rating has moved this league year. Nothing else — no sparkline, no ceiling, no
+career-arc section.
+
+**There was no rating history in this database at all.** `Player.trueOvr` is a
+single current number, overwritten at every in-season development checkpoint
+with nothing keeping the old one, so "how much better did he get this year"
+had nothing on disk to read. One nullable column answers it:
+
+```prisma
+endOvr Int?   // his overall at the end of that season
+```
+
+One column, not two. A potential/ceiling column "for later" was rejected: a
+column nothing reads is a schema that lies about what the game tracks. A
+ceiling history can have its own migration when something needs it.
+
+### It is the one column here not derivable from box scores
+
+Everything else on this table is a replay of games still on disk. A rating is
+not in a box score. Two consequences, both handled in `syncPlayerSeasons`:
+
+* **Only the season being closed is stamped.** `p.trueOvr` at the rollover is
+  his end-of-season rating for *that* season and a fabrication for every year
+  underneath it, so a save catching up ten years of history stamps the tenth
+  and leaves nulls below. Writing today's number onto a 2029 row would be a
+  different year's answer wearing 2029's label.
+* **A `rebuild: true` replay carries the stored values across its own
+  delete** rather than recomputing them. Without that, re-running the
+  playoff-split backfill (§6) would have silently erased every league's rating
+  history and left a table that still looked complete.
+
+### Null is a real answer, and it shows nothing at all
+
+`yearOverYearOvr()` returns null — and the card draws no chip whatsoever, not
+"+0", not a greyed box, not "first season" — in every one of these cases:
+
+| Case | Why |
+|---|---|
+| Every row that existed before the column did | That rating is genuinely gone |
+| Every year a catch-up sweep backfills | Same; only the closing season is stamped |
+| A save that hasn't rolled over since the column landed | Replay path, no stored rows |
+| A rookie, or a man who missed all of last season | No row for `seasonYear - 1` |
+| **Every offensive lineman, permanently** | See below |
+
+That last one is the significant limitation. This table is written from
+box-score lines and a box score names about twenty-six men a club — measured
+on a champion's 49-man roster, 31 had a row and **all ten offensive linemen
+had none** (see the `ChampionRoster` note in the schema). A lineman therefore
+has no season row in any year and can never carry a rating here, so his card
+shows no chip ever. Writing zero-stat rows for whole rosters to fix that is
+the same idea this table already rejected in §4: ~1,700 rows a league year
+against ~50, and every lineman collects an empty stat line on his career table
+every season. If the chip is ever wanted for linemen it needs a rating history
+of its own, not this table.
+
+### The arithmetic, exactly
+
+`currentOvr - endOvr(seasonYear - 1)`. Only the season *immediately* gone
+counts: a man who missed all of last year is compared against nothing rather
+than against two years ago, because billing two years of decline to one under
+the label "this year" is the lying-metric failure this codebase keeps paying
+for.
+
+`currentOvr` is the number the hero **prints** (`view.scoutedOvr`), never
+`player.trueOvr` behind it, and the chip is gated on `view.revealed` — a delta
+taken off a true rating is a second channel out of the scouting fog, and a
+delta taken off a fogged centre point is two error bars subtracted from each
+other and printed to the unit. In this build `revealed` is false only for a
+draft prospect, who has never played a professional season, so the gate costs
+nothing today and stays correct if that scope ever widens.
+
+### Two things to know about what it shows
+
+* **An existing save shows no chip on any card** until it next closes a
+  season. There is nothing to backfill from.
+* **Between the rollover and the season's first development checkpoint every
+  chip reads `±0`** — for that stretch of the calendar his current rating *is*
+  his end-of-last-season rating, so zero is the honest answer, and it is muted
+  rather than coloured because it is not news.

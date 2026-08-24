@@ -109,6 +109,14 @@ export interface SeasonLine {
   /** Postseason only — empty for the twenty clubs a year that don't get one. */
   playoffStats: SeasonStats;
   playoffGp: number;
+  /**
+   * What he was RATED at the end of that season, or null when nobody wrote it
+   * down — see PlayerSeason.endOvr in the schema for the three ways that
+   * happens. It only ever comes off a stored row: a box score records what a
+   * man did, never what he was worth, so the replay path below cannot know it
+   * and truthfully says so with a null.
+   */
+  endOvr: number | null;
   /** Sort key within a season — where his first game for this club fell. */
   firstSeen: number;
 }
@@ -186,6 +194,11 @@ export function buildSeasonLines(
       stats: entry.stats,
       playoffStats: entry.playoffStats,
       playoffGp: entry.playoffStats.gp ?? 0,
+      // A REPLAY CANNOT KNOW THIS. Every other field on this line is
+      // reconstructed from the box scores; a rating is not in a box score.
+      // Null is the honest answer and the card shows nothing rather than
+      // guessing — see PlayerSeason.endOvr.
+      endOvr: null,
       firstSeen: entry.firstSeen,
     });
   }
@@ -391,13 +404,29 @@ export async function syncPlayerSeasons(
   const played = havePlayedGames.map((r) => r.seasonYear).sort((a, b) => a - b);
   const missing = opts.rebuild ? played : played.filter((y) => !done.has(y));
   if (missing.length === 0) return { years: [], rows: 0 };
-  if (opts.rebuild) await prisma.playerSeason.deleteMany({ where: { leagueId, seasonYear: { in: missing } } });
+
+  // THE RATING HISTORY IS CARRIED ACROSS A REBUILD, NOT RECOMPUTED.
+  // `endOvr` is the one column on this table that is not derivable from a box
+  // score (see PlayerSeason.endOvr in the schema), so the delete-and-replay
+  // above would quietly erase every year of it — a rerun of the playoff-split
+  // backfill would have wiped the whole league's career arcs and left a table
+  // that still looked complete. Read the stored values first, put them back on
+  // the rows they belonged to.
+  const keptOvr = new Map<string, number>();
+  if (opts.rebuild) {
+    const had = await prisma.playerSeason.findMany({
+      where: { leagueId, seasonYear: { in: missing }, endOvr: { not: null } },
+      select: { playerId: true, seasonYear: true, teamAbbr: true, endOvr: true },
+    });
+    for (const r of had) keptOvr.set(`${r.playerId}|${r.seasonYear}|${r.teamAbbr}`, r.endOvr!);
+    await prisma.playerSeason.deleteMany({ where: { leagueId, seasonYear: { in: missing } } });
+  }
 
   const [byPlayer, roster] = await Promise.all([
     reconstructLeagueSeasons(leagueId, { years: missing }),
     prisma.player.findMany({
       where: { leagueId },
-      select: { id: true, age: true, status: true, yearsUnsigned: true },
+      select: { id: true, age: true, status: true, yearsUnsigned: true, trueOvr: true },
     }),
   ]);
   const rosterById = new Map(roster.map((p) => [p.id, p]));
@@ -406,6 +435,7 @@ export async function syncPlayerSeasons(
     leagueId: string; playerId: string; seasonYear: number;
     teamId: string | null; teamAbbr: string; age: number | null; gp: number;
     firstSeen: number; stats: string; playoffStats: string; playoffGp: number;
+    endOvr: number | null;
   }[] = [];
   for (const [playerId, lines] of byPlayer) {
     // A box score can name a player the Player table no longer has (a save
@@ -425,6 +455,27 @@ export async function syncPlayerSeasons(
         stats: writeJson(line.stats),
         playoffStats: writeJson(line.playoffStats),
         playoffGp: line.playoffGp,
+        // HIS RATING, ON THE SEASON BEING CLOSED AND ON NO OTHER YEAR.
+        //
+        // `p.trueOvr` is what he is rated RIGHT NOW. At the ordinary rollover
+        // that IS his end-of-season rating — the last in-season development
+        // checkpoint and the award bumps have both landed, and the offseason
+        // PROGRESS step immediately before this one ages players without
+        // touching their ratings. For every OTHER year in `missing` it is a
+        // different season's answer wearing this season's label, which is
+        // exactly the lie this codebase keeps having to un-ship, so a save
+        // catching up ten years of box scores stamps only the tenth and
+        // leaves nulls under it.
+        //
+        // TWO KNOWN IMPRECISIONS, both small and both deliberately not
+        // papered over. A man who was UNSIGNED at the rollover has already had
+        // progressFreeAgents' offseason roll applied in the same press of
+        // Advance, so his stamp carries that roll; and a `rebuild` pass is not
+        // at a rollover at all, which is why it reuses `keptOvr` above and
+        // writes null where it has nothing stored rather than stamping
+        // today's number onto an old year.
+        endOvr: keptOvr.get(`${playerId}|${line.seasonYear}|${line.teamAbbr}`)
+          ?? (!opts.rebuild && line.seasonYear === throughYear ? p.trueOvr : null),
       });
     }
   }
@@ -472,8 +523,66 @@ export async function loadPlayerSeasons(
     stats: readJson<SeasonStats>(r.stats, {}),
     playoffStats: readJson<SeasonStats>(r.playoffStats, {}),
     playoffGp: r.playoffGp,
+    endOvr: r.endOvr,
     firstSeen: r.firstSeen,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Year-over-year rating change
+// ---------------------------------------------------------------------------
+
+/** The one thing the player card's change chip needs, or null for no chip. */
+export interface OvrChange {
+  /** Current overall minus his overall at the end of `fromYear`. Zero is a real answer. */
+  delta: number;
+  /** The season being compared against — always the one immediately gone. */
+  fromYear: number;
+  /** What he was rated at the end of it. */
+  fromOvr: number;
+}
+
+/**
+ * "+1 this year", in two numbers.
+ *
+ * WHICH TWO, EXACTLY: the overall the card is printing right now, minus the
+ * overall stored on his row for season `seasonYear - 1`. Nothing else. It is
+ * the movement over the current league year — the in-season development
+ * checkpoints that have fired so far, plus any award bump, plus whatever the
+ * offseason did — and mid-season it is honestly partial, because the year is.
+ *
+ * ONLY THE SEASON IMMEDIATELY GONE COUNTS. A man who missed all of last year
+ * has a 2029 row and no 2030 row; comparing him against 2029 and calling it
+ * "this year" would quietly bill two years of decline to one, which is the
+ * lying-metric failure this codebase keeps paying for. He gets no chip.
+ *
+ * NULL MEANS NO CHIP, AND THERE IS NO SECOND STATE. Not "+0", not a greyed
+ * box, not "first season". Every reason to return null — no row for last
+ * year, a row from before the rating was ever recorded, a save that has not
+ * rolled over since, a rookie, an offensive lineman whom no box score ever
+ * names — comes back as the same silence, because a box with nothing to say
+ * is clutter and on the day this ships every player in every existing save is
+ * in exactly that state.
+ *
+ * `endOvr != null` and not a truthiness test: 0 is not a real rating, but the
+ * distinction that matters here is stored-versus-absent, and `undefined` on
+ * both sides of a comparison compares equal while testing nothing.
+ */
+export function yearOverYearOvr(args: {
+  /** What the card is showing — the fogged view's number, never trueOvr behind it. */
+  currentOvr: number;
+  /** The league year now in progress. */
+  seasonYear: number;
+  /** His season rows; only last year's matters, order does not. */
+  seasons: { seasonYear: number; endOvr: number | null }[];
+}): OvrChange | null {
+  const fromYear = args.seasonYear - 1;
+  for (const line of args.seasons) {
+    if (line.seasonYear === fromYear && line.endOvr != null) {
+      return { delta: args.currentOvr - line.endOvr, fromYear, fromOvr: line.endOvr };
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

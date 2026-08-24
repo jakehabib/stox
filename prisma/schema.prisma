@@ -778,6 +778,36 @@ model PlayerSeason {
   playoffStats String @default("{}")
   playoffGp    Int    @default(0)
 
+  // HIS OVERALL AT THE END OF THAT SEASON. The only rating history there is.
+  //
+  // Player.trueOvr is a single current number, overwritten at every
+  // development checkpoint with nothing keeping the old one, so "how much
+  // better did he get this year" was unanswerable until this column existed.
+  // The year-over-year chip on the player card is its one reader — see
+  // yearOverYearOvr() in lib/playerSeasons.ts.
+  //
+  // Nullable, and a null is a real answer rather than a missing one: it means
+  // NOBODY WROTE HIS RATING DOWN THAT YEAR, and every reader shows no chip at
+  // all rather than a wrong one. Three ways to get one, all the same fact:
+  //   - Every row in every save that existed before this column did. That
+  //     rating is genuinely gone. A backfill would have to invent it, because
+  //     the only number on disk is what he is rated TODAY, which is a
+  //     different year's answer wearing this year's label.
+  //   - Every season a catch-up sweep replays out of old box scores, for the
+  //     same reason. syncPlayerSeasons stamps the current rating ONLY on the
+  //     season it is closing, never on the years it backfills underneath it.
+  //   - A man with no row for the year at all — this table is written from
+  //     box-score lines, and a box score names about twenty-six men a club.
+  //     An offensive lineman has no row in any season and so never carries a
+  //     rating here. See the ChampionRoster note below, which measured it: 31
+  //     of one champion's 49 men had a row and all ten linemen had none.
+  //
+  // IT IS THE ONE COLUMN HERE NOT DERIVABLE FROM BOX SCORES. A rebuild that
+  // replays the games therefore has to CARRY these values across rather than
+  // recompute them; syncPlayerSeasons does exactly that, and that is the
+  // invariant to keep if a second rebuild path is ever written.
+  endOvr Int?
+
   // The query this table exists to serve is "every season for one player,
   // oldest first", which this unique index serves as a prefix scan. It is also
   // the idempotency key: re-running a rollover cannot double a season.

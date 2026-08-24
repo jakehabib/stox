@@ -1,0 +1,20 @@
+-- WHAT HE WAS RATED AT THE END OF THAT SEASON.
+--
+-- There has never been any rating history in this database. `Player.trueOvr`
+-- is one current number, overwritten at every in-season development checkpoint
+-- with nothing keeping the old one, so the question the player card now asks —
+-- "how much better did he get this year" — had no answer on disk to read.
+--
+-- One column, deliberately. A potential/ceiling column "for later" was
+-- considered and rejected: a column nothing reads is a schema that lies about
+-- what the game tracks (see marketValue()'s dead `potential` parameter in
+-- lib/cap.ts, which ten call sites pass believing it prices something). If a
+-- ceiling history is ever wanted it can have its own migration.
+--
+-- NULLABLE, AND EVERY EXISTING ROW STAYS NULL ON PURPOSE. The rating those
+-- seasons ended on is genuinely gone; the only number on disk is what the man
+-- is rated today, and writing that into a 2029 row would be a different year's
+-- answer wearing 2029's label. Null means "nobody wrote it down", every reader
+-- shows no chip at all rather than a wrong one, and the column starts filling
+-- from the next season this league closes.
+ALTER TABLE "PlayerSeason" ADD COLUMN "endOvr" INTEGER;

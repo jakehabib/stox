@@ -15,6 +15,7 @@ import { resolveStartYear } from '@/lib/leagueYear';
 import type { Position } from '@/lib/tuning';
 import {
   loadPlayerSeasons, reconstructPlayerSeasons, withAges, ageBasisYear, buildCareerTable,
+  yearOverYearOvr,
 } from '@/lib/playerSeasons';
 import { CutButton } from '@/components/CutButton';
 import { resignListCutoff } from '@/lib/contractClock';
@@ -32,6 +33,7 @@ import { ScoutingRange } from '@/components/ds/ScoutingRange';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { StatNumber } from '@/components/ds/StatNumber';
 import { RatingBadge } from '@/components/ds/RatingBadge';
+import { OvrChangeChip } from '@/components/ds/OvrChangeChip';
 import { PlayerCardTabs } from '@/components/ds/PlayerCardTabs';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -283,6 +285,28 @@ export default async function PlayerPage({
     };
   })();
   const careerTable = career?.table ?? null;
+
+  /**
+   * HOW HIS OVERALL HAS MOVED THIS YEAR — the one new thing on the hero.
+   *
+   * FOG: gated on `view.revealed`, which is the only honest gate available.
+   * The number the chip is arithmetic on is the number the hero PRINTS
+   * (`view.scoutedOvr`), never `player.trueOvr` behind it — a delta taken off
+   * the true rating is a second channel out of the fog, and a reader who knows
+   * last season's stored overall could recover a hidden rating exactly by
+   * adding. Gating on `revealed` goes further than that and is the deliberate
+   * choice: a delta computed from a fogged centre point is noise dressed as
+   * information, two error bars subtracted from each other and printed to the
+   * unit. In this game `revealed` is false only for a draft prospect (see the
+   * SCOPE block in lib/scouting.ts — established pros are never fogged), and a
+   * prospect has never played a professional season, so in practice the gate
+   * costs nothing and it stays correct if that scope ever widens.
+   *
+   * `career` is null for a draftee, so he is doubly excluded.
+   */
+  const ovrChange = view.revealed && career
+    ? yearOverYearOvr({ currentOvr: view.scoutedOvr, seasonYear: league.seasonYear, seasons: career.lines })
+    : null;
 
   // Your team's current depth at this player's position — the point is
   // answering "do I need a replacement here" without leaving the card,
@@ -849,7 +873,13 @@ export default async function PlayerPage({
         {view.revealed ? (
           /* The design system's own rating shape — the notched chip, which
              carries the tier colour, the 95+ mark and the 99 plate itself. */
-          <RatingBadge value={view.scoutedOvr} label="Overall" size="lg" filled />
+          <div className="flex flex-col items-center gap-2">
+            <RatingBadge value={view.scoutedOvr} label="Overall" size="lg" filled />
+            {/* Absent, not empty, when last season's rating was never written
+                down — see yearOverYearOvr(). Most of the league is in that
+                state the day this ships, and on a lineman it is permanent. */}
+            {ovrChange && <OvrChangeChip delta={ovrChange.delta} />}
+          </div>
         ) : (
           <div className="panel p-3 w-full">
             <ScoutingRange low={view.ovrLow} high={view.ovrHigh} confidence={view.confidence} label="Scouted OVR" tip={tip('scoutedRange')} className="w-full" />
