@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
-import { CAP, CONTRACT, FREE_AGENCY, LEAGUE, Position, PROGRESSION, RESIGN, ROSTER_TARGETS, SCOUTING, GENERATION, rosterMinFor } from './tuning';
+import { AI, CAP, CONTRACT, FREE_AGENCY, LEAGUE, Position, PROGRESSION, RESIGN, ROSTER_TARGETS, SCOUTING, GENERATION, rosterMinFor } from './tuning';
 import { parseSettings, LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { simulateGame, SimTeamInput } from './sim/engine';
@@ -1791,6 +1791,10 @@ async function runOffseasonStepClaimed(
       };
     }
     case 'RESET_STANDINGS': {
+      // BEFORE the wipe below, which is the point: this is the last moment
+      // the season just played is still on the standings. See the header on
+      // recomputeCompetitiveWindows.
+      await recomputeCompetitiveWindows(leagueId, league.seasonYear, settings.capMode);
       await rollSeasonStatsIntoCareer(leagueId, league.seasonYear);
       await prisma.team.updateMany({
         where: { leagueId },
@@ -1886,6 +1890,106 @@ async function runOffseasonStepClaimed(
           + 'Re-sign yours, then advance to open free agency.',
       };
     }
+  }
+}
+
+/**
+ * ===========================================================================
+ * EVERY AI CLUB RE-READS ITS OWN COMPETITIVE WINDOW, ONCE A YEAR
+ * ===========================================================================
+ * `recomputeWinNow` (lib/ai/gm.ts) has existed since the AI was written and
+ * its own header said it ran every offseason. Nothing called it. `gmProfile`
+ * was written once, at league generation, and never touched again — so the
+ * window every downstream system prices against described the roster the club
+ * was handed on day one, for as long as the save lived. A club could go 3-14
+ * four years running and still be shopping like a contender, and a dynasty
+ * could still be hoarding picks in its fourth title season.
+ *
+ * IT RUNS HERE, AT THE TOP OF RESET_STANDINGS, and that is the only step
+ * where all three of its inputs are readable at once:
+ *
+ *   - PROGRESS has already run, so every roster has aged and retired. The
+ *     ages read here are the ones the club will PLAY next season, which is
+ *     what a window is a statement about.
+ *   - the standings below are about to be wiped, so this is the last moment
+ *     the season just played is still on the Team row.
+ *   - the contract ledger rolled when the season ended, so the books already
+ *     describe the league year the club is about to enter.
+ *
+ * THE CAP SUMMARY IS ASKED FOR `seasonYear + 1` ON PURPOSE. The claim in
+ * `runOffseasonStep` moves League.week to the far side of the whole advance
+ * before any step runs, so a summary asked for `seasonYear` here would take
+ * `capChargeYear`'s post-roll branch and pair the OLD ceiling with contracts
+ * that have already stepped onto the new year — the three-years-in-one-number
+ * defect written up on `bookYearFor` in lib/cap-summary.ts. Naming the year
+ * outright takes that branch out of the question.
+ *
+ * THE USER'S CLUB IS NOT TOUCHED. His window is whatever he decides to do,
+ * and nothing in the game reads a gmProfile for the team he runs.
+ */
+async function recomputeCompetitiveWindows(leagueId: string, closingYear: number, capMode: LeagueSettings['capMode']) {
+  const { parseGmProfile, recomputeWinNow } = await import('./ai/gm');
+  const { fieldedByPosition, STARTERS_AT_POSITION } = await import('./lineup');
+  const { teamCapSummary } = await import('./cap-summary');
+
+  const teams = await prisma.team.findMany({
+    where: { leagueId, isUser: false },
+    select: { id: true, wins: true, losses: true, gmProfile: true },
+  });
+  if (teams.length === 0) return;
+  const ids = teams.map((t) => t.id);
+
+  const [players, slots] = await Promise.all([
+    prisma.player.findMany({
+      where: { teamId: { in: ids }, status: 'ACTIVE' },
+      select: { id: true, teamId: true, position: true, trueOvr: true, age: true, status: true, injuryWeeks: true, fatigue: true },
+    }),
+    prisma.depthChartSlot.findMany({
+      where: { teamId: { in: ids } },
+      select: { teamId: true, position: true, playerId: true, rank: true },
+      orderBy: { rank: 'asc' },
+    }),
+  ]);
+  const rosterByTeam = new Map<string, typeof players>();
+  for (const p of players) (rosterByTeam.get(p.teamId!) ?? rosterByTeam.set(p.teamId!, []).get(p.teamId!)!).push(p);
+  const chartByTeam = new Map<string, Record<string, string[]>>();
+  for (const s of slots) {
+    const d = chartByTeam.get(s.teamId) ?? chartByTeam.set(s.teamId, {}).get(s.teamId)!;
+    (d[s.position] ??= []).push(s.playerId);
+  }
+
+  for (const t of teams) {
+    /*
+     * WHOSE AGE COUNTS: the men this club actually FIELDS, in the order it
+     * plays them — `fieldedByPosition` is the sim's own rule (lib/lineup.ts),
+     * so the roster this reads and the roster that plays Sunday are the same
+     * eleven. Averaging the whole 53 would have a club's window moved by its
+     * practice squad, and averaging the best men at each position would read a
+     * lineup the club has chosen not to field.
+     */
+    const fielded = fieldedByPosition(rosterByTeam.get(t.id) ?? [], chartByTeam.get(t.id));
+    let ageSum = 0;
+    let starters = 0;
+    for (const [position, count] of Object.entries(STARTERS_AT_POSITION)) {
+      for (const p of (fielded[position] ?? []).slice(0, count)) { ageSum += p.age; starters++; }
+    }
+    const avgStarterAge = starters > 0 ? ageSum / starters : AI.WINDOW.AGE_PIVOT;
+
+    const cap = await teamCapSummary(t.id, closingYear + 1, capMode);
+    // With the cap off there is no such thing as a cap position; capSpace is
+    // deliberately Infinity there (see CapSummary) and the window drops the
+    // term rather than pretending the club is flush.
+    const capRoomShare = cap.capEnabled ? cap.capSpace / Math.max(1, cap.capTotal) : Number.NaN;
+
+    // Seeded exactly as every other reader of this club's profile seeds it
+    // (lib/trade.ts, lib/aiMarket.ts), so a profile that is somehow partial
+    // fills its gaps with the same values they would have filled them with.
+    const profile = parseGmProfile(t.gmProfile, new Rng(`gm-${t.id}-${closingYear}`));
+    const winNow = recomputeWinNow(t.wins, t.losses, avgStarterAge, capRoomShare);
+    await prisma.team.update({
+      where: { id: t.id },
+      data: { gmProfile: writeJson({ ...profile, winNow }) },
+    });
   }
 }
 

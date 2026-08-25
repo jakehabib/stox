@@ -2280,6 +2280,74 @@ export const AI = {
   /** Rebuilding teams weight youth/potential this much more. */
   REBUILD_POTENTIAL_WEIGHT: 0.55,
   CONTENDER_POTENTIAL_WEIGHT: 0.18,
+  /**
+   * =========================================================================
+   * THE COMPETITIVE WINDOW
+   * =========================================================================
+   * What `recomputeWinNow` weighs and where the four bands fall on it. The
+   * long version — why each term is centred rather than floored, and why the
+   * evidence is weighed before it is squashed rather than after — is on that
+   * function in lib/ai/gm.ts.
+   *
+   * EVERY SPAN BELOW IS A DIVISOR ON EVIDENCE, so a term's influence is its
+   * input's own spread divided by its span. Against the league this game
+   * actually produces that puts last season's record at about 60% of the
+   * window's variation, the age of the lineup at about a quarter and the cap
+   * sheet at the rest — a club is what its record says it is, adjusted.
+   */
+  WINDOW: {
+    /**
+     * Win percentage, measured from .500. At 0.42 a 13-4 club reads
+     * 0.78 and a 4-13 club 0.22; a 17-0 club is further out again
+     * without ever reaching the end of the scale. [TUNE]
+     */
+    RECORD_SPAN: 0.42,
+    /**
+     * The league's own mean starter age, measured over 186 club-seasons
+     * of real play (mean 27.98, sd 0.73). Centring on it rather than on a
+     * round number is what stops most of the league reading the same here.
+     */
+    AGE_PIVOT: 27.6,
+    /**
+     * ...and the span is WIDE against that spread. A starting lineup's average
+     * age moves by around half a year from club to club, so a club a full year
+     * older than the league reads about two wins better than its record:
+     * real, and not enough on its own to move a club more than one band.
+     * [TUNE]
+     */
+    AGE_SPAN: 3.0,
+    /**
+     * Cap position, as the share of the ceiling still free going into the new
+     * league year. Measured at the moment the window is recomputed: median
+     * 15.7% of the ceiling, p10 2.1%, p90 42.9%.
+     */
+    CAP_PIVOT: 0.25,
+    CAP_SPAN: 0.13,
+    /**
+     * ...and how far it is allowed to move the window in each direction, on
+     * the same scale as the two terms above. ASYMMETRIC BY DESIGN: an empty
+     * sheet is a hard stop on going all in, while a full one is only an
+     * option — a club with money and a young roster is building, and that
+     * sentence is already the age term's. [TUNE]
+     */
+    CAP_UP: 0.1,
+    CAP_DOWN: 0.22,
+    /**
+     * The opening window at league creation, where there is no record and no
+     * cap sheet yet and the only evidence is the roster the club has been
+     * handed. Sized so the league's first offseason is not a different game
+     * from its second: it puts the generated spread on the same scale the
+     * recomputed one lands at. [TUNE]
+     */
+    OPENING_SPAN: 0.52,
+    /**
+     * WHERE THE FOUR NAMES SIT ON IT. Measured over 186 club-seasons of
+     * real play: Rebuilding 27%, Building 30%, Competitive 30%, All-In 14% across the 124 club-seasons the game recomputed rather than generated. That is football's own shape, near enough — a
+     * handful of clubs genuinely all in, a similar group competitive, the
+     * largest group building, and a solid minority tearing it down.
+     */
+    BANDS: { REBUILDING: 0.36, COMPETITIVE: 0.54, ALL_IN: 0.72 },
+  },
   /** Chance the AI reaches (drafts off-board) on a given pick — adds variance. */
   DRAFT_REACH_CHANCE: 0.18,
   DRAFT_REACH_DEPTH: 6, // picks from the top of its board it may reach into
@@ -2435,6 +2503,29 @@ export const AI = {
     /** The shape worth getting right: an ageing man with little term left, moving from a rebuild to a contender for picks. */
     VETERAN_MIN_AGE: 27,
     VETERAN_MAX_YEARS_LEFT: 2,
+    /**
+     * HOW KEEN A CLUB IS TO BE ON EACH SIDE OF A DEAL, as a curve on its
+     * competitive window rather than a switch on its label — see
+     * `sellerAppetite` in lib/aiMarket.ts. FLOOR is what a club at the far
+     * wrong end of the window still brings to the draw (never zero: a club
+     * that can never be called is a club the market cannot surprise you
+     * with), CEIL what one at the right end brings, and CURVE is what makes
+     * the ends mean something the middle does not — at 2.2 an all-in club is
+     * about twice as reluctant to shop one of its own as a merely competitive
+     * one, which is the difference the fourth window exists to name.
+     */
+    APPETITE_FLOOR: 0.2,
+    APPETITE_CEIL: 3.2,
+    APPETITE_CURVE: 2.2,
+    /**
+     * ...and how willing a club is to be talked out of a SPECIFIC man, before
+     * its window is applied. An ageing player with little term left is the
+     * obvious sale; anyone else is a conversation. These are the numbers the
+     * old label switch used for a club in the middle of the window, kept so
+     * that a neutral club still leans exactly as it did.
+     */
+    LEAN_EXPIRING_VET: 1.2,
+    LEAN_SIGNED: 0.5,
 
     /**
      * A TRADE HAS TO BE ABOUT SOMEBODY. The first measured pass filled the

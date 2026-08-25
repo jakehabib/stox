@@ -10,7 +10,7 @@ import {
 } from './trade';
 import {
   playerValueDetailed, pickValue, parseGmProfile, teamNeeds, leagueScarcity,
-  rosterFit, philosophySummary, type RosterPlayer,
+  rosterFit, type RosterPlayer,
 } from './ai/gm';
 import { draftOrderContext, type DraftOrderContext } from './draft';
 import { teamCapSummary } from './cap-summary';
@@ -139,7 +139,6 @@ interface Club {
   abbr: string;
   city: string;
   profile: ReturnType<typeof parseGmProfile>;
-  window: 'Rebuilding' | 'Retooling' | 'Win-Now Contender';
   roster: RosterPlayer[];
   needs: Record<string, number>;
   picks: { id: string; year: number; round: number; slot: number; originalTeamId: string }[];
@@ -225,10 +224,6 @@ async function loadContext(leagueId: string, seasonYear: number, week: number, s
     const profile = parseGmProfile(t.gmProfile, new Rng(`gm-${t.id}-${seasonYear}`));
     return {
       id: t.id, abbr: t.abbr, city: t.city, profile,
-      // The SAME thresholds the trade screen prints beside this club's name.
-      // Deriving a second idea of "who is rebuilding" here would let the
-      // market treat a club as a seller while the screen calls it Retooling.
-      window: philosophySummary(profile).windowLabel,
       roster,
       needs: teamNeeds(roster),
       picks: picksByTeam.get(t.id) ?? [],
@@ -324,17 +319,35 @@ function eligibleSeller(c: Club, ctx: MarketContext): boolean {
 }
 
 /**
- * Who is shopping and who is buying. Driven by the club's competitive window
- * rather than filtered by it afterwards: a REBUILDING club with an ageing man
- * on an expiring deal and a WIN-NOW club with a hole at his position is the
- * shape this market exists to produce, so it is the shape the generator starts
- * from. Retooling clubs play both sides, less often.
+ * ===========================================================================
+ * WHO IS SHOPPING AND WHO IS BUYING
+ * ===========================================================================
+ * Driven by the club's competitive window rather than filtered by it
+ * afterwards: a rebuilding club with an ageing man on an expiring deal and an
+ * all-in club with a hole at his position is the shape this market exists to
+ * produce, so it is the shape the generator starts from.
+ *
+ * IT USED TO SWITCH ON THE LABEL — `window === 'Rebuilding' ? 3 : ...` — and
+ * two things were wrong with that. The label had three values; the window now
+ * has four, so a club in either middle band would have fallen through both
+ * arms and been treated as the least interested club in the league. And a
+ * threshold here is a place where a club's card and a club's behaviour can
+ * end up on opposite sides of a line, which is this codebase's cardinal
+ * defect. Reading `winNow` directly removes the threshold instead of moving
+ * it: appetite is a smooth curve on the same number the card is a name for,
+ * so there is nothing left to disagree about.
+ *
+ * THE CURVE IS CONVEX ON PURPOSE. A club at 0.85 is not a slightly keener
+ * buyer than one at 0.62 — it is the club that has decided this is the year,
+ * and it is measurably harder to talk out of one of its own contributors than
+ * a club merely having a good season. APPETITE_CURVE is what makes the ends
+ * of the window mean something the middle does not.
  */
-function windowSellerWeight(c: Club): number {
-  return c.window === 'Rebuilding' ? 3 : c.window === 'Retooling' ? 1 : 0.25;
+function sellerAppetite(winNow: number): number {
+  return M.APPETITE_FLOOR + (M.APPETITE_CEIL - M.APPETITE_FLOOR) * Math.pow(1 - winNow, M.APPETITE_CURVE);
 }
-function windowBuyerWeight(c: Club): number {
-  return c.window === 'Win-Now Contender' ? 3 : c.window === 'Retooling' ? 1 : 0.25;
+function buyerAppetite(winNow: number): number {
+  return M.APPETITE_FLOOR + (M.APPETITE_CEIL - M.APPETITE_FLOOR) * Math.pow(winNow, M.APPETITE_CURVE);
 }
 
 /**
@@ -368,10 +381,10 @@ function pickPremium(c: Club, ctx: MarketContext): number {
  * it is what a general manager does when he decides who to call.
  */
 function sellerWeight(c: Club, ctx: MarketContext): number {
-  return windowSellerWeight(c) * pickPremium(c, ctx);
+  return sellerAppetite(c.profile.winNow) * pickPremium(c, ctx);
 }
 function buyerWeight(c: Club, ctx: MarketContext): number {
-  return windowBuyerWeight(c) / Math.max(0.3, pickPremium(c, ctx));
+  return buyerAppetite(c.profile.winNow) / Math.max(0.3, pickPremium(c, ctx));
 }
 
 function weightedPick<T>(items: T[], weight: (t: T) => number, rng: Rng): T | null {
@@ -419,7 +432,13 @@ async function shortlist(ctx: MarketContext, rng: Rng, window: MarketWindow): Pr
       // seller's. Both have to be true or there is no conversation.
       const wanted = Math.max(need, fit.score);
       const expiringVeteran = p.age >= M.VETERAN_MIN_AGE && (p.contract?.yearsRemaining ?? 9) <= M.VETERAN_MAX_YEARS_LEFT;
-      const sellerLean = seller.window === 'Rebuilding' ? (expiringVeteran ? 2.5 : 1) : expiringVeteran ? 1.2 : 0.5;
+      // What he is, times how badly this club wants to be selling anybody at
+      // all. Expressed as a RATIO to a club in the middle of the window, so a
+      // neutral seller leans exactly as it did when this was a label switch;
+      // what is new is that the two ends now separate from each other rather
+      // than from a threshold.
+      const sellerLean = (expiringVeteran ? M.LEAN_EXPIRING_VET : M.LEAN_SIGNED)
+        * (sellerAppetite(seller.profile.winNow) / sellerAppetite(0.5));
       /*
        * CLUBS TRADE FROM SURPLUS INTO NEED, and until this line the generator
        * only modelled the second half of that.

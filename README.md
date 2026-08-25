@@ -647,6 +647,96 @@ undo anything, ask to revert to a commit below (or the app owner can do it
 directly: `git revert <hash>`, or check out an earlier commit — nothing is
 ever force-pushed over, so every state below still exists in git history).
 
+- **2026-08-25 — Every CPU front office kept the competitive window it was born
+  with, for the life of the save.** `recomputeWinNow` was written to re-read a
+  club's window each offseason from last season's record and the age of its
+  lineup, and its own header said that is what it did. Nothing called it:
+  `gmProfile` was written once, at league generation, and never touched again.
+  A club that went 3-14 four years running was still shopping like the roster
+  it was handed on day one, and a four-time champion was still hoarding picks.
+  That number is not decoration — it prices every pick the AI values and how
+  hard it marks a future one down, sets its free-agency budget and its payroll
+  target, weights potential against rating on the draft board, and decides who
+  the AI-vs-AI market calls. All of it was being told about a team that no
+  longer existed. The window now recomputes at the RESET_STANDINGS step of the
+  offseason advance, which is the last moment the season just played is still
+  on the standings and the first at which the rosters have aged into the season
+  ahead. Measured over 186 club-seasons driven through the real advance: **every
+  club's window moved**, 83.9% of them changed band within three seasons, and
+  the median club's window swung 0.23 across its run. Before this, none ever
+  moved at all.
+
+  **Four windows, not three, and the fourth is a gear rather than a word.**
+  `Retooling` was doing the work of two genuinely different postures — a young
+  club accumulating and a real team that is not betting anything — and there
+  was no top gear at all: `Win-Now Contender` covered a solid eleven-win club
+  and a club that has decided this is the year. The bands are now **Rebuilding
+  / Building / Competitive / All-In**, and they land at 27% / 30% / 30% / 14%
+  across the club-seasons the game recomputed. The difference between the top
+  two was already in the arithmetic and is not small: with everything else held
+  neutral, a club in the middle of All-In prices a pick two drafts out **17.4%
+  cheaper** than one in the middle of Competitive and wants **21.8% more** draft
+  capital for the same 29-year-old starter. What was missing was a name for it
+  and a market that could see it — so the AI-vs-AI market's buyer and seller
+  appetite, which used to switch on the label string, now reads `winNow`
+  directly on a convex curve. An All-In club is **2.09x less likely** to be
+  drawn as a seller than a Competitive one, **1.72x more likely** as a buyer,
+  and **2.09x less willing** to shop a man it is already playing. Removing the
+  threshold rather than moving it is also what makes a fourth label safe: three
+  cases in a switch and four possible labels would have dropped both middle
+  bands through to the least interested club in the league. The trade screen's
+  label and the trade evaluator's profile were checked club by club across all
+  186 club-seasons and disagree **zero** times.
+
+  **Cap position is the third input, and it is a capacity rather than a plan.**
+  The window read record and roster age and never asked whether the club could
+  afford to act. Money is permission: a club with nothing under the ceiling
+  cannot go all in on the strength of a good season alone. The term is
+  deliberately asymmetric — an empty sheet pulls away from win-now harder than a
+  full one pushes toward it, because room is an opportunity and not a mandate,
+  and "young roster plus money means building" is already the age term's
+  sentence. Measured, it moves a club's window by 0.053 on average, at most
+  0.106 downward, and changes the band outright for 26.3% of club-seasons.
+  **It does not make being broke a veto on ambition, and it should not:** the
+  All-In share among the tightest tenth of cap sheets is 15.8% against 5.3%
+  among the flushest, because in this game as in the real sport a club is
+  usually cap-poor *because* it went for it. What the term does is stop a club
+  with no room being pushed further in by a good record alone.
+
+  **And four clamps came out of one number.** The old form floored and ceilinged
+  each term to [0, 1] and then clamped the total to [0.05, 0.95], and it was the
+  interior floors that did the damage rather than the famous outer one:
+  `clamp((winPct - 0.4) / 0.4, 0, 1)` reads exactly zero for every club at or
+  below 6.8 wins, which on real play pinned **31.7%** of the league at the
+  bottom of its own term before anything else was counted and left the median
+  club at 0.33 — a league where **53.8%** of club-seasons would have read
+  Rebuilding, dragging the median payroll target from 80.6% of the cap down to
+  76.6%. The evidence is now weighed first and squashed once, so the result is
+  inside (0, 1) by construction, approaches both ends and reaches neither, and
+  there is no bound left to pile on. The outer clamp did bite in one place — the
+  same quantity one season earlier, at league creation, where **2.79%** of clubs
+  landed on 0.05 exactly and **2.85%** on 0.95 against neighbouring buckets
+  holding about 0.4% each — and that one is squashed now too. `softBound` is the
+  usual fix and is the wrong one here, which is written up where the next reader
+  will find it: this distribution is too wide for the bound it is held inside,
+  so the taper's own expansion beats the tail's decay at every split of the
+  headroom and the pile returns as a rising density one step inside the wall
+  (measured 0.880%, 0.904%, 0.977%, 1.056%, 1.113% across 0.90 to 0.94), and at
+  the helper's default core the untouched region reaches past the bound and the
+  "bound" is exceeded outright (measured 1.125).
+
+  **Two things to watch.** The AI-vs-AI market now places **9 to 16** deals a
+  league-season, averaging 12.3 across six completed league-seasons, against
+  the 7.7 recorded when it shipped. That is what you would expect once the
+  league contains real rebuilders and real contenders instead of a static
+  middle — every pairing the market draws is now more likely to be two clubs
+  that genuinely disagree about what is being exchanged, which is the condition
+  a deal needs. It is still well under the real market's 35-40, and the two
+  figures are not quite like for like: the market has been rewired since 7.7
+  was recorded. And the correlation between a club's window and its record
+  came in at **0.497** against a pre-registered floor of 0.50: missed, by
+  0.003, and reported rather than tuned to. Shipped in `HASH`.
+
 - **2026-08-25 — Two paragraphs under the career table explained a column
   header and a view toggle.** Under a man's season-by-season record sat *"Regular
   season only. Playoff games are counted on the Playoffs view…"* and *"OVR is

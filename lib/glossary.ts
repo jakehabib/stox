@@ -663,8 +663,8 @@ export const GLOSSARY = {
   },
   gmPhilosophy: {
     term: 'Front office philosophy',
-    definition: 'Where a club sees itself — rebuilding, competing, or somewhere between.',
-    why: 'It changes what they will pay for. A rebuilding club values youth and draft capital over immediate roster quality; a contender will pay a premium for the opposite.',
+    definition: 'Where a club sees itself: rebuilding, building, competitive, or all in on this season.',
+    why: 'It changes what they will pay for, and it is not fixed — every club re-reads its own window each offseason off last season\'s record, the age of the lineup it is about to field and what it has left under the cap. A rebuilding club values youth and draft capital over immediate roster quality and will let a veteran go. A club that has decided this is the year marks a future pick down hard, pays up for a man who starts on Sunday, and is very difficult to talk out of one of its own.',
   },
 
   // -------------------------------------------------------------------------

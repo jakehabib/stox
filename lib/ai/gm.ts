@@ -151,12 +151,29 @@ export interface RosterPlayer {
  * record dictates attitude exactly is neither.
  */
 export function defaultGmProfile(rng: Rng, strength?: number): GmProfile {
+  /*
+   * THE OPENING WINDOW IS SQUASHED, NOT CLAMPED, and this is the clamp on this
+   * number that actually bit. Measured over 400,000 draws at the spread the
+   * generator produces, `clamp(tilt, 0.05, 0.95)` put 2.79% of clubs on
+   * 0.05 exactly and 2.85% on 0.95, against neighbouring buckets holding
+   * about 0.4% each — so on the day a league was created the two most extreme
+   * postures in the game were also two of its most common. It now goes through
+   * the same squash `recomputeWinNow` uses, because it is the same quantity
+   * one season early and should not be shaped differently. The draw itself is
+   * untouched, so nothing else the generator produces moves.
+   *
+   * The three fields around it are still clamped and that is a decision, not
+   * an oversight: they answer a different question from the club's window, and
+   * re-shaping them would move every trade tendency and pick preference in the
+   * game. They pile too, at between 0.6% and 1.3% on each wall, which is worth somebody's afternoon and
+   * is not what this change is about.
+   */
   const tilt = strength === undefined
-    ? rng.normal(0.5, 0.22)
-    : 0.5 + strength / 14 + rng.normal(0, 0.1);
+    ? rng.normal(0, 0.22)
+    : strength / 14 + rng.normal(0, 0.1);
   return {
     aggression: clamp(rng.normal(0.5, 0.18), 0.05, 0.95),
-    winNow: clamp(tilt, 0.05, 0.95),
+    winNow: 0.5 + 0.5 * Math.tanh(tilt / AI.WINDOW.OPENING_SPAN),
     valuePicks: clamp(rng.normal(0.5, 0.2), 0.05, 0.95),
     bpaBias: clamp(rng.normal(0.55, 0.18), 0.05, 0.95),
   };
@@ -853,15 +870,26 @@ export function playerValueDetailed(
   // overall) rather than a separate flat formula, so a QB's untapped
   // ceiling is worth far more than a kicker's in exactly the same way his
   // current level already is.
+  /*
+   * THE CLUB'S OWN ACCOUNT OF WHERE IT IS, taken from the same bands the
+   * trade screen prints beside its name. The three sentences below used to
+   * run off thresholds of their own — 0.4 here, 0.5 further down — so a club
+   * whose card read Retooling could explain its own valuation by saying "we're
+   * rebuilding". A reason is a displayed value like any other; it has to come
+   * from the number the price came from.
+   */
+  const window = philosophySummary(profile).windowLabel;
   const potentialWeight =
     AI.REBUILD_POTENTIAL_WEIGHT * (1 - profile.winNow) + AI.CONTENDER_POTENTIAL_WEIGHT * profile.winNow;
   const effectiveCeiling = p.trueOvr + Math.max(0, p.potential - p.trueOvr) * potentialWeight;
   const upside = Math.max(0, tierCurveValue(effectiveCeiling, curve) - base);
   if (upside > base * 0.15) {
     reasons.push({
-      text: profile.winNow < 0.4
+      text: window === 'Rebuilding'
         ? "We're rebuilding — his upside matters more to us than his current level."
-        : 'There\'s real untapped ceiling here.',
+        : window === 'Building'
+          ? "We're building through the draft, so the ceiling is the part we're buying."
+          : 'There\'s real untapped ceiling here.',
       weight: upside,
     });
   }
@@ -879,9 +907,11 @@ export function playerValueDetailed(
   const ageSwing = base * Math.abs(ageMult - 1);
   if (ageMult < 0.85) {
     reasons.push({
-      text: profile.winNow < 0.4
+      text: window === 'Rebuilding'
         ? `We're rebuilding, so a ${p.age}-year-old holds less value for us than the league average.`
-        : `At age ${p.age}, his future value is beginning to decline — we discount it.`,
+        : window === 'Building'
+          ? `We're building, and a ${p.age}-year-old's best seasons land before ours do.`
+          : `At age ${p.age}, his future value is beginning to decline — we discount it.`,
       weight: ageSwing,
     });
   } else if (ageMult > 1.1) {
@@ -1011,11 +1041,11 @@ export function playerValueDetailed(
     reasons.push({
       text: profile.winNow < 0.5
         ? (wantsHim
-          ? `We're rebuilding, and at ${p.age} he's still around when we're good — that's worth more to us than to most.`
-          : `We're rebuilding — a ${p.age}-year-old's best seasons land before ours do, so he's worth less to us than to a contender.`)
+          ? `${window === 'Rebuilding' ? "We're rebuilding" : "We're building"}, and at ${p.age} he's still around when we're good — that's worth more to us than to most.`
+          : `${window === 'Rebuilding' ? "We're rebuilding" : "We're building"} — a ${p.age}-year-old's best seasons land before ours do, so he's worth less to us than to a contender.`)
         : (wantsHim
-          ? `We're going for it now, and he helps now — that's worth a premium to us.`
-          : `We're going for it now — at ${p.age} he's more future than we're shopping for.`),
+          ? `${window === 'All-In' ? "We're all in this year" : "We're going for it now"}, and he helps now — that's worth a premium to us.`
+          : `${window === 'All-In' ? "We're all in this year" : "We're going for it now"} — at ${p.age} he's more future than we're shopping for.`),
       weight: base * Math.abs(windowMult - 1),
     });
   }
@@ -1238,19 +1268,127 @@ export function pickValue(
 }
 
 /**
- * Whether the AI is in win-now or rebuild mode, recomputed each offseason from
- * last season's record and roster age.
+ * ===========================================================================
+ * THE COMPETITIVE WINDOW — ONE NUMBER, RE-READ EVERY OFFSEASON
+ * ===========================================================================
+ * `winNow` is the club's whole organisational posture, and it is deliberately
+ * ONE CONTINUOUS NUMBER rather than a mode with gears in it. Everything
+ * downstream is a reading of this number and nothing branches on a label:
+ * what a pick is worth to this club and how hard it marks a future one down
+ * (`pickValue`), how it weighs a 23-year-old against a 30-year-old
+ * (`windowMultiplier`), how much of the ceiling it carries (`rosterCapTarget`
+ * in lib/gen/league.ts), how it leans in the draft, how heavily it weights
+ * potential over rating (`playerValueDetailed`), and how keen the AI-vs-AI
+ * market is to have it on each side of a deal (lib/aiMarket.ts). That is the
+ * only reason the label a screen prints and the price the club actually
+ * quotes cannot come apart — see `philosophySummary`, which only names bands
+ * of this number and is read by nothing that decides anything.
+ *
+ * NOTHING CALLED THIS FUNCTION UNTIL NOW, and the header it replaced said it
+ * ran every offseason. `gmProfile` was written once, at league generation,
+ * and never again: a club that went 3-14 four years running kept the window
+ * it was born with, a dynasty kept the one it started with, and every system
+ * in the list above was pricing against the roster the club was handed on day
+ * one. It now runs at the RESET_STANDINGS step of the offseason advance
+ * (`recomputeCompetitiveWindows` in lib/season.ts), which is the last moment
+ * the season just played is still on the standings.
+ *
+ * THREE PIECES OF EVIDENCE, WEIGHED AND THEN SQUASHED ONCE.
+ *
+ * RECORD is measured from .500, not from .400. The old form was
+ * `clamp((winPct - 0.4) / 0.4, 0, 1)`, which reads exactly zero for every
+ * club at or below 6.8 wins. Measured over 186 club-seasons of real play,
+ * that pinned 31.7% of the league at the bottom of its own term before
+ * anything else had been counted, and left the median club at 0.33 once the
+ * weights were applied — which under the old three-label bands would have
+ * read 53.8% of all club-seasons as Rebuilding. That is not a league with a
+ * window, it is a league of rebuilders, and it drags the money with it:
+ * `rosterCapTarget` reads off this same number, so the median club's payroll
+ * target would have sat at 76.6% of the cap instead of 80.6%. A .500 club
+ * now sits in the middle of the scale, which is what .500 means.
+ *
+ * AGE is measured from the league's own mean starter age — 27.98, sd 0.73
+ * across the same club-seasons — not from 25, which no starting lineup in
+ * this game is anywhere near. The old pivot did not PIN this term; no
+ * club-season at all reached its floor. What it did was put the whole league
+ * on one side of its own scale, and a term every club agrees on is a constant
+ * rather than evidence. AGE_SPAN is wide against the spread on purpose: a
+ * starting lineup's average age moves by about half a year from club to club,
+ * so it should move the window by about that much, and the club this term
+ * exists for is the one genuinely ageing out.
+ *
+ * CAP POSITION is the new term and it is a CAPACITY, not a plan. Money is
+ * permission to act: a club with nothing under the ceiling cannot go all in
+ * however good it is, and one sitting on a fortune has the option. It is
+ * ASYMMETRIC on purpose — an empty sheet pulls away from win-now harder than
+ * a full one pushes toward it, because room is an opportunity and not a
+ * mandate. It deliberately does NOT try to say "young roster plus money means
+ * building"; that sentence belongs to the age term, and saying it twice is
+ * how two halves of one model start disagreeing with each other.
+ *
+ * AND THERE IS NO CLAMP AT THE END, BECAUSE THERE IS NOTHING LEFT TO CLAMP.
+ * The evidence is weighed FIRST and squashed ONCE, so the result is inside
+ * (0, 1) by construction, approaches both ends and reaches neither.
+ *
+ * THE OLD FORM CLAMPED THREE TIMES — each term to [0, 1] and then the total
+ * to [0.05, 0.95] — and it is the INTERIOR floors that did the damage rather
+ * than the famous outer one. Measured over the same club-seasons, the outer
+ * clamp caught nobody at all, while the record term's own floor held 31.7% of
+ * the league. A floor inside a sum is still a pile; it just does not look
+ * like one from outside, because the number it produces is not the number
+ * anybody plots.
+ *
+ * THE OUTER CLAMP DID BITE IN ONE PLACE, on the same quantity one season
+ * earlier: the opening window at league generation, where 2.79% of clubs
+ * landed on 0.05 exactly and 2.85% on 0.95, against neighbouring buckets
+ * holding about 0.4% each. See `defaultGmProfile`.
+ *
+ * `softBound` IS THE USUAL FIX AND IT IS THE WRONG ONE HERE, which is worth
+ * writing down so the next reader does not "correct" this back. That helper
+ * bends whatever lies past `core * sd` into the headroom left before the
+ * bound, and it needs the bound to be comfortably further out than the
+ * distribution is wide. This one is not: at a spread of about 0.27 against a
+ * half-range of 0.45, the Gaussian tail loses to the taper's own expansion at
+ * every split of that headroom — it needs edge x room > 2 sd^2, i.e. more
+ * than 0.146 out of a budget that peaks at 0.051 — so the pile does not go
+ * away, it comes back as a rising density one step inside the wall.
+ * Measured on 400,000 draws at the generator's own spread, `softBound` with a
+ * 0.25 core returned buckets of 0.880%, 0.904%, 0.977%, 1.056% and 1.113%
+ * across 0.90 to 0.94: no spike, but climbing toward the bound rather than
+ * away from it. And at the helper's default core the untouched region reaches
+ * past the bound itself, at which point the taper runs the wrong way and the
+ * "bound" is exceeded outright — measured, 1.125. Weighing before squashing
+ * removes the wall instead of decorating it.
  */
-export function recomputeWinNow(wins: number, losses: number, avgStarterAge: number): number {
+export function recomputeWinNow(
+  wins: number,
+  losses: number,
+  avgStarterAge: number,
+  /**
+   * Share of the ceiling this club still has free going into the league year
+   * it is about to play — `capSpace / capTotal`. Omit it, or pass a non-finite
+   * number, and the cap term is dropped rather than guessed: that is what a
+   * league with the cap switched OFF hands in, where `capSpace` is
+   * deliberately Infinity.
+   */
+  capRoomShare?: number,
+): number {
+  const W = AI.WINDOW;
   const winPct = wins / Math.max(1, wins + losses);
-  // [TUNE] 10+ wins pushes hard toward win-now; an old roster does too.
-  const fromRecord = clamp((winPct - 0.4) / 0.4, 0, 1);
-  const fromAge = clamp((avgStarterAge - 25) / 5, 0, 1);
-  return clamp(fromRecord * 0.7 + fromAge * 0.3, 0.05, 0.95);
+  const fromRecord = (winPct - 0.5) / W.RECORD_SPAN;
+  const fromAge = (avgStarterAge - W.AGE_PIVOT) / W.AGE_SPAN;
+  // Bounded to (-1, 1) before it is weighed, so a club $200M under the
+  // ceiling in a rebuilt league cannot swamp the two terms that are actually
+  // about football.
+  const lean = capRoomShare === undefined || !Number.isFinite(capRoomShare)
+    ? 0
+    : Math.tanh((capRoomShare - W.CAP_PIVOT) / W.CAP_SPAN);
+  const fromCap = lean * (lean < 0 ? W.CAP_DOWN : W.CAP_UP);
+  return 0.5 + 0.5 * Math.tanh(fromRecord + fromAge + fromCap);
 }
 
 export interface PhilosophySummary {
-  windowLabel: 'Rebuilding' | 'Retooling' | 'Win-Now Contender';
+  windowLabel: 'Rebuilding' | 'Building' | 'Competitive' | 'All-In';
   tradeTendency: 'Conservative' | 'Measured' | 'Aggressive';
   pickPreference: 'Hoards picks' | 'Balanced on picks' | 'Trades picks for now';
 }
@@ -1260,9 +1398,29 @@ export interface PhilosophySummary {
  * drive every valuation. Surfaced in the trade UI so AI teams read as
  * distinct front offices instead of an invisible math function — per the
  * brief's complaint that "eventually every CPU franchise feels identical."
+ *
+ * FOUR WINDOWS, NOT THREE. `Retooling` was doing the work of two genuinely
+ * different postures — a young club accumulating and a real team that is not
+ * betting anything — and there was no top gear at all: `Win-Now Contender`
+ * covered a solid eleven-win club and a club that has decided this is the
+ * year, and those two do not price a 2029 second the same way. Measured on
+ * the shipped curve with everything else held neutral, a club in the middle
+ * of the All-In band marks a pick two drafts out 17.4% cheaper than one in the
+ * middle of Competitive, and wants 21.8% more draft capital for the same
+ * 29-year-old starter. That gap was always in the arithmetic; what was
+ * missing was a name for it and a market that could see it.
+ *
+ * THE BANDS ARE READINGS, NOT SWITCHES. Nothing in the game branches on the
+ * string this returns. The AI-vs-AI market used to, and its buyer and seller
+ * appetite now read `winNow` directly (lib/aiMarket.ts), so there is no
+ * threshold left anywhere that could put a club's card and a club's price on
+ * opposite sides of a line.
  */
 export function philosophySummary(profile: GmProfile): PhilosophySummary {
-  const windowLabel = profile.winNow >= 0.62 ? 'Win-Now Contender' : profile.winNow <= 0.38 ? 'Rebuilding' : 'Retooling';
+  const B = AI.WINDOW.BANDS;
+  const windowLabel = profile.winNow >= B.ALL_IN ? 'All-In'
+    : profile.winNow >= B.COMPETITIVE ? 'Competitive'
+      : profile.winNow > B.REBUILDING ? 'Building' : 'Rebuilding';
   const tradeTendency = profile.aggression >= 0.62 ? 'Aggressive' : profile.aggression <= 0.38 ? 'Conservative' : 'Measured';
   const pickPreference = profile.valuePicks >= 0.62 ? 'Hoards picks' : profile.valuePicks <= 0.38 ? 'Trades picks for now' : 'Balanced on picks';
   return { windowLabel, tradeTendency, pickPreference };
