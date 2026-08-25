@@ -727,6 +727,49 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — Kickers and punters were graded by a production score that
+  could not see a kick, and cut-down day would release a club's only one.**
+  Two separate defects, both of which left a specialist's whole career running
+  on nothing but his age curve. The growth model ranks every player against his
+  own position group by `offensiveScore` or `defensiveScore`, and neither of
+  those reads a field goal or a punt, so both returned a flat zero for every
+  kicker and punter in the league — measured over 6,442 live season lines with
+  real work in them, `offensiveScore` was non-zero on zero of them. That
+  switched off both halves of the feedback loop at once: the performance tier
+  drops men whose rate is zero, so no specialist was ever ranked a breakout or a
+  slump, and the ceiling fit needs spread to work, so over 3,222 working kickers
+  it produced no revision at all. A kicker's projection was written once when he
+  was generated and never moved again — he could not bust and he could not break
+  out, whatever he kicked. `specialistScore` fills the gap and its two formulas
+  were chosen by measurement, not by looking sensible: over 640 seasons replayed
+  through today's engine, a kicker's points scored minus points left on the
+  field tracks his rating at r = 0.46 (a bare make count 0.26) and a punter's
+  yards above a league-average leg at r = 0.68, while both of the obvious volume
+  stats come out NEGATIVE — a punt count is a fact about how often his offence
+  stalled, so grading him on it grades him backwards. The awards deliberately do
+  not read it, so no kicker has entered the MVP race. Separately, final cuts
+  sort a roster by rating plus what a release costs and were blind to position,
+  which is right everywhere except the two jobs with no second body behind them:
+  213 clubs in the dev database carry no kicker and 218 no punter, and 113 of
+  the kicker-less ones are carrying fifty or more men — a full roster with
+  nobody to kick, and nothing that ever puts one back, since the roster-filler
+  only signs for clubs under the minimum and cut-down day is the last roster
+  event before week 1. Swapping one club's kicker across the rating range on
+  identical rosters and identical seeds is worth 0.666 points a season per
+  rating point, so that hole costs about sixteen points a year. The last man at
+  a one-man job now sorts behind every other release candidate — still cut if
+  there is nobody else left to cut, and only while he is the last, so a club
+  carrying two kickers may still cut one. Measured after, the only-K and only-P
+  cut counts are zero at every overflow depth from one to eight. A punter also
+  gets his stat standings back: they were refused at every column on the note
+  that his average was "dice with no input from his rating", which was true of
+  the old engine and has been false since punts started being drawn around a
+  rating-set mean. His volume columns stay unranked as the opportunity stats
+  they are; his average, the one number on the row that is his, now ranks. The
+  engine itself was not touched and is proven not to have moved — 400 games on a
+  fixed seed hash identically before and after, kicking and punting lines
+  included. Shipped in `6511cc3`.
+
 - **2026-08-25 — College workouts were shut for the whole season the class was
   on the board.** A draft class is generated in week one and is not selected
   until the draft after it, so a GM looks at those four hundred men for a full
