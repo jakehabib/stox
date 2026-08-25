@@ -588,7 +588,8 @@ export const GENERATION = {
    * the draft no longer sells. Scouting error (lib/scouting.ts observe()) is
    * what has to carry draft uncertainty now, and it is unrelated to this.
    */
-  ROOKIE_POTENTIAL_BONUS_MEAN: 8,
+  /** Moves in LOCKSTEP with the draft rating geometry — see the note at DRAFT_TIER_OFFSET before touching either. */
+  ROOKIE_POTENTIAL_BONUS_MEAN: 12,
   ROOKIE_POTENTIAL_BONUS_SD: 3.5,
   /**
    * [TUNE] THE CEILING ON POTENTIAL IS AN ASYMPTOTE, NOT A WALL.
@@ -797,12 +798,50 @@ export const GENERATION = {
    * of 54..88 and the middle of a class bunches slightly closer together.
    */
   DRAFT_TIER_SPREAD: 16,
-  DRAFT_TIER_OFFSET: 7,
+  /**
+   * =======================================================================
+   * MOVING ENTRY RATINGS MEANS MOVING ALL SIX OF THESE BY THE SAME AMOUNT
+   * =======================================================================
+   * A draftee's ceiling is his rating plus his potential roll — below
+   * POTENTIAL_SOFT_KNEE, `potential === trueOvr + potBonus` exactly. So the
+   * only way to lower what a rookie ARRIVES at without dragging the whole
+   * potential tier ladder down with him is to lower the rating by X and raise
+   * ROOKIE_POTENTIAL_BONUS_MEAN by the same X. Entry falls by X, runway rises
+   * by X, the ceiling stays put. That is why these two moved together, and it
+   * is the entire mechanism.
+   *
+   * THE TRAP, AND THE REASON THE FOUR BOUND CONSTANTS MOVED TOO. Doing it with
+   * DRAFT_TIER_OFFSET alone does NOT work, and it fails quietly. The rating
+   * roll is bent at both ends (SOFT_KNEE_LO/MIN below, SOFT_KNEE_HI/MAX
+   * above), and inside a bend the finished rating falls by LESS than X while
+   * the bonus rises by exactly X — so the shortfall lands on the ceiling, and
+   * it lands at precisely the two ends of the ladder. Measured over 300
+   * classes, the rating's transfer per unit X and the worst tier-table row:
+   *
+   *     centre moved alone, bends left where they were   0.945   46.0%
+   *     bends disabled entirely (diagnostic only)        1.000    5.2%
+   *     bends TRANSLATED with the class, as below        1.000    5.9%
+   *
+   * At 46% the ladder is wrecked — Generational +46%, Deep Sleeper -20% —
+   * while every band in the middle sits within 2%, which is exactly the
+   * signature of a bend leaking. So X translates the WHOLE rating geometry:
+   * the centre, both knees and both asymptotes, all by the same 4.
+   *
+   * IT IS NOT EXACT, and nobody should write that it is. At X = 4 the worst
+   * tier row still moves 5.9% (Deep Sleeper +5.9%, Generational -3.7%) — a
+   * systematic residual, not sampling noise. Two things do not translate with
+   * the geometry: the per-position class-strength bias (generateClassStrength,
+   * N(0,6), added after the ramp) and generateAttributes' nudge, which lands
+   * computeOverall a point or two clear of its target. 5.9% is inside the
+   * +/-8% band the ladder already ran at, and that is the claim — no more.
+   * =======================================================================
+   */
+  DRAFT_TIER_OFFSET: 11,
   DRAFT_OVR_SD: 6,
-  DRAFT_OVR_SOFT_KNEE_LO: 56,
-  DRAFT_OVR_MIN: 46,
-  DRAFT_OVR_SOFT_KNEE_HI: 84,
-  DRAFT_OVR_MAX: 92,
+  DRAFT_OVR_SOFT_KNEE_LO: 52,
+  DRAFT_OVR_MIN: 42,
+  DRAFT_OVR_SOFT_KNEE_HI: 80,
+  DRAFT_OVR_MAX: 88,
   /**
    * The unsigned pool. Hardcoded in TWO places before this (lib/gen/league.ts
    * and lib/leagueFile.ts) and following nothing, so raising the roster
