@@ -760,7 +760,7 @@ three routes and when each is right.
   One thing was fixed while it was in hand — a man with no seasons left drew a
   table header, four column names and a rule over an empty body, which on this
   layout sits in the middle of the cap sheet on the two states a GM looks at
-  most during the re-sign window.
+  most during the re-sign window. Shipped in `b942a9b`.
 
 - **2026-08-25 — Every CPU front office kept the competitive window it was born
   with, for the life of the save.** `recomputeWinNow` was written to re-read a
