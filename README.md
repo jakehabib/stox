@@ -710,6 +710,69 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — The draft told you what had happened only by looking different
+  the next time you read it.** Every reaction in scouting and on draft day was a
+  re-render. You spent a Full Scout charge and the ranges were simply narrower.
+  You flew a prospect in and his attributes were simply numbers. A rival took
+  the man you had starred all season and his row appeared at the top of the feed
+  in the same grey as the other 223. The app owner, on the two signing
+  animations the game already had: *"LOVE the signed and released animations. We
+  need more things like that all over our game"*, and, scoping it: *"just the
+  draft actions need animations like that in our game as is today.. scouting,
+  drafting etc"*.
+
+  Eight moments now, in one stylesheet (`app/moments.css`) with three small
+  helpers beside it (`components/ds/Moments.tsx`). No animation library, no new
+  dependency, and nothing on any path the simulation runs. Scouting a man
+  tightens the band and counts the confidence figure to what the file now says.
+  A private workout lifts fog off the attribute block, then the rows come in in
+  the order they are weighted and the measured bars grow. The shortlist star
+  fills, overshoots and settles in one tick. The draft clock beats once a second
+  and walks from chalk to amber to red. Making the pick turns the card over,
+  lands the name behind it and stamps the club badge on last. A shortlisted man
+  taken by a rival arrives red rather than green, struck through where he lands.
+  Only the newest row on the feed moves, and the run watch speaks when the
+  pattern turns on instead of quietly differing on the next render. And one row
+  on Best Available, only ever one, glows gold: a first-round grade still
+  sitting there twelve picks past his own slot.
+
+  **The bar for a steal is measured, not chosen.** Through the first
+  thirty-eight selections of a live save the most-slid top-thirty-two man
+  reached fourteen picks past his grade and nobody else got past eleven, so a
+  bar of twelve fires somewhere in the thirties in a draft where the room
+  disagrees with itself and not at all in one where it does not. The window
+  shuts by itself: once the room's top thirty-two are gone, nothing on the page
+  can qualify again.
+
+  **The rule they are held to is the owner's own** — a moment earns its
+  animation by being rare or by being a decision. Nothing here is wired to a
+  page load, a table sort, the position filter, a tab switch or the Advance
+  button, and every one fires on the success path only. The shortlist star now
+  takes its state from the row the action actually wrote rather than flipping
+  optimistically and hoping; a refused write leaves it exactly where it was.
+
+  **Reduced motion loses the movement, never the information.** Durations are
+  the four tokens already in `globals.css`, so honouring the preference stays
+  one override for the whole file. Every animation is filled, so a 1ms run lands
+  on its end state rather than on nothing, and anything whose meaning lived in
+  the movement carries a static channel as well: the steal keeps its gold edge,
+  the sniped man keeps his strike-through. That second channel needed the glow
+  moved onto a pseudo-element — a filled animation holds its last keyframe on a
+  property forever, and the row's own `box-shadow` was being erased by the very
+  effect meant to leave it behind.
+
+  **One defect had to be fixed before the sniped moment could ever fire.** The
+  draft page scoped its shortlist to `isDraftee`, and selection clears
+  `isDraftee`, so a man left the set the instant he was drafted. The feed's
+  "★ Our shortlist" chip, the pick card's Shortlisted badge and the class
+  recap's marker all read that set, and all three could only ever have marked
+  rows that had just left it — forty men starred on a live save, eleven off the
+  board, nought chips. A second query now collects this year's taken men by
+  `draftYear` and `draftRound`, the same pair `lib/draft.ts` uses to recover a
+  class after its members stop being draftees, and the three backward-looking
+  surfaces read the union. Best Available still reads the original set, because
+  a man who is gone is not available. Shipped in `166b066`.
+
 - **2026-08-25 — Opening extension talks took away the cap sheet you needed in
   order to decide what to offer.** The contract face of a player card was one
   column — the decisions, then the year-by-year ledger under them — and pressing
