@@ -279,15 +279,26 @@ const SKIPS_BENCH: Position[] = ['QB', 'WR', 'CB', 'S', 'K', 'P'];
  * WHAT IT IS NOW. Each drill is an anchored, position-real distribution
  * whose z-score is a NOISY READ OF THE ATTRIBUTES IT MEASURES:
  *
- *   z = ABILITY_WEIGHT * (how good he is)
- *     + ATTR_WEIGHT    * (how he carries the relevant attributes FOR his
+ *   z = ability weight * (how good he is)
+ *     + attr weight    * (how he carries the relevant attributes FOR his
  *                         position and grade)
  *     + NOISE_WEIGHT   * (day-of noise)
  *
  * then bent through softTail so the extremes thin out instead of piling up
  * against a wall, then placed as `anchor.mean + anchor.sd * z`. The weights
- * are squared-summed to 1 so z stays unit-variance and the printed sd is the
- * one in the table rather than an accident.
+ * are squared-summed to COMBINE.WEIGHT_SUM_SQ so z stays unit-variance and the
+ * printed sd is the one in the table rather than an accident.
+ *
+ * THE FORTY IS NOT WEIGHTED LIKE THE OTHER FIVE. It takes
+ * COMBINE.FORTY_ABILITY_WEIGHT (0.30) where they take COMBINE.ABILITY_WEIGHT
+ * (0.78), and the attribute weight is whatever the unit-variance budget has
+ * left over — so the forty is very nearly a readout of the speed his card
+ * already prints, and the other five are where a man's actual grade shows up.
+ * That asymmetry is deliberate and it is load-bearing: the consensus room
+ * grades the forty and almost nothing else (CONSENSUS.FORTY_FIXATION), so the
+ * five drills that carry ability go unpriced by the public board, which is
+ * what makes the six-drill athletic rank worth reading beside it. See the
+ * tuning entries for the measurement.
  *
  * The three outlier archetypes still override the ability term outright —
  * that gap between the stopwatch and the player is the content the scouting
@@ -316,13 +327,16 @@ export interface DrillAnchor {
  * negative slope below; the jumps and the bench are higher-is-better.
  *
  * THE SD COLUMN IS THE COMPOSITE'S SD, NOT QUITE THE PRINTED ONE. The three
- * weights below square to 1, so a NORMAL tester's spread is exactly this
- * column — but the outlier archetypes sit outside that unit variance by
- * design, and about one prospect in nine is one. Measured over 16,000
- * prospects the realised spread runs ~1.1x the table (WR 40: 0.10 against
- * 0.09; LT 40: 0.15 against 0.13; DT bench: 5.1 against 4.7), which lands ON
- * the real per-position spread rather than under it — published combine sds
- * include their own workout warriors too.
+ * weights on any one drill square to COMBINE.WEIGHT_SUM_SQ, so a NORMAL
+ * tester's spread is exactly this column — but the outlier archetypes sit
+ * outside that unit variance by design, and about one prospect in nine is one.
+ * Measured over 16,000 prospects the realised spread runs ~1.1x the table (WR
+ * 40: 0.10 against 0.09; LT 40: 0.15 against 0.13; DT bench: 5.1 against 4.7),
+ * which lands ON the real per-position spread rather than under it — published
+ * combine sds include their own workout warriors too. Splitting the ability
+ * weight between the forty and the other five left every one of those spreads
+ * where it was: measured over 12 classes before and against after, LT 40 0.146
+ * -> 0.144, DT bench 5.07 -> 5.11, CB three-cone 0.215 -> 0.210.
  */
 export const COMBINE_ANCHOR: Record<Position, DrillAnchor> = {
   QB:   { forty: [4.80, 0.11], vertical: [31.0, 3.2], broad: [111, 5.5], cone: [7.05, 0.20], shuttle: [4.30, 0.14], bench: [0, 0] },
@@ -551,11 +565,16 @@ export function generateCombineTesting(rng: Rng, position: Position, trueAttrs: 
    * spread is the anchor's sd and not an accident of how many terms happen
    * to be in the blend.
    */
-  const drillZ = (attrs: Record<string, number>, weightPull: number): number => {
+  const drillZ = (attrs: Record<string, number>, weightPull: number, abilityWeight = COMBINE.ABILITY_WEIGHT): number => {
     const attr = blendZ(position, trueAttrs, trueOvr, attrs);
     const noise = rng.normal(0, 1);
+    // The attribute weight is whatever is left over once ability and noise
+    // have taken their share of a unit-variance z, so a drill that reads less
+    // of a man's overall grade reads more of the profile his card shows —
+    // never less total signal. See COMBINE.FORTY_ABILITY_WEIGHT.
+    const attrWeight = Math.sqrt(Math.max(0, COMBINE.WEIGHT_SUM_SQ - abilityWeight * abilityWeight - COMBINE.NOISE_WEIGHT * COMBINE.NOISE_WEIGHT));
     const z = archetype === 'NORMAL'
-      ? COMBINE.ABILITY_WEIGHT * abilityZ + COMBINE.ATTR_WEIGHT * attr + COMBINE.NOISE_WEIGHT * noise
+      ? abilityWeight * abilityZ + attrWeight * attr + COMBINE.NOISE_WEIGHT * noise
       // The outlier archetypes ignore ability outright. That is the point:
       // testing alone cannot tell a workout warrior from a real one, and only
       // the tape can. They still carry a little of his physical profile and a
@@ -567,7 +586,7 @@ export function generateCombineTesting(rng: Rng, position: Position, trueAttrs: 
   };
 
   // Timed drills: a HIGHER z is a BETTER athlete, so it subtracts seconds.
-  const fortyYard = anchor.forty[0] - anchor.forty[1] * drillZ(DRILL_ATTRS.forty, -COMBINE.WEIGHT_PULL);
+  const fortyYard = anchor.forty[0] - anchor.forty[1] * drillZ(DRILL_ATTRS.forty, -COMBINE.WEIGHT_PULL, COMBINE.FORTY_ABILITY_WEIGHT);
   const threeCone = anchor.cone[0] - anchor.cone[1] * drillZ(DRILL_ATTRS.cone, -COMBINE.WEIGHT_PULL);
   const shuttle = anchor.shuttle[0] - anchor.shuttle[1] * drillZ(DRILL_ATTRS.shuttle, -COMBINE.WEIGHT_PULL);
   // Jumps and the bench: a higher z adds inches / reps.

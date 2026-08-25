@@ -239,9 +239,10 @@ export default async function PlayerPage({
           .map((p) => p.testing!),
       )
     : {};
-  // The six finishes above as one figure, ordered against the class — the same
-  // read the draft board's Athletic column carries, off the same pool, so the
-  // two screens cannot disagree about the same man.
+  // The six finishes above as one figure, ordered against his own position
+  // group — the same read the draft board's Athletic column carries, off the
+  // same pool and the same function, so the two screens cannot disagree about
+  // the same man.
   const athletic = combineTesting ? classAthleticRanks(classTesting).get(player.id) ?? null : null;
   const weeksElapsed = collegeWeeksElapsed(league);
   const collegeToDate = collegeProfile ? aggregateCollegeGames(collegeProfile.games, weeksElapsed) : null;
@@ -1105,7 +1106,7 @@ export default async function PlayerPage({
                       <span className="text-muted">Athletic</span>
                       <span className="font-mono text-chalk">{ordinal(athletic.rank)}</span>
                       <span className="text-muted">
-                        of {athletic.outOf} in the class
+                        of {athletic.outOf} at {player.position} in this class
                         {athletic.thin && ` — on ${athletic.events} drills, a shorter workout than his group runs`}
                       </span>
                       <Tooltip placement="bottom" text={tip('athleticRank')} />

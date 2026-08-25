@@ -158,6 +158,41 @@ export function publicAthleticism(position: string, testing: Partial<CombineTest
   return testingAthleticism(position, testing);
 }
 
+/**
+ * ---------------------------------------------------------------------------
+ * WHAT THE ROOM ACTUALLY REACTS TO IS NOT THE WHOLE WORKOUT
+ * ---------------------------------------------------------------------------
+ * publicAthleticism() above is the six-drill read the draft board's Athletic
+ * column publishes. This is the narrower thing the consensus grade moves on:
+ * the same drills against the same anchors, with the forty carrying
+ * CONSENSUS.FORTY_FIXATION of the weight and the other five splitting the
+ * rest.
+ *
+ * It is the difference between these two reads that makes the stopwatch worth
+ * looking at. When the room priced the whole workout, the public grade already
+ * contained everything the Athletic column could tell a GM, and testing added
+ * almost nothing on top of a board rank sitting two columns away — see the
+ * partial correlations in lib/combineRank.ts. Now the five drills the room
+ * skims over stay unpriced, and a man who is ordinary in the forty and
+ * excellent everywhere else is genuinely undersold by the board.
+ *
+ * It is also simply what draft rooms do. The forty is the number that gets
+ * read out on television; the three-cone is the number the position coach
+ * cares about.
+ */
+export function roomStopwatchRead(position: string, testing: Partial<CombineTesting>): number | null {
+  const f = CONSENSUS.FORTY_FIXATION;
+  const rest = (1 - f) / 5;
+  return testingAthleticism(position, testing, {
+    fortyYard: f,
+    vertical: rest,
+    broadJump: rest,
+    threeCone: rest,
+    shuttle: rest,
+    benchReps: rest,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // What the room is actually looking at
 // ---------------------------------------------------------------------------
@@ -799,12 +834,17 @@ function gradeOnce(p: ConsensusInput, scrutiny: number): ConsensusGrade {
   // tape never saw it coming, and the good player who ran a 4.8 gets marked
   // down by a room that never watched him play.
   const athleticism = publicAthleticism(p.position, testing);
+  // NOT the same read. The published Athletic column is the whole workout;
+  // what moves a grade is the room's forty-first skim of it — see
+  // roomStopwatchRead, and the paragraph above it for why the gap between the
+  // two is the whole reason a GM should look at testing at all.
+  const stopwatch = roomStopwatchRead(p.position, testing);
   // The room's own read, not the truth — a bias is a distortion of what an
   // evaluator believes. Reading trueOvr here meant the stopwatch markdown was
   // applied by a room that already knew exactly how good he was.
   const ability = clamp((room.now - 40) / 55, 0, 1);
-  if (athleticism != null) {
-    const d = CONSENSUS.TESTING_PULL * (athleticism - ability);
+  if (stopwatch != null) {
+    const d = CONSENSUS.TESTING_PULL * (stopwatch - ability);
     delta += d;
     if (Math.abs(d) >= CONSENSUS.BIAS_REPORT_THRESHOLD) {
       const up = d > 0;

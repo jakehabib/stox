@@ -382,8 +382,8 @@ export const GLOSSARY = {
   },
   athleticRank: {
     term: 'Athletic rank',
-    definition: 'Where a prospect finishes in his class once every drill he ran is placed against the men at his own position and those finishes are averaged. First is the best tester on the board.',
-    why: 'A guard is timed against guards, so the figure reads the same for a 330-pound tackle as for a corner. It is public — the whole league watched the same stopwatch — and it grades a workout, not a football player: plenty of men near the top of it will never start.',
+    definition: 'Where a prospect finishes among the men at his own position in this class, once every drill he ran is placed against that same group and those finishes are averaged. Fourth of sixteen is the fourth-best workout of the sixteen tackles in the class.',
+    why: 'A guard is timed against guards and ranked against guards, so the figure means the same thing for a 330-pound tackle as for a corner. It is public — the whole league watched the same stopwatch — and it grades a workout, not a football player. The board leans on the forty and little else, so the rest of the workout is a read the consensus has not priced; plenty of men near the top of it will still never start.',
   },
   proDay: {
     term: 'Pro day',

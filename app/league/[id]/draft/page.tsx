@@ -325,8 +325,9 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // league stood over the same stopwatch, and the six numbers behind it are
   // printed in full on every prospect's card. So it is never fogged and it does
   // not care what this club has scouted — see lib/combineRank.ts for how each
-  // drill is placed inside the man's own position group before the averages are
-  // ranked against the class, and for what that does and does not give away.
+  // drill is placed inside the man's own position group, how those finishes are
+  // then ordered INSIDE that same group, and for what that does and does not
+  // give away.
   //
   // Ranked over the SAME pool the consensus is, drafted men included, for the
   // same reason: a prospect's forty does not get faster because somebody else
@@ -1650,7 +1651,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th className="text-right">
                   <span className="inline-flex items-center gap-1">
                     <Link href={sortHref('athletic')} scroll={false} prefetch={false} className="hover:text-chalk">Athletic{sortKey === 'athletic' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
-                    <Tooltip placement="bottom" text={`${tip('athleticRank')} ${athletic.size} men in this class have testing numbers on file.`} />
+                    <Tooltip placement="bottom" text={`${tip('athleticRank')} The second figure is how many men at his position tested; ${athletic.size} in the class did.`} />
                   </span>
                 </th>
                 <th>
@@ -1769,13 +1770,18 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     {/* Muted, and deliberately: it is a real figure and it is
                         not a grade. A dash is a man nobody has timed, never a
                         last place he did not earn. */}
-                    <td className="stat-value text-stat-sm text-right">
+                    {/* THE DENOMINATOR TRAVELS WITH THE RANK. Fourth of
+                        sixteen tackles and fourth of forty-eight corners are
+                        not the same finish, and the group size is not
+                        something a reader can infer from a badge — the class
+                        carries whatever it carries at each position. */}
+                    <td className="stat-value text-stat-sm text-right whitespace-nowrap">
                       {ath ? (
                         <span
                           className={ath.thin ? 'text-muted' : 'text-chalk'}
                           title={ath.thin ? `Averaged over ${ath.events} drills — he ran a shorter workout than the rest of his position group, so the figure rests on less.` : undefined}
                         >
-                          {ath.rank}{ath.thin && '*'}
+                          {ath.rank}{ath.thin && '*'}<span className="text-muted font-normal">/{ath.outOf}</span>
                         </span>
                       ) : (
                         <span className="text-muted/50">—</span>

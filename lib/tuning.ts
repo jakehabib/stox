@@ -2004,8 +2004,39 @@ export const CONSENSUS = {
    */
   NOISE_SD: 2.4,
 
-  /** Max swing from the room over-indexing on the stopwatch. */
-  TESTING_PULL: 9,
+  /**
+   * Max swing from the room over-indexing on the stopwatch.
+   *
+   * IT WAS 9, AND AT 9 THE BOARD HAD ALREADY SPENT THE STOPWATCH. The pull is
+   * added straight onto the grade, so whatever testing knows about a man, the
+   * board knows too — and a GM reading the Athletic column was reading a
+   * column the Board column two places away had already told him. Measured
+   * over 20 classes inside a position group, the athletic rank added rho -0.21
+   * on top of board rank at 9 and -0.36 at 6.
+   *
+   * It comes down rather than to zero because the room's over-reaction to
+   * testing IS the workout-warrior trap: TESTING_DARLING still fires on 29.5%
+   * of a class and TESTING_FADED on 8.0% (38.7% / 10.6% at 9), so the man who
+   * ran a 4.38 and cannot play still gets pushed up a board somebody has to
+   * be disciplined enough not to follow.
+   */
+  TESTING_PULL: 6,
+  /**
+   * How much of the room's stopwatch reaction is the forty alone; the other
+   * five drills split the rest. 1/6 is the flat average the room used to
+   * grade, and it is the flat average the PUBLIC Athletic column still
+   * publishes (lib/combineRank.ts).
+   *
+   * The gap between the two reads is the point. A room grades the number it
+   * quotes, and what it quotes is the forty — which, by design, is the drill
+   * carrying the least of a man's actual ability (COMBINE.FORTY_ABILITY_WEIGHT).
+   * So the five drills that DO carry ability go unpriced by the board, and a
+   * front office that reads the whole workout is looking at something the
+   * consensus never charged for. That is the mechanism behind a late-round
+   * gem, and it is also simply what draft rooms do: the forty is read out on
+   * television and the three-cone is read by the position coach.
+   */
+  FORTY_FIXATION: 0.75,
   /**
    * Grade adjustment by strength of competition faced. Only the two extremes
    * move the grade enough to be worth naming: a genuine blue blood and a
@@ -3436,27 +3467,88 @@ export const TRADE_VALUE = {
  * single scalar, so all six were the same number in different units — 16,000
  * blindly-walked prospects gave forty-vs-trueOvr -0.543, vertical-vs-trueOvr
  * +0.548 and bench-vs-trueOvr +0.527, three identical magnitudes because there
- * was one variable. The weights below are squared-summed to 1 on purpose, so
- * each drill's printed spread is the per-position sd in lib/gen/
- * prospectProfile.ts COMBINE_ANCHOR rather than an accident of the arithmetic.
+ * was one variable. The three weights on any one drill are squared-summed to
+ * WEIGHT_SUM_SQ on purpose, so each drill's printed spread is the per-position
+ * sd in lib/gen/prospectProfile.ts COMBINE_ANCHOR rather than an accident of
+ * the arithmetic.
+ *
+ * AND THE SPLIT IS NOT THE SAME FOR EVERY DRILL. The forty reads a man's
+ * attributes and the other five read his grade — see FORTY_ABILITY_WEIGHT,
+ * which is what makes the six-drill athletic rank worth reading beside a board
+ * that has already priced the forty.
  */
 export const COMBINE = {
-  /** Weight on how good he actually is (his trueOvr rank in his own position group). */
-  ABILITY_WEIGHT: 0.60,
   /**
-   * Weight on the attributes the drill claims to measure, relative to his own
-   * grade. It is the LARGEST of the three on purpose: the card shows the
-   * stopwatch and the rating side by side, and a 40 that disagrees with the
-   * speed printed under it is worse than a 40 drawn from the wrong
-   * distribution — the reader can see both at once.
+   * Weight on how good he actually is (his trueOvr rank in his own position
+   * group), for the five drills the forty is not.
+   *
+   * IT WAS 0.60 AND THE PRICE OF THAT WAS THE WHOLE FEATURE. The app owner:
+   * *"there should be a moderate correlation between combine performance,
+   * draft stock and ability. it should be one of the ways maybe we can spot a
+   * late round gem."* At 0.60, with the room pricing the whole workout at
+   * CONSENSUS.TESTING_PULL 9, testing told a GM almost nothing the public
+   * board had not already told him: measured over 20 classes, the athletic
+   * rank added rho -0.21 against a man's true rating once his board rank was
+   * held fixed inside his own position group, and "take the best tester of the
+   * eight men still on your board" was WORSE than simply following the board
+   * (mean career peak 73.0 against 74.2). A signal you lose money following
+   * is not a way to find anything.
+   *
+   * See FORTY_ABILITY_WEIGHT below and CONSENSUS.FORTY_FIXATION for the other
+   * half of the change; the three numbers only work as a set.
+   *
+   * WHAT A CLASS ALREADY ON THE BOARD GETS, STATED PLAINLY. Testing is rolled
+   * once, at class creation, and nothing is backfilled — so a class already in
+   * a save keeps the numbers it was born with and only the BOARD half of this
+   * reaches it. Measured on four real saves that is most of the way there
+   * anyway: the athletic rank's partial against true overall inside a position
+   * group moves from -0.25/-0.33 to -0.32/-0.40 on those stored classes purely
+   * off TESTING_PULL and FORTY_FIXATION. The generator half arrives with the
+   * next class the league mints, which is one season away at worst. Nothing a
+   * player already owns changes value; a board grade re-computes, as it always
+   * does on every render.
    */
-  ATTR_WEIGHT: 0.72,
+  ABILITY_WEIGHT: 0.78,
+  /**
+   * The forty's own ability weight, and it is deliberately the small one.
+   *
+   * THE DRILL THE ROOM QUOTES IS THE DRILL THAT SAYS LEAST. A forty is very
+   * nearly "how fast is this man for his size" — which is a fact about his
+   * speed rating, not about whether he can play — and it is the one number a
+   * draft room, a broadcast and a mock draft all lead with. So the forty is
+   * mostly the attributes his card already prints (its attr weight is the
+   * leftover, 0.888 against 0.520 for the other five), and the room's grade
+   * reacts mostly to the forty (CONSENSUS.FORTY_FIXATION 0.75).
+   *
+   * That is what leaves the OTHER five drills carrying real ability signal
+   * that the public board has never priced, which is precisely the gap a GM
+   * reading the whole workout is paid for. It also protects the thing the old
+   * ATTR_WEIGHT comment was protecting: the card shows the stopwatch and the
+   * speed rating side by side, and the drill a reader can check against a
+   * printed rating is now the one most tightly tied to it.
+   */
+  FORTY_ABILITY_WEIGHT: 0.30,
+  /**
+   * What the three weights on a drill square-sum to. Each drill's attribute
+   * weight is derived as sqrt(WEIGHT_SUM_SQ - ability^2 - noise^2) rather than
+   * being its own constant, so a drill that reads less of a man's grade reads
+   * MORE of his profile and never less signal in total — and every drill's
+   * printed spread stays the per-position sd in lib/gen/prospectProfile.ts
+   * COMBINE_ANCHOR instead of drifting with the weights. Measured over 12
+   * classes before and after the weights moved, every position's printed 40 /
+   * vertical / three-cone / bench spread is unchanged to the third decimal
+   * (LT 40: 0.146 -> 0.144 against an anchor of 0.13).
+   *
+   * It is 0.994 and not 1 because that is what 0.60/0.72/0.34 squared to, and
+   * holding it there keeps existing spreads exactly where they were.
+   */
+  WEIGHT_SUM_SQ: 0.994,
   /**
    * Day-of noise. Deliberately real and deliberately not large: workout
    * warriors and "he plays faster than he times" guys both exist and that gap
    * is the content the scouting layer trades on, but it is supplied by the
    * OUTLIER_* archetypes below, not by making every man's stopwatch a coin
-   * flip. 0.60/0.72/0.34 squares to 0.994.
+   * flip.
    *
    * 0.34 is a ninth of a drill's variance. The size is anchored on real
    * test-retest: the same athlete's combine and pro-day 40 typically differ by
