@@ -710,6 +710,58 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — Opening extension talks took away the cap sheet you needed in
+  order to decide what to offer.** The contract face of a player card was one
+  column — the decisions, then the year-by-year ledger under them — and pressing
+  Negotiate Extension replaced the whole box with the negotiation. So while you
+  priced a new deal, the old one was not on screen: not what he already costs
+  this season, not what 2028 already carries, not what cutting him would leave
+  behind. Inside the negotiation itself the interest meter sat at the top and
+  the verdict at the bottom, and you scrolled to hold both. Eleven directions
+  were drawn for the screen and the app owner picked one — *"I like #11 the best
+  but i want to make sure it shows all the same details as ours does now"*, and
+  then, on the full-parity build, *"I love them. Lets do it."*
+
+  It is a room now. Your club's cap sheet is the left half and it does not move.
+  The agent is the right half — his mood, the stretch of the track where he
+  might sign, the rival's package marked on that same scale, his patience, and
+  the three sliders. The buttons that act on him sit on the line between the
+  two. Drag the salary on the right and the year-by-year table the money lands
+  on is beside it, unscrolled, at 1440 wide.
+
+  **Nothing was dropped to make room.** Cap hit this year, years remaining
+  "X of Y", the term bar, remaining value, guaranteed, dead if cut today, market
+  value, total value, signing bonus, Year/Base/Bonus/Cap hit/Dead if cut, the
+  void-year block, the contract clock, cap space after year one, and every
+  action — Negotiate Extension, Restructure, Release, Re-sign, Franchise Tag and
+  the fifth-year option — are all still there, in the state rules they were
+  already under. Two figures gained something on the way: market value moved
+  into the row with remaining, guaranteed and dead-if-cut, which are the other
+  three answers to "what is this deal worth now", and the term bar now draws the
+  void years on the end, hatched, as a different material rather than as more of
+  the same one.
+
+  **Two decisions were deliberately not re-opened.** Void years are still a
+  block and not table rows — they are not seasons, he is not on the roster for
+  them, and drawn as rows they read as an extra contract year, which is the
+  misreading that costs somebody a cap sheet. And the action set still follows
+  the player's state exactly as it did: no extension for a man whose deal is up
+  (that is a re-sign, refused at the entrance rather than after four sliders),
+  no tag for a man with three years to run, the option above the tag for the man
+  who has both, and the tag greyed with its reason rather than hidden wherever
+  it cannot be taken.
+
+  **What the layout did change is where one sentence lives.** The contract clock
+  used to sit under the Re-sign button; on two columns that put it six inches
+  from the cap sheet it describes, and the first build of this screen printed it
+  twice on one page, word for word, because both halves wanted it. The clock is
+  the sheet's now, at the foot of the left column. The button keeps the half
+  that belongs to the button: the reason to press it today rather than in March.
+  One thing was fixed while it was in hand — a man with no seasons left drew a
+  table header, four column names and a rule over an empty body, which on this
+  layout sits in the middle of the cap sheet on the two states a GM looks at
+  most during the re-sign window.
+
 - **2026-08-25 — Every CPU front office kept the competitive window it was born
   with, for the life of the save.** `recomputeWinNow` was written to re-read a
   club's window each offseason from last season's record and the age of its

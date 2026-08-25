@@ -68,7 +68,7 @@ const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidY
  * up, year by year — and that was always the `details` below it, which is the
  * sentence with the figures attached rather than the sentence.
  */
-export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDone }: {
+export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDone, showCurrentDeal = true }: {
   leagueId: string; playerId: string; capMode: CapMode;
   /**
    * The deal this extension would REPLACE. Display only — the session resolves
@@ -77,6 +77,15 @@ export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDo
    */
   contract: ContractLike & { guaranteed: number; voidYears?: number };
   onDone?: () => void;
+  /**
+   * FALSE WHERE THE DEAL HE IS ON IS ALREADY ON SCREEN. The contract room
+   * (components/contract/ContractRoom.tsx) mounts this in the right-hand half
+   * with the full ledger unscrolled in the left-hand half, so the banner below
+   * would be the same table twice at the same moment — which is the exact
+   * duplication this panel spent a pass removing. Everywhere the form opens on
+   * its own it still carries it, closed, because there the ledger is nowhere.
+   */
+  showCurrentDeal?: boolean;
   /** Accepted from the old call site; the live figures all come from the session now. */
   ovr?: number; position?: string; age?: number; availableSpace?: number;
 }) {
@@ -124,12 +133,14 @@ export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDo
            The suitor is NOT passed any more: a club that would come for him if
            he ever got out is a fact about the negotiation, not about this
            screen, and the panel draws it on all three tables now. */
-        <details className="rounded-lg border border-line bg-raised/40 px-3 py-2">
-          <summary className="text-sm cursor-pointer select-none">
-            The deal he is on now, before anything is added
-          </summary>
-          <ContractLedger contract={contract} capMode={capMode} seasonYear={session.ctx.seasonYear} className="pt-3" />
-        </details>
+        showCurrentDeal ? (
+          <details className="rounded-lg border border-line bg-raised/40 px-3 py-2">
+            <summary className="text-sm cursor-pointer select-none">
+              The deal he is on now, before anything is added
+            </summary>
+            <ContractLedger contract={contract} capMode={capMode} seasonYear={session.ctx.seasonYear} className="pt-3" />
+          </details>
+        ) : undefined
       }
       structureSlot={
         (years) => <DealStructureControls capMode={capMode} contractYears={years} structure={structure} onChange={setStructure} />

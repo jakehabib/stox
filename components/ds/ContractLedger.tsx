@@ -37,10 +37,20 @@ import { tip } from '@/lib/glossary';
  * Server component on purpose — it is arithmetic over data the page already
  * has, with nothing to interact with, so it costs the client bundle nothing.
  */
-export function ContractLedger({ contract, capMode, seasonYear, className }: {
+export function ContractLedger({ contract, capMode, seasonYear, market, className }: {
   /** The contract as stored. `baseSalaries` is the full original schedule, indexed from signing. */
   contract: ContractLike & { guaranteed: number; voidYears?: number; isFranchiseTag?: boolean };
   capMode: CapMode;
+  /**
+   * What the rating is worth a year, and how far this deal sits from it.
+   *
+   * It arrives as a prop rather than being computed here for the reason every
+   * other figure in this file does: `marketValue` and `classifyContractValue`
+   * own it, the page has already asked them, and a second call with a second
+   * set of scouted inputs is how two boxes on one screen come to disagree
+   * about the same man. Omitted, the cell is simply not drawn.
+   */
+  market?: { value: number; tier: 'bargain' | 'market' | 'overpay' } | null;
   /**
    * The league year the FIRST remaining season belongs to — row labels only.
    * Optional: a contract carries the year it was signed and how much of it has
@@ -118,13 +128,31 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
         />
       </div>
 
+      {/* THE TERM, INCLUDING THE PART OF IT HE IS NOT ON THE ROSTER FOR.
+          Seasons played are dim, seasons owed are accent, and the void years
+          are hatched amber on the end — a different material, not a longer
+          run of the same one. That distinction is the whole reason they are
+          not table rows (see below); on a bar, which is a picture of a length
+          rather than a list of seasons, the honest drawing is the one that
+          shows the tail is there and shows it is made of something else. */}
       <div className="flex gap-1 mt-3">
         {Array.from({ length: contract.years }, (_, i) => (
           <div key={i} className={`h-1.5 flex-1 rounded-full ${i < elapsed ? 'bg-line' : 'bg-accent'}`} />
         ))}
+        {Array.from({ length: voidYears }, (_, i) => (
+          <div
+            key={`void-${i}`}
+            className="h-1.5 flex-1 rounded-full border border-warn/50"
+            style={{
+              backgroundImage:
+                'repeating-linear-gradient(45deg, rgb(251 191 36 / 0.7) 0 3px, transparent 3px 6px)',
+            }}
+            title="A void year — no season, no salary, and the bonus still prorating across it."
+          />
+        ))}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-4 pt-4 border-t border-line/60">
+      <div className={`grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-line/60 ${market ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
         <StatNumber value={formatMoney(remainingValue(contract, capMode))} label="Remaining value" size="sm" />
         <StatNumber value={formatMoney(guaranteedMoney(contract))} label="Guaranteed" size="sm" tip={tip('guaranteedMoney')} />
         <StatNumber
@@ -134,6 +162,17 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
           tip={tip('deadMoney')}
           color={deadMoneyOnCut(contract, capMode) > 0 ? 'text-bad' : 'text-chalk'}
         />
+        {market && (
+          <StatNumber
+            value={`${formatMoney(market.value)}/yr`}
+            label="Market value"
+            size="sm"
+            tip={tip('marketValue')}
+            // Market rate stays the default ink; only a deviation big enough
+            // to matter earns green or red.
+            color={market.tier === 'bargain' ? 'text-accent' : market.tier === 'overpay' ? 'text-bad' : 'text-chalk'}
+          />
+        )}
       </div>
 
       <div className="mt-5">
@@ -142,6 +181,17 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
             row is inside an `overflow-x-auto` scroller whose height is the
             table's own, so on a one-year deal a bubble has room neither above
             it nor below. Outside the scroller, nothing clips them. */}
+        {/* A DEAL WITH NO SEASONS LEFT GETS NO TABLE. `capHitSchedule` returns
+            nothing for a man at zero years remaining — his contract runs out
+            at the end of this league year — and this block drew a header row,
+            four column names and a rule over an empty body. On the room layout
+            that empty frame sits in the middle of the cap sheet on the two
+            states a GM looks at most in the re-sign window, and reads as a
+            table that failed to load. What he still costs is in the figures
+            above it; what is still waiting after the deal is the void-year
+            line below, which is why the guard is on these two elements rather
+            than on the section. */}
+        {rows.length > 0 && (<>
         <div className="label-sm mb-2 inline-flex items-center gap-2">
           Cap hit, every year left
           <span className="inline-flex items-center gap-1 normal-case tracking-normal">
@@ -190,6 +240,7 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
             </tbody>
           </table>
         </div>
+        </>)}
 
         {voidYears > 0 && (
           <div className="mt-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2.5 flex flex-wrap items-baseline justify-between gap-3">
