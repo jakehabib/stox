@@ -682,9 +682,9 @@ ever force-pushed over, so every state below still exists in git history).
   effect cannot be quoted exactly — the offseason press runs a retirement roll,
   and a predicted figure that does not arrive would be worse than none — so it
   appears twice a league year and the strip is unchanged the rest of the time.
-  Verified by predicting the change, pressing Advance and comparing: 96
-  club-seasons at the final and 95 at the re-sign window, zero residual at
-  $0.000001. Shipped in `32d669b`.
+  Verified by predicting the change, pressing Advance and comparing across
+  three seeded leagues: 320 club-seasons at the final and 316 at the re-sign
+  window, none off by more than $0.000001. Shipped in `32d669b`.
 
 - **2026-08-24 — A receiver caught 158 passes for 1,444 yards and every man on
   his club averaged the same yards a catch.** Yards per reception was flat
