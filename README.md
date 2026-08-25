@@ -727,6 +727,36 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — A multi-week advance could not be called off once it started,
+  so a mis-clicked "Advance to Playoffs" burned the rest of the season with
+  nothing on screen to stop it.** `2544477`. The app owner: *"there is no way
+  to stop the advance to X week sim when it starts. we should have a stop.
+  accidentally hit 'sim to playoffs' and couldnt do anything."* The batch was
+  already a client-side loop — one `advanceWeekAction` per week, deliberately,
+  so real progress shows between each — which means there is a seam between
+  every week where nothing is half-written. The stop is checked there: the week
+  in flight finishes, and the run simply does not ask for the next one. It
+  cannot be made instant and does not pretend to be; a week's advance commits
+  results, progression, injuries, contracts and cap charges together, and
+  tearing that up mid-write would leave the league in a state nothing else
+  reads. **Where it sits**: on the progress popover, the only thing on screen
+  that is moving, and deliberately not on the Advance button, which is disabled
+  for the whole run it exists to interrupt. It reads *"Stop after this week"* —
+  or *"this playoff round"*, *"this offseason step"* — and then *"Stopping —
+  finishing this week…"*. **Escape does the same thing**, because that is the
+  reflex when the wrong option has just been clicked. **The report afterwards
+  describes the run that happened, not the one that was asked for**: the span
+  is folded from the weeks that actually returned and carries a *"Stopped on
+  your call"* mark, so a run called off at week 8 reports weeks 1-8 and cannot
+  claim to have reached the playoffs. The existing stop conditions are
+  untouched, and the mode's own targets are still tested first — a stop pressed
+  during the last week of a run that was finishing anyway does not relabel it,
+  and does not swallow the message a gate phase produces. Two smaller things
+  fell out of it: the Advance button now disables on durable state instead of
+  `useTransition`'s `pending`, which goes false at the first `await`, so it is
+  genuinely disabled for the whole batch rather than for a frame; and it no
+  longer renders the live progress sentence, which grew it wide enough to shove
+  the popover — and the stop on it — off the right of a 390px screen.
 - **2026-08-25 — The athletic rank averaged all six combine drills equally, so
   a 330lb left tackle's forty counted for exactly as much of his workout as a
   corner's.** `5a4071d`. The app owner: *"and remember, athletic testing matters
