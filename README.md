@@ -710,6 +710,30 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — A climbing cap ceiling was four unlabelled steps and a summary
+  quoting only its two ends.** The multi-year outlook draws each season's ceiling
+  as its own chalk step, because the ceiling is not flat — it climbs with the
+  league's growth rung. Nothing on the plot said what any of those steps was
+  worth: the only figure was a header line reading *"Ceiling $255.0M → $262.7M"*,
+  so a GM wanting 2028's limit interpolated between two ends by eye. The app
+  owner: *"i want to make it easy to see the headline # especially as the cap is
+  moving up"*. Each step now carries its own season's ceiling, at the right end
+  of the line it names, off the same `pct(capTotal)` the step is drawn from — at
+  the end and not centred because centred is where the ROOM figure already lives,
+  and the two would land on each other on any club inside roughly $38M of the
+  cap. The header's summary line is gone rather than printed alongside. The brief
+  above the plot is cut to one sentence for the same reason: it restated the
+  first and last columns' room, named the window's dead money and pointed at the
+  panel below, all of which the chart already prints in bigger type — *"it reads
+  very longwinded and confusing"*. What survives is the fact the picture
+  genuinely misleads about, that the far column is a handful of men under
+  contract rather than a squad. That sentence also grew a full-squad branch: off
+  `openSlots` alone it read *"46 men under contract, not 46"* at the roster
+  floor, the caveat firing at exactly the club it does not apply to. Verified by
+  static-rendering the panel against five hand-built cap sheets — climbing,
+  tight, over the ceiling, flat, and full squad — and screenshotting each.
+  Shipped in `27deb60`.
+
 - **2026-08-25 — The re-sign window converted a season's salary to bonus with
   no say in it.** A walk-year re-sign appends — the new years go on the end of
   the season he is still owed, exactly as an extension does — and both are
