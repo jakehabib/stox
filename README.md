@@ -710,6 +710,26 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — The re-sign window converted a season's salary to bonus with
+  no say in it.** A walk-year re-sign appends — the new years go on the end of
+  the season he is still owed, exactly as an extension does — and both are
+  written by `extendContract` with `structure.convertPct ?? DEFAULT_CONVERT_PCT`.
+  The re-sign screen never set that field, so every re-sign in the game pushed
+  the whole of that season's salary into the signing bonus, and the panel
+  reported the result — *"$8.60M → $5.50M ($3.10M freed)"* — as a read-only box.
+  The GM was shown the consequence of a decision he was never offered. The
+  extension screen has had the slider all along; the app owner asked for one
+  negotiation screen across the board. `NegotiationPanel` already knows which
+  deals append and already draws the control — it degrades to the read-only box
+  only when the screen passes no `onStructure`, and the re-sign row was the one
+  call site of three that did not. It does now, so the re-sign table has the same
+  slider and the same typed field, opening at the figure the write was already
+  applying: an untouched re-sign prices and signs exactly as it did, verified
+  figure for figure, and Reset terms has somewhere to return to. Free agency is
+  untouched and needs no control — nothing appends there — and a final-call
+  re-sign, where the deal has actually run out, is unchanged for the same reason.
+  Shipped in `4c4265c`.
+
 - **2026-08-25 — A club knocked out in the first round was handed the
   champion's pick.** The draft order was seeded on regular-season record alone,
   so how far a club went in January counted for nothing: a 15-2 side that lost
