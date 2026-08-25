@@ -515,6 +515,23 @@ To change one hunk of a contended file, read the committed version first
 (`git show HEAD:path`), apply the hunk to *that*, and hash the result — never
 the working copy.
 
+**Then refresh the shared index for the files you committed.** The private
+index is the only thing that saw the commit, so `git status` in the shared tree
+still holds the pre-commit blobs and reports every file you just pushed as
+`MM` — modified in the index, modified in the worktree — long after the branch
+is clean. It is not a real change and there is nothing to commit; a
+pre-push hook or a passing agent reading that output will say otherwise. Check
+the fact rather than the summary, then clear it:
+
+```sh
+git diff HEAD --stat          # EMPTY = the worktree already matches the commit
+git reset -q -- path/to/file  # drop the stale index entries for your files only
+```
+
+`git diff HEAD` is the honest test; `git status` is not, because it reads the
+index in between. Scope the reset to your own paths — a bare `git reset` is
+only safe once you have confirmed nothing else is staged.
+
 **Verify in an isolated worktree, never in the shared tree.** A `tsc` run in
 the shared tree measures a mix of everyone's in-flight work and will report
 failures that do not exist on the branch, and hide ones that do. A false alarm
