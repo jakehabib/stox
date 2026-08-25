@@ -35,7 +35,10 @@ export function InjuryReport({ leagueId, entries }: { leagueId: string; entries:
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <span className="text-sm truncate">{e.name}</span>
-              {e.isStarter && <span className="text-[9px] uppercase tracking-wider font-semibold text-warn shrink-0">Starter</span>}
+              {/* 10px, matching the identical Starter tag on the roster
+                  table. 9px was the smallest type in the application and the
+                  only place this one label wore a different size. */}
+              {e.isStarter && <span className="text-[10px] uppercase tracking-wider font-semibold text-warn shrink-0">Starter</span>}
             </div>
             <div className="text-[11px] text-muted truncate">{e.type ?? 'Undisclosed'}</div>
           </div>

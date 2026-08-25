@@ -204,7 +204,7 @@ export default async function StandingsPage({ params }: { params: { id: string }
                                 {t.seed}
                               </span>
                             ) : (
-                              <span className="text-[10px] text-muted/60">—</span>
+                              <span className="text-[10px] text-muted">—</span>
                             )}
                           </td>
                           <td>
@@ -282,7 +282,7 @@ function PlayoffPicture({ leagueId, conf }: { leagueId: string; conf: Awaited<Re
         ))}
         {conf.inHunt.length > 0 && (
           <>
-            <div className="px-4 py-1.5 bg-ink/40 text-[10px] uppercase tracking-widest text-bad/70 font-semibold">
+            <div className="px-4 py-1.5 bg-ink/40 text-[10px] uppercase tracking-widest text-bad font-semibold">
               Cut line
             </div>
             {conf.inHunt.map((t) => (

@@ -264,7 +264,13 @@ export default async function RosterPage({ params, searchParams }: { params: { i
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <span className={isStarter ? 'font-semibold' : 'font-medium'}>{p.firstName} {p.lastName}</span>
-                {isStarter && <span className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: teamColor }}>Starter</span>}
+                {/* `.text-team`, not the raw primary. Painting this tag with
+                    the raw teamColor put it at 2.72:1 for Boston's teal and
+                    1.08:1 for the midnight pair — a label nobody could read
+                    on the row it describes. The utility's color-mix clears
+                    5.03:1 for every team, and --team-accent is set here so
+                    it resolves against THIS club, not the house blue. */}
+                {isStarter && <span className="text-[10px] uppercase tracking-wider font-semibold text-team" style={{ ['--team-accent' as never]: teamColor }}>Starter</span>}
               </div>
               {production && <div className="text-[11px] text-muted font-mono mt-0.5 truncate">{production}</div>}
             </div>
@@ -306,7 +312,10 @@ export default async function RosterPage({ params, searchParams }: { params: { i
     if (unit !== lastUnit) {
       bodyRows.push(
         <tr key={`unit-${unit}`}>
-          <td colSpan={8} className={`px-3 text-[11px] font-display font-bold uppercase tracking-[0.18em] text-muted/60 ${lastUnit ? 'pt-5' : 'pt-1'} pb-1`}>
+          {/* Full `muted`. At muted/60 this composited to 2.97:1 on the card
+              surface, and it is the only thing on the page telling you where
+              offence stops and defence starts. */}
+          <td colSpan={8} className={`px-3 text-[11px] font-display font-bold uppercase tracking-[0.18em] text-muted ${lastUnit ? 'pt-5' : 'pt-1'} pb-1`}>
             {unit}
           </td>
         </tr>

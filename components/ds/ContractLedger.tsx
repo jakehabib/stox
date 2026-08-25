@@ -174,15 +174,20 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
                       {formatMoney(r.base ?? 0)}
                     </td>
                   )}
+                  {/* The empty-year dash sits at full `muted`, same as the
+                      dead-money column beside it. The two carried muted/50
+                      and muted/60 — 2.41:1 and 2.92:1 — so one table drew the
+                      same "nothing here" mark in two weights, neither of them
+                      readable. */}
                   {realistic && (
-                    <td className={`py-2 px-3 text-right font-mono tabular-nums border-b border-line/50 ${r.bonus ? 'text-muted' : 'text-muted/50'}`}>
+                    <td className="py-2 px-3 text-right font-mono tabular-nums border-b border-line/50 text-muted">
                       {r.bonus ? formatMoney(r.bonus) : '—'}
                     </td>
                   )}
                   <td className="py-2 px-3 text-right border-b border-line/50">
                     <span className="stat-value text-stat-sm">{formatMoney(r.hit)}</span>
                   </td>
-                  <td className={`py-2 pl-3 text-right font-mono tabular-nums border-b border-line/50 ${r.dead > 0 ? 'text-bad' : 'text-muted/60'}`}>
+                  <td className={`py-2 pl-3 text-right font-mono tabular-nums border-b border-line/50 ${r.dead > 0 ? 'text-bad' : 'text-muted'}`}>
                     {r.dead > 0 ? formatMoney(r.dead) : '—'}
                   </td>
                 </tr>

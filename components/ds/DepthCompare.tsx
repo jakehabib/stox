@@ -304,7 +304,7 @@ export function DepthCompare({ position, depth, candidate, capOn }: {
                   rule for every surface that draws this figure. */}
               <span className="font-mono text-chalk">{formatMoney(capCommitted(depth))}</span>
               <span>committed here</span>
-              <span className="text-line">·</span>
+              <span>·</span>
             </>
           )}
           <span>
@@ -407,8 +407,8 @@ export function DepthCompare({ position, depth, candidate, capOn }: {
                       open rather than filled — the incumbents' figures below
                       have to stay in a straight line to be comparable, and a
                       number in his row would be one this screen invented. */}
-                  {capOn && <span className="text-xs text-muted/50 w-16 text-right font-mono">unsigned</span>}
-                  <span className="text-xs text-muted/50 w-16 text-right">—</span>
+                  {capOn && <span className="text-xs text-muted w-16 text-right font-mono">unsigned</span>}
+                  <span className="text-xs text-muted w-16 text-right">—</span>
                   <span className={`stat-value text-stat-sm w-14 text-right ${ratingCls}`}>{ratingText}</span>
                 </div>
               )}
@@ -437,13 +437,13 @@ export function DepthCompare({ position, depth, candidate, capOn }: {
                       two cells, drawn the same way and in the same widths, as
                       DepthList. */}
                   {capOn && (
-                    <span className={`text-xs w-16 text-right font-mono ${d.capHit === null ? 'text-muted/50' : 'text-muted'}`}>
+                    <span className={`text-xs w-16 text-right font-mono ${d.capHit === null ? 'text-muted' : 'text-muted'}`}>
                       {d.capHit === null ? '—' : formatMoney(d.capHit)}
                     </span>
                   )}
                   <span className="text-xs w-16 text-right">
                     {d.yearsRemaining === null
-                      ? <span className="text-muted/50">—</span>
+                      ? <span className="text-muted">—</span>
                       : d.yearsRemaining <= 0
                         ? <span className="text-bad">expiring</span>
                         : <span className="text-muted">{d.yearsRemaining} yr{d.yearsRemaining === 1 ? '' : 's'}</span>}

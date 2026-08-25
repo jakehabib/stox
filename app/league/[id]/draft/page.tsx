@@ -1731,7 +1731,11 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                         entire return on a season of scouting, and until now it
                         could only be read one row at a time out of the grade
                         column's "us NN". */}
-                    <td className={`stat-value text-stat-sm text-right ${ourRank.has(p.id) ? 'text-accent2' : 'text-muted/50'}`}>
+                    {/* The unranked dash is full `muted`, matching the public
+                        board column immediately to its right. At muted/50 it
+                        measured 2.43:1 and the two adjacent columns printed
+                        the same "no data" mark in two different weights. */}
+                    <td className={`stat-value text-stat-sm text-right ${ourRank.has(p.id) ? 'text-accent2' : 'text-muted'}`}>
                       {ourRank.get(p.id) ?? '—'}
                     </td>
                     <td className="stat-value text-stat-sm text-muted text-right">{read?.rank ?? '—'}</td>
@@ -1784,7 +1788,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                           {ath.rank}{ath.thin && '*'}<span className="text-muted font-normal">/{ath.outOf}</span>
                         </span>
                       ) : (
-                        <span className="text-muted/50">—</span>
+                        <span className="text-muted">—</span>
                       )}
                     </td>
                     {/* Ink off the RANGE, never off view.scoutedOvr — see

@@ -155,7 +155,9 @@ export default async function RivalTeamPage({ params }: { params: { id: string; 
     if (unit !== lastUnit) {
       bodyRows.push(
         <tr key={`unit-${unit}`}>
-          <td colSpan={6} className={`px-3 text-[11px] font-display font-bold uppercase tracking-[0.18em] text-muted/60 ${lastUnit ? 'pt-5' : 'pt-1'} pb-1`}>
+          {/* Full `muted` — same divider, same 2.97:1 problem, as the roster
+              page's own unit rows. Kept identical to that page on purpose. */}
+          <td colSpan={6} className={`px-3 text-[11px] font-display font-bold uppercase tracking-[0.18em] text-muted ${lastUnit ? 'pt-5' : 'pt-1'} pb-1`}>
             {unit}
           </td>
         </tr>

@@ -176,7 +176,7 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order, ca
             <>
               <span className="font-mono text-chalk">{formatMoney(capCommitted(players))}</span>
               <span>committed here</span>
-              <span className="text-line">·</span>
+              <span>·</span>
             </>
           )}
           <span className="label-sm">
@@ -251,7 +251,7 @@ export function DepthChartGroup({ leagueId, teamId, position, players, order, ca
                     formatMoney can hand back here is "$100.0M" at 50px, so the
                     column still never clips what it is given. */}
                 {capOn && (
-                  <span className={`text-xs w-14 text-right font-mono shrink-0 ${p.capHit === null ? 'text-muted/50' : 'text-muted'}`}>
+                  <span className={`text-xs w-14 text-right font-mono shrink-0 ${p.capHit === null ? 'text-muted' : 'text-muted'}`}>
                     {p.capHit === null ? '—' : formatMoney(p.capHit)}
                   </span>
                 )}

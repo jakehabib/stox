@@ -84,7 +84,13 @@ export function ShortlistStar({ leagueId, teamId, playerId, initial, label = fal
       disabled={pending}
       onClick={toggle}
       title={on ? 'Remove from shortlist' : 'Add to shortlist'}
-      className={`text-base leading-none ${on ? 'text-gold' : 'text-line hover:text-muted'}`}
+      /* The empty star was `text-line`, which is the BORDER token: 1.36:1 on
+         the board's surface. A control the user is meant to find was, in
+         practice, invisible until the pointer happened to cross it. `muted`
+         is the same token the row's other secondary figures use and measures
+         5.82:1; the gold filled state stays the loud one, so the on/off
+         reading is unchanged — only the off state is now actually there. */
+      className={`text-base leading-none ${on ? 'text-gold' : 'text-muted hover:text-chalk'}`}
     >
       {star(on ? '★' : '☆', '')}
     </button>

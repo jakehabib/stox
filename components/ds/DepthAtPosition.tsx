@@ -93,13 +93,13 @@ export function DepthList({ position, depth, capOn, subjectNote }: {
                 than $0.0M and "expiring": both of those are statements about a
                 deal, and there is no deal here to make them about. */}
             {capOn && (
-              <span className={`text-xs w-16 text-right font-mono ${d.capHit === null ? 'text-muted/50' : 'text-muted'}`}>
+              <span className={`text-xs w-16 text-right font-mono ${d.capHit === null ? 'text-muted' : 'text-muted'}`}>
                 {d.capHit === null ? '—' : formatMoney(d.capHit)}
               </span>
             )}
             <span className="text-xs w-16 text-right">
               {d.yearsRemaining === null
-                ? <span className="text-muted/50">—</span>
+                ? <span className="text-muted">—</span>
                 : d.yearsRemaining <= 0
                   ? <span className="text-bad">expiring</span>
                   : <span className="text-muted">{d.yearsRemaining} yr{d.yearsRemaining === 1 ? '' : 's'}</span>}
@@ -188,7 +188,7 @@ export function DepthAtPosition({ position, depth, capOn }: {
             <>
               <span className="font-mono text-chalk">{formatMoney(capCommitted(depth))}</span>
               <span>committed here</span>
-              <span className="text-line">·</span>
+              <span>·</span>
             </>
           )}
           <span>

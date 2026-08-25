@@ -326,9 +326,9 @@ function Row({
                 {text == null
                   // No denominator — he has no rate, which is a different fact
                   // from a rate of zero. A dash says so; "0.0" would not.
-                  ? <span className="text-muted/50" title="No attempts to compute this from">—</span>
+                  ? <span className="text-muted" title="No attempts to compute this from">—</span>
                   : zero && !isCareer
-                    ? <span className="text-muted/50">0</span>
+                    ? <span className="text-muted">0</span>
                     : text}
               </td>
             );
@@ -336,7 +336,7 @@ function Row({
           {ovrCol && (
             <td className={`${cell} text-right font-mono tabular-nums`}>
               {season.endOvr == null
-                ? <span className="text-muted/50" title="Nobody wrote his rating down that season">—</span>
+                ? <span className="text-muted" title="Nobody wrote his rating down that season">—</span>
                 : season.endOvr}
             </td>
           )}
