@@ -9,7 +9,9 @@ import { ratingColorForRange, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE } from '@/lib/tuning';
 import { bandCutoffs, consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
-import { draftOrderContext, pickNumbers, projectionAppliesTo, draftIsStarted, liveDraftClassYear, rookieCapOutlook, overallPickNumber } from '@/lib/draft';
+import { classAthleticRanks } from '@/lib/combineRank';
+import type { CombineTesting } from '@/lib/gen/prospectProfile';
+import { draftOrderContext, pickNumbers, projectionAppliesTo, draftIsStarted, liveDraftClassYear, draftClassScope, rookieCapOutlook, overallPickNumber } from '@/lib/draft';
 import { needSeverity, teamNeeds } from '@/lib/ai/gm';
 import { loadWorkoutSlots } from '@/lib/workouts';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -45,7 +47,7 @@ import { positionBadgeClass } from '@/components/ds/positionColor';
 import { Tooltip } from '@/components/Tooltip';
 import { define, tip } from '@/lib/glossary';
 
-type SortKey = 'consensus' | 'ours' | 'pos' | 'ovr' | 'age' | 'potential';
+type SortKey = 'consensus' | 'ours' | 'pos' | 'ovr' | 'age' | 'potential' | 'athletic';
 
 /** How many selections back the run detector looks. [TUNE] */
 const RUN_WINDOW = 12;
@@ -302,22 +304,14 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // whole class. In the DRAFT phase the draft on screen is this season's, and
   // everywhere else the next one to run is the right answer.
   const boardDraftYear = league.phase === 'DRAFT' ? league.seasonYear : upcomingDraftYear;
-  const takenThisDraft = boardDraftYear === null ? [] : await prisma.draftPick.findMany({
-    where: { leagueId: league.id, year: boardDraftYear, used: true, playerId: { not: null } },
-    select: { playerId: true },
-  });
-  // The class as one object — still on the board plus already called. Carries
-  // the identity fields too, because the broadcast below names men who are no
-  // longer in `pool` at all: the feed, the pick on screen, and the run counts
-  // are all about players this draft has removed from it.
+  // The class as one object — still on the board plus already called (the
+  // filter itself lives in lib/draft.ts, because the player card ranks a man
+  // against the same pool and two spellings of "the class" would drift).
+  // Carries the identity fields too, because the broadcast below names men who
+  // are no longer in `pool` at all: the feed, the pick on screen, and the run
+  // counts are all about players this draft has removed from it.
   const classPool = await prisma.player.findMany({
-    where: {
-      leagueId: league.id,
-      OR: [
-        { draftYear: classYear, isDraftee: true },
-        { id: { in: takenThisDraft.map((p) => p.playerId!) } },
-      ],
-    },
+    where: await draftClassScope(league.id, classYear, boardDraftYear),
     select: {
       id: true, firstName: true, lastName: true, position: true, age: true, college: true,
       heightIn: true, weightLb: true, trueOvr: true, potential: true,
@@ -326,6 +320,21 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     },
   });
   const consensus = consensusBoardMap(classPool, { teams: LEAGUE.TEAM_COUNT, rounds: settings.draftRounds });
+
+  // THE ATHLETIC RANK. Public in a way nothing else on this table is: the whole
+  // league stood over the same stopwatch, and the six numbers behind it are
+  // printed in full on every prospect's card. So it is never fogged and it does
+  // not care what this club has scouted — see lib/combineRank.ts for how each
+  // drill is placed inside the man's own position group before the averages are
+  // ranked against the class, and for what that does and does not give away.
+  //
+  // Ranked over the SAME pool the consensus is, drafted men included, for the
+  // same reason: a prospect's forty does not get faster because somebody else
+  // came off the board, so his athletic rank must not move when one does.
+  const athletic = classAthleticRanks(classPool.map((p) => {
+    const testing = readJson<Partial<CombineTesting>>(p.combineTesting, {});
+    return { id: p.id, position: p.position, testing: testing.venue ? (testing as CombineTesting) : null };
+  }));
 
   // Files on the rest of the class, folded into the same map the board rows
   // read from. `reports` above only covers the slice on screen; our own board
@@ -370,7 +379,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     return null;
   };
 
-  const sortKey: SortKey = (['consensus', 'ours', 'pos', 'ovr', 'age', 'potential'] as SortKey[]).includes(searchParams.sort as SortKey)
+  const sortKey: SortKey = (['consensus', 'ours', 'pos', 'ovr', 'age', 'potential', 'athletic'] as SortKey[]).includes(searchParams.sort as SortKey)
     ? (searchParams.sort as SortKey) : 'consensus';
   const dir = searchParams.dir === 'asc' ? 1 : -1;
 
@@ -383,6 +392,10 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       // Same direction rule as the consensus column, and men with no file of
       // our own sort to the bottom either way round rather than to the top.
       case 'ours': return ((ourRank.get(a.p.id) ?? Infinity) - (ourRank.get(b.p.id) ?? Infinity)) * -dir;
+      // Rank 1 is the best tester, so the same sign flip the two rank columns
+      // above take. Men with nothing on file sort to the bottom either way
+      // round — an untested prospect is unknown, not slow.
+      case 'athletic': return ((athletic.get(a.p.id)?.rank ?? Infinity) - (athletic.get(b.p.id)?.rank ?? Infinity)) * -dir;
       case 'ovr': return (a.view.scoutedOvr - b.view.scoutedOvr) * dir;
       case 'age': return (a.p.age - b.p.age) * dir;
       case 'potential': {
@@ -1631,6 +1644,15 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th><Link href={sortHref('pos')} scroll={false} prefetch={false} className="hover:text-chalk">Pos{sortKey === 'pos' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
                 <th>Name</th>
                 <th><Link href={sortHref('age')} scroll={false} prefetch={false} className="hover:text-chalk">Age{sortKey === 'age' && (dir === -1 ? ' ▾' : ' ▴')}</Link></th>
+                {/* Between the man's own facts and the club's opinion of him,
+                    which is where it belongs: everything left of here is
+                    measured and everything right of here is judged. */}
+                <th className="text-right">
+                  <span className="inline-flex items-center gap-1">
+                    <Link href={sortHref('athletic')} scroll={false} prefetch={false} className="hover:text-chalk">Athletic{sortKey === 'athletic' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
+                    <Tooltip placement="bottom" text={`${tip('athleticRank')} ${athletic.size} men in this class have testing numbers on file.`} />
+                  </span>
+                </th>
                 <th>
                   <span className="inline-flex items-center gap-1">
                     <Link href={sortHref('ovr')} scroll={false} prefetch={false} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
@@ -1694,6 +1716,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 const potentialForLabel = view.potentialRevealed ? p.potential : (view.potLow + view.potHigh) / 2;
                 const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0, confidence: view.confidence });
                 const read = consensus.get(p.id);
+                const ath = athletic.get(p.id);
                 // "Our file vs the board" goes through ownGradeFor, never a raw
                 // scoutedOvr. The board grade blends current AND ceiling; a
                 // scouted OVR is current only, so subtracting one from the
@@ -1743,6 +1766,21 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                       </div>
                     </td>
                     <td className="text-muted">{p.age}</td>
+                    {/* Muted, and deliberately: it is a real figure and it is
+                        not a grade. A dash is a man nobody has timed, never a
+                        last place he did not earn. */}
+                    <td className="stat-value text-stat-sm text-right">
+                      {ath ? (
+                        <span
+                          className={ath.thin ? 'text-muted' : 'text-chalk'}
+                          title={ath.thin ? `Averaged over ${ath.events} drills — he ran a shorter workout than the rest of his position group, so the figure rests on less.` : undefined}
+                        >
+                          {ath.rank}{ath.thin && '*'}
+                        </span>
+                      ) : (
+                        <span className="text-muted/50">—</span>
+                      )}
+                    </td>
                     {/* Ink off the RANGE, never off view.scoutedOvr — see
                         ratingColorForRange (lib/ratings.ts) for the measurement
                         that killed the old call. Revealed rows pass

@@ -5,7 +5,8 @@ import { readJson } from '@/lib/json';
 import { buildScoutedView } from '@/lib/scouting';
 import { loadScoutMods } from '@/lib/dynasty';
 import { ratingColor, playerLabel, positionMoves, relatedPositions, POSITION_WEIGHTS, ATTRIBUTE_BY_KEY, AttrMap } from '@/lib/ratings';
-import { rankProspectCombine, ordinal, CombineMeasurable } from '@/lib/combineRank';
+import { rankProspectCombine, classAthleticRanks, ordinal, CombineMeasurable } from '@/lib/combineRank';
+import { draftClassScope } from '@/lib/draft';
 import { formatMoney, capHit, capCommitted, askingPrice, marketValue, proration, prorationYears, restructureContract } from '@/lib/cap';
 import { classifyContractValue } from '@/lib/analytics';
 import { generateScoutingReport } from '@/lib/scoutingProse';
@@ -213,24 +214,35 @@ export default async function PlayerPage({
   const combineRaw = player.isDraftee ? readJson<Partial<CombineTesting>>(player.combineTesting, {}) : null;
   const combineTesting = combineRaw?.venue ? (combineRaw as CombineTesting) : null;
   // Testing numbers are PUBLIC — every team watches the same combine — so
-  // this ranks against the whole position group in the class with no fog
-  // gating, unlike the scouted attribute ranges above. draftYear scopes the
-  // peer group to prospects generated in the same class, not every CB who's
-  // ever passed through isDraftee:true.
-  const combinePeers = combineTesting && player.draftYear != null
-    ? await prisma.player.findMany({
-        where: { leagueId: league.id, isDraftee: true, position: player.position, draftYear: player.draftYear },
-        select: { combineTesting: true },
+  // these rank with no fog gating, unlike the scouted attribute ranges above.
+  //
+  // THE POOL IS THE WHOLE CLASS, drafted men included, and it is the pool the
+  // draft board ranks against (draftClassScope). It used to be `isDraftee:
+  // true` alone, which is only the men still on the board — so every rank on
+  // this card climbed as other clubs made picks, and the same prospect read
+  // one way here and another way on the board. A forty does not get faster
+  // because somebody else's name was called.
+  const classTesting = combineTesting && player.draftYear != null
+    ? (await prisma.player.findMany({
+        where: await draftClassScope(league.id, player.draftYear, league.phase === 'DRAFT' ? league.seasonYear : null),
+        select: { id: true, position: true, combineTesting: true },
+      })).map((p) => {
+        const c = readJson<Partial<CombineTesting>>(p.combineTesting, {});
+        return { id: p.id, position: p.position, testing: c.venue ? (c as CombineTesting) : null };
       })
     : [];
   const combineRanks = combineTesting
     ? rankProspectCombine(
         combineTesting,
-        combinePeers
-          .map((p) => readJson<Partial<CombineTesting>>(p.combineTesting, {}))
-          .filter((c): c is CombineTesting => !!c.venue),
+        classTesting
+          .filter((p) => p.position === player.position && p.testing)
+          .map((p) => p.testing!),
       )
     : {};
+  // The six finishes above as one figure, ordered against the class — the same
+  // read the draft board's Athletic column carries, off the same pool, so the
+  // two screens cannot disagree about the same man.
+  const athletic = combineTesting ? classAthleticRanks(classTesting).get(player.id) ?? null : null;
   const weeksElapsed = collegeWeeksElapsed(league);
   const collegeToDate = collegeProfile ? aggregateCollegeGames(collegeProfile.games, weeksElapsed) : null;
   const buzzNote = collegeProfile
@@ -1068,18 +1080,37 @@ export default async function PlayerPage({
           <div className="panel overflow-hidden">
             {/* Testing gets its own full-width band of equal tiles — six
                 measurements read as one workout, not a cramped 3x2 grid.
-                Its own guard now: the college line above outlives the draft,
-                but combine ranks are computed against prospects still on the
-                board, so they stop being meaningful once the class is gone. */}
+                Its own guard now: older saves carry an empty testing blob
+                where the college line still parses, and half a band of dashes
+                is worse than no band. */}
             {combineTesting && (<>
             <div className="px-5 pt-4 pb-3 border-b border-line/60">
               <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                <div className="label-sm inline-flex items-center gap-1.5">
-                  {combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day'} Testing
-                  {/* Downward, every one of these: the testing band is the FIRST
-                      thing in a `panel overflow-hidden`, so an upward bubble
-                      opens straight out of the top of the card and is cut. */}
-                  <Tooltip placement="bottom" text={combineTesting.venue === 'COMBINE' ? tip('combineTesting') : tip('proDay')} />
+                <div className="inline-flex items-baseline gap-x-4 gap-y-1 flex-wrap">
+                  <div className="label-sm inline-flex items-center gap-1.5">
+                    {combineTesting.venue === 'COMBINE' ? 'NFL Combine' : 'Pro Day'} Testing
+                    {/* Downward, every one of these: the testing band is the FIRST
+                        thing in a `panel overflow-hidden`, so an upward bubble
+                        opens straight out of the top of the card and is cut. */}
+                    <Tooltip placement="bottom" text={combineTesting.venue === 'COMBINE' ? tip('combineTesting') : tip('proDay')} />
+                  </div>
+                  {/* The six tiles below say how he did drill by drill; this is
+                      the one line that says where that leaves him in the class.
+                      It sits with the workout rather than up in the header
+                      because it is a testing number, not a grade — and the
+                      draft board carries the same figure, so it is not said
+                      twice on this page. */}
+                  {athletic && (
+                    <div className="text-xs inline-flex items-center gap-1.5 whitespace-nowrap">
+                      <span className="text-muted">Athletic</span>
+                      <span className="font-mono text-chalk">{ordinal(athletic.rank)}</span>
+                      <span className="text-muted">
+                        of {athletic.outOf} in the class
+                        {athletic.thin && ` — on ${athletic.events} drills, a shorter workout than his group runs`}
+                      </span>
+                      <Tooltip placement="bottom" text={tip('athleticRank')} />
+                    </div>
+                  )}
                 </div>
                 <div className="text-xs text-muted">
                   {combineTesting.venue === 'COMBINE'

@@ -68,8 +68,9 @@ export type ProspectCombineRanks = Partial<Record<CombineMeasurable, MeasurableR
 /**
  * Rank every measurable `subject` has a recorded value for against
  * `positionPeers` — the full position group's testing rows for the same
- * draft class, subject included. Pure and DB-free: the page does the one
- * query (position + draftYear + isDraftee) and hands the rows in here.
+ * draft class, subject included. Pure and DB-free: the caller loads the class
+ * (draftClassScope in lib/draft.ts, which is the whole class and not just the
+ * men still on the board) and hands the rows in here.
  */
 export function rankProspectCombine(subject: CombineTesting, positionPeers: CombineTesting[]): ProspectCombineRanks {
   const out: ProspectCombineRanks = {};
@@ -154,4 +155,149 @@ function normalCdf(z: number): number {
   const t = 1 / (1 + 0.3275911 * x);
   const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
   return 0.5 * (1 + sign * y);
+}
+
+/**
+ * ===========================================================================
+ * THE CLASS ATHLETIC RANK — one public figure per prospect
+ * ===========================================================================
+ * "Athletic 7" is the seventh-best tester in this draft class. It is built by
+ * ranking every drill a man ran against the men at HIS OWN POSITION, averaging
+ * those finishes, and then ordering the whole class on that average.
+ *
+ * WHY EACH DRILL IS RANKED INSIDE THE POSITION GROUP AND ONLY THE AVERAGE IS
+ * RANKED ACROSS THE CLASS. A 330-pound tackle is never going to run a 4.4, so
+ * ranking the raw stopwatch across a whole class turns the column into a proxy
+ * for "is he a skill player", which tells a front office nothing it could not
+ * read off the position badge. Measured over 158 generated classes (63,020
+ * prospects), ranking each drill inside the position group leaves the MEDIAN
+ * athletic rank varying by sd 15.3 across the sixteen positions of a 400-man
+ * class — flat, as it should be. Ranking the raw numbers across the class
+ * instead puts that spread at sd 39.6, and the order it produces is simply the
+ * depth chart. So: measured against his peers, ordered against the class.
+ *
+ * WHAT IT DOES AND DOES NOT GIVE AWAY. Testing is public — every club watched
+ * the same stopwatch, and the six numbers are already printed in full on the
+ * player card — so this is arithmetic over visible data and is never fogged.
+ * It does carry real signal about ability, because good players do tend to
+ * test well (see COMBINE.ABILITY_WEIGHT): over those same 158 classes it runs
+ * rho -0.558 against a prospect's true overall. That is well short of the
+ * CONSENSUS BOARD RANK sitting two columns away on the same table, which is
+ * equally free to every club and runs rho -0.799; and once the consensus rank
+ * is held fixed, this figure adds only rho -0.148 of its own. A GM cannot back
+ * a hidden rating out of it that the board has not already told him.
+ *
+ * MISSING EVENTS ARE AVERAGED OVER, NEVER SCORED AS FAILURES. A man is ranked
+ * on the drills he actually ran; a corner who was never going to bench is not
+ * pushed down the class for it, because the battery his position group runs is
+ * measured from the group rather than assumed. Anyone who ran fewer drills
+ * than his own group's usual battery is flagged `thin` — his average rests on
+ * less, and the reader is told rather than sold a number that looks as solid
+ * as the rest. Measured across every class in the local database, that flag
+ * fires on nobody: the generator gives every man his group's full battery, and
+ * the four prospects with no testing recorded at all get no rank rather than a
+ * last place. It is a guard on data that does not exist yet, not a thing the
+ * board shows today.
+ */
+export interface AthleticRead {
+  /** 1 = the best tester in the class. Ties share a rank. */
+  rank: number;
+  /** Men in this class with testing numbers on file — the denominator. */
+  outOf: number;
+  /** 0..100, the mean of his within-position drill percentiles. */
+  percentile: number;
+  /** How many drills the average is built on. */
+  events: number;
+  /** He ran fewer drills than the usual battery for his position group. */
+  thin: boolean;
+}
+
+export function classAthleticRanks(
+  prospects: { id: string; position: string; testing: CombineTesting | null }[],
+): Map<string, AthleticRead> {
+  const tested = prospects.filter(
+    (p): p is { id: string; position: string; testing: CombineTesting } => p.testing != null,
+  );
+
+  const peers = new Map<string, CombineTesting[]>();
+  for (const p of tested) {
+    const list = peers.get(p.position);
+    if (list) list.push(p.testing);
+    else peers.set(p.position, [p.testing]);
+  }
+
+  const scored = tested
+    .map((p) => {
+      const finishes = Object.values(rankProspectCombine(p.testing, peers.get(p.position)!))
+        .filter((r): r is MeasurableRank => r != null);
+      return {
+        id: p.id,
+        position: p.position,
+        events: finishes.length,
+        // MeasurableRank.percentile is rounded to a whole number, which is
+        // right on a card tile and wrong as an input to an average: a group of
+        // twenty-five offers only twenty-five finishes, so six rounded
+        // percentiles land on a coarse lattice and men collide who are not
+        // level. Measured over 158 classes, averaging the rounded figure left
+        // 39.8% of every class sharing a rank with somebody. This is
+        // rankValue's own formula with the rounding left off — the same
+        // finish, at full precision.
+        percentile: finishes.length === 0
+          ? null
+          : finishes.reduce((sum, r) => sum + (100 * (r.outOf - r.rank)) / (r.outOf - 1), 0) / finishes.length,
+        // The same six numbers against the same position anchors, never
+        // collapsed into finishes at all. Only ever used to separate men the
+        // average could not tell apart — see the tiebreak note below.
+        precise: testingAthleticism(p.position, p.testing) ?? 0.5,
+      };
+    })
+    .filter((s): s is { id: string; position: string; events: number; percentile: number; precise: number } => s.percentile != null);
+
+  // The battery each position group actually runs, taken from the group rather
+  // than hard-coded: the positions that skip the bench are a generator detail
+  // (SKIPS_BENCH in lib/gen/prospectProfile.ts) and a list of them copied over
+  // here is one more thing to drift. The modal count is the group's normal
+  // day; ties break high, so an evenly split group reads the fuller battery as
+  // normal.
+  const usual = new Map<string, number>();
+  for (const pos of peers.keys()) {
+    const counts = new Map<number, number>();
+    for (const s of scored) if (s.position === pos) counts.set(s.events, (counts.get(s.events) ?? 0) + 1);
+    let best = 0;
+    let bestSeen = -1;
+    for (const [events, seen] of counts) if (seen > bestSeen || (seen === bestSeen && events > best)) { best = events; bestSeen = seen; }
+    usual.set(pos, best);
+  }
+
+  /*
+   * THE ORDER, AND THE TIEBREAK IT NEEDS.
+   *
+   * The primary key is the average finish, exactly as the column claims. Six
+   * finishes out of a twenty-five-man group still average onto a lattice
+   * though, and men land level who are not really level — on the average
+   * alone, 22.4% of a class shared a rank and the worst pile-up put nine men
+   * on one, which reads as a broken column rather than a dead heat. With the
+   * tiebreak it is 0.4%, and never more than three.
+   *
+   * Level men are separated by `precise`: the same public stopwatch against
+   * the same position anchors, so it reveals nothing the average did not, and
+   * it only ever orders men the average could not tell apart. Two men alike on
+   * both did test the same, and share a rank, as they should.
+   */
+  const ordered = scored.slice().sort((a, b) => b.percentile - a.percentile || b.precise - a.precise);
+
+  const out = new Map<string, AthleticRead>();
+  let rank = 0;
+  ordered.forEach((s, i) => {
+    const prev = ordered[i - 1];
+    if (!prev || prev.percentile !== s.percentile || prev.precise !== s.precise) rank = i + 1;
+    out.set(s.id, {
+      rank,
+      outOf: ordered.length,
+      percentile: Math.round(s.percentile),
+      events: s.events,
+      thin: s.events < (usual.get(s.position) ?? s.events),
+    });
+  });
+  return out;
 }

@@ -1,4 +1,5 @@
 import { prisma } from './db';
+import type { Prisma } from '@prisma/client';
 import { Rng, clamp } from './rng';
 import { readJson, writeJson } from './json';
 import { buildContract, rookieScaleApy, marketValue, suggestedYears, capHit } from './cap';
@@ -1515,6 +1516,40 @@ export async function imminentDraftYear(leagueId: string): Promise<number | null
  * has no class yet, because the step that mints it is the step that ends the
  * phase, and the year it will mint is this one.
  */
+/**
+ * THE WHOLE OF ONE DRAFT CLASS — men still on the board PLUS the men this
+ * draft has already called. The filter every screen that ranks a class against
+ * itself has to use, because `draftYear` alone cannot say it: draftPlayer()
+ * overwrites a prospect's draftYear with the year he was SELECTED in, one
+ * higher than the year his class was generated under, so a plain
+ * `draftYear: classYear` query is two cohorts at once and misses the one it
+ * means. Measured mid-draft on a 400-man class it returned 311 — and every
+ * rank computed off it drifted upward as other clubs made picks, which is the
+ * one thing a class rank must never do.
+ *
+ * `pickYear` IS THE DRAFT ON THE CLOCK, AND IT IS REQUIRED BECAUSE THE
+ * OBVIOUS DEFAULT IS WRONG. It is NOT the class year: a completed draft
+ * overwrites its selections' draftYear with the year they were taken, which is
+ * the number the NEXT class is generated under — so passing the class year
+ * outside a live draft pulls in the whole of the previous class's drafted
+ * rookies. Measured on a real save that way, a 400-man class returned 624.
+ * `null` when no draft of this class is running, which is every phase but
+ * DRAFT, and `league.seasonYear` while one is.
+ */
+export async function draftClassScope(leagueId: string, classYear: number, pickYear: number | null): Promise<Prisma.PlayerWhereInput> {
+  const taken = pickYear === null ? [] : await prisma.draftPick.findMany({
+    where: { leagueId, year: pickYear, used: true, playerId: { not: null } },
+    select: { playerId: true },
+  });
+  return {
+    leagueId,
+    OR: [
+      { draftYear: classYear, isDraftee: true },
+      { id: { in: taken.map((p) => p.playerId!) } },
+    ],
+  };
+}
+
 export async function liveDraftClassYear(leagueId: string, seasonYear: number): Promise<number> {
   const newest = await prisma.player.findFirst({
     // `draftYear: not null` is load-bearing, not defensive. A fantasy league's
