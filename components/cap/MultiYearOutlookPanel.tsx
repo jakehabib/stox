@@ -205,43 +205,47 @@ export function MultiYearOutlookPanel({ sheet, teamId, teamAbbr, accent }: {
   const ticks: number[] = [];
   for (let v = 0; v <= scaleMax + 1; v += TICK) ticks.push(v);
 
-  const anyDead = years.some((y) => y.deadTotal > 0);
-  const deadInWindow = years.reduce((s, y) => s + y.deadTotal, 0);
-
   /**
-   * THE BRIEF, and the reason the honesty sentence is in it rather than in a
-   * tooltip. This is the first thing on the Advanced tab and the place a
-   * reader forms his impression of the next four years, so the caveat has to
-   * travel with the impression.
+   * THE BRIEF, cut to the one fact the chart cannot draw.
    *
-   * The far column is a handful of men under contract, not a squad — a median
-   * of 8 across every club in the database — so a bare "$235.4M free in 2043"
-   * reads as money spare when it is really money he has to build a roster
-   * with. It names the count and prices the empty slots at the league minimum,
-   * which is a floor the game genuinely enforces rather than a guess at what
-   * those men will cost. No such guess exists in this game and inventing one
-   * here would be the lying metric with a helpful face on it.
+   * It used to open by restating the first and last columns' room in prose,
+   * then name the dead money in the window, then point at the panel below.
+   * The chart prints every one of those: the room is each column's own
+   * headline in far bigger type, the dead total is under each season on the
+   * X axis, and the ceiling is now on the step line itself. The app owner,
+   * reading it: *"it reads very longwinded and confusing"*. He is right, and
+   * the reason is that four of its five clauses were the picture in words.
    *
-   * "As the books stand" because every figure is today's roster told forward:
-   * no draft class, no free agent, no extension he has not signed yet. And a
-   * club over the ceiling is a real state on this page — the compliance block
-   * fires on exactly that — so the sentence has to survive a negative;
-   * "leaves you -$71.3M under the ceiling" is not English.
+   * What survives is the part the picture genuinely lies about. The far
+   * column is a handful of men under contract, not a squad — a median of 8
+   * across every club in the database — so its tall ROOM figure reads as
+   * money spare when it is really money he has to build a roster with. It is
+   * priced at the league minimum, a floor the game actually enforces, rather
+   * than at a guess about what those men will cost; no such guess exists in
+   * this game and inventing one here would be the lying metric with a
+   * helpful face on it.
+   *
+   * Worded off the COLUMN rather than off its room, so it survives a club
+   * over the ceiling — "2029's room is 5 men under contract" is not English
+   * when the room is negative, and the compliance block on this page fires on
+   * exactly that state.
    */
-  const roomPhrase = (v: number) => (v >= 0 ? `${formatMoney(v)} under the ceiling` : `${formatMoney(-v)} OVER the ceiling`);
-  const trend = last.room > first.room
-    ? `opens up to ${last.room >= 0 ? formatMoney(last.room) : roomPhrase(last.room)} by ${last.year}`
-    : `tightens to ${last.room >= 0 ? formatMoney(last.room) : roomPhrase(last.room)} by ${last.year}`;
-
-  /**
-   * THE SCALE, NAMED. Every height on this panel is drawn against the ceiling,
-   * and it is the one line that makes the league's cap-growth rung readable as
-   * a number rather than as four steps a reader has to measure by eye — a FLAT
-   * league says so in words instead of looking like a rendering fault.
-   */
-  const ceilingLine = first.capTotal === last.capTotal
-    ? `Ceiling flat at ${formatMoney(first.capTotal)}`
-    : `Ceiling ${formatMoney(first.capTotal)} → ${formatMoney(last.capTotal)}`;
+  const brief = last.openSlots > 0
+    ? (
+        <>
+          The {last.year} column is <strong className="text-chalk font-semibold">{last.menSigned} {last.menSigned === 1 ? 'man' : 'men'} under contract, not {rosterFloor}</strong>
+          {' '}— filling the other {last.openSlots} at the league minimum alone takes {formatMoney(last.floorCost)} of it.
+        </>
+      )
+    : (
+        // A FULL SQUAD NEEDS THE OPPOSITE SENTENCE, not the same one with a
+        // zero in it. Built off `openSlots`, the earlier phrasing read "46 men
+        // under contract, not 46" on a club at the floor and "47 men under
+        // contract, not 46" on one above it — the caveat firing at exactly the
+        // club it does not apply to. There is no misreading to correct here,
+        // so this says so and stops.
+        <>The {last.year} column is a full squad under contract, so the room left there is genuinely spare.</>
+      );
 
   return (
     <div className="panel relative" style={{ ['--team-accent' as never]: accent }}>
@@ -273,28 +277,15 @@ export function MultiYearOutlookPanel({ sheet, teamId, teamAbbr, accent }: {
               <Tooltip text={tip('capSpace')} />
             </h2>
           </div>
-          {/* NOT a second printing of column 0's figure, which is what stood
-              here before and is the duplication principle 7 is about — the
-              room in {first.year} is already that column's own headline and
-              the opening clause of the sentence below. This is the SCALE. */}
-          <div className="shrink-0 font-mono text-[11px] text-muted whitespace-nowrap">{ceilingLine}</div>
+          {/* THE CEILING SUMMARY THAT STOOD HERE IS ON THE PLOT NOW. It read
+              "Ceiling flat at $255.0M" or "Ceiling $255.0M → $270.4M", which
+              made a climbing cap something the reader had to hold two ends of
+              in his head and interpolate. Each step line now carries its own
+              season's ceiling, so the number is where the line is. Printing
+              it here as well would be that figure four times over. */}
         </div>
 
-        <p className="text-sm text-muted leading-relaxed mt-3">
-          As the books stand, {first.year} leaves you {roomPhrase(first.room)} and the sheet {trend}.
-          {' '}That last column is <strong className="text-chalk font-semibold">{last.menSigned} {last.menSigned === 1 ? 'man' : 'men'} under contract, not {rosterFloor}</strong>
-          {last.openSlots > 0
-            ? ` — filling the other ${last.openSlots} slots at the league minimum alone would take ${formatMoney(last.floorCost)} of it, before a single draft pick or free agent is paid what he is actually worth.`
-            : ' — a full squad, so what is left there is genuinely spare.'}
-          {/* NO EQUALITY CLAIM between this figure and the one the bottom panel
-              heads with, because they are not the same figure: `deadInWindow`
-              is the four columns drawn here, and the runway's headline is the
-              WHOLE bill including anything dated past them. Saying "the panel
-              below is that figure by name" would have put $59.0M here over a
-              $61.8M headline three panels down — a small lie, and exactly the
-              kind this page keeps having to be rescued from. */}
-          {anyDead && ` ${formatMoney(deadInWindow)} of it is dead money and cannot be released; every charge is named at the foot of this tab.`}
-        </p>
+        <p className="text-sm text-muted leading-relaxed mt-3">{brief}</p>
 
         {/* THE TWO WEEKS WHERE THE LEAGUE CLOCK AND THE BOOKS DISAGREE, said
             out loud rather than left for a GM to trip over. Through OFFSEASON
@@ -396,6 +387,50 @@ export function MultiYearOutlookPanel({ sheet, teamId, teamAbbr, accent }: {
                   className="absolute h-[2px] rounded-[1px] bg-chalk/90 z-30"
                   style={{ bottom: `${pct(y.capTotal)}%`, left: `${colLeft(i)}%`, width: `${colW}%` }}
                 />
+              ))}
+
+              {/* THE CEILING, IN DOLLARS, SITTING ON ITS OWN LINE.
+                  The step already draws WHERE the limit is; this says WHAT it
+                  is, per season. The app owner: *"i want to make it easy to
+                  see the headline # especially as the cap is moving up"* — a
+                  climbing ceiling was four unlabelled steps and one summary
+                  line in the header quoting only its two ends, so every middle
+                  season's limit had to be interpolated by eye.
+
+                  ABOVE the line, never below: below is the room figure's
+                  airspace and the top of the column it belongs to. Above is
+                  the plot's own top padding, which nothing else uses and which
+                  `scaleMax`'s 6% headroom keeps clear even on the season that
+                  sets the scale. `bottom` is the step's own `pct(capTotal)`
+                  plus the line's 2px, so the label rides the line it names
+                  rather than a second computation of where that line is.
+
+                  AT THE END OF THE LINE, NOT CENTRED ON IT, because centred
+                  is where the ROOM figure already lives. The room label sits
+                  ~33px above the top of its column, and the gap between that
+                  column and its step IS the room — so any club inside about
+                  $38M of the ceiling on a $275M scale would have had the two
+                  figures land on each other, and a club over the ceiling has
+                  its room label above the step by definition. Labelling the
+                  line at its own end clears both in every case. Full-strength
+                  chalk on an over-cap season, where the label falls on the red
+                  the column broke through the line with rather than on the
+                  empty plot.
+
+                  Not `aria-hidden`, unlike the step: the step is a mark and
+                  this is the number. The hover bubble names the same ceiling
+                  in a sentence, which is a different reading of it, not a
+                  duplicate of this one. */}
+              {years.map((y, i) => (
+                <span
+                  key={`ceiling-${y.year}`}
+                  data-capb="ceiling"
+                  data-year={y.year}
+                  className={`absolute z-30 text-right pr-[3px] pointer-events-none font-mono text-[9px] sm:text-[11px] leading-none tabular-nums whitespace-nowrap ${y.room < 0 ? 'text-chalk' : 'text-chalk/75'}`}
+                  style={{ bottom: `calc(${pct(y.capTotal)}% + 5px)`, left: `${colLeft(i)}%`, width: `${colW}%` }}
+                >
+                  {formatMoney(y.capTotal)}
+                </span>
               ))}
 
               {/* THE HOVER LAYER, which carries the split the column itself
