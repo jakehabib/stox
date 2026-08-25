@@ -1,3 +1,4 @@
+import type { Player, Contract, DraftPick } from '@prisma/client';
 import { prisma } from './db';
 import { Rng } from './rng';
 import { AI, LEAGUE, TRADE_VALUE, PICK_VALUE_CHART } from './tuning';
@@ -147,78 +148,151 @@ export function effectiveSlot(pick: { year: number; slot: number; originalTeamId
   return Math.min(LEAGUE.TEAM_COUNT, Math.max(1, Math.round(middle + (projected - middle) * kept)));
 }
 
-async function assetValues(
-  assets: TradeAsset[],
-  forTeamId: string,
-  profile: ReturnType<typeof parseGmProfile>,
-  needs: Record<string, number>,
-  currentYear: number,
-  /** Seed prefix for per-asset valuation noise — see the block in evaluateTrade. */
-  noisePrefix: string,
-  /** Which draft is next, which one's slots are real, and the standings behind any projection. */
-  draft: DraftOrderContext,
-  capMode: CapMode,
-  scarcity: Record<string, number>,
-  /** The AI club's roster and live cap space — what turns "how good is he" into "what does he do to US". */
-  club: { roster: RosterPlayer[]; capSpace?: number },
-  /**
-   * Which way this pile is travelling, and how wide the club's bid/ask spread
-   * is. See TRADE_VALUE.SPREAD: prying a man loose costs a premium, handing
-   * one over meets a haircut, and picks are exempt from both because a spread
-   * on everything is just a stricter acceptance threshold wearing a costume.
-   */
-  spread: { side: 'receive' | 'send'; poach: number; haircut: number; badContractTax: number },
-): Promise<AssetSide> {
+/**
+ * ===========================================================================
+ * WHAT A VALUATION NEEDS THAT IS NOT THE ASSET
+ * ===========================================================================
+ * Who the GM is, what his roster is short of, how scarce the position is
+ * league-wide, which draft is next, the bid/ask spread the difficulty sets,
+ * the noise seed, and the club's books. Every one of these is a fact about
+ * the CLUB and the SEASON, and none of them depends on which assets are on
+ * the table — which is why one of these is built per evaluation and shared by
+ * every asset on both sides.
+ *
+ * It is exported so lib/tradeClosers.ts can build it ONCE and hand the same
+ * object to every candidate package it tries. That is sound precisely because
+ * of the paragraph above: the context a fresh evaluateTrade would construct
+ * for the same club in the same season is this object, field for field. If a
+ * field is ever added here that varies with the offer, it does not belong in
+ * this interface.
+ */
+export interface TradeContext {
+  aiTeamId: string;
+  leagueId: string;
+  seasonYear: number;
+  /** The draft year picks are priced against — evaluateTrade's `currentYear`. */
+  currentYear: number;
+  settings: ReturnType<typeof parseSettings>;
+  capMode: CapMode;
+  spread: { poach: number; haircut: number; badContractTax: number };
+  noisePrefix: string;
+  profile: ReturnType<typeof parseGmProfile>;
+  needs: Record<string, number>;
+  scarcity: Record<string, number>;
+  draft: DraftOrderContext;
+  club: { roster: RosterPlayer[]; capSpace?: number };
+  /** The club's live room, or null when the league has the cap switched off. */
+  capSpace: number | null;
+}
+
+/** One asset priced on its own, before any package weighting. See priceAsset. */
+export interface PricedAsset {
+  label: string;
+  /** In the club's own value points, after the bid/ask spread for this side. */
+  value: number;
+  isPlayer: boolean;
+  /** Dollars this contract runs over market, only ever set on the receive side. */
+  overMarket: number;
+  reasons: { text: string; weight: number }[];
+}
+
+/** A row already in hand, so a caller pricing many assets can fetch in bulk. */
+export type LoadedAsset =
+  | { type: 'PLAYER'; player: Player & { contract: Contract | null } }
+  | { type: 'PICK'; pick: DraftPick };
+
+/**
+ * ONE ASSET, PRICED THE WAY THIS CLUB PRICES IT.
+ *
+ * Lifted out of assetValues' loop so that the trade closers (lib/tradeClosers.ts)
+ * can narrow a 53-man roster down to the handful of men who could plausibly
+ * cover a gap without re-deriving a single line of this. A second copy of the
+ * spread rules is exactly how this app has shipped a screen quoting a figure
+ * it was not using.
+ *
+ * `loaded` lets a caller that has already fetched the row in bulk hand it
+ * over; without it the row is fetched here, one asset at a time, which is
+ * what an ordinary evaluation does.
+ */
+export async function priceAsset(
+  a: TradeAsset,
+  ctx: TradeContext,
+  side: 'receive' | 'send',
+  loaded?: LoadedAsset,
+): Promise<PricedAsset> {
+  const { profile, needs, capMode, scarcity, club, spread, draft, noisePrefix, currentYear } = ctx;
+  if (a.type === 'PLAYER') {
+    const p = loaded?.type === 'PLAYER'
+      ? loaded.player
+      : await prisma.player.findUniqueOrThrow({ where: { id: a.id }, include: { contract: true } });
+    const v = playerValueDetailed(p as unknown as RosterPlayer, {
+      profile, needs, rng: new Rng(`${noisePrefix}-${a.type}:${a.id}`), capMode, scarcity,
+      roster: club.roster, capSpace: club.capSpace,
+    });
+    const name = `${p.firstName} ${p.lastName}`;
+    /*
+     * THE SPREAD IS A PRICE FOR A MAN. IT IS NOT A DISCOUNT ON A BILL.
+     *
+     * `v.total` can now come back NEGATIVE — see the contract block in
+     * lib/ai/gm.ts — and multiplying a negative by (1 - haircut) marks the
+     * burden DOWN, which is a club handing itself a discount on a debt it is
+     * about to be handed. The other direction is just as wrong: a poach
+     * premium on a liability would say prising an albatross loose costs
+     * MORE than he is worth. So the spread is applied to the talent, and the
+     * money owed rides through at face value on both sides.
+     */
+    const talent = Math.max(0, v.total);
+    const owed = Math.min(0, v.total);
+    let value = side === 'send'
+      ? talent * (1 + spread.poach) + owed
+      : talent * (1 - spread.haircut) + owed;
+    let overMarket = 0;
+    if (side === 'receive') {
+      // What the bad contract already cost him, charged again as the price
+      // of the favour: the club taking a burden on wants paying for it, and
+      // how much depends on the difficulty. Zero on any fair deal.
+      //
+      // NO FLOOR. This used to end in `Math.max(1, ...)`, which is one of
+      // the two floors that made a liability impossible: however toxic the
+      // deal, the man came out of here worth at least a point, and a point
+      // is a positive asset.
+      value -= v.contractBurden * spread.badContractTax;
+      overMarket = v.contractOverMarket;
+    }
+    return {
+      label: name, value, isPlayer: true, overMarket,
+      reasons: v.reasons.map((r) => ({ text: `${name}: ${r.text}`, weight: r.weight })),
+    };
+  }
+  const pick = loaded?.type === 'PICK'
+    ? loaded.pick
+    : await prisma.draftPick.findUniqueOrThrow({ where: { id: a.id } });
+  return {
+    label: `${pick.year} Round ${pick.round}`,
+    value: pickValue(pick.round, effectiveSlot(pick, draft), profile, pick.year, currentYear, draft.imminentYear),
+    isPlayer: false,
+    overMarket: 0,
+    reasons: [],
+  };
+}
+
+/**
+ * A whole side of a proposed deal, priced. `side` is which way the pile is
+ * travelling, and it decides the club's bid/ask spread — see
+ * TRADE_VALUE.SPREAD: prying a man loose costs a premium, handing one over
+ * meets a haircut, and picks are exempt from both because a spread on
+ * everything is just a stricter acceptance threshold wearing a costume.
+ */
+async function assetValues(assets: TradeAsset[], ctx: TradeContext, side: 'receive' | 'send'): Promise<AssetSide> {
   const each: { label: string; value: number; isPlayer: boolean }[] = [];
   const weighted: { text: string; weight: number }[] = [];
   let worstDeal: { label: string; overMarket: number } | null = null;
   for (const a of assets) {
-    if (a.type === 'PLAYER') {
-      const p = await prisma.player.findUniqueOrThrow({ where: { id: a.id }, include: { contract: true } });
-      const v = playerValueDetailed(p as unknown as RosterPlayer, {
-        profile, needs, rng: new Rng(`${noisePrefix}-${a.type}:${a.id}`), capMode, scarcity,
-        roster: club.roster, capSpace: club.capSpace,
-      });
-      const name = `${p.firstName} ${p.lastName}`;
-      /*
-       * THE SPREAD IS A PRICE FOR A MAN. IT IS NOT A DISCOUNT ON A BILL.
-       *
-       * `v.total` can now come back NEGATIVE — see the contract block in
-       * lib/ai/gm.ts — and multiplying a negative by (1 - haircut) marks the
-       * burden DOWN, which is a club handing itself a discount on a debt it is
-       * about to be handed. The other direction is just as wrong: a poach
-       * premium on a liability would say prising an albatross loose costs
-       * MORE than he is worth. So the spread is applied to the talent, and the
-       * money owed rides through at face value on both sides.
-       */
-      const talent = Math.max(0, v.total);
-      const owed = Math.min(0, v.total);
-      let value = spread.side === 'send'
-        ? talent * (1 + spread.poach) + owed
-        : talent * (1 - spread.haircut) + owed;
-      if (spread.side === 'receive') {
-        // What the bad contract already cost him, charged again as the price
-        // of the favour: the club taking a burden on wants paying for it, and
-        // how much depends on the difficulty. Zero on any fair deal.
-        //
-        // NO FLOOR. This used to end in `Math.max(1, ...)`, which is one of
-        // the two floors that made a liability impossible: however toxic the
-        // deal, the man came out of here worth at least a point, and a point
-        // is a positive asset.
-        value -= v.contractBurden * spread.badContractTax;
-        if (v.contractOverMarket > (worstDeal?.overMarket ?? 0)) {
-          worstDeal = { label: name, overMarket: v.contractOverMarket };
-        }
-      }
-      each.push({ label: name, value, isPlayer: true });
-      for (const r of v.reasons) weighted.push({ text: `${name}: ${r.text}`, weight: r.weight });
-    } else {
-      const pick = await prisma.draftPick.findUniqueOrThrow({ where: { id: a.id } });
-      each.push({
-        label: `${pick.year} Round ${pick.round}`,
-        value: pickValue(pick.round, effectiveSlot(pick, draft), profile, pick.year, currentYear, draft.imminentYear),
-        isPlayer: false,
-      });
+    const priced = await priceAsset(a, ctx, side);
+    each.push({ label: priced.label, value: priced.value, isPlayer: priced.isPlayer });
+    for (const r of priced.reasons) weighted.push(r);
+    if (side === 'receive' && priced.overMarket > (worstDeal?.overMarket ?? 0)) {
+      worstDeal = { label: priced.label, overMarket: priced.overMarket };
     }
   }
   // Sort ACROSS every asset on this side of the deal, not just within one —
@@ -299,14 +373,13 @@ function headlineShortfall(receive: AssetSide, send: AssetSide): { wanted: numbe
  * what happened here before this fix, so don't rename `give`/`get` without
  * also re-deriving which one feeds `sendValue` vs `receiveValue` below.
  */
-export async function evaluateTrade(opts: {
-  aiTeamId: string;
-  give: TradeAsset[];
-  get: TradeAsset[];
-  currentYear: number;
-  settings: { aiAcceptsLopsided: boolean };
-}): Promise<TradeEvaluation> {
-  const team = await prisma.team.findUniqueOrThrow({ where: { id: opts.aiTeamId } });
+/**
+ * Build the club-and-season half of a valuation — see TradeContext. Every
+ * comment below is about a decision that belongs to the CLUB, which is why
+ * none of it takes the offer as an argument.
+ */
+export async function buildTradeContext(aiTeamId: string, currentYear: number): Promise<TradeContext> {
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: aiTeamId } });
   const league = await prisma.league.findUniqueOrThrow({ where: { id: team.leagueId } });
   const settings = parseSettings(league.settings);
   const capMode: CapMode = settings.capMode;
@@ -362,7 +435,7 @@ export async function evaluateTrade(opts: {
    * Set happened to iterate in, and the rest of the package.
    * ==========================================================================
    */
-  const noisePrefix = `trade-${opts.aiTeamId}-${league.seasonYear}`;
+  const noisePrefix = `trade-${aiTeamId}-${league.seasonYear}`;
 
   /**
    * A GM's character belongs to the franchise, not to the proposal in front
@@ -373,18 +446,18 @@ export async function evaluateTrade(opts: {
    * valuations. Seeded per club per season, so a Rebuilding conservative GM
    * is still one on the tenth proposal.
    */
-  const profile = parseGmProfile(team.gmProfile, new Rng(`gm-${opts.aiTeamId}-${league.seasonYear}`));
+  const profile = parseGmProfile(team.gmProfile, new Rng(`gm-${aiTeamId}-${league.seasonYear}`));
 
   const [roster, allPlayers, draft, capSummary] = await Promise.all([
     prisma.player.findMany({
-      where: { teamId: opts.aiTeamId },
+      where: { teamId: aiTeamId },
       select: { id: true, position: true, trueOvr: true, age: true, potential: true },
     }),
     // One league-wide fetch reused for scarcity across every asset in this
     // trade, not queried per player — see leagueScarcity()'s cost note.
     prisma.player.findMany({ where: { leagueId: team.leagueId, status: 'ACTIVE' }, select: { position: true, trueOvr: true } }),
     draftOrderContext(team.leagueId),
-    capMode === 'OFF' ? Promise.resolve(null) : teamCapSummary(opts.aiTeamId, league.seasonYear, capMode),
+    capMode === 'OFF' ? Promise.resolve(null) : teamCapSummary(aiTeamId, league.seasonYear, capMode),
   ]);
   const needs = teamNeeds(roster as RosterPlayer[]);
   const scarcity = leagueScarcity(allPlayers);
@@ -393,10 +466,38 @@ export async function evaluateTrade(opts: {
   // not about the asset being priced.
   const club = { roster: roster as RosterPlayer[], capSpace: capSummary?.capSpace };
 
+  return {
+    aiTeamId, leagueId: team.leagueId, seasonYear: league.seasonYear, currentYear,
+    settings, capMode, spread, noisePrefix, profile, needs, scarcity, draft, club,
+    capSpace: capSummary?.capSpace ?? null,
+  };
+}
+
+export async function evaluateTrade(opts: {
+  aiTeamId: string;
+  give: TradeAsset[];
+  get: TradeAsset[];
+  currentYear: number;
+  settings: { aiAcceptsLopsided: boolean };
+  /** An already-built context for this club and season — see the note below. */
+  ctx?: TradeContext;
+}): Promise<TradeEvaluation> {
+  /*
+   * The context is REUSED when one is handed in, and built when it is not.
+   * That is not a shortcut past the evaluation: TradeContext holds only facts
+   * about the club and the season (see its own note), so an injected one is
+   * identical to the one this line would otherwise construct. It exists so
+   * the trade closers can try a dozen candidate packages against the same
+   * club without re-reading its roster, its books and the draft order a dozen
+   * times — every candidate still goes through this whole function.
+   */
+  const ctx = opts.ctx ?? await buildTradeContext(opts.aiTeamId, opts.currentYear);
+  const { capMode, profile, capSpace } = ctx;
+
   // opts.give flows TO the AI => that's what the AI receives.
   // opts.get flows FROM the AI => that's what the AI sends away.
-  const receive = await assetValues(opts.give, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, draft, capMode, scarcity, club, { side: 'receive', ...spread });
-  const send = await assetValues(opts.get, opts.aiTeamId, profile, needs, opts.currentYear, noisePrefix, draft, capMode, scarcity, club, { side: 'send', ...spread });
+  const receive = await assetValues(opts.give, ctx, 'receive');
+  const send = await assetValues(opts.get, ctx, 'send');
   const sendValue = send.total;
   const receiveValue = receive.total;
   const philosophy = philosophySummary(profile);
@@ -491,7 +592,7 @@ export async function evaluateTrade(opts: {
    * sentence a GM can act on. Only the AI's own side is judged; the user's
    * cap is his own business and is still reported at execution.
    */
-  const capBlock = capSummary ? await aiCapShortfall(opts, capSummary.capSpace, capMode) : null;
+  const capBlock = capSpace !== null ? await aiCapShortfall(opts, capSpace, capMode) : null;
   if (capBlock) {
     /*
      * THE TWO ASKS MUST NOT CONTRADICT EACH OTHER.

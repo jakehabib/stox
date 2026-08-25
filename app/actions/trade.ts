@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { assertLeagueOwner } from '@/lib/owner';
 import { evaluateTrade, executeTrade, rankTradePartners, isTradeDeadlinePassed, TradeAsset } from '@/lib/trade';
+import { findTradeClosers } from '@/lib/tradeClosers';
 import { parseSettings } from '@/lib/settings';
 import { readJson } from '@/lib/json';
 
@@ -12,6 +13,31 @@ export async function evaluateTradeAction(leagueId: string, aiTeamId: string, gi
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   return evaluateTrade({ aiTeamId, give, get, currentYear: league.seasonYear, settings: { aiAcceptsLopsided: settings.aiAcceptsLopsided } });
+}
+
+/**
+ * WHAT WOULD CLOSE IT — the refusal turned into moves the GM can make.
+ *
+ * Deliberately NOT part of evaluateTradeAction. That one runs on every
+ * selection change behind a 350ms debounce and has to stay one evaluation;
+ * this one runs a candidate package through the whole engine a dozen or more
+ * times, so it is only ever called after an explicit Propose came back
+ * declined. See findTradeClosers for the narrowing that keeps that bounded,
+ * and for why nothing it returns is an estimate.
+ *
+ * `userTeamId` is not taken from the client. The user's club in this league
+ * is a fact the server already holds, and the closers read that roster to
+ * decide what he could add — accepting it as an argument would let a request
+ * enumerate somebody else's board.
+ */
+export async function tradeClosersAction(leagueId: string, aiTeamId: string, give: TradeAsset[], get: TradeAsset[]) {
+  await assertLeagueOwner(leagueId);
+  const [userTeam, partner] = await Promise.all([
+    prisma.team.findFirst({ where: { leagueId, isUser: true }, select: { id: true } }),
+    prisma.team.findUnique({ where: { id: aiTeamId }, select: { leagueId: true, isUser: true } }),
+  ]);
+  if (!userTeam || !partner || partner.leagueId !== leagueId || partner.isUser) return null;
+  return findTradeClosers({ leagueId, userTeamId: userTeam.id, aiTeamId, give, get });
 }
 
 // `ovr` is the rating of the man actually being shopped — see

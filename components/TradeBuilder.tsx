@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { evaluateTradeAction, executeTradeAction, forceTradeAction, rankTradePartnersAction } from '@/app/actions/trade';
+import { evaluateTradeAction, executeTradeAction, forceTradeAction, rankTradePartnersAction, tradeClosersAction } from '@/app/actions/trade';
 import { insiderReadAction, tradeIntelAction, type TradeIntelRead } from '@/app/actions/dynasty';
 import { ratingColor } from '@/lib/ratings';
 import { formatMoney } from '@/lib/cap';
@@ -15,10 +15,12 @@ import { Tooltip } from './Tooltip';
 import { positionBadgeClass } from './ds/positionColor';
 import { TradePickBoard, pickTier, type PickAsset } from './ds/TradePickBoard';
 import { TradeVerdict, AcceptanceMeter } from './ds/TradeVerdict';
+import { TradeClosers } from './ds/TradeClosers';
 import { TradeRecapCard, type TradeRecapData } from './ds/TradeRecapCard';
 import { IconSwap } from './ds/icons';
 import type { PhilosophySummary } from '@/lib/ai/gm';
 import type { TradePartnerSuggestion } from '@/lib/trade';
+import type { TradeCloser, TradeClosersResult } from '@/lib/tradeClosers';
 import { tip } from '@/lib/glossary';
 
 interface RosterP {
@@ -110,6 +112,15 @@ export function TradeBuilder({
     capBlock?: { shortfall: number; added: number; available: number };
   } | null>(null);
   const [intel, setIntel] = useState<TradeIntelRead | null>(null);
+  /**
+   * The closers for the offer that was last PROPOSED — not for the selection
+   * currently on the sheet. See `runClosers`: this is the one thing on the
+   * screen that costs more than a single evaluation, so it is not allowed
+   * anywhere near the live meter.
+   */
+  const [closers, setClosers] = useState<TradeClosersResult | null>(null);
+  const [closersLoading, setClosersLoading] = useState(false);
+  const closerSeq = useRef(0);
   const [insider, setInsider] = useState<string | null>(null);
   const [execError, setExecError] = useState<string | null>(null);
   const [partnerSuggestions, setPartnerSuggestions] = useState<TradePartnerSuggestion[] | null>(null);
@@ -123,11 +134,26 @@ export function TradeBuilder({
   const [capBefore, setCapBefore] = useState<number | null>(null);
   const [partnerCapBefore, setPartnerCapBefore] = useState<number | null>(null);
 
+  /**
+   * Any change to the selection retires the closers with the verdict they
+   * belonged to. They are answers about a specific package, and a row still
+   * reading "add him and it closes" after the package underneath it changed
+   * would be a promise about a deal nobody evaluated. The sequence number
+   * retires an in-flight request too, so a slow answer for an abandoned offer
+   * cannot land afterwards.
+   */
+  const clearClosers = () => {
+    closerSeq.current++;
+    setClosers(null);
+    setClosersLoading(false);
+  };
+
   const toggle = (set: Set<string>, setFn: (s: Set<string>) => void, id: string) => {
     const next = new Set(set);
     if (next.has(id)) next.delete(id); else next.add(id);
     setFn(next);
     setResult(null);
+    clearClosers();
   };
 
   const giveAssets = useMemo(() => assetList(give, myRoster, myPicks), [give, myRoster, myPicks]);
@@ -242,7 +268,52 @@ export function TradeBuilder({
         // own, never a second sum taken on this side of the wire.
         capBlock: evaluation.capBlock,
       });
+
+      /*
+       * ONLY ON A DECLINE, AND ONLY FROM PROPOSE.
+       *
+       * The closers put a dozen or more candidate packages through the real
+       * evaluator (lib/tradeClosers.ts), which is the one thing on this
+       * screen that cannot ride along with the live meter — that runs on
+       * every selection change behind a 350ms debounce, and firing this from
+       * there would turn each click into a round of evaluations nobody asked
+       * for. Propose is the call you make; this is part of the answer.
+       *
+       * Not awaited inside the verdict's own state update, so the refusal,
+       * the meter and the club's words are on screen while the alternatives
+       * are still being put to them.
+       */
+      if (evaluation.accepted) { clearClosers(); return; }
+      const seq = ++closerSeq.current;
+      setClosers(null);
+      setClosersLoading(true);
+      tradeClosersAction(leagueId, partnerId, giveA, getA)
+        .then((res) => {
+          if (closerSeq.current !== seq) return;
+          setClosers(res);
+          setClosersLoading(false);
+        })
+        .catch(() => {
+          // A failed read shows nothing at all rather than an empty panel
+          // implying the engine found nothing.
+          if (closerSeq.current === seq) { setClosers(null); setClosersLoading(false); }
+        });
     });
+  };
+
+  /**
+   * One click puts the closer's package on the sheet. It does exactly what
+   * clicking those assets in the roster panels does — sets the selection and
+   * lets the live meter re-read it — and deliberately no more: it does not
+   * propose the deal and it does not execute it. The club has already said
+   * yes to this package; whether to actually offer it is the GM's call.
+   */
+  const applyCloser = (closer: TradeCloser) => {
+    setGive(new Set(closer.give.map((a) => a.id)));
+    setGet(new Set(closer.get.map((a) => a.id)));
+    setResult(null);
+    setExecError(null);
+    clearClosers();
   };
 
   /**
@@ -288,6 +359,8 @@ export function TradeBuilder({
     setGet(new Set());
     setResult(null);
     setIntel(null);
+    clearClosers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [partnerId]);
 
   const reviewKey = `${initialGive?.join(',') ?? ''}|${initialGet?.join(',') ?? ''}`;
@@ -325,6 +398,7 @@ export function TradeBuilder({
       }
       setExecError(null);
       setGive(new Set()); setGet(new Set()); setResult(null);
+      clearClosers();
       setCapBefore(spaceBefore);
       setPartnerCapBefore(partnerSpaceBefore);
       setShowRecap(true);
@@ -633,6 +707,14 @@ export function TradeBuilder({
           result={result}
           intel={intel}
           partner={{ id: partnerId, abbr: currentPartner.abbr, name: currentPartner.name }}
+          closers={
+            <TradeClosers
+              result={closers}
+              loading={closersLoading}
+              partnerAbbr={currentPartner.abbr}
+              onApply={applyCloser}
+            />
+          }
         >
           <div className="border-t border-line/60 pt-3 flex items-center gap-3 flex-wrap">
             <button type="button" className="btn-secondary text-xs" disabled={pending} onClick={callInsider}>

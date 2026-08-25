@@ -157,10 +157,16 @@ function CapBlockTiles({ block }: { block: { shortfall: number; added: number; a
  * numbers behind it come from `capBlock` exactly as the evaluator reported
  * them.
  */
-export function TradeVerdict({ result, intel, partner, children }: {
+export function TradeVerdict({ result, intel, partner, closers, children }: {
   result: TradeVerdictResult;
   intel: TradeIntelNumbers | null;
   partner: { id: string; abbr: string; name: string };
+  /**
+   * The "what would close it" panel (see TradeClosers). Its own slot rather
+   * than part of `children` because it belongs to the refusal — it sits with
+   * the club's reasons, above Trade Intel, and not down with the controls.
+   */
+  closers?: ReactNode;
   /** Trailing controls that belong to the caller — the Insider row. */
   children?: ReactNode;
 }) {
@@ -202,6 +208,8 @@ export function TradeVerdict({ result, intel, partner, children }: {
           <ReasonColumn heading="What we'd be giving up" reasons={result.explanation.receive} />
         </div>
       ) : null}
+
+      {closers}
 
       {intel?.unlocked && (
         <div className="rounded-md border border-accent2/25 bg-accent2/[0.06] px-3 py-2">
