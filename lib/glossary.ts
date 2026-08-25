@@ -380,6 +380,11 @@ export const GLOSSARY = {
     term: 'Bench press',
     definition: 'Repetitions at 225 pounds. Upper-body strength endurance — most relevant to linemen, largely decoration for a receiver.',
   },
+  athleticRank: {
+    term: 'Athletic rank',
+    definition: 'Where a prospect finishes in his class once every drill he ran is placed against the men at his own position and those finishes are averaged. First is the best tester on the board.',
+    why: 'A guard is timed against guards, so the figure reads the same for a 330-pound tackle as for a corner. It is public — the whole league watched the same stopwatch — and it grades a workout, not a football player: plenty of men near the top of it will never start.',
+  },
   proDay: {
     term: 'Pro day',
     definition: 'A prospect testing at his own school instead of at the league combine.',
@@ -420,7 +425,7 @@ export const GLOSSARY = {
   },
   pickValue: {
     term: 'Pick value',
-    definition: 'What a draft pick is worth in trade. The curve is steep at the top — the first pick is worth far more than the fifth, and a whole late round is worth less than one early selection.',
+    definition: 'What a draft pick is worth in trade. One early selection outweighs a whole late round, but the climb through the top of round one is gentler than the standing order suggests — nobody is certain enough about a 22-year-old to pay double for the first name over the fifth.',
     why: 'Future years are discounted, which is why a rebuilding club takes three next-year picks for one this year and a contender does the opposite.',
   },
   draftHitRate: {

@@ -15,12 +15,17 @@ import { PICK_VALUE_CHART, LEAGUE } from './tuning';
  * lib/trade.ts and the Dynasty server actions can hold it without either one
  * dragging the other's module graph along behind it.
  *
- * THE THRESHOLDS ARE THE CHART, not numbers written down beside it. Jimmy
- * Johnson points are what pickValue returns, unscaled, so "a second-rounder"
- * is literally the band between the last pick of round two and the last of
- * round one. If the league ever changes size, the bands move with it. The old
- * hand-written table was close but not the chart — it called 500 points a
- * second-rounder and 550 a first, when the last pick of round one is 590.
+ * THE THRESHOLDS ARE THE CHART, not numbers written down beside it: "a
+ * second-rounder" is literally the band between the last pick of round two and
+ * the last of round one, read off PICK_VALUE_CHART. If the league ever changes
+ * size, the bands move with it. The old hand-written table was close but not
+ * the chart — it called 500 points a second-rounder and 550 a first, when the
+ * last pick of round one is 590.
+ *
+ * EVERY BAND BELOW IS THE LAST PICK OF A ROUND, which is the part of the chart
+ * the round-one bend deliberately leaves alone, so none of these sentences
+ * moved when it landed. The one threshold that did is the top of the range —
+ * the middle of round one, 1000 before the bend and 951 after.
  */
 export function describeValue(v: number): string {
   const lastOf = (round: number) => PICK_VALUE_CHART(round * LEAGUE.TEAM_COUNT);

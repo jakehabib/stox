@@ -478,10 +478,11 @@ export async function insiderReadAction(
  * adds is the Insider's extra clause at the top of the range.
  *
  * The comment that used to sit here calibrated the thresholds against "the
- * 0.30 chart scalar in gm.ts" and a mid-first at 680. Both are gone:
- * pickValue returns Jimmy Johnson points unscaled, so a mid-first is 1000 and
- * the thresholds are read straight off the chart. A calibration note against a
- * constant that no longer exists is worse than none.
+ * 0.30 chart scalar in gm.ts" and a mid-first at 680. Both are gone: the
+ * thresholds are read straight off PICK_VALUE_CHART, so a mid-first is
+ * whatever that says it is (951, since the round-one bend). A calibration note
+ * against a constant that no longer exists is worse than none — which is why
+ * this one names the function rather than repeating its output.
  */
 function describeValue(v: number): string {
   const phrase = describeValueShared(v);

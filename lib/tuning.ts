@@ -2582,9 +2582,15 @@ export const AI = {
  * players, picks, both sides of a swap — is quoted in Jimmy Johnson points,
  * so every valuation in the game is a sentence a football person can check:
  * "this man is worth 420" means "this man is worth pick 48". The tier curves
- * below are calibrated directly against it and pickValue() returns it
- * unscaled to a neutral GM, so there is no conversion factor anywhere for a
- * later change to desynchronise.
+ * below are calibrated directly against it, and from pick 31 to pick 224
+ * pickValue() returns this table to a neutral GM with nothing done to it.
+ *
+ * THE CLIMB OF ROUND ONE IS THE ONE EXCEPTION, and it is not a rescaling —
+ * see PICK_VALUE_CHART below, which bends the top of the round onto the top of
+ * the player curve because the table's steepest stretch is a pick-for-pick
+ * auction price and no player trade has ever validated it. The table itself is
+ * untouched; what is stated is that above pick 31 it stops being the price a
+ * man costs.
  *
  * WHAT REPLACING THE OLD EXPONENTIAL FIXED. `3000 * exp(-0.0255 * (pick - 1))`
  * tracked this table at roughly 0.55-0.65x through the middle rounds, but the
@@ -2640,15 +2646,98 @@ const JIMMY_JOHNSON: readonly number[] = [
 ];
 
 /**
- * Chart value of an overall pick number. Clamped rather than allowed to
- * return undefined: a league configured with more teams than the chart has
- * rows would otherwise silently price its last round at NaN, and the honest
- * answer for a pick past the end of the chart is what the last pick on it is
- * worth.
+ * ===========================================================================
+ * THE CLIMB OF ROUND ONE IS AN AUCTION PRICE, NOT A PLAYER PRICE
+ * ===========================================================================
+ * The table above is what one pick costs in OTHER PICKS. It is not what a
+ * pick costs in men, and using it for both is what let a single high first
+ * outbid the best receiver in the league.
+ *
+ * MEASURED, IN THIS GAME'S OWN UNITS, AND THE SIGNATURE IS UNMISTAKABLE.
+ * A pick is a right to add one player, so the honest yardstick is: what is
+ * the man it turns into worth, priced by the same TIER_CURVE that prices
+ * everyone else? Generate 400 draft classes, rank each on the public board
+ * lib/consensus.ts builds, take the prospect who actually sits at slot n,
+ * develop him all the way to his own `potential`, stand him at 26 on the last
+ * year of his rookie deal — his BEST CASE, with the bust risk spent and the
+ * scouting fog gone — and price him. Against the chart:
+ *
+ *   pick    1     2     3     5     8    12    16    20    24    28    32
+ *   chart 3000  2600  2200  1700  1400  1200  1000   850   740   660   590
+ *   best  1829  1638  1508  1332  1117   972   855   830   711   662   605
+ *   ratio 1.64  1.59  1.46  1.28  1.25  1.23  1.17  1.02  1.04  1.00  0.98
+ *
+ *   round 2 .. round 4:  0.98, 0.96, 0.89, 0.89, 0.88 at picks 36/40/48/56/64
+ *
+ * From the bottom of round one down, the chart sits at essentially 1.00 of the
+ * most a pick can ever deliver — which is exactly why every player-for-pick
+ * anchor TRADE_VALUE.TIER_CURVE is calibrated on comes out right. Climb the
+ * round and it pulls away from that, monotonically, until the first overall
+ * pick is priced 64% above the best outcome it has. Whatever systematic bias
+ * that best-case yardstick carries (no bust risk deducted, no discount for the
+ * years of waiting) it carries EQUALLY at every slot, so the flat 1.00 tail is
+ * the calibration and the climb away from it is the defect.
+ *
+ * THE ANCHOR, in one sentence a football person can check: THE FIRST OVERALL
+ * PICK IS WORTH THE BEST PROVEN NON-QUARTERBACK IN THE LEAGUE, AND NEVER MORE.
+ * A top pick is a 22-year-old a board likes; a 96 receiver is that man already,
+ * with the fog gone. What the pick buys over him is five cheap years, what he
+ * buys over the pick is certainty, and at the very top those roughly cancel.
+ * So the asymptote below is TIER_CURVE.PREMIUM's own ceiling, read from it
+ * rather than typed again — one opinion about where the top of this economy
+ * is, not two — and the first overall pick lands at 1797, which is what a
+ * neutral 96 at a premium position is worth.
+ *
+ * IT IS A BEND, NOT A CAP, and not a rescaling either. Below the knee the
+ * Jimmy Johnson table is returned bit for bit: picks 31 through 224 — the
+ * whole of the chart real trades have actually tested, and the whole of the
+ * range MARKET.MIN_ASSET_ROUND and lib/trade.ts's `premiumLine` read — are
+ * untouched to the point. Above it the excess is compressed onto the gap to
+ * the asymptote, continuously, with gradient exactly 1 at the join, strictly
+ * increasing everywhere and never reaching the bound. The #1 pick still
+ * out-prices the #2 and always will; it just stops out-pricing the league.
+ *
+ * WHAT THIS IS NOT is the `0.30` [FRAGILE PLACEHOLDER] that used to sit
+ * between the two halves of every trade. That was a flat conversion factor
+ * nobody could state in football terms, and it moved every pick in the draft.
+ * This moves one end of one round, by a measured amount, for a stated reason.
+ *
+ * NOTHING BELOW ROUND ONE IS TOUCHED even though the measurement has an
+ * opinion there too — the chart runs UNDER the best case from pick 48 on
+ * (0.88x) and far under it in round seven. That is a different claim needing
+ * different evidence, no real trade tests it, and it has no bearing on the bug
+ * this bend exists to fix. Left alone deliberately, and said out loud rather
+ * than quietly half-fixed.
+ */
+const PICK_SCALE = {
+  /**
+   * Where the bend begins, in chart points: 600 is the 31st pick. Below it the
+   * table is the answer. Chosen as the highest knee at which the measured
+   * ratio above is still flat — picks 28-32 read 0.98-1.04, and bending a
+   * region that is already calibrated would be inventing a defect to fix.
+   */
+  KNEE: 600,
+};
+
+/**
+ * Chart value of an overall pick number, on this game's value scale — see the
+ * block above for why the top of round one is bent onto the player curve and
+ * why nothing else moves. Clamped rather than allowed to return undefined: a
+ * league configured with more teams than the chart has rows would otherwise
+ * silently price its last round at NaN, and the honest answer for a pick past
+ * the end of the chart is what the last pick on it is worth.
  */
 export const PICK_VALUE_CHART = (overallPick: number): number => {
   const i = Math.min(Math.max(Math.round(overallPick), 1), JIMMY_JOHNSON.length);
-  return JIMMY_JOHNSON[i - 1];
+  const raw = JIMMY_JOHNSON[i - 1];
+  const knee = PICK_SCALE.KNEE;
+  if (raw <= knee) return raw;
+  // The asymptote is the top of the veteran market itself, read off the tier
+  // table so the two cannot drift apart. Same shape as softCeiling() in
+  // lib/ai/gm.ts, and for the same reason: a bound has to be approached, never
+  // stacked on.
+  const span = TRADE_VALUE.TIER_CURVE.PREMIUM.ceiling - knee;
+  return knee + span * (1 - Math.exp(-(raw - knee) / span));
 };
 
 // ---------------------------------------------------------------------------
@@ -2826,11 +2915,19 @@ export const TRADE_VALUE = {
    *
    * -------------------------------------------------------------------------
    * CALIBRATED IN JIMMY JOHNSON POINTS — the same units PICK_VALUE_CHART
-   * returns, unscaled. A value here IS a pick number, and every row below is
-   * a claim about football that can be checked by reading it aloud:
+   * returns. A value here IS a pick number, and every row below is a claim
+   * about football that can be checked by reading it aloud. These are the
+   * numbers AFTER the round-one bend, i.e. what a pick actually costs:
    *
-   *   pick   1 = 3000    pick  16 = 1000    pick  48 = 420    pick  96 = 116
-   *   pick   5 = 1700    pick  32 =  590    pick  64 = 270    pick 144 =  34
+   *   pick   1 = 1797    pick  16 =  951    pick  48 = 420    pick  96 = 116
+   *   pick   5 = 1380    pick  32 =  590    pick  64 = 270    pick 144 =  34
+   *
+   * The anchors below are read against real trades made of MID-to-LATE firsts
+   * and seconds, and the bend does not reach them: it is nothing at all from
+   * pick 31 down, 1% at pick 24, 5% at pick 16 and 13% at pick 8. What changed
+   * is the top of the round, where no player trade has ever set a price — the
+   * first overall pick used to sit at 3000, above anything PREMIUM could reach
+   * at any rating, and now sits at 1797, which is a neutral 96.
    *
    * THE ANCHORS, and the real trades behind them. Real NFL trades are the
    * source of truth (the owner's ruling); dynasty markets such as KeepTradeCut
@@ -2838,12 +2935,13 @@ export const TRADE_VALUE = {
    * only skill positions — no linemen, no linebackers, no defensive backs,
    * which is more than half a starting lineup and the whole of MID.
    *
-   *   QB       94 ~ 2799, about the first overall pick; 96 ~ 3796; 98+ clips
-   *            at the 5000 ceiling, four to five mid-firsts. The owner's
+   *   QB       94 ~ 2799, half again the first overall pick; 96 ~ 3796; 98+ clips
+   *            at the 5000 ceiling, five mid-firsts and more. The owner's
    *            anchor: *"Josh Allen in the real nfl would go for at least 4
    *            or 5 first round pick equivalents"*. 91 ~ 1783 is the Stafford
    *            package (two firsts and a third); 85 ~ 716 a late first.
-   *   PREMIUM  94 ~ 1457 (pick 8), 96 ~ 1957 (pick 4). Mack cost two firsts
+   *   PREMIUM  94 ~ 1457 (pick 4), 96 ~ 1957 — above any pick there is, which
+   *            is the whole point of the round-one bend. Mack cost two firsts
    *            and a third against a second coming back (~1765); Tunsil two
    *            firsts and a second; Hill a first, a second and three later
    *            picks (~1205); Ramsey, at 24, two firsts and a fourth
@@ -2857,7 +2955,7 @@ export const TRADE_VALUE = {
    *            elite. That is the age curve and the rating doing their job,
    *            not a second tier — a 27-year-old 88 corner prices at 597 x
    *            0.85 here, which is a late second, and that is the trade.
-   *   MID      94 ~ 766 (pick 23), 88 ~ 313 (a late second). Hockenson cost
+   *   MID      94 ~ 766 (pick 22), 88 ~ 313 (a late second). Hockenson cost
    *            a second and a third, Waller pick 100, Roquan Smith a second
    *            and a fifth — the tight end and off-ball linebacker markets
    *            are the softest real starters have.
@@ -3242,6 +3340,16 @@ export const TRADE_VALUE = {
      * checked. "First-round quality" is read off the chart itself, at the
      * value of the LAST pick of round one, so it stays true if the league
      * ever changes size.
+     *
+     * THE COUNT IS NOT THE WHOLE CLAUSE. Those two assets must also be worth
+     * HEADLINE_SHARE of the pillar BETWEEN them — see headlineShortfall in
+     * lib/trade.ts. A count on its own is a fixed line (590) tested against a
+     * man of any size, so the clause got easier the bigger the cornerstone
+     * being sold: two late firsts are 47% of a 2500-point pillar, which is the
+     * trade this clause exists to permit, and 24% of a 5000-point one, which
+     * is not. Real two-first packages clear the added bar comfortably; what it
+     * removes is a pair of picks that are first-round quality only by the
+     * letter of the threshold.
      */
     HEADLINE_PREMIUM_COUNT: 2,
   },

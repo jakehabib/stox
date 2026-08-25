@@ -438,7 +438,42 @@ const CAP_FIT = {
   FREE_SHARE: 0.25,
   /** At this share (i.e. it does not fit) the acquiring discount is at full strength. */
   FULL_SHARE: 1.25,
-  ACQUIRE_MULT_MIN: 0.6,
+  /**
+   * [TUNE] 0.80, up from 0.60, and the reason is that this term had stopped
+   * being a reading of a contract.
+   *
+   * MEASURED. A club with $318K of room — an ordinary mid-season position, not
+   * an edge case — prices EVERY incoming contract past FULL_SHARE, so `strain`
+   * saturates and the multiplier came back at exactly 0.600 for a 60-overall
+   * on $1M, an 88 on $9M, a 92 on $12M and a 99 on $30M alike. Six different
+   * contracts, one number: at the point where it bit hardest it had no
+   * resolution left and was simply a 40% tax on trading with a broke club at
+   * all. That is the same shape defect `contractBurden` was rewritten to
+   * escape — cap room is dollars, and a multiplier on a man's TALENT charges
+   * the same dollars four times over to a star and once to a backup.
+   *
+   * AND IT READS ONLY HALF THE DEAL. `added` is the incoming contract against
+   * the club's room as though nothing were going the other way, so a swap that
+   * is cap-neutral by construction — a $12M man in, a $12M man out — still
+   * came back marked down 40%. The real question, "can this club's sheet carry
+   * the trade", is answered properly and separately: aiCapShortfall (lib/
+   * trade.ts) prices the WHOLE deal against the room and refuses it on screen,
+   * and assertCapRoom refuses to write it. So the hard fact is already stated
+   * twice and this term's only remaining job is the soft preference.
+   *
+   * 0.80 is sized against the other "we would rather not" term in the model:
+   * the widest the bid/ask spread ever opens is SPREAD.POACH_PREMIUM 0.18 on
+   * HARD. A club that genuinely cannot fit a contract now marks the man down
+   * by about what the hardest difficulty marks up a man it is being asked to
+   * give up — a real, visible cost, and no longer the largest single term in
+   * the price of a star.
+   */
+  ACQUIRE_MULT_MIN: 0.8,
+  /**
+   * Untouched. This is the branch that prices a club's OWN expensive man, and
+   * it was measured at 0.943 for a club with $318K of room — a 6% markdown for
+   * being glad of the relief, which is the right size for a preference.
+   */
   SHED_MULT_MIN: 0.88,
 };
 
@@ -1192,16 +1227,18 @@ export function playerValue(p: RosterPlayer, opts: Parameters<typeof playerValue
 }
 
 /**
- * Value of a draft pick to this team, in the same units as playerValue — which
- * are now the Jimmy Johnson chart's own units, unscaled. See PICK_VALUE_CHART
- * in lib/tuning.ts: to a neutral GM valuing a pick in the next draft, this
- * function returns the chart number and nothing else, so "420" means "pick 48"
- * everywhere in the game, for players as much as for picks.
+ * Value of a draft pick to this team, in the same units as playerValue. See
+ * PICK_VALUE_CHART in lib/tuning.ts: to a neutral GM valuing a pick in the next
+ * draft, this function returns the chart number and nothing else, so "420"
+ * means "pick 48" everywhere in the game, for players as much as for picks.
  *
  * The old form multiplied the chart by a bare 0.30 marked [FRAGILE
  * PLACEHOLDER], which is exactly what it was: a conversion factor between two
  * scales that nobody could state in football terms, sitting between the two
- * halves of every trade. It is gone.
+ * halves of every trade. It is gone, and what replaced it is not another one:
+ * PICK_VALUE_CHART bends the CLIMB of round one — a pick-for-pick auction
+ * price — onto the top of the player curve, by a measured amount, and leaves
+ * every pick from 31 down exactly as the table states it.
  */
 export function pickValue(
   round: number,

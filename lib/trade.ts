@@ -108,8 +108,8 @@ const FUTURE_SLOT_REGRESSION = 0.65;
  * not merely stale but backwards: during a live draft RESET_STANDINGS has
  * already wiped the live rows, so the projection collapsed to database row
  * order and the club holding the 32nd selection was charged for the 1st —
- * a Jimmy Johnson gap of 3000 points against 590 on the exact same pick the
- * board was calling #32.
+ * a gap of 1797 points against 590 on the exact same pick the board was
+ * calling #32.
  *
  * Before the reseed the stored slot is only the placeholder assigned at
  * generation time, unrelated to performance, so the projection is the honest
@@ -321,7 +321,13 @@ async function assetValues(assets: TradeAsset[], ctx: TradeContext, side: 'recei
   // "First-round quality" is read off the chart itself rather than written
   // down, so it stays true if the league ever changes size.
   const premiumLine = PICK_VALUE_CHART(LEAGUE.TEAM_COUNT);
-  return { total, reasons, best: ranked[0] ?? null, premiumCount: ranked.filter((a) => a.value >= premiumLine).length, worstDeal };
+  const P2 = TRADE_VALUE.PACKAGE.HEADLINE_PREMIUM_COUNT;
+  return {
+    total, reasons, best: ranked[0] ?? null,
+    premiumCount: ranked.filter((a) => a.value >= premiumLine).length,
+    premiumTotal: pieces.slice(0, P2).reduce((sum, a) => sum + a.value, 0),
+    worstDeal,
+  };
 }
 
 /** One side of a proposed trade, priced. See assetValues and TRADE_VALUE.PACKAGE. */
@@ -333,6 +339,12 @@ interface AssetSide {
   best: { label: string; value: number; isPlayer: boolean } | null;
   /** How many assets here are worth a first-round pick or more — the headline rule's second clause. */
   premiumCount: number;
+  /**
+   * What the best HEADLINE_PREMIUM_COUNT assets here are worth together,
+   * unweighted. The headline rule's second clause needs a SIZE and not only a
+   * count — see headlineShortfall.
+   */
+  premiumTotal: number;
   /**
    * The single worst contract coming AT the club and what it is over market
    * by, in dollars — what the salary-dump refusal names. Only ever set on the
@@ -358,8 +370,31 @@ function headlineShortfall(receive: AssetSide, send: AssetSide): { wanted: numbe
   const wanted = pillar.value * TRADE_VALUE.PACKAGE.HEADLINE_SHARE;
   const best = receive.best?.value ?? 0;
   if (best >= wanted) return null;
-  // ...or enough of the package is first-round quality (see premiumCount).
-  if (receive.premiumCount >= TRADE_VALUE.PACKAGE.HEADLINE_PREMIUM_COUNT) return null;
+  /*
+   * ...or enough of the package is first-round quality — AND WORTH AS MUCH,
+   * BETWEEN THEM, AS THE ONE PIECE WOULD HAVE HAD TO BE.
+   *
+   * The count alone was not a bar. "First-round quality" is a fixed line — the
+   * value of the LAST pick of round one, 590 — while a pillar is whatever a
+   * pillar is, so the clause got easier the bigger the man being sold. Two
+   * late firsts excuse selling a 2500-point cornerstone at 47% of him, which
+   * is roughly what HEADLINE_SHARE asks for and is the real trade this clause
+   * exists to permit; the same two picks excused selling a 5000-point
+   * franchise quarterback at 24% of him, which is not a trade anyone has made.
+   * The rule is about not selling a pillar for scraps, and a fixed line cannot
+   * say what scraps are relative to a man of any size.
+   *
+   * So the second clause now clears the SAME bar as the first, spread over
+   * more than one piece instead of carried by one. That is exactly what the
+   * clause was for — "two firsts for a franchise quarterback has a headline
+   * asset worth only about a quarter of him, and the Rams, the Bears and the
+   * Texans all made that trade" — and those packages still pass, because two
+   * genuine firsts are worth far more than 40% of the man between them. What
+   * stops passing is two picks that are first-round-quality only by the
+   * letter of a threshold.
+   */
+  if (receive.premiumCount >= TRADE_VALUE.PACKAGE.HEADLINE_PREMIUM_COUNT
+    && receive.premiumTotal >= wanted) return null;
   return { wanted, best, name: pillar.label, isPlayer: pillar.isPlayer };
 }
 
