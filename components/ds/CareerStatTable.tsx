@@ -113,7 +113,6 @@ export function CareerStatTable({ position, table, record, showOvr = false }: {
   // The number that defines the position — bolded down the column the way a
   // stat page leads with a back's yards rather than his carries.
   const leadKey = leadColumnKey(position);
-  const liveRow = table.rows.find((r) => r.inProgress && r.kind !== 'career' && r.showSeasonLabel);
 
   /**
    * A quarterback's line is twelve stat columns before the record column is
@@ -137,9 +136,24 @@ export function CareerStatTable({ position, table, record, showOvr = false }: {
               <th className={dense}>Team</th>
               {ageCol && <th className={`text-right ${dense}`}>Age</th>}
               {cols.map((c) => (
-                <th key={c.key} className={`text-right ${dense}`}>{c.short}</th>
+                <th
+                  key={c.key}
+                  className={`text-right ${dense}`}
+                  title={c.key === 'gp'
+                    ? (playoffs
+                        ? 'Playoff games only \u2014 wild card through the final.'
+                        : 'Regular-season games only. Playoff games are counted on the Playoffs view.')
+                    : undefined}
+                >{c.short}</th>
               ))}
-              {ovrCol && <th className={`text-right ${dense}`}>OVR</th>}
+              {/* The two notes that used to sit under this table are now hover
+                  titles on the headers they describe. The owner's rule: text
+                  must be useful without reading as an explainer, and a
+                  paragraph restating what the view toggle and a column header
+                  already say is clutter. The facts are still one hover away. */}
+              {ovrCol && (
+                <th className={`text-right ${dense}`} title="What he was rated when that season finished. Blank for a year with no rating on record.">OVR</th>
+              )}
               {hasEvents && (
                 // Unlabelled on purpose: the column is sentences, and a header
                 // over them would name what they already say.
@@ -161,56 +175,30 @@ export function CareerStatTable({ position, table, record, showOvr = false }: {
         </table>
       </div>
 
+      {/* The strip only exists when it has something to say. Every note left
+          here explains data that is ABSENT -- without them a card with no
+          numbers reads as broken. The notes that merely restated a label or a
+          column header are gone; those facts are titles on the labels now. */}
+      {(cols.length === 0 || (playoffs && table.hasPreLeagueCareer) || table.hasUndecomposed) && (
       <div className="px-4 py-3 border-t border-line/60 space-y-1">
-        {/* Only where there is a G column to explain. A position the box score
-            never names has no games counted here either way. */}
-        {cols.length > 0 && (
-          <p className="text-xs text-muted">
-            {playoffs
-              ? 'Postseason games only — wild card through the final. None of these numbers appear on the Regular Season view, and G counts the playoff games the yardage came from.'
-              : 'Regular season only. Playoff games are counted on the Playoffs view and nowhere else, so G here is the regular-season schedule.'}
-          </p>
-        )}
         {cols.length === 0 && (
           <p className="text-xs text-muted">
-            Box scores don&apos;t track individual production at {position}, so there are no stat
-            columns to draw — the record beside each year is what this league wrote down about him.
-          </p>
-        )}
-        {ovrCol && (
-          <p className="text-xs text-muted">
-            <span className="text-chalk font-semibold">OVR</span> is what he was rated when that
-            season finished — blank for a year nobody wrote it down.
+            Box scores don&apos;t track individual production at {position}.
           </p>
         )}
         {playoffs && table.hasPreLeagueCareer && (
           <p className="text-xs text-muted">
-            The career he arrived with — everything before this league started keeping records — was seeded as
-            one merged total with no postseason in it. Those years are on the Regular Season view and cannot be
-            split, so they are absent here rather than guessed at.
+            The career he arrived with carries no postseason split; those years are on the Regular Season view.
           </p>
         )}
         {table.hasUndecomposed && (
           <p className="text-xs text-muted">
             <span className="text-chalk font-semibold">Before {beforeYear(table)}</span> is a real
-            career total that arrived with him — everything he did before this league started
-            keeping season-by-season records. The seasons behind it were never recorded, and the
-            game will not guess at a split it doesn&apos;t have.
-          </p>
-        )}
-        {table.rows.some((r) => r.teamAbbr?.endsWith('TM')) && (
-          <p className="text-xs text-muted">
-            <span className="text-chalk font-semibold">2TM</span> is a season split by a mid-season
-            trade — the combined line, with each club&apos;s share beneath it.
-          </p>
-        )}
-        {liveRow && (
-          <p className="text-xs text-muted">
-            <span className="text-accent2 font-semibold uppercase tracking-wide">Live</span> marks
-            the {liveRow.seasonLabel} season, which is still being played.
+            career total he arrived with, never recorded season by season.
           </p>
         )}
       </div>
+      )}
     </>
   );
 }
@@ -373,7 +361,12 @@ function Club({ className, teamId, teamAbbr, indent }: {
     return <td className={className}><span className="text-muted">—</span></td>;
   }
   if (teamId == null) {
-    return <td className={className}><span className="font-semibold text-xs">{teamAbbr}</span></td>;
+    // "2TM" and friends explain themselves on hover rather than in a footnote
+    // under the table -- see the note on the OVR header.
+    const multi = teamAbbr?.endsWith('TM')
+      ? 'A season split by a mid-season trade. The combined line, with each club\u2019s share beneath it.'
+      : undefined;
+    return <td className={className}><span className="font-semibold text-xs" title={multi}>{teamAbbr}</span></td>;
   }
   return (
     <td className={className}>

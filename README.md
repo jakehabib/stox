@@ -647,6 +647,24 @@ undo anything, ask to revert to a commit below (or the app owner can do it
 directly: `git revert <hash>`, or check out an earlier commit — nothing is
 ever force-pushed over, so every state below still exists in git history).
 
+- **2026-08-25 — Two paragraphs under the career table explained a column
+  header and a view toggle.** Under a man's season-by-season record sat *"Regular
+  season only. Playoff games are counted on the Playoffs view…"* and *"OVR is
+  what he was rated when that season finished…"* — one restating the view the
+  reader had already chosen, the other defining a column two inches above it.
+  The app owner: *"can you remove the needless text underneath?"* Both are gone,
+  and the facts moved onto the things they describe as hover titles, so nothing
+  is lost and nothing is printed. Three more notes went the same way once they
+  were looked at together: the LIVE note duplicated a tooltip the badge already
+  carried word for word, the 2TM note now hangs off the 2TM cell, and the two
+  remaining explanations of genuinely absent data were cut to one sentence each.
+  The footer strip is now gated on having something to say, so an ordinary
+  career ends at the table rather than at an empty bordered box. What stays,
+  stays on purpose: every surviving note explains data that is **missing** — a
+  lineman the box score writes no line for, a career seeded before the league
+  kept records — and without them a card with no numbers reads as broken rather
+  than as honest. Shipped in `HASHPLACEHOLDER`.
+
 - **2026-08-25 — A man four years into his professional career still had a
   live college season ticking over on his card.** The College Profile block was
   deliberately un-gated a while back, on the reasoning that being drafted
