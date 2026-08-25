@@ -1185,9 +1185,62 @@ async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng, kin
   return board[0].p;
 }
 
-/** Worst record first, tie-broken by point differential — the real draft-order rule, used to reseed the order for real and to project it (see projectionFor) from whichever standings exist. */
-function standingsOrder<T extends { id: string; wins: number; losses: number; ties: number; pointsFor: number; pointsAgnst: number }>(teams: T[]): T[] {
+/**
+ * HOW FAR A CLUB WENT, WORST FIRST — the first key of the draft order, ahead
+ * of any record.
+ *
+ * The board is built from the bottom: everyone who missed January picks before
+ * anyone who played in it, then the clubs that played are separated by the
+ * round they went out in, and the club still standing at the end picks last.
+ * A club's record decides where it sits INSIDE its group and nothing more,
+ * which is why the best record in football can pick 19th and why the 8-9 club
+ * that snuck in cannot pick 3rd.
+ *
+ * The strings are TeamSeasonRecord.playoffResult, written by
+ * snapshotSeasonHistory the moment the final is played (lib/season.ts). Their
+ * ORDER here is the rule; their COUNTS are never assumed. A club with no
+ * record at all, or one carrying a value this list does not know, is read as
+ * MISSED — the column's own default, and the only honest reading of "nothing
+ * on file says this club played a playoff game".
+ */
+const PLAYOFF_EXIT_ORDER: readonly string[] = ['MISSED', 'WILDCARD', 'DIVISIONAL', 'CONFERENCE', 'RUNNER_UP', 'CHAMPION'];
+
+function exitRank(result?: string | null): number {
+  const i = PLAYOFF_EXIT_ORDER.indexOf(result ?? 'MISSED');
+  return i < 0 ? 0 : i;
+}
+
+/**
+ * THE DRAFT ORDER: playoff exit first, worst record first inside it — the one
+ * rule, used to reseed the order for real (reseedDraftOrder) and to project it
+ * (see projectionFor) from whichever standings exist. Both call it. Neither
+ * writes its own copy, because a screen and an engine holding two copies of an
+ * ordering rule is how the number a GM reads stops being the number the draft
+ * runs on.
+ *
+ * Record alone used to be the whole rule, and it produced the thing the app
+ * owner reported: *"i was knocked out in the first round yet got pick #32. it
+ * shouldn't operate that way."* He was right. Pick 32 belongs to the club that
+ * won the title; the 15-2 side that lost its wild-card game belongs at the top
+ * of the playoff block, not at the bottom of the board.
+ *
+ * NO GROUP SIZE IS HARD-CODED ANYWHERE IN HERE. The standard bracket happens
+ * to hand out 6/4/2/1/1, but the league size and the playoff format are
+ * settings in this game, so the groups are whatever the playoffResult values
+ * on file actually say. Sizes that do not add up to a familiar shape simply
+ * produce a different split of the same complete order.
+ *
+ * It stays a single sort over a single array for the same reason: a sort of N
+ * clubs is N clubs, so ranking by position in the result gives 1..N with every
+ * slot used exactly once and none used twice, whatever the groups look like.
+ * That invariant is the point of this file — INV-11, and the collision the
+ * long comment in reseedDraftOrder is about.
+ */
+function standingsOrder<T extends { id: string; wins: number; losses: number; ties: number; pointsFor: number; pointsAgnst: number; playoffResult?: string | null }>(teams: T[]): T[] {
   return [...teams].sort((a, b) => {
+    const exitA = exitRank(a.playoffResult);
+    const exitB = exitRank(b.playoffResult);
+    if (exitA !== exitB) return exitA - exitB;
     const pctA = a.wins / Math.max(1, a.wins + a.losses + a.ties);
     const pctB = b.wins / Math.max(1, b.wins + b.losses + b.ties);
     if (pctA !== pctB) return pctA - pctB;
@@ -1197,7 +1250,10 @@ function standingsOrder<T extends { id: string; wins: number; losses: number; ti
 
 /**
  * The 1-based draft slot a club would hold if the season ended on the rows
- * handed in — the same worst-first rule reseedDraftOrder runs for real.
+ * handed in — the same rule reseedDraftOrder runs for real. Rows carrying a
+ * playoffResult are ordered by how far the club went first; the week report,
+ * which hands in mid-season standings, has no playoff exits yet and gets the
+ * worst-record-first board it is asking about.
  *
  * Exported as a PURE function, deliberately. The caller that needs it (the
  * week report's "what it changed" band) is already holding the standings from
@@ -1205,7 +1261,7 @@ function standingsOrder<T extends { id: string; wins: number; losses: number; ti
  * draftOrderProjection can only answer for "now", and a second database read
  * cannot recover a snapshot the caller has in hand.
  */
-export function draftSlotAmong<T extends { id: string; wins: number; losses: number; ties: number; pointsFor: number; pointsAgnst: number }>(
+export function draftSlotAmong<T extends { id: string; wins: number; losses: number; ties: number; pointsFor: number; pointsAgnst: number; playoffResult?: string | null }>(
   teamId: string,
   teams: T[],
 ): number {
@@ -1213,8 +1269,9 @@ export function draftSlotAmong<T extends { id: string; wins: number; losses: num
 }
 
 /**
- * Reseed every round's pick slots from the finished season's standings, worst
- * first.
+ * Reseed every round's pick slots from the finished season's standings: the
+ * clubs that missed January first, worst record first, then the playoff field
+ * in the order it went out, with the champion last (see standingsOrder).
  *
  * THE STANDINGS THIS READS ARE NOT ON THE TEAM ROW, and reading them there was
  * a real bug that made the draft order arbitrary. `Team.wins/losses/pointsFor/
@@ -1245,12 +1302,16 @@ export async function reseedDraftOrder(leagueId: string, seasonYear: number) {
   const teams = await prisma.team.findMany({ where: { leagueId } });
   const records = await prisma.teamSeasonRecord.findMany({
     where: { leagueId, year: seasonYear - 1 },
-    select: { teamId: true, wins: true, losses: true, ties: true, pointsFor: true, pointsAgnst: true },
+    select: { teamId: true, wins: true, losses: true, ties: true, pointsFor: true, pointsAgnst: true, playoffResult: true },
   });
   const byTeam = new Map(records.map((r) => [r.teamId, r]));
   // Every club must be present or the sort compares a real record against a
   // wiped row, which is the bug wearing a smaller hat.
   const haveEveryRecord = teams.length > 0 && teams.every((t) => byTeam.has(t.id));
+  // The fallback hands in live Team rows, which carry no playoffResult at all
+  // — every club then reads as MISSED, standingsOrder collapses to the
+  // worst-record-first board, and a first draft with nothing on file still
+  // comes out a complete 1..N with nothing shared and nothing missing.
   const order = haveEveryRecord
     ? standingsOrder(teams.map((t) => ({ ...t, ...byTeam.get(t.id)! })))
     : standingsOrder(teams);
@@ -1311,8 +1372,9 @@ export async function reseedDraftOrder(leagueId: string, seasonYear: number) {
  * WHERE EACH CLUB WOULD PICK, AND WHAT THAT NUMBER IS ACTUALLY MADE OF.
  *
  * `order` maps a club id to its place in round one (1 = first overall), which
- * is also its place in every other round — the same worst-first rule
- * reseedDraftOrder applies for real. `season` names the season the ranking
+ * is also its place in every other round — the same rule reseedDraftOrder
+ * applies for real: the clubs that missed the playoffs first, worst record
+ * first, then the playoff field in the order it went out. `season` names the season the ranking
  * came from and `live` says whether that season is still being played, and
  * both exist because a screen that prints the number has to be able to say
  * where it came from without guessing.
@@ -1355,8 +1417,32 @@ async function projectionFor(leagueId: string, seasonYear: number): Promise<Draf
   if (teams.length === 0) return null;
   const rank = (sorted: { id: string }[]) => new Map(sorted.map((t, i) => [t.id, i + 1]));
 
+  /** The exits on file for one season, only when every club has one. */
+  const exitsFor = async (year: number) => {
+    const rows = await prisma.teamSeasonRecord.findMany({
+      where: { leagueId, year },
+      select: { teamId: true, playoffResult: true },
+    });
+    const byTeam = new Map(rows.map((r) => [r.teamId, r.playoffResult]));
+    return teams.every((t) => byTeam.has(t.id)) ? byTeam : null;
+  };
+
   if (teams.some((t) => t.wins + t.losses + t.ties > 0)) {
-    return { order: rank(standingsOrder(teams)), season: seasonYear, live: true };
+    // THE LIVE ROWS SAY NOTHING ABOUT JANUARY. Team.wins is the season being
+    // played and there is no playoff column on it, so through the regular
+    // season this is the worst-record-first board and nothing else — which is
+    // the honest answer while the field is still being decided.
+    //
+    // The moment the final is played, though, snapshotSeasonHistory freezes
+    // this season's exits and the live rows sit there unwiped until
+    // RESET_STANDINGS runs several advances later. Every screen in that window
+    // — the end-of-season report, re-signing, the trade board — would
+    // otherwise print an order the reseed is about to contradict. So if the
+    // exits exist for the season in progress, they are laid over the live
+    // records and this becomes the same computation the draft will run.
+    const exits = await exitsFor(seasonYear);
+    const rows = exits ? teams.map((t) => ({ ...t, playoffResult: exits.get(t.id)! })) : teams;
+    return { order: rank(standingsOrder(rows)), season: seasonYear, live: true };
   }
 
   // Rows wiped: the season that was played is the one before the league year
@@ -1365,7 +1451,7 @@ async function projectionFor(leagueId: string, seasonYear: number): Promise<Draf
   const played = seasonYear - 1;
   const records = await prisma.teamSeasonRecord.findMany({
     where: { leagueId, year: played },
-    select: { teamId: true, wins: true, losses: true, ties: true, pointsFor: true, pointsAgnst: true },
+    select: { teamId: true, wins: true, losses: true, ties: true, pointsFor: true, pointsAgnst: true, playoffResult: true },
   });
   const byTeam = new Map(records.map((r) => [r.teamId, r]));
   if (!teams.every((t) => byTeam.has(t.id))) return null;
