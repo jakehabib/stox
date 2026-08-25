@@ -727,6 +727,50 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — A club's refusal never named a single move that would have
+  turned it into a yes.** The trade screen said no, said how far off the offer
+  was through the acceptance meter, and stopped. Working out what would
+  actually close it was left to the GM, one asset at a time, against a value
+  model he is deliberately never shown — which made the most common moment on
+  the screen the one it helped with least. A closer now sits under the
+  refusal. `findTradeClosers` enumerates the single-asset changes to the offer
+  — one more of yours on the table, one fewer of theirs on the ask, and, when
+  the block is the club's cap rather than its board, the two money moves that
+  are the only things that can shift what lands on its books, since picks
+  weigh nothing there — and puts every one of them through the SAME
+  `evaluateTrade` the verdict above it just ran. Only a package that comes back
+  accepted, and that also survives the cap and roster-limit gates the Confirm
+  button enforces, reaches the screen; nothing on the panel is an estimate, and
+  each row is a package the club has already agreed to. It prints no value
+  figure of any kind. The engine's points are the price list its whole board
+  runs on, so they do the two jobs they are good for and neither is display:
+  they NARROW the candidate set before anything expensive runs and they ORDER
+  the survivors cheapest first, while what renders is an action, the club's own
+  football note on the piece ("This fills a real hole for us at RT"), and a
+  three-word band — *only just*, *comfortably*, *more than they need* — read
+  off the verified evaluation, with the last drawn in the warning colour for
+  the same reason the meter names its overshoot. The narrowing is an exact
+  necessary condition rather than a heuristic, which is what makes the empty
+  state honest rather than a shrug: a pile is weighted by
+  `PACKAGE.CONCENTRATION` with the best asset at 1.0 and falling from there, so
+  adding an asset can move the club's receive total by at most that asset's own
+  priced value, and an asset priced under the shortfall cannot close the deal
+  however the rest of the package falls — skipping it can never hide a
+  suggestion that would have worked. The cap thresholds are the same shape
+  against the same `frees`/`takesOn` the gate itself reads. Both are slackened
+  by a rounding hair on purpose, because a slightly wide net costs one wasted
+  verification and a net a rounding error too tight silently loses the only
+  asset that worked. The cost is paid only on an explicit Propose that came
+  back declined, never on the live debounced meter that runs on every click.
+  Measured on a real 53-man roster: pricing 53 men and 21 picks to narrow them
+  takes 6ms, a typical refusal spends three to five verifications and answers
+  in 64ms, and the worst case — the full 24-candidate budget spent with nothing
+  accepted — is 128ms. 157 suggested closers across four live leagues were
+  re-evaluated after being applied, and every one came back accepted. Clicking
+  a row does exactly what clicking those assets in the roster panels does: it
+  sets the selection and lets the meter re-read it. It does not propose the
+  deal and it does not execute it. Shipped in `1ba830e`.
+
 - **2026-08-25 — Kickers and punters were graded by a production score that
   could not see a kick, and cut-down day would release a club's only one.**
   Two separate defects, both of which left a specialist's whole career running
