@@ -143,9 +143,16 @@ export function NegotiationPanel({
    * It belongs to the panel and not to the screen because it is only
    * meaningful on a deal that APPENDS, and `appending` is the panel's own read
    * of the session (`ctx.currentContract` plus `controlYears`) rather than a
-   * fact about which form is mounted — a walk-year re-sign appends too. A
-   * screen that does not pass this still gets the before-and-after figures,
-   * just not the slider; nothing is hidden by its absence.
+   * fact about which form is mounted — a walk-year re-sign appends too.
+   *
+   * PASS IT ON EVERY SCREEN THAT CAN APPEND. Omitting it does not remove the
+   * conversion, it removes the say: `negotiateOffer` resolves the unset field
+   * through DEFAULT_CONVERT_PCT and converts the whole of that season's salary
+   * anyway, and the block below then reports a figure the GM was never offered
+   * a chance to set. The re-sign window shipped that way — the same appended
+   * deal as an extension, the same cap effect on screen, and the slider only on
+   * the extension. Free agency does not pass it and does not need to: nothing
+   * appends there, so the block never draws at all.
    */
   onStructure?: (next: DealStructure) => void;
   /**

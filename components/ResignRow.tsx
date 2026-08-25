@@ -9,7 +9,7 @@ import { formatMoney } from '@/lib/cap';
 import { startersAt } from '@/lib/lineup';
 import { positionBadgeClass } from './ds/positionColor';
 import { CapMode } from '@/lib/types';
-import type { DealStructure, NegotiationSession } from '@/lib/negotiation';
+import { DEFAULT_CONVERT_PCT, type DealStructure, type NegotiationSession } from '@/lib/negotiation';
 import { DealStructureControls, DEFAULT_ESCALATION } from './DealStructureControls';
 import { cutPlayerAction } from '@/app/actions/roster';
 import { openResignNegotiationAction, submitResignOfferAction, setAsideResignAction } from '@/app/actions/resign';
@@ -20,8 +20,19 @@ import { tip } from '@/lib/glossary';
 import { contractStagePill } from '@/lib/contractClock';
 import { FranchiseTagButton } from './FranchiseTagButton';
 
-/** Where a fresh deal opens. Reset terms returns the shape here. */
-const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidYears: 0 };
+/**
+ * Where a fresh deal opens. Reset terms returns the shape here.
+ *
+ * `convertPct` is stated rather than left out, and stated at the figure the
+ * write already applies. A walk-year re-sign APPENDS — the new years go on the
+ * end of the season he is still owed — so `negotiateOffer` sends it down
+ * `extendContract` with `structure.convertPct ?? DEFAULT_CONVERT_PCT`. This
+ * screen never set the field, so every re-sign in the game converted the whole
+ * of that season's salary into signing bonus, and Reset had nothing to return
+ * the control to. Nothing about the deal changes by writing it down; what
+ * changes is that the GM can now move it.
+ */
+const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidYears: 0, convertPct: DEFAULT_CONVERT_PCT };
 
 /**
  * One expiring contract, and the decision it forces.
@@ -359,6 +370,24 @@ export function ResignRow({ leagueId, playerId, name, position, age, ovr, curren
               onSigned={() => { setOpen(false); router.refresh(); }}
               onReset={() => setStructure(OPENING_STRUCTURE)}
               onCancel={leaveTable}
+              /* HOW MUCH OF THIS SEASON HE TAKES AS BONUS — the one control
+                 the re-sign window did not have, and the only difference left
+                 between this table and the extension one.
+
+                 A walk-year re-sign appends exactly as an extension does, and
+                 the panel already knows it: `appending` is its own read of the
+                 session, so it was drawing the before-and-after cap figures for
+                 the conversion on this screen all along. Without `onStructure`
+                 those figures are a read-out of a decision nobody made —
+                 `negotiateOffer` resolves the unset field through
+                 DEFAULT_CONVERT_PCT and converts the lot. The GM who would
+                 rather keep the added years clean had no way to say so here and
+                 every way to say so one screen over.
+
+                 Same arrangement `structureSlot` already uses: the structure is
+                 this screen's state, the control lives in the panel beside the
+                 cap figures it moves. */
+              onStructure={setStructure}
               onOffer={(offer, str, fingerprint) =>
                 submitResignOfferAction(leagueId, playerId, offer, str, fingerprint)}
               structureSlot={

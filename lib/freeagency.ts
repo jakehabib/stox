@@ -3041,9 +3041,10 @@ export async function negotiateOffer(opts: {
           capMode: settings.capMode, week, escalation: structure.escalation, voidYears: structure.voidYears,
           // Same figure the meter used, resolved the same way. A walk-year
           // re-sign APPENDS (see extendContract), so this reaches
-          // `signExtension` on that path too — and the re-sign screen does not
-          // set the field at all, which is precisely why the default is
-          // applied here rather than left to the builder.
+          // `signExtension` on that path too. The re-sign screen sets the field
+          // now — it has the slider the extension screen always had — but the
+          // default stays here rather than in the builder, because an offer may
+          // still arrive from a caller that never set it.
           convertPct: structure.convertPct ?? DEFAULT_CONVERT_PCT,
           // An EXTENSION is not a re-sign and must not report as one on the
           // wire: he was never going to be a free agent, and "Re-signed" over
