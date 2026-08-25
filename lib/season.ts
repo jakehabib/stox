@@ -371,6 +371,13 @@ async function runPhaseStep(leagueId: string) {
       // this step (or that initial seed) never doubles it up.
       const alreadySeeded = await prisma.player.count({ where: { leagueId, isDraftee: true, draftYear: league.seasonYear } });
       if (alreadySeeded === 0) await addDraftClass(leagueId, league.seasonYear, rng);
+      // A new class is a new set of private workouts, and this is the moment
+      // the old ones stop being spendable — everybody they could have been
+      // spent on was drafted or signed one phase ago. Not at the turn of the
+      // league year, which falls in the middle of a class's life: see
+      // resetWorkoutSlots in lib/workouts.ts. Idempotent, so a save whose
+      // class was seeded at league creation lands on the same counter.
+      await resetWorkoutSlots(leagueId, league.seasonYear);
 
       // Build this year's schedule if it doesn't exist yet. buildSchedule()
       // used to be called from exactly one place — createLeague() — and
@@ -1803,10 +1810,12 @@ async function runOffseasonStepClaimed(
       await prisma.league.update({ where: { id: leagueId }, data: { seasonYear: league.seasonYear + 1 } });
       // This is the one line in the phase machine where seasonYear actually
       // moves, so it is where a per-season allowance turns over. Private
-      // workout slots are stamped with the year they belong to and would read
-      // as zero-used anyway; zeroing them here means the count on screen
-      // changes with the calendar rather than on the next spend.
-      await resetWorkoutSlots(leagueId, league.seasonYear + 1);
+      // workout slots deliberately do NOT turn over here: they are budgeted
+      // against a college class, and the class on the board right now was put
+      // together last September and will not be drafted until this offseason
+      // is over. Refilling them on this line would hand a GM ten workouts
+      // against one class of four hundred. They reset where a new class is
+      // actually minted — the PRESEASON step below.
       return { summary: `Standings are wiped and the ${league.seasonYear + 1} league year is open.` };
     }
     case 'AGE_CONTRACTS': {

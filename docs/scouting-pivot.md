@@ -35,7 +35,7 @@ Three pieces, replacing one.
 |---|---|---|---|
 | **Consensus board** (`lib/consensus.ts`) | Free | Always | A public grade, rank, band and *reason* for every prospect |
 | **Shortlist attention** (`lib/shortlistAttention.ts`) | Free | Every regular-season week | Passive convergence on whoever you starred |
-| **Private workouts** (`lib/workouts.ts`) | 5 slots/season | Pre-draft window only | One big discrete reveal on one prospect |
+| **Private workouts** (`lib/workouts.ts`) | 5 slots per class | Any phase, until that draft goes on the clock | One big discrete reveal on one prospect |
 
 The focus-point currency (`lib/scoutingEconomy.ts`, `SCOUT_TIERS`,
 `Team.scoutPoints`) is retired. It still compiles and still runs — see §5.
@@ -169,12 +169,12 @@ group. Dynasty scaling comes from `loadScoutMods` / `scoutingModsFor` — see
   are the traits that bust a pick and a workout genuinely cannot settle them.
   Full Scout stays the one sanctioned hole in the fog.
 - Per-prospect one-shot: `ScoutingReport.workoutYear` blocks a second workout
-  on the same player in the same year, so a scarce slot cannot be wasted.
+  on the same player in the same class, so a scarce slot cannot be wasted.
 
 Full Scout vs workout, in one line each: **Full Scout answers "what is he",
 on anybody in the league, in any phase, twice a year. A workout answers "how
-high is the ceiling and what is he like", on a prospect, before the draft,
-five times a year.**
+high is the ceiling and what is he like", on a prospect, any time before his
+draft goes on the clock, five times per class.**
 
 ---
 

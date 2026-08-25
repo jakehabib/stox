@@ -15,12 +15,15 @@ import { beginRookieDraftAction } from '@/app/actions/draft';
  * is one draft and not two).
  *
  * THE CONFIRM STEP IS ABOUT UNSPENT WORKOUTS, NOT ABOUT SECOND-GUESSING.
- * Private workouts are the one scarce scouting decision in the game and their
- * window closes the instant the first card goes in (see lib/workouts.ts). A GM
- * who walks to the podium holding four of them has thrown away the whole
- * mechanic without being told, so when any are left the button asks once and
- * points at the room where they can still be used. With none left there is no
- * second step at all — a confirm that always fires is a confirm nobody reads.
+ * Private workouts are the one scarce scouting decision in the game, and this
+ * button is the event that ends their window: workoutsOpen() in lib/workouts.ts
+ * reads the same `started` flag this sets, so the slots are live while the war
+ * room is up and gone the moment it comes down. A GM who walks to the podium
+ * holding four of them has thrown away the whole mechanic without being told,
+ * so when any are left the button asks once and points at the room where they
+ * can still be used — a room that really is still open when he gets there.
+ * With none left there is no second step at all; a confirm that always fires
+ * is a confirm nobody reads.
  */
 export function StartDraftButton({ leagueId, unusedWorkouts, fullScoutsLeft, scoutingHref }: {
   leagueId: string;
@@ -56,8 +59,8 @@ export function StartDraftButton({ leagueId, unusedWorkouts, fullScoutsLeft, sco
       <div className="label-sm text-warn">Before you go to the podium</div>
       <p className="text-sm text-chalk/90 leading-snug">
         Your scouting department still has {unusedWorkouts} private workout{unusedWorkouts === 1 ? '' : 's'} on
-        the books. That window shuts the second the first card goes in, and unused slots do not carry to next
-        year — there is still time to fly somebody in.
+        the books. That window shuts the second you go on the clock, and nothing carries over to next year's
+        class — there is still time to fly somebody in.
       </p>
       {/* Full Scouts are named but never gated on: unlike a workout they are a
           league-year entitlement and survive into the season, so telling a GM

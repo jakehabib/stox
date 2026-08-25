@@ -39,7 +39,7 @@ export function WorkoutButton({
   max: number;
   open: boolean;
   windowLabel: string;
-  /** Already worked out this league year. A slot cannot be spent on him twice. */
+  /** Already worked out. A slot cannot be spent on the same prospect twice. */
   done: boolean;
   potLow?: number;
   potHigh?: number;
@@ -98,13 +98,13 @@ export function WorkoutButton({
   };
 
   if (done) {
-    return <span className="text-[11px] text-gold whitespace-nowrap" title="One workout per prospect per year.">✓ Worked out</span>;
+    return <span className="text-[11px] text-gold whitespace-nowrap" title="One workout per prospect. There is nothing left to measure on him.">✓ Worked out</span>;
   }
   if (!open) {
     return <span className="text-[11px] text-muted whitespace-nowrap" title={windowLabel}>Window closed</span>;
   }
   if (remaining <= 0) {
-    return <span className="text-[11px] text-bad whitespace-nowrap" title={`All ${max} slots spent. They reset with the new league year.`}>No slots left</span>;
+    return <span className="text-[11px] text-bad whitespace-nowrap" title={`All ${max} slots spent on this class. The next lot comes with the next class.`}>No slots left</span>;
   }
 
   if (!staged) {
@@ -146,7 +146,7 @@ export function WorkoutButton({
     <div className="w-full">
       <CommitmentCard
         tone="gold"
-        eyebrow={`Private workout · ${remaining} of ${max} left this year`}
+        eyebrow={`Private workout · ${remaining} of ${max} left on this class`}
         avatar={avatar}
         name={name}
         meta={meta}

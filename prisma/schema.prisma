@@ -484,10 +484,13 @@ model ScoutingReport {
   // lib/workouts.ts). Nullable: it is genuinely absent for every report that
   // predates workouts, and `prisma db push` cannot add a required column to a
   // database that already has rows. Two jobs, both of them real: it stops a
-  // scarce workout slot being spent twice on the same prospect, and it is
-  // what a page reads to say "worked him out in 2027". It does NOT gate the
-  // reveal — the reveal lives in the confidence/attrsRevealed columns like
-  // every other one.
+  // scarce workout slot being spent twice on the same prospect, and it is what
+  // the board reads to put a ✓ beside a man already flown in. The year is his
+  // CLASS (`Player.draftYear`), matching the ledger on DynastyProfile — the
+  // window spans the turn of the league year, so stamping the league year
+  // would let the same prospect be worked out twice, once on each side of it.
+  // It does NOT gate the reveal — the reveal lives in the
+  // confidence/attrsRevealed columns like every other one.
   workoutYear   Int?
 
   @@unique([playerId, teamId])
@@ -1024,12 +1027,19 @@ model DynastyProfile {
   insiderYear Int @default(0)
   insiderUsed Int @default(0)
 
-  /// PRIVATE WORKOUT slot ledger (see lib/workouts.ts), same year-stamped
+  /// PRIVATE WORKOUT slot ledger (see lib/workouts.ts), same stamped-counter
   /// shape as the two above and for the same reason: a counter tagged with
-  /// the league year it belongs to reads as zero the moment the year moves,
-  /// so "resets every season" needs no hook to be CORRECT. lib/season.ts
-  /// zeroes it at the season boundary anyway, purely so the count on screen
-  /// turns over with the calendar instead of on the next spend.
+  /// what it belongs to reads as zero the moment that moves, so the reset
+  /// needs no hook to be CORRECT.
+  ///
+  /// The stamp is the COLLEGE CLASS (`Player.draftYear`), not the league year,
+  /// which is the one thing about this column that differs from the two above.
+  /// Workouts are budgeted against a class of prospects, and a class is
+  /// generated in one league year and drafted in the next — a per-year counter
+  /// refilled itself halfway through the class's life and paid out twice for
+  /// the same four hundred men. lib/season.ts zeroes it where a new class is
+  /// minted, purely so the count on screen turns over with the new board
+  /// instead of on the next spend.
   workoutYear Int @default(0)
   workoutUsed Int @default(0)
 

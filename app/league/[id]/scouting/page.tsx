@@ -13,7 +13,7 @@ import {
 } from '@/lib/consensus';
 import { loadAttentionPlan, unitsFor, confidenceAfterWeek } from '@/lib/shortlistAttention';
 import { loadWorkoutSlots } from '@/lib/workouts';
-import { imminentDraftYear } from '@/lib/draft';
+import { imminentDraftYear, liveDraftClassYear } from '@/lib/draft';
 import { PageMasthead } from '@/components/ds/PageMasthead';
 import { SectionHeading } from '@/components/ds/SectionHeading';
 import { ScoutingRange } from '@/components/ds/ScoutingRange';
@@ -53,7 +53,8 @@ export const dynamic = 'force-dynamic';
  *      share — the number lib/shortlistAttention.ts applies, from the same
  *      function it applies it with, never a second copy of the arithmetic.
  *
- *   3. PRIVATE WORKOUTS (five a year, pre-draft only). The one scarce,
+ *   3. PRIVATE WORKOUTS (five against each class, spendable from the day it
+ *      lands on the board until its draft goes on the clock). The one scarce,
  *      deliberate commitment left in scouting.
  *
  * ---------------------------------------------------------------------------
@@ -95,12 +96,14 @@ export const dynamic = 'force-dynamic';
  *   98% of flagged men and 11.6% of every row on the board. The standalone
  *   flag now renders only when the bias chip is not already saying it.
  *
- *   A PANEL THAT REPORTS NOTHING. Private workouts open in RESIGN and
- *   FREE_AGENCY only (WORKOUTS.PHASES), so through the whole season — every
- *   state a GM spends most of his time in — the panel rendered a four-line
- *   explainer plus up to nine prospect cards whose only content was the words
- *   "Window closed", nine times. Closed, it is now one line saying when it
- *   opens. Open, it is unchanged.
+ *   A PANEL THAT REPORTS NOTHING. Private workouts used to open in RESIGN and
+ *   FREE_AGENCY only, so through the whole season — every state a GM spends
+ *   most of his time in — the panel rendered a four-line explainer plus up to
+ *   nine prospect cards whose only content was the words "Window closed", nine
+ *   times. Closed is now one line. The window itself has since been fixed to
+ *   run for the whole life of a class (lib/workouts.ts), which leaves shut as
+ *   the rare state rather than the usual one; the one-line form stays, because
+ *   an empty panel is worth no more space in a state a GM reaches rarely.
  *
  *   A NUMBER WITH NO UNIT. "Attention Each 10.7 units per starred man, per
  *   week" is unreadable — 10.7 of what, and is that a lot? The decision it
@@ -179,12 +182,7 @@ export default async function ScoutingPage({ params, searchParams }: {
   // The class is keyed by draftYear, not by "who is still available" — the
   // board has to rank drafted prospects too or a rank would move because
   // somebody else came off it.
-  const classYearRow = await prisma.player.findFirst({
-    where: { leagueId: league.id, isDraftee: true },
-    orderBy: { draftYear: 'desc' },
-    select: { draftYear: true },
-  });
-  const classYear = classYearRow?.draftYear ?? league.seasonYear;
+  const classYear = await liveDraftClassYear(league.id, league.seasonYear);
   // Player.draftYear is stamped with the season the class was GENERATED in;
   // these men are selected in the offseason after it, so the two numbers
   // differ by one and only the pick year is the one to put on screen. The
@@ -268,7 +266,7 @@ export default async function ScoutingPage({ params, searchParams }: {
   const [reports, workedOut] = await Promise.all([
     prisma.scoutingReport.findMany({ where: { teamId: team.id, playerId: { in: shownIds } } }),
     prisma.scoutingReport.findMany({
-      where: { teamId: team.id, workoutYear: slots.seasonYear },
+      where: { teamId: team.id, workoutYear: slots.classYear },
       select: { playerId: true },
     }),
   ]);
@@ -379,13 +377,11 @@ export default async function ScoutingPage({ params, searchParams }: {
           label: 'Workouts',
           tip: tip('privateWorkout'),
           value: `${slots.remaining}/${slots.max}`,
-          // Derived from the same phase read the panel below quotes in full,
-          // so the tile cannot promise a window the panel says is shut.
-          detail: slots.open
-            ? 'window open now'
-            : league.phase === 'DRAFT' || league.phase === 'FANTASY_DRAFT'
-              ? 'closed — this class is on the clock'
-              : 'opens once the season ends',
+          // The same sentence the panel below quotes in full, cut to tile
+          // width by the function that writes it — not a second reading of the
+          // phase here, which is how a tile ends up promising a window the
+          // panel says is shut.
+          detail: slots.windowTag,
           color: !slots.open ? 'text-muted' : slots.remaining === 0 ? 'text-bad' : undefined,
         },
         {
@@ -725,15 +721,16 @@ export default async function ScoutingPage({ params, searchParams }: {
       {/* ---------------------------------------------------------------- */}
       {/* 3. PRIVATE WORKOUTS                                              */}
       {/* ---------------------------------------------------------------- */}
-      {/* CLOSED IS ONE LINE. Workouts open in RESIGN and FREE_AGENCY only, so
-          for the whole season this panel was a four-line explainer above a
-          grid of cards reading "Window closed" — a panel reporting nothing,
-          in the state the game spends most of its time in (README principle
-          7). What a GM needs to know while it is shut is that he still has his
-          slots and roughly when he can spend them, which is one line. */}
+      {/* CLOSED IS ONE LINE. The window now runs from the day the class is
+          generated to the moment the draft goes on the clock, so shut is the
+          rare state rather than the season-long one — but it is still a panel
+          with nothing in it to work, and a four-line explainer over a grid of
+          cards reading "Window closed" reports nothing (README principle 7).
+          What a GM needs while it is shut is that his slots are intact and
+          what closed them, which is one line. */}
       {!slots.open ? (
         <div className="section">
-          <SectionHeading eyebrow="Scarce · pre-draft only" title="Private Workouts" tip={tip('privateWorkout')} />
+          <SectionHeading eyebrow="Scarce · one class" title="Private Workouts" tip={tip('privateWorkout')} />
           <div className="panel px-4 py-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
             <span className="text-sm text-muted">{slots.windowLabel}</span>
             <span className="text-xs text-muted">
@@ -744,13 +741,13 @@ export default async function ScoutingPage({ params, searchParams }: {
       ) : (
         <div className="section">
           <SectionHeading
-            eyebrow="Scarce · pre-draft only"
+            eyebrow="Scarce · one class"
             title="Private Workouts"
             tip={tip('privateWorkout')}
             action={
               <span className="text-xs">
                 <span className={`stat-value text-stat-sm ${slots.remaining === 0 ? 'text-bad' : 'text-chalk'}`}>{slots.remaining}</span>
-                <span className="text-muted"> of {slots.max} left this year</span>
+                <span className="text-muted"> of {slots.max} left on this class</span>
               </span>
             }
           />

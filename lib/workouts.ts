@@ -2,6 +2,7 @@ import { prisma } from './db';
 import { Rng, clamp } from './rng';
 import { readJson, writeJson } from './json';
 import { observe } from './scouting';
+import { draftIsStarted, liveDraftClassYear } from './draft';
 import { ATTRIBUTE_BY_KEY, attrsForPosition } from './ratings';
 import type { AttrMap } from './ratings';
 import { SCOUTING, WORKOUTS } from './tuning';
@@ -20,11 +21,19 @@ import {
  * has no moment where the GM has to commit. Workouts are that moment, and
  * they are the only one.
  *
- * A handful of slots in the run-up to the draft. Each one is a big, discrete
+ * A handful of slots against one college class. Each one is a big, discrete
  * reveal on exactly one prospect: your people fly him in, put him through
  * their own testing, run the medical, and sit in a room with him. You get
- * four or five of these a year against a class of hundreds, so the question
- * is never "should I work somebody out" — it is "which four".
+ * four or five of these against a class of hundreds, so the question is never
+ * "should I work somebody out" — it is "which four".
+ *
+ * THE WINDOW IS THE WHOLE LIFE OF THE CLASS. A class is put together at the
+ * start of the season and is not selected until the draft after it, so from
+ * the first week of football to the moment the war room opens the board it is
+ * a live concern and a slot can be spent on it. The window shuts on one event
+ * and one only — that draft going on the clock. See workoutsOpen below; it is
+ * gated on the draft's own state rather than on a list of phase names, which
+ * is what let the whole regular season fall outside it.
  *
  * HOW THIS DIFFERS FROM FULL SCOUT, which already exists and already works.
  * They must not be two names for the same button:
@@ -56,28 +65,70 @@ import {
 // Availability
 // ---------------------------------------------------------------------------
 
-/** Slots a GM gets this league year: the baseline entitlement plus Scouting Network. Single source of truth — the action re-derives the cap from here. */
+/** Slots a GM gets against one college class: the baseline entitlement plus Scouting Network. Single source of truth — the action re-derives the cap from here. */
 export function workoutMax(skills: SkillRanks): number {
   return WORKOUTS.BASE_SLOTS + rankOf(skills, 'SCOUTING_NETWORK') * WORKOUTS.SLOTS_PER_NETWORK_RANK;
 }
 
-export function workoutsOpen(phase: string): boolean {
-  return WORKOUTS.PHASES.includes(phase);
+/**
+ * CAN A SLOT BE SPENT RIGHT NOW. The only test in the game — the server action
+ * refuses on it (runWorkout) and every button, column and counter is drawn
+ * from the same call through loadWorkoutSlots, so a control cannot appear over
+ * a rule that would turn it away.
+ *
+ * A class is scoutable from the day it is generated, which is the first week
+ * of the season before its draft. What ends that is the draft itself, so that
+ * is what this reads: draftIsStarted() in lib/draft.ts, the same predicate
+ * draftPlayer() enforces at the podium and the same one the war room's Start
+ * button flips. Board set but nobody on the clock is still open — that is a
+ * GM standing in his own war room the morning of, and it is the last honest
+ * moment to fly a man in.
+ *
+ * WHAT THIS REPLACED, because the shape of the mistake is worth keeping: a
+ * whitelist of phase names, RESIGN and FREE_AGENCY. It shut the window for the
+ * entire regular season and playoffs — the months the class is actually in
+ * front of the GM — and it did so for a class that had been on the board since
+ * week one. It also shut it in the war room, where the Start button was at the
+ * same time telling the GM there was "still time to fly somebody in".
+ *
+ * FANTASY_DRAFT is the one phase that closes the window without a college
+ * draft running. That pool is the league's own veterans wearing isDraftee for
+ * the length of the draft (lib/gen/league.ts); there is no class behind it,
+ * and a private workout is for prospects.
+ */
+export function workoutsOpen(
+  league: { phase: string },
+  draft: { kind: string; started: boolean } | null,
+): boolean {
+  if (league.phase === 'FANTASY_DRAFT') return false;
+  if (league.phase !== 'DRAFT') return true;
+  return !draft || !draftIsStarted(draft);
 }
 
-/** What the UI tells the user about the window, whether or not it is open right now. */
-export function workoutWindowLabel(phase: string): string {
-  if (phase === 'RESIGN') return 'Workout window is open — through the end of free agency.';
-  if (phase === 'FREE_AGENCY') return 'Workout window is open — it closes when the draft goes on the clock.';
-  if (phase === 'DRAFT' || phase === 'FANTASY_DRAFT') return 'The draft is on the clock. Workouts closed for this class.';
-  return 'Workouts open after the season, once the class is set — through the re-sign window and free agency.';
+/** The window in one sentence, open or shut. */
+export function workoutWindowLabel(open: boolean, phase: string): string {
+  if (open) return 'Workout window is open — it closes when the draft goes on the clock.';
+  if (phase === 'FANTASY_DRAFT') return 'A fantasy draft is running. Workouts are for the college class, and there is not one yet.';
+  return 'The draft is on the clock. Workouts are closed for this class.';
+}
+
+/** The same fact at the width of a stat tile. */
+export function workoutWindowTag(open: boolean): string {
+  return open ? 'open until the draft' : 'closed — a draft is running';
 }
 
 export interface WorkoutSlots extends LimitedUse {
-  /** True when the phase allows a workout to be scheduled right now. */
+  /** True when a workout can be scheduled right now. */
   open: boolean;
   windowLabel: string;
-  seasonYear: number;
+  windowTag: string;
+  /**
+   * The college class the slots are budgeted against, and the stamp on every
+   * report a slot has been spent on. `Player.draftYear`, NOT the league year —
+   * see liveDraftClassYear in lib/draft.ts for why the two disagree for half
+   * of every class's life.
+   */
+  classYear: number;
 }
 
 /**
@@ -99,22 +150,40 @@ async function loadWorkoutLedger(leagueId: string): Promise<{ skills: string; wo
 
 /** Live slot count for a league. Cheap enough for any server component. */
 export async function loadWorkoutSlots(leagueId: string): Promise<WorkoutSlots> {
-  const [league, profile] = await Promise.all([
-    prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { seasonYear: true, phase: true } }),
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { seasonYear: true, phase: true } });
+  const [draft, classYear, profile] = await Promise.all([
+    prisma.draftState.findUnique({ where: { leagueId }, select: { kind: true, started: true } }),
+    liveDraftClassYear(leagueId, league.seasonYear),
     loadWorkoutLedger(leagueId),
   ]);
   const max = workoutMax(parseSkills(profile.skills));
-  // A counter stamped with a previous league year is stale by definition, the
-  // same rule lib/dynasty.ts's limitedUse() applies to Full Scout.
-  const used = profile.workoutYear === league.seasonYear ? clamp(profile.workoutUsed, 0, max) : 0;
+  /**
+   * THE BUDGET IS PER CLASS, AND THAT IS WHAT MAKES THE OPEN WINDOW SAFE.
+   *
+   * A counter stamped with any other class is stale by definition — the same
+   * self-healing rule lib/dynasty.ts's limitedUse() applies to Full Scout,
+   * with the class year in place of the league year.
+   *
+   * It has to be the class year and not the league year, because those two
+   * part company halfway through the class's life: RESET_STANDINGS moves
+   * seasonYear in the middle of the offseason, while the men on the board do
+   * not move at all. Budgeted per league year, a window this wide would have
+   * handed out five slots during the season and five MORE after the turn of
+   * the year, on the same four hundred prospects — ten workouts against a
+   * class the design gives five, which would have quietly ended the "which
+   * four" question this whole mechanic exists to ask.
+   */
+  const used = profile.workoutYear === classYear ? clamp(profile.workoutUsed, 0, max) : 0;
+  const open = workoutsOpen(league, draft);
   return {
     unlocked: true,
     max,
     used,
     remaining: Math.max(0, max - used),
-    open: workoutsOpen(league.phase),
-    windowLabel: workoutWindowLabel(league.phase),
-    seasonYear: league.seasonYear,
+    open,
+    windowLabel: workoutWindowLabel(open, league.phase),
+    windowTag: workoutWindowTag(open),
+    classYear,
   };
 }
 
@@ -152,8 +221,9 @@ function profileUpsert(leagueId: string, data: { workoutYear: number; workoutUse
  * answer as one that does not.
  */
 export async function runWorkout(leagueId: string, teamId: string, playerId: string): Promise<WorkoutResult> {
-  const [league, player, team] = await Promise.all([
+  const [league, draft, player, team] = await Promise.all([
     prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { seasonYear: true, phase: true } }),
+    prisma.draftState.findUnique({ where: { leagueId }, select: { kind: true, started: true } }),
     prisma.player.findUnique({
       where: { id: playerId },
       select: {
@@ -169,23 +239,32 @@ export async function runWorkout(leagueId: string, teamId: string, playerId: str
   if (!player.isDraftee) {
     return { ok: false, message: 'Private workouts are for draft prospects. Players already in the league have tape.' };
   }
-  if (!workoutsOpen(league.phase)) {
-    return { ok: false, message: workoutWindowLabel(league.phase) };
+  if (!workoutsOpen(league, draft)) {
+    return { ok: false, message: workoutWindowLabel(false, league.phase) };
   }
 
-  const profile = await loadWorkoutLedger(leagueId);
+  const [classYear, profile] = await Promise.all([
+    liveDraftClassYear(leagueId, league.seasonYear),
+    loadWorkoutLedger(leagueId),
+  ]);
   const max = workoutMax(parseSkills(profile.skills));
-  const used = profile.workoutYear === league.seasonYear ? clamp(profile.workoutUsed, 0, max) : 0;
+  // Keyed on the class, exactly as loadWorkoutSlots is — see the paragraph
+  // there. A screen counting one budget over an action spending another is how
+  // five slots become ten.
+  const used = profile.workoutYear === classYear ? clamp(profile.workoutUsed, 0, max) : 0;
   if (used >= max) {
-    return { ok: false, message: `No workout slots left. All ${max} reset when the new league year starts.`, remaining: 0, max };
+    return { ok: false, message: `No workout slots left. All ${max} come back when next year's class lands on the board.`, remaining: 0, max };
   }
 
   const existing = await prisma.scoutingReport.findUnique({ where: { playerId_teamId: { playerId, teamId } } });
   if (existing?.fullyRevealed) {
     return { ok: false, message: 'You already have a complete file on him — a workout would tell you nothing new.', remaining: max - used, max };
   }
-  if (existing?.workoutYear === league.seasonYear) {
-    return { ok: false, message: 'You already worked him out this year.', remaining: max - used, max };
+  // Stamped with the class too, so a man flown in during the season cannot be
+  // flown in again after the new league year turns over. He is the same
+  // prospect in the same class and there is nothing left to measure on him.
+  if (existing?.workoutYear === classYear) {
+    return { ok: false, message: 'You already worked him out.', remaining: max - used, max };
   }
 
   const position = player.position as Position;
@@ -215,9 +294,13 @@ export async function runWorkout(leagueId: string, teamId: string, playerId: str
     .slice(0, room);
   const locked = Array.from(new Set([...alreadyLocked, ...measurable]));
 
-  // Deterministic per (team, player, year): re-running a workout that somehow
+  // Deterministic per (team, player, class): re-running a workout that somehow
   // got repeated produces the identical file rather than a fresh set of dice.
-  const rng = new Rng(`workout-${leagueId}-${teamId}-${playerId}-${league.seasonYear}`);
+  // The class year and not the league year, so the same man worked out in
+  // November and in March would draw the same numbers — the window spans that
+  // boundary now, and a seed that did not would make the date of the visit
+  // worth something.
+  const rng = new Rng(`workout-${leagueId}-${teamId}-${playerId}-${classYear}`);
   const observed = observe(rng, position, trueAttrs, confidence, 85, SCOUTING.SPECIALTY_BONUS, player.potential);
   // Everything measured comes back exact — that is the whole promise of
   // flying him in. buildScoutedView reads attrsRevealed to render these as a
@@ -233,7 +316,7 @@ export async function runWorkout(leagueId: string, teamId: string, playerId: str
     // The intangibles read. A day in the building is how a front office forms
     // an opinion on how hard somebody works, which is exactly what devTrait is.
     devRevealed: true,
-    workoutYear: league.seasonYear,
+    workoutYear: classYear,
     notes: workoutNote(player.devTrait, measurable.length),
   };
 
@@ -243,13 +326,13 @@ export async function runWorkout(leagueId: string, teamId: string, playerId: str
       create: { playerId, teamId, ...payload },
       update: payload,
     }),
-    profileUpsert(leagueId, { workoutYear: league.seasonYear, workoutUsed: used + 1 }),
+    profileUpsert(leagueId, { workoutYear: classYear, workoutUsed: used + 1 }),
   ]);
 
   const remaining = max - (used + 1);
   return {
     ok: true,
-    message: `${player.firstName} ${player.lastName} worked out. ${remaining} of ${max} slot${max === 1 ? '' : 's'} left this year.`,
+    message: `${player.firstName} ${player.lastName} worked out. ${remaining} of ${max} slot${max === 1 ? '' : 's'} left on this class.`,
     remaining,
     max,
     measured: measurable,
@@ -267,22 +350,27 @@ export function workoutNote(devTrait: string, measuredCount: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Season boundary
+// Class boundary
 // ---------------------------------------------------------------------------
 
 /**
- * Zero the slot counter onto a new league year.
+ * Zero the slot counter onto a new college class.
  *
- * Strictly speaking redundant — loadWorkoutSlots already treats a counter
- * stamped with an older year as zero, which is what makes the ledger
+ * Called where a class is minted — the PRESEASON step in lib/season.ts — and
+ * NOT at the turn of the league year, which is the middle of a class's life
+ * and would refill the budget on prospects the GM has already been flying in
+ * since September.
+ *
+ * Strictly speaking redundant either way: loadWorkoutSlots already treats a
+ * counter stamped with any other class as zero, which is what makes the ledger
  * self-healing for saves that predate it. The hook exists so the number on
- * screen turns over the moment the calendar does, instead of the first time
- * the user spends a slot. Idempotent: a profile already stamped with the new
- * year is left alone.
+ * screen turns over the moment the new board does, instead of the first time
+ * the user spends a slot. Idempotent: a profile already stamped with this
+ * class is left alone.
  */
-export async function resetWorkoutSlots(leagueId: string, seasonYear: number): Promise<void> {
+export async function resetWorkoutSlots(leagueId: string, classYear: number): Promise<void> {
   await prisma.dynastyProfile.updateMany({
-    where: { leagueId, workoutYear: { not: seasonYear } },
-    data: { workoutYear: seasonYear, workoutUsed: 0 },
+    where: { leagueId, workoutYear: { not: classYear } },
+    data: { workoutYear: classYear, workoutUsed: 0 },
   });
 }

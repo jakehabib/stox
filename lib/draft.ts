@@ -1493,6 +1493,43 @@ export async function imminentDraftYear(leagueId: string): Promise<number | null
 }
 
 /**
+ * THE COLLEGE CLASS CURRENTLY ON THE BOARD, keyed the way the men themselves
+ * are keyed: `Player.draftYear`.
+ *
+ * Not `league.seasonYear`, and the gap is not a rounding error. addDraftClass
+ * stamps a class with the season it was GENERATED in (the PRESEASON step in
+ * lib/season.ts), and nobody in it is selected until the draft of the FOLLOWING
+ * league year — so from RESET_STANDINGS onward the two numbers differ by one
+ * while the board has not changed by a single name. Counted across the 173
+ * saves on hand: seasonYear === draftYear in every REGULAR and PLAYOFFS league,
+ * seasonYear === draftYear + 1 in every RESIGN, FREE_AGENCY and DRAFT one, and
+ * OFFSEASON holds both because RESET_STANDINGS lands in the middle of it.
+ *
+ * "Newest class still flagged isDraftee" is the same number on both sides of
+ * that boundary, which is what makes it the key for anything budgeted per
+ * class rather than per calendar. Nothing older can shadow it: the flag is
+ * cleared off everybody the moment a draft completes, so the only class
+ * carrying it is the one nobody has picked from yet.
+ *
+ * The fallback covers the one hole that leaves — a league sitting in PRESEASON
+ * has no class yet, because the step that mints it is the step that ends the
+ * phase, and the year it will mint is this one.
+ */
+export async function liveDraftClassYear(leagueId: string, seasonYear: number): Promise<number> {
+  const newest = await prisma.player.findFirst({
+    // `draftYear: not null` is load-bearing, not defensive. A fantasy league's
+    // pool is the league's own veterans flagged isDraftee with no draftYear at
+    // all (lib/gen/league.ts), and Postgres sorts those NULLs FIRST on a DESC
+    // order — so without the filter the newest class of a fantasy league's
+    // first season is whichever undrafted veteran the planner reached first.
+    where: { leagueId, isDraftee: true, draftYear: { not: null } },
+    orderBy: { draftYear: 'desc' },
+    select: { draftYear: true },
+  });
+  return newest?.draftYear ?? seasonYear;
+}
+
+/**
  * THE ONE DRAFT YEAR WHOSE `DraftPick.slot` IS A REAL SELECTION NUMBER.
  *
  * Every pick row is created with a placeholder slot (the club's index in the

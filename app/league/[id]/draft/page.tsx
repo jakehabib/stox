@@ -9,7 +9,7 @@ import { ratingColorForRange, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
 import { LEAGUE } from '@/lib/tuning';
 import { bandCutoffs, consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
-import { draftOrderContext, pickNumbers, projectionAppliesTo, draftIsStarted, rookieCapOutlook, overallPickNumber } from '@/lib/draft';
+import { draftOrderContext, pickNumbers, projectionAppliesTo, draftIsStarted, liveDraftClassYear, rookieCapOutlook, overallPickNumber } from '@/lib/draft';
 import { needSeverity, teamNeeds } from '@/lib/ai/gm';
 import { loadWorkoutSlots } from '@/lib/workouts';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
@@ -292,12 +292,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   //
   // Still on the board plus already taken by this draft is the class itself,
   // in every phase, and it is 400 in both cases above.
-  const classYearRow = await prisma.player.findFirst({
-    where: { leagueId: league.id, isDraftee: true },
-    orderBy: { draftYear: 'desc' },
-    select: { draftYear: true },
-  });
-  const classYear = classYearRow?.draftYear ?? league.seasonYear;
+  const classYear = await liveDraftClassYear(league.id, league.seasonYear);
   // WHICH DRAFT'S SELECTIONS COUNT AS "TAKEN OUT OF THIS CLASS".
   //
   // Not `upcomingDraftYear`. That is the smallest year with an UNUSED pick, so
@@ -990,11 +985,11 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // THE WAR ROOM: board set, clock stopped, nobody at the podium yet.
   //
   // The two scouting ledgers are read ONLY in this state. Private workouts die
-  // when the draft opens (lib/workouts.ts — the window is RESIGN and FREE
-  // AGENCY, and this is the last screen before it shuts), so a GM holding
-  // unused ones has to be told before he starts rather than after. Full Scout
-  // charges do not expire here; they are named alongside because the prospect
-  // does — he comes off the board and is somebody else's.
+  // the moment the clock starts (lib/workouts.ts gates on the same `started`
+  // flag this reads), and this is the last screen before that happens — so a
+  // GM holding unused ones has to be told before he presses it rather than
+  // after. Full Scout charges do not expire here; they are named alongside
+  // because the prospect does — he comes off the board and is somebody else's.
   const warRoom = !!state && !draftStarted;
   // The workout ledger is read in EVERY state now, not just here. The board
   // below carries the control that spends a slot (the app owner: *"we should
@@ -1002,14 +997,17 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // the window's own sentence have to be on this page whether or not the war
   // room is up. Full Scout charges stay a war-room-only read: they do not
   // expire at the podium, so they are only worth naming at the podium.
-  const [workoutSlots, warRoomDynasty, workedOut] = await Promise.all([
+  const [workoutSlots, warRoomDynasty] = await Promise.all([
     loadWorkoutSlots(league.id),
     warRoom ? buildDynastyState(league.id) : Promise.resolve(null),
-    prisma.scoutingReport.findMany({
-      where: { teamId: team.id, workoutYear: league.seasonYear },
-      select: { playerId: true },
-    }),
   ]);
+  // Stamped with the CLASS, not the league year — the two are a year apart by
+  // the time a draft is on screen, and reading the wrong one puts the ✓ on
+  // nobody. lib/workouts.ts writes the same number it hands back here.
+  const workedOut = await prisma.scoutingReport.findMany({
+    where: { teamId: team.id, workoutYear: workoutSlots.classYear },
+    select: { playerId: true },
+  });
   const workedOutIds = new Set(workedOut.map((w) => w.playerId));
   const firstSelection = firstPick?.overall !== undefined
     ? `Round ${firstPick.round}, #${firstPick.overall} overall`

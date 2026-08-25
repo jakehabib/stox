@@ -2176,8 +2176,13 @@ export const SHORTLIST_ATTENTION = {
  */
 export const WORKOUTS = {
   /**
-   * Slots per league year. Five against a class of hundreds: enough to cover
+   * Slots per college class. Five against a class of hundreds: enough to cover
    * the top of your board, nowhere near enough to cover a position group.
+   *
+   * Per CLASS and not per league year, and the two are genuinely different
+   * numbers — a class is generated in one league year and drafted in the next,
+   * so a per-year budget would pay out twice for the same four hundred men.
+   * lib/workouts.ts keys the ledger on the class for that reason.
    */
   BASE_SLOTS: 5,
   /**
@@ -2188,16 +2193,16 @@ export const WORKOUTS = {
   SLOTS_PER_NETWORK_RANK: 1,
 
   /**
-   * Phases a workout may be scheduled in. RESIGN and FREE_AGENCY are the
-   * whole stretch between the season ending and the draft going on the clock
-   * — combine season, pro days and visits — and they are the phases where the
-   * board is the GM's live concern.
+   * There is no phase list here, and that absence is the tuning decision.
    *
-   * DRAFT is deliberately NOT here: by the time League.phase is DRAFT the
-   * draft is actually running and teams are on the clock. Nobody flies a
-   * prospect in between picks.
+   * A whitelist of ['RESIGN', 'FREE_AGENCY'] used to sit on this line and it
+   * was wrong in a way no number could fix: a class goes on the board in week
+   * one and is not drafted until the following spring, so those two phases
+   * shut the window for the entire season the GM actually spends looking at
+   * the men. The window is now bounded by the event that really ends it — the
+   * draft going on the clock — which lib/workouts.ts reads off the draft's own
+   * state via draftIsStarted(). Nothing about it belongs in a constant.
    */
-  PHASES: ['RESIGN', 'FREE_AGENCY'] as string[],
 
   /** A workout brings a cold file at least this far on its own. */
   CONFIDENCE_FLOOR: 74,

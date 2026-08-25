@@ -144,8 +144,8 @@ export default async function PlayerPage({
 
   // Scouting a prospect is no longer something you buy per click. The two
   // affordances left are a star — which puts him in front of your staff every
-  // week for nothing — and, in the pre-draft window, one of the year's handful
-  // of private workouts.
+  // week for nothing — and, until his draft goes on the clock, one of the
+  // handful of private workouts budgeted against his class.
   const prospectScouting = userTeam && player.isDraftee
     ? await Promise.all([
         loadWorkoutSlots(league.id),
@@ -154,7 +154,7 @@ export default async function PlayerPage({
     : null;
   const workoutSlots = prospectScouting?.[0] ?? null;
   const onShortlist = !!prospectScouting?.[1];
-  const workedOutThisYear = !!workoutSlots && report?.workoutYear === workoutSlots.seasonYear;
+  const workedOutForClass = !!workoutSlots && report?.workoutYear === workoutSlots.classYear;
 
   // Regular season and postseason are stored apart (see Player.seasonStats in
   // the schema) and are never added together here — the toggle picks one.
@@ -1177,7 +1177,7 @@ export default async function PlayerPage({
                     max={workoutSlots.max}
                     open={workoutSlots.open}
                     windowLabel={workoutSlots.windowLabel}
-                    done={workedOutThisYear}
+                    done={workedOutForClass}
                     potLow={view.potLow}
                     potHigh={view.potHigh}
                     confidence={view.confidence}

@@ -414,16 +414,17 @@ export const DYNASTY_SKILLS: DynastySkillDef[] = [
     // to lose the realism, maybe we just do extra draft workouts (full
     // scouts)."* Everything above narrows what your staff will say; this buys
     // more of the two things that actually settle a file — a private workout
-    // and a complete evaluation. Both are already per-season charges that
-    // reset with the league year (limitedUse below, and lib/workouts.ts).
+    // and a complete evaluation. Both are already recurring charges that
+    // refill on their own clock — Full Scouts with the league year (limitedUse
+    // below), workouts with each new college class (lib/workouts.ts).
     id: 'SCOUTING_NETWORK',
     branch: 'DRAFT',
     name: 'Scouting Network',
     blurb: 'More contacts, more access: extra private workouts before the draft and extra perfect evaluations to spend on whoever is still a question.',
     requires: 'FILM_ROOM',
     ranks: [
-      { cost: 2, effect: `+1 private workout and +1 Full Scout per season (${WORKOUTS.BASE_SLOTS + WORKOUTS.SLOTS_PER_NETWORK_RANK} workouts, ${DYNASTY.FULL_SCOUT_BASE_USES + DYNASTY.FULL_SCOUT_PER_RANK} evaluations).` },
-      { cost: 2, effect: `+2 private workouts and +2 Full Scouts per season (${WORKOUTS.BASE_SLOTS + WORKOUTS.SLOTS_PER_NETWORK_RANK * 2} workouts, ${DYNASTY.FULL_SCOUT_BASE_USES + DYNASTY.FULL_SCOUT_PER_RANK * 2} evaluations).` },
+      { cost: 2, effect: `+1 private workout per draft class and +1 Full Scout per season (${WORKOUTS.BASE_SLOTS + WORKOUTS.SLOTS_PER_NETWORK_RANK} workouts, ${DYNASTY.FULL_SCOUT_BASE_USES + DYNASTY.FULL_SCOUT_PER_RANK} evaluations).` },
+      { cost: 2, effect: `+2 private workouts per draft class and +2 Full Scouts per season (${WORKOUTS.BASE_SLOTS + WORKOUTS.SLOTS_PER_NETWORK_RANK * 2} workouts, ${DYNASTY.FULL_SCOUT_BASE_USES + DYNASTY.FULL_SCOUT_PER_RANK * 2} evaluations).` },
     ],
   },
 

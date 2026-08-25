@@ -37,7 +37,7 @@ import { loadWorkoutSlots, runWorkout, type WorkoutResult, type WorkoutSlots } f
  */
 
 export interface WorkoutPanel extends WorkoutSlots {
-  /** Prospects already worked out this league year, so the UI never offers a wasted slot. */
+  /** Prospects already worked out against this class, so the UI never offers a wasted slot. */
   workedOutPlayerIds: string[];
 }
 
@@ -46,7 +46,7 @@ export async function getWorkoutPanelAction(leagueId: string, teamId: string): P
   await assertLeagueOwner(leagueId);
   const slots = await loadWorkoutSlots(leagueId);
   const done = await prisma.scoutingReport.findMany({
-    where: { teamId, workoutYear: slots.seasonYear },
+    where: { teamId, workoutYear: slots.classYear },
     select: { playerId: true },
   });
   return { ...slots, workedOutPlayerIds: done.map((d) => d.playerId) };

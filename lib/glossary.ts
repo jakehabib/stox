@@ -344,7 +344,7 @@ export const GLOSSARY = {
   privateWorkout: {
     term: 'Private workout',
     definition: 'A prospect flown in for your own staff to test. Every measurable comes back exact and the ceiling projection tightens to about as narrow as it ever gets.',
-    why: 'The only thing in scouting you can run out of — a handful a year, pre-draft only. It will not tell you how he reads a defence, which is the read that busts picks.',
+    why: 'The only thing in scouting you can run out of — a handful against each class, spendable right up until that draft goes on the clock. It will not tell you how he reads a defence, which is the read that busts picks.',
   },
   fullScout: {
     term: 'Full scout',
