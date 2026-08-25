@@ -465,7 +465,8 @@ export const ONE_MAN_JOB: ReadonlySet<Position> = new Set<Position>(['K', 'P']);
  *
  * WHY 0.35 AND NOT 0.45. Nothing in the game ever unwinds an over-max room.
  * `trimRostersToLimit` (lib/season.ts) cuts by cheapest-to-release lowest-
- * rated and is position-blind, so a sixth quarterback survives cut-down day
+ * rated and knows about position only far enough to keep a club's last kicker
+ * and last punter, so a sixth quarterback survives cut-down day
  * whenever he outranks somebody at a position the club is thin at. Over-max is
  * a one-way ratchet — measured across the whole dev database, brand-new
  * leagues sit at 0.4% of club-positions over max and by their fifth season

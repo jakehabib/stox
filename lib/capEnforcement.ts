@@ -1,6 +1,6 @@
 import { prisma } from './db';
 import { CapMode } from './types';
-import { CAP, Position } from './tuning';
+import { CAP, ONE_MAN_JOB, Position, canonicalPosition } from './tuning';
 import { readJson, writeJson } from './json';
 import {
   CAP_GATE_TOLERANCE,
@@ -516,18 +516,70 @@ export async function tradeCapDeltas(
 export const CUT_DEAD_MONEY_PER_OVR = 1_500_000;
 
 /**
+ * ===========================================================================
+ * THE LAST KICKER DOES NOT GET CUT
+ * ===========================================================================
+ * The ranking below is otherwise blind to position, and for fourteen of the
+ * sixteen positions that is right: a club that sheds its fifth receiver still
+ * has four, and the depth chart absorbs it. `ONE_MAN_JOB` is the pair where it
+ * is not right, because there is no second man to absorb anything — a club
+ * that releases its kicker fields nobody, and `computeUnits` hands the empty
+ * slot REPLACEMENT_LEVEL for the rest of the season.
+ *
+ * IT WAS HAPPENING, and at a size worth a fix. Counted across every club in
+ * the dev database: 213 clubs carry no kicker at all and 218 no punter, and
+ * 113 of the kicker-less ones are carrying FIFTY OR MORE men — a full roster
+ * with nobody to kick, which is not a club that ran short of bodies. Replaying
+ * this exact ordering over 6,373 real rosters, an overflow of five men takes a
+ * club's ONLY kicker on 3.67% of them and its only punter on 4.14%; the median
+ * club's kicker sits 26th in the cut queue, but the 5th-percentile club's sits
+ * 6th. Nothing puts him back either: `fillTeamsToRosterMinimum` only signs for
+ * a club UNDER the roster minimum, and cut-down day is the last roster event
+ * before week 1.
+ *
+ * What it costs is measured, not asserted. Swapping one club's kicker across
+ * the rating range on identical rosters and identical seeds moves that club's
+ * scoring by 0.666 points a season per rating point, so the drop from a median
+ * 73 kicker to an empty slot's 48 is about SIXTEEN POINTS A SEASON — a fifth
+ * of the gap between a good offence and a bad one, paid by a club that never
+ * decided to pay it.
+ *
+ * A LAST MAN, NOT AN UNTOUCHABLE MAN. The protection is on the ORDER, not on
+ * the decision: a protected man sorts behind every unprotected one and is
+ * still released if the club has more overflow than it has other bodies. And
+ * it is the LAST one — a club carrying two kickers may cut one, which is what
+ * keeps this from freezing a specialist onto a roster forever.
+ */
+export function lastAtOneManJob<T extends { id: string; position: string }>(players: T[]): Set<string> {
+  const held = new Map<string, T[]>();
+  for (const p of players) {
+    if (!ONE_MAN_JOB.has(canonicalPosition(p.position))) continue;
+    (held.get(p.position) ?? held.set(p.position, []).get(p.position)!).push(p);
+  }
+  const out = new Set<string>();
+  for (const group of held.values()) if (group.length === 1) out.add(group[0].id);
+  return out;
+}
+
+/**
  * The order a club sheds players in: worst first, with a man who is expensive
  * to be rid of treated as better than his rating alone says. Dead money is
  * the reason a good contract survives a cut-down and a bad one does not, so
- * it belongs in the ranking rather than beside it.
+ * it belongs in the ranking rather than beside it — and a club's only kicker
+ * or only punter goes to the back of the queue whatever he grades, for the
+ * reason written above this function.
  */
 export function releaseRanking<T extends {
-  id: string; trueOvr: number; contract: { signingBonus: number; years: number; yearsRemaining: number;
+  id: string; position: string; trueOvr: number; contract: { signingBonus: number; years: number; yearsRemaining: number;
   signedYear: number; baseSalaries: string; guaranteed: number; voidYears: number } | null;
 }>(players: T[], capMode: CapMode): T[] {
+  const protectedIds = lastAtOneManJob(players);
   const score = (p: T) =>
     p.trueOvr + deadMoneyOnCut(p.contract, capMode) / CUT_DEAD_MONEY_PER_OVR;
-  return [...players].sort((a, b) => score(a) - score(b) || a.id.localeCompare(b.id));
+  return [...players].sort((a, b) =>
+    (protectedIds.has(a.id) ? 1 : 0) - (protectedIds.has(b.id) ? 1 : 0)
+    || score(a) - score(b)
+    || a.id.localeCompare(b.id));
 }
 
 /**

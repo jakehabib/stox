@@ -53,10 +53,6 @@ import type { SeasonStats } from './types';
  * Read off lib/sim/engine.ts's allocateStats() and lib/coachRoom.ts's honesty
  * limits, which already did this audit for the week report:
  *
- *   * A PUNTER, AT ALL. `punts * rng.int(40, 50)` — his gross and therefore
- *     his average are dice with no input from his rating, and his volume is a
- *     fact about how often the offense stalled. coachRoom leaves P out of
- *     praise for this reason; a rosette on a coin flip is worse than silence.
  *   * OPPORTUNITY COLUMNS — attempts, carries, targets, field goals attempted,
  *     extra points. They are how much work a man was handed, not how well he
  *     did it, and a table should still show them (they stay in CAREER_COLUMNS)
@@ -66,6 +62,26 @@ import type { SeasonStats } from './types';
  *     attempt-adjusted version — passer rating — is already on the row.
  *   * EXTRA POINTS MADE. A kicker's extra points are his offense's touchdowns;
  *     the half he controls is the accuracy, which is `fgPct`.
+ *
+ * ---------------------------------------------------------------------------
+ * A PUNTER USED TO BE ON THAT LIST, AND THE ENGINE MOVED UNDER IT
+ * ---------------------------------------------------------------------------
+ * The bullet read: "A PUNTER, AT ALL. `punts * rng.int(40, 50)` — his gross and
+ * therefore his average are dice with no input from his rating, and his volume
+ * is a fact about how often the offense stalled. coachRoom leaves P out of
+ * praise for this reason; a rosette on a coin flip is worse than silence."
+ * Every word of it was true and none of it is now: lib/sim/engine.ts draws each
+ * punt on its own around a mean SIM.PUNT_GROSS_PER_RATING sets from the man's
+ * rating, and lib/coachRoom.ts has already retracted the identical sentence
+ * against its own norms. Measured over 640 season lines replayed through the
+ * current engine, a punter's rating against his yards-above-a-league-average-leg
+ * runs r = 0.68; swapping one club's punter from 40 to 99 on identical rosters
+ * and identical seeds moves his season average from 40.5 to 49.9.
+ *
+ * The second half of the old bullet survives it and is handled by the rule
+ * above rather than by a position ban: `punts` and `puntYds` ARE volume, they
+ * are both opportunity columns, and neither carries a standing. What is left is
+ * `puntAvg`, which is the one number on his row that is his.
  * ===========================================================================
  */
 
@@ -83,8 +99,13 @@ export interface StatRank {
   qualified: boolean;
 }
 
-/** Positions whose every column is engine noise. See the honesty list above. */
-const UNRANKABLE_POSITIONS = new Set(['P']);
+/**
+ * Positions whose every column is engine noise. See the honesty list above.
+ * EMPTY, and kept rather than deleted: the punter was the only entry and the
+ * engine change that emptied it is written up above, so the next position that
+ * turns out to be dice has a documented place to go.
+ */
+const UNRANKABLE_POSITIONS = new Set<string>();
 
 /** Columns that measure work handed out, or availability, rather than merit. */
 const OPPORTUNITY_KEYS = new Set(['gp', 'passAtt', 'rushAtt', 'targets', 'fga', 'xpa', 'xpm', 'punts', 'puntYds']);

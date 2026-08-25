@@ -1,6 +1,7 @@
 import { prisma } from './db';
 import { readJson } from './json';
 import { SeasonStats, BoxScore } from './types';
+import { SIM } from './tuning';
 
 /**
  * ===========================================================================
@@ -20,9 +21,13 @@ import { SeasonStats, BoxScore } from './types';
  * ordering real voting has (quarterbacks clear, backs close behind,
  * receivers within reach of the backs). `defensiveScore` is NOT — see the
  * long note on it below for why an IDP blend cannot pick a Defensive Player
- * of the Year. Both are exported so lib/development.ts can score in-season
- * production with the same formula — one definition of "who's playing well,"
- * not two.
+ * of the Year. Neither of them can see a specialist's afternoon, which is what
+ * `specialistScore` is for; `productionScore` is the dispatcher over all three.
+ * All four are exported so lib/development.ts and lib/seasonReview.ts grade
+ * in-season production with the same formulas — one definition of "who's
+ * playing well," not several. The AWARDS in this file deliberately do not read
+ * the dispatcher: MVP and OPOY stay on `offensiveScore`, so a kicker is not
+ * suddenly in the MVP race.
  * ===========================================================================
  */
 
@@ -134,6 +139,93 @@ export function offensiveScore(s: SeasonStats): number {
  */
 export function defensiveScore(s: SeasonStats): number {
   return (s.tackles ?? 0) * 0.8 + (s.sacks ?? 0) * 6.5 + (s.defInt ?? 0) * 10 + (s.pd ?? 0) * 3 + (s.ff ?? 0) * 8;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * WHAT A SPECIALIST DID, WHICH NEITHER SCORE ABOVE COULD SEE
+ * ---------------------------------------------------------------------------
+ * `offensiveScore` reads passing, rushing and receiving; a kicker and a punter
+ * accumulate none of the three, so both scored a FLAT ZERO — and everything
+ * downstream that grades a season by one of those two numbers therefore graded
+ * every specialist in the league identically. Measured over 6,442 live season
+ * lines with real work in them (field goals attempted, or punts), `offensiveScore`
+ * was non-zero on exactly 0 of them. What that cost, in lib/development.ts:
+ *
+ *   - THE PERFORMANCE TIER. The checkpoint ranks a position group by score and
+ *     hands the top 15% `BREAKOUT_GROWTH_MULT` and the bottom `SLUMP_`. It
+ *     filters out men whose rate is zero first, so every kicker and punter fell
+ *     out of his own group and none was ever ranked.
+ *   - THE CEILING REVISION. `deliveryZScores` fits production against rating and
+ *     skips a position whose fit is below `CEILING_MIN_R`. A column of zeroes has
+ *     no spread at all, so the fit returned nothing: over 3,222 working kickers
+ *     it produced 0 z-scores. A kicker's projection was written once at
+ *     generation and never revised again — he could not bust and he could not
+ *     break out, whatever he kicked.
+ *
+ * THE TWO FORMULAS ARE MEASURED, not chosen for looking reasonable. Each
+ * candidate was scored against the one property this has to have — that it
+ * correlate with the man's rating well enough to clear `CEILING_MIN_R` (0.1),
+ * since below that the model has no credible expectation to hold him to.
+ * Measured over 640 season lines replayed through TODAY's engine (20 seasons of
+ * a real 32-club league; per game, which is the rate both callers divide to):
+ *
+ *   KICKER   fgm only                                    r = 0.26
+ *            fgm*3 + xpm  (the points he put up)         r = 0.34
+ *            points scored MINUS points left on the field r = 0.46   <- shipped
+ *   PUNTER   punts (volume)                              r = -0.24
+ *            puntYds (gross volume)                      r = -0.04
+ *            puntYds - punts * PUNT_GROSS_BASE           r = 0.68   <- shipped
+ *
+ * BOTH VOLUME FIGURES ARE NEGATIVE, and that is the whole argument against the
+ * obvious formula. A punter's punt count is a fact about how often his offence
+ * stalled, so the better his club the less he punts — grading him on it grades
+ * him on somebody else's failure, backwards. Subtracting a league-average leg
+ * from every kick leaves YARDS ABOVE THAT LEG, which is his and only his, and
+ * `PUNT_GROSS_BASE` is exactly the mean the engine draws a 72-rated punter
+ * around (see SIM.PUNT_GROSS_BASE). The kicker's version does the same job:
+ * charging a miss the points it cost turns a volume stat into an accuracy one
+ * without dropping the volume entirely, which is why it beats both the raw
+ * points blend and a bare make count.
+ *
+ * DO NOT MEASURE THIS AGAINST THE DATABASE. The specialist lines sitting in
+ * Postgres were written by the old engine, where a punter's gross was
+ * `punts * rng.int(40, 50)` with no input from his rating at all. Run the same
+ * candidates over those rows and the punting formula reads r = 0.04 and would
+ * look worthless — lib/coachRoom.ts records the identical trap against its own
+ * P norms. Replay seasons through the current engine instead.
+ *
+ * IT IS NOT AN AWARDS SCORE. Nothing in this file votes with it: MVP and OPOY
+ * still read `offensiveScore`, so a kicker cannot win them, which is both what
+ * real voting does and a balance change nobody has asked for. This exists so
+ * the DEVELOPMENT path can see a specialist's season, and that is all it does.
+ */
+export const SPECIALIST_POSITIONS = new Set(['K', 'P']);
+
+export function specialistScore(s: SeasonStats): number {
+  const fgMade = s.fgm ?? 0;
+  const fgMissed = (s.fga ?? 0) - fgMade;
+  const xpMade = s.xpm ?? 0;
+  const xpMissed = (s.xpa ?? 0) - xpMade;
+  const kicking = fgMade * 3 + xpMade - fgMissed * 3 - xpMissed;
+  const punting = (s.puntYds ?? 0) - (s.punts ?? 0) * SIM.PUNT_GROSS_BASE;
+  // Summed rather than branched on position: a kicker's punting term is zero
+  // and a punter's kicking term is zero, and on the short roster where one man
+  // does both jobs (RELATED_POSITIONS pairs K and P for exactly that reason)
+  // the honest score is the sum of the two afternoons rather than half of one.
+  return kicking + punting;
+}
+
+/**
+ * The production score that grades THIS man's season — the one definition of
+ * "who is playing well", dispatched by position so no caller has to remember
+ * which of the three formulas a punter takes. Every caller that grades a
+ * player against his own position group reads this.
+ */
+export function productionScore(position: string, s: SeasonStats): number {
+  if (DEFENSIVE_POSITIONS.has(position)) return defensiveScore(s);
+  if (SPECIALIST_POSITIONS.has(position)) return specialistScore(s);
+  return offensiveScore(s);
 }
 
 export interface AwardWinner {

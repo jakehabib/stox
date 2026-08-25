@@ -5,7 +5,7 @@ import { Rng } from './rng';
 import { canonicalPosition } from './tuning';
 import { gradeLine, playedEnough, statLine, UNIT_OF } from './coachRoom';
 import { leadColumnKey } from './statLabels';
-import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS } from './awards';
+import { productionScore } from './awards';
 import { ageBasisYear, ageInSeason } from './playerSeasons';
 import type { BoxScore, SeasonStats } from './types';
 
@@ -127,7 +127,7 @@ import type { BoxScore, SeasonStats } from './types';
  *
  *   PROVABLE, WITH A MARGIN — THE BREAKOUT BAND. The growth model multiplies a
  *   man's roll by PROGRESSION.BREAKOUT_GROWTH_MULT when he is inside the top
- *   15% at his position by `offensiveScore`/`defensiveScore` per week. The
+ *   15% at his position by `productionScore` per week. The
  *   final checkpoint of the year runs on the completed season, against exactly
  *   the roster this panel is looking at, so that one checkpoint's verdict is
  *   reconstructable — using the model's own metric, not a second one. Two
@@ -1710,7 +1710,7 @@ export async function buildSeasonReview(
 
   // The growth model's own band, reconstructed from the growth model's own
   // metric. lib/development.ts ranks ACTIVE players at a position by
-  // offensiveScore/defensiveScore per week and hands the top 15% an
+  // `productionScore` per week and hands the top 15% an
   // accelerated roll; the last checkpoint of the year runs on the completed
   // season, so this is that checkpoint's ranking and not a second opinion
   // about it. `Player.seasonStats` is the input, and it is cleared by the
@@ -1721,7 +1721,7 @@ export async function buildSeasonReview(
     const byPos = new Map<string, { id: string; rate: number }[]>();
     for (const lp of leaguePlayers) {
       const st = readJson<SeasonStats>(lp.seasonStats, {});
-      const rate = DEFENSIVE_POSITIONS.has(lp.position) ? defensiveScore(st) : offensiveScore(st);
+      const rate = productionScore(lp.position, st);
       if (rate === 0) continue;
       (byPos.get(lp.position) ?? byPos.set(lp.position, []).get(lp.position)!).push({ id: lp.id, rate });
     }

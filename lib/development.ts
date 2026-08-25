@@ -6,7 +6,7 @@ import { AttrMap } from './ratings';
 import { progressPlayer, bumpForMilestone, retirementChance, ceilingRevision } from './progression';
 import { readJson, writeJson } from './json';
 import { SeasonStats } from './types';
-import { offensiveScore, defensiveScore, DEFENSIVE_POSITIONS } from './awards';
+import { productionScore } from './awards';
 import { loadDevSpeedMult } from './dynasty';
 
 /**
@@ -190,8 +190,16 @@ export function evidenceSample(role: number | null, gp: number): number {
  * perfectly, and an uncapped correlation divides by a vanishing spread and
  * turns rounding into evidence. Below CEILING_MIN_R the fit says rating did
  * not predict production at this position this year, so no expectation is
- * credible and the position is skipped entirely — including kickers and
- * punters, whose production `offensiveScore` scores as a flat zero.
+ * credible and the position is skipped entirely.
+ *
+ * KICKERS AND PUNTERS USED TO BE SKIPPED HERE ALWAYS, and not because the fit
+ * was weak — because they had nothing to fit. `offensiveScore` reads passing,
+ * rushing and receiving, so a specialist's production was a column of zeroes
+ * with no spread, `sy` was 0 and this function returned an empty map every
+ * year of every save: measured over 3,222 working kickers, 0 z-scores. Their
+ * ceilings were therefore written once at generation and never revised again.
+ * They are fitted like everybody else now — see `specialistScore` in
+ * lib/awards.ts and the measured correlations recorded there.
  */
 export function deliveryZScores(rows: { id: string; ovr: number; perGame: number }[]): Map<string, number> {
   const out = new Map<string, number>();
@@ -302,19 +310,20 @@ export async function applyInSeasonProgression(
 
   // --- Performance tier: rank each player against others at his own
   // position by production-per-week so far. Positions with no tracked
-  // individual production (offensive line) never get a nonzero rate, so
-  // they fall out of ranking entirely and just get the base age-curve roll.
+  // individual production (the offensive line, and only the offensive line —
+  // `productionScore` covers every other position including the two
+  // specialists) never get a nonzero rate, so they fall out of ranking
+  // entirely and just get the base age-curve roll.
   const byPosition = new Map<string, typeof players>();
   for (const p of players) (byPosition.get(p.position) ?? byPosition.set(p.position, []).get(p.position)!).push(p);
 
   const tierById = new Map<string, 'breakout' | 'slump'>();
   for (const group of byPosition.values()) {
-    const isDefensive = DEFENSIVE_POSITIONS.has(group[0].position);
     const rated = group
       .map((p) => ({
         id: p.id,
         trueOvr: p.trueOvr,
-        rate: (isDefensive ? defensiveScore(statsById.get(p.id)!) : offensiveScore(statsById.get(p.id)!)) / week,
+        rate: productionScore(p.position, statsById.get(p.id)!) / week,
       }))
       .filter((p) => p.rate !== 0)
       .sort((a, b) => b.rate - a.rate);
@@ -395,7 +404,6 @@ export async function applyInSeasonProgression(
       sampleById.set(p.id, evidenceSample(roleById.get(p.id) ?? null, statsById.get(p.id)!.gp ?? 0));
     }
     for (const group of byPosition.values()) {
-      const isDefensive = DEFENSIVE_POSITIONS.has(group[0].position);
       // The expectation is fitted over the men who actually had a job. A
       // league-wide fit that included every healthy scratch would describe the
       // production of not playing, and every starter would beat it.
@@ -407,7 +415,7 @@ export async function applyInSeasonProgression(
         rows.push({
           id: p.id,
           ovr: p.trueOvr,
-          perGame: (isDefensive ? defensiveScore(stats) : offensiveScore(stats)) / gp,
+          perGame: productionScore(p.position, stats) / gp,
         });
       }
       const zs = deliveryZScores(rows);

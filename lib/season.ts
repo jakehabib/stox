@@ -12,6 +12,7 @@ import { retirementChance, bumpForMilestone } from './progression';
 import { AttrMap } from './ratings';
 import { applyInSeasonProgression, checkpointShare, progressFreeAgents } from './development';
 import { proration, deadMoneyOnCut, capHit, formatMoney } from './cap';
+import { lastAtOneManJob } from './capEnforcement';
 import { runAiFreeAgencyWave, fillTeamsToRosterMinimum, runInSeasonSignings } from './freeagency';
 import { maybeGenerateAiTradeOffer, isTradeDeadlinePassed } from './trade';
 import { runAiTradeMarket } from './aiMarket';
@@ -2529,11 +2530,24 @@ async function trimRostersToLimit(
      * exchange rate: a player costing this much to release is as hard to cut as
      * a man one rating point better.
      */
+    /*
+     * AND IT DOES NOT TAKE THE CLUB'S ONLY KICKER. The sort is otherwise blind
+     * to position — deliberately, since a sixth quarterback surviving over a
+     * thin room is a bloat problem and not this function's — but a one-man job
+     * has no second body to absorb the loss, and this is the last roster event
+     * before week 1. Measured, it was taking one: 113 clubs in the dev database
+     * carry fifty or more men and no kicker. See THE LAST KICKER DOES NOT GET
+     * CUT in lib/capEnforcement.ts for the counts, the points it costs, and why
+     * a protected man is still cut when there is nobody else left to cut.
+     */
+    const protectedIds = lastAtOneManJob(roster);
     const cutScore = (p: (typeof roster)[number]) =>
       p.trueOvr + deadMoneyOnCut(p.contract, settings.capMode) / CUT_DEAD_MONEY_PER_OVR;
     const cuts = overflow > 0
       ? [...roster]
-        .sort((a, b) => cutScore(a) - cutScore(b) || a.trueOvr - b.trueOvr || a.id.localeCompare(b.id))
+        .sort((a, b) =>
+          (protectedIds.has(a.id) ? 1 : 0) - (protectedIds.has(b.id) ? 1 : 0)
+          || cutScore(a) - cutScore(b) || a.trueOvr - b.trueOvr || a.id.localeCompare(b.id))
         .slice(0, overflow)
       : [];
     for (const p of cuts) await release(p);
