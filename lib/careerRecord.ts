@@ -161,7 +161,15 @@ function moveTitle(tx: RecordTransaction): string {
   switch (tx.type) {
     case 'DRAFT': return 'Drafted';
     case 'TRADE': return 'Traded';
-    case 'SIGN': return tx.headline.startsWith('Extended') ? 'Extended' : 'Signed';
+    // A RESTRUCTURE IS NOT A SIGNING. `restructureContract` writes its row as
+    // type SIGN (lib/freeagency.ts), so before this case existed a man who had
+    // his base converted to bonus read "Signed" on his own record -- a move he
+    // never made, in a year he was already under contract. Reported by the app
+    // owner: "this player restructured instead of signed".
+    case 'SIGN':
+      if (tx.headline.startsWith('Extended')) return 'Extended';
+      if (tx.headline.startsWith('Restructured')) return 'Restructured';
+      return 'Signed';
     case 'RESIGN': return 'Re-signed';
     case 'CUT': return 'Released';
     case 'TAG': return 'Franchise tag';
@@ -188,6 +196,12 @@ const PLAIN_TYPES = new Set(['POSITION']);
  */
 function moveDetail(tx: RecordTransaction): string | null {
   if (tx.type === 'POSITION' || tx.type === 'DRAFT') return null;
+  // A restructure says everything it needs to in its title. Its stored detail
+  // ("Converted $XM of base salary to bonus for cap relief") is bookkeeping
+  // about the club's books rather than anything that happened to him, and the
+  // owner asked for it gone: it should "just say restructured". The row is
+  // untouched in the database -- the cap page is where that money is read.
+  if (tx.type === 'SIGN' && tx.headline.startsWith('Restructured')) return null;
   const d = tx.detail.trim();
   if (d.length > 0) return d;
   // A trade row's headline names the two clubs and is the only thing it has

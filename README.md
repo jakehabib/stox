@@ -710,6 +710,19 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — A restructured contract read "Signed" on the player's own
+  record.** `restructureContract` writes its transaction as type `SIGN`, and the
+  career record only separated out an extension — so converting a man's base
+  salary to bonus appeared on his page as a signing, in a year he was already
+  under contract and had signed nothing. The app owner, seeing it: *"this player
+  restructured instead of signed"*. It now reads **Restructured**. The stored
+  detail line that came with it — *"Converted $XM of base salary to bonus for
+  cap relief"* — is suppressed on the record too, at his request: it is
+  bookkeeping about the club's books rather than something that happened to the
+  player, and the cap page is where that money is read. Nothing in the database
+  changes; both fixes are in how the record is titled and what it prints.
+  Shipped in `HASHPLACEHOLDER`.
+
 - **2026-08-25 — The draft told you what had happened only by looking different
   the next time you read it.** Every reaction in scouting and on draft day was a
   re-render. You spent a Full Scout charge and the ranges were simply narrower.
