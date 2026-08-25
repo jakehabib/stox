@@ -727,6 +727,45 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — A prospect's six combine numbers sat on his card and nowhere
+  on the draft board, and nothing said where they left him in the class.** The
+  testing was already there and already public — forty, vertical, broad,
+  three-cone, shuttle and, at the positions that run it, bench — with each
+  finish ranked against his own position group on his card. What no screen had
+  was the one figure that comes of reading all six together, and reading a
+  board of three hundred men one workout at a time is not something a front
+  office does. The board now carries an **Athletic** column: every drill placed
+  against the men at his own position, those finishes averaged at full
+  precision, and the class ordered on the average. It sorts like every other
+  column and the header says how many men in the class actually have numbers on
+  file, so "Athletic 7" is seventh of a stated field rather than seventh of
+  nothing. The ranking is done inside the position group because ranking the raw
+  stopwatch across a class turns the column into the depth chart — a 330-pound
+  tackle never runs a 4.4 — and that is measured rather than asserted: over 158
+  generated classes and 63,020 prospects, in-group ranking leaves the median
+  athletic rank varying by sd 15.3 across the sixteen positions of a 400-man
+  class, against sd 39.6 the other way, where the order it produces is simply
+  which men play the skill positions. A man is ranked only on the drills he
+  actually ran; the battery each position group runs is read off the group
+  rather than hard-coded, so a corner who was never going to bench is not
+  pushed down the class for it, and anyone genuinely short of his group's
+  workout is marked rather than quietly averaged as though he had failed the
+  events he skipped. The column is never fogged, and that is a decision with a
+  measurement behind it rather than a convenience: it is arithmetic over numbers
+  already printed in full one click away, it runs rho -0.558 against a
+  prospect's true overall, and the consensus board rank sitting two columns to
+  its left — equally free to every club in the league — runs rho -0.799. Held
+  against that rank, the athletic figure adds rho -0.148 of its own. Nobody can
+  back a hidden rating out of it that the board has not already given away, and
+  the men at the top of it are a right tackle, a punter, a quarterback and a
+  corner, one of whom is a 57 overall. The player card carries the same figure
+  beside the six tiles it explains, off the same pool — the whole class,
+  drafted men included — which is also a fix in its own right: the card had
+  been ranking a man against the prospects still on the board, so every finish
+  printed on it climbed as other clubs made picks, and the same prospect read
+  one way there and another way here. Both screens now load the class through
+  one `draftClassScope`. Shipped in `ae04248`.
+
 - **2026-08-25 — The top of the draft was priced on a pick-for-pick auction
   chart and outbid the best player any club could put on the table.** The first
   overall pick was worth 3000 points while the very most a premium-position
