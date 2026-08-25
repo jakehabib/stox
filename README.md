@@ -639,13 +639,76 @@ session's live harness mid-run.
   to flatter a deeper pool would leave the game with two disagreeing answers to
   "what does a roster cost".
 
+## Rolling back
+
+Nothing here is ever force-pushed over, so **every state this project has ever
+been in still exists in git history** and can be returned to. There are three
+ways back, in the order you would actually reach for them.
+
+**1. The live site is broken and you want it fixed now — use Vercel.**
+Vercel keeps every deployment. Open the project, find the last deployment that
+was good, and press *Promote to Production*. This is instant, needs no git, and
+does not touch the repository. It is the right first move whenever the problem
+is "the site is down": it undoes the symptom in seconds and leaves the
+diagnosis for afterwards.
+
+**2. One change is bad and the rest are fine — revert that commit.**
+Every entry in the changelog below ends with the hash it shipped in. Reverting
+makes a *new* commit that undoes that one, which is safer than rewinding
+because it keeps everything that came after:
+
+```sh
+git revert <hash>          # a single commit
+git revert <hash1> <hash2> # a change that shipped in two
+git push origin claude/football-gm-simulator-ixeatl
+```
+
+Most changes here ship as a pair — the change, then a small follow-up pointing
+the changelog entry at its hash. Reverting only the first is fine; the
+changelog line becomes wrong, which is worth tidying but breaks nothing.
+
+**3. A whole run went wrong — go back to a known-good point.**
+
+```sh
+git log --oneline -40                        # find it
+git checkout -b before-<whatever> <hash>     # inspect it safely first
+```
+
+Verified checkpoints are recorded below as they are established. Each was
+checked in an isolated worktree with `npx tsc --noEmit` reporting zero app-code
+errors and `npx next build` completing through the full route table — not
+merely "it looked fine".
+
+| Checkpoint | Commit | What was in it |
+|---|---|---|
+| 2026-08-25, before the UI overhaul | `d1d48d8` | Competitive windows, rookie entry curve, AI franchise tag, AI-vs-AI trades, depth chart, soft-bounded catch rate, career records, cap preview |
+
+**Why a table and not git tags.** The automation's credentials can push commits
+to the working branch but not tags — a real permission boundary, not an
+oversight. Tags can be made by hand from the hashes above:
+`git tag -a verified/2026-08-25-pre-ui d1d48d8 -m "known good" && git push origin --tags`.
+
+**Check whether the change touched the database before reverting it.** Almost
+nothing here does — the overwhelming majority are code and display only, and
+reverting those is completely safe. The exceptions are schema migrations, listed
+in `prisma/migrations/`. Reverting code that expects a column which now exists
+is harmless; reverting a *migration* is not, and is worth asking about first.
+
+**One hazard worth knowing, because it nearly bit.** This repository is often
+worked on by several sessions at once, and a shared working tree's branch ref
+can drift behind `origin` without anything looking wrong. A commit built on a
+stale base looks perfectly normal and would revert everything after it. Two
+habits make that safe: **never `--force` push this branch** (the non-fast-forward
+rejection is the safety net that catches it), and before pushing, run
+`git log --oneline origin/claude/football-gm-simulator-ixeatl..HEAD` and confirm
+it lists only the commits you meant to make.
+
 ## Changelog
 
 Every notable change lands here with the commit it shipped in, so there's
-always a plain-English trail back to "what did this look like before." To
-undo anything, ask to revert to a commit below (or the app owner can do it
-directly: `git revert <hash>`, or check out an earlier commit — nothing is
-ever force-pushed over, so every state below still exists in git history).
+always a plain-English trail back to "what did this look like before." To undo
+anything, ask to revert to a commit below, or see **Rolling back** above for the
+three routes and when each is right.
 
 - **2026-08-25 — Every CPU front office kept the competitive window it was born
   with, for the life of the save.** `recomputeWinNow` was written to re-read a
