@@ -665,7 +665,7 @@ ever force-pushed over, so every state below still exists in git history).
   because each already reads the same value. The stored college blob is
   untouched, so this is a display decision and reversible; the comment at the
   gate records that it was the owner's call and asks that it not be re-removed
-  without him. Shipped in `HASHPLACEHOLDER`.
+  without him. Shipped in `6a86173`.
 
 - **2026-08-24 — The seventh clamp: a 0.85 catch rate was the most common rate
   in the upper tail.** A receiver's catch rate is drawn as a bell around 0.62
