@@ -721,7 +721,7 @@ three routes and when each is right.
   bookkeeping about the club's books rather than something that happened to the
   player, and the cap page is where that money is read. Nothing in the database
   changes; both fixes are in how the record is titled and what it prints.
-  Shipped in `HASHPLACEHOLDER`.
+  Shipped in `8f97f05`.
 
 - **2026-08-25 — The draft told you what had happened only by looking different
   the next time you read it.** Every reaction in scouting and on draft day was a
