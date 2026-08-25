@@ -647,6 +647,26 @@ undo anything, ask to revert to a commit below (or the app owner can do it
 directly: `git revert <hash>`, or check out an earlier commit — nothing is
 ever force-pushed over, so every state below still exists in git history).
 
+- **2026-08-25 — A man four years into his professional career still had a
+  live college season ticking over on his card.** The College Profile block was
+  deliberately un-gated a while back, on the reasoning that being drafted
+  otherwise erased a man's college career from his own page and left 26,852
+  rostered players holding a thirteen-game season nobody could see. The app
+  owner saw the result on a rostered professional and ruled the other way:
+  *"it should only be for the draft until selected."* He is right, and the
+  unseen-data argument was the weaker one — a college profile on a man with
+  professional seasons behind him is a scouting artifact outliving its purpose,
+  and the Career Record already tells a drafted man's origin, dated against the
+  year it happened. The block was also not merely stale but *live*: it reads
+  the league's college-week counter and printed "COLLEGE SEASON — THROUGH WEEK
+  13 OF 13" against a man no longer playing that season. One gate on
+  `isDraftee` closes all three leaks at once — the profile section, the
+  "Competition: B-tier" chip in the hero strip, and the prospect buzz note —
+  because each already reads the same value. The stored college blob is
+  untouched, so this is a display decision and reversible; the comment at the
+  gate records that it was the owner's call and asks that it not be re-removed
+  without him. Shipped in `HASHPLACEHOLDER`.
+
 - **2026-08-24 — The seventh clamp: a 0.85 catch rate was the most common rate
   in the upper tail.** A receiver's catch rate is drawn as a bell around 0.62
   and was then truncated to [0.35, 0.85]. Truncation does not cap a tail, it

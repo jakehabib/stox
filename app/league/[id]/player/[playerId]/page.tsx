@@ -185,15 +185,30 @@ export default async function PlayerPage({
   // parse fine as "{}" (not a parse failure, so readJson's fallback never
   // kicks in) but with no real fields, so check for actual content.
   //
-  // NOT GATED ON isDraftee. It used to be, and being drafted therefore erased
-  // a man's college career from his own card: lib/draft.ts flips isDraftee to
-  // false on the pick, the blob stays in the database untouched, and the page
-  // simply stopped reading it. Measured on the live data: 26,852 rostered
-  // players are holding a full thirteen-game college season nobody can see.
-  // The `games?.length` test below is what the comment above is actually
-  // describing, and it already rejects the empty "{}" blobs on its own.
-  const collegeProfileRaw = readJson<Partial<CollegeProfile>>(player.collegeStats, {});
-  const collegeProfile = collegeProfileRaw.games?.length ? (collegeProfileRaw as CollegeProfile) : null;
+  // GATED ON isDraftee, BY THE OWNER'S DECISION. This gate was removed once, on
+  // the reasoning that being drafted erased a man's college career from his own
+  // card and left 26,852 rostered players holding a thirteen-game college season
+  // nobody could see. The owner saw the result on a rostered professional and
+  // ruled against it: "it should only be for the draft until selected."
+  //
+  // He is right, and the unseen-data argument was the weaker one. A college
+  // profile on a man who has played professional seasons is a scouting artifact
+  // outliving its purpose — the card's job then is his professional record, and
+  // the Career Record below is where a drafted man's origin is told, dated
+  // against the year it happened. Worse, the block is a LIVE readout: it reads
+  // `collegeWeeksElapsed(league)` and prints "COLLEGE SEASON — THROUGH WEEK 13
+  // OF 13" against a man in his fourth professional year, which is not stale
+  // data but a running ticker for a season he is no longer playing.
+  //
+  // The blob stays in the database untouched either way, so this is a display
+  // decision and reversible. DO NOT re-remove the gate without asking him.
+  //
+  // The `games?.length` test still rejects the empty "{}" blobs older test data
+  // carries (they parse fine, so readJson's fallback never kicks in).
+  const collegeProfileRaw = player.isDraftee
+    ? readJson<Partial<CollegeProfile>>(player.collegeStats, {})
+    : null;
+  const collegeProfile = collegeProfileRaw?.games?.length ? (collegeProfileRaw as CollegeProfile) : null;
   const combineRaw = player.isDraftee ? readJson<Partial<CombineTesting>>(player.combineTesting, {}) : null;
   const combineTesting = combineRaw?.venue ? (combineRaw as CombineTesting) : null;
   // Testing numbers are PUBLIC — every team watches the same combine — so
