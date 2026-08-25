@@ -1651,7 +1651,15 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 <th className="text-right">
                   <span className="inline-flex items-center gap-1">
                     <Link href={sortHref('athletic')} scroll={false} prefetch={false} className="hover:text-chalk">Athletic{sortKey === 'athletic' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
-                    <Tooltip placement="bottom" text={`${tip('athleticRank')} The second figure is how many men at his position tested; ${athletic.size} in the class did.`} />
+                    {/* THE GLOSSARY LINE AND NOTHING APPENDED TO IT.
+                        This carried a second sentence explaining that the
+                        figure after the slash is how many men at his position
+                        tested. The cell reads `4/16`: the denominator is
+                        already on screen, and a sentence explaining a number
+                        that explains itself is the duplication this app keeps
+                        being decluttered of. The app owner, on the tooltip as
+                        a whole: *"lets also simplify the athletic tooltip"*. */}
+                    <Tooltip placement="bottom" text={tip('athleticRank')} />
                   </span>
                 </th>
                 <th>
