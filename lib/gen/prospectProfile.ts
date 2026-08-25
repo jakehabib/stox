@@ -1,4 +1,4 @@
-import { Rng, clamp } from '../rng';
+import { Rng, clamp, softBound } from '../rng';
 import { COMBINE, GENERATION, Position } from '../tuning';
 import { AttrMap, POSITION_WEIGHTS } from '../ratings';
 import { POSITION_GROUPS, PositionGroup } from '../positionGroups';
@@ -479,14 +479,175 @@ function blendZ(position: Position, attrs: AttrMap, trueOvr: number, weights: Re
 }
 
 /** What each drill is a measurement of. [TUNE] */
-const DRILL_ATTRS = {
+const DRILL_ATTRS: Record<DrillKey, Record<string, number>> = {
   forty:    { speed: 0.65, acceleration: 0.35 },
   vertical: { speed: 0.40, strength: 0.30, acceleration: 0.30 },
   broad:    { speed: 0.45, strength: 0.25, acceleration: 0.30 },
   cone:     { agility: 0.60, acceleration: 0.20, speed: 0.20 },
   shuttle:  { agility: 0.60, acceleration: 0.25, speed: 0.15 },
   bench:    { strength: 1.00 },
-} as const;
+};
+
+/**
+ * ===========================================================================
+ * WHAT EACH DRILL IS WORTH AT EACH POSITION — DERIVED, NOT TYPED IN
+ * ===========================================================================
+ * The app owner: *"athletic testing matters differently across position. 40
+ * time matters more for a CB than it does a LT."* Until this existed the
+ * athletic composite was a flat six-way average for everybody, so a 330lb left
+ * tackle's forty counted for exactly as much of his rank as a corner's did.
+ *
+ * NOBODY HAND-TYPED SIXTEEN COLUMNS OF NUMBERS HERE. The table is computed at
+ * module load out of three things that already existed plus one judgement:
+ *
+ *   POSITION_WEIGHTS (lib/ratings.ts)   what a position's play is made of in
+ *                                       THIS engine. trueOvr is computed from
+ *                                       it and every sim result runs on
+ *                                       trueOvr, so it is the game's own
+ *                                       account of what a job needs.
+ *   COMBINE.PHYSICAL_BASIS              which raw physical qualities each of
+ *                                       those skills rests on. The judgement,
+ *                                       argued in lib/tuning.ts.
+ *   DRILL_ATTRS (above)                 what each drill measures.
+ *   COMBINE.DRILL_FLAT_SHARE            the part of every man's workout that
+ *                                       is just "is he an athlete".
+ *
+ * The consequence is that these weights are a statement about this simulation
+ * and not about the real NFL, and they stay true if the engine is retuned:
+ * move a guard's runBlock weight and his bench re-prices itself with no second
+ * table to remember.
+ *
+ * WEIGHTS ARE RELATIVE AND ARE RENORMALISED OVER THE DRILLS A MAN ACTUALLY
+ * RAN, by testingAthleticism and classAthleticRanks in lib/combineRank.ts —
+ * so the six positions that skip the bench (SKIPS_BENCH) simply have that
+ * column dropped and the remaining five rescaled, rather than being scored
+ * against a battery they were never going to run.
+ * ===========================================================================
+ */
+export type DrillKey = 'forty' | 'vertical' | 'broad' | 'cone' | 'shuttle' | 'bench';
+export const DRILL_KEYS: DrillKey[] = ['forty', 'vertical', 'broad', 'cone', 'shuttle', 'bench'];
+
+/** The four axes any drill in this game can see. */
+type PhysicalAxis = 'speed' | 'acceleration' | 'agility' | 'strength';
+const PHYSICAL_AXES: PhysicalAxis[] = ['speed', 'acceleration', 'agility', 'strength'];
+
+/**
+ * How much of a position's play, as the engine grades it, rests on each of the
+ * four physical axes. POSITION_WEIGHTS is renormalised first (it does not sum
+ * to 1 — LB's deliberately sums to 1.18, see the note there) so a position
+ * that carries more named skills is not read as physically hungrier for it.
+ * The result does NOT sum to 1 either, and should not: the missing remainder
+ * is everything a stopwatch cannot reach, which at quarterback is most of the
+ * job.
+ */
+function physicalDemand(position: Position): Record<PhysicalAxis, number> {
+  const out: Record<PhysicalAxis, number> = { speed: 0, acceleration: 0, agility: 0, strength: 0 };
+  const weights = POSITION_WEIGHTS[position];
+  if (!weights) return out;
+  let total = 0;
+  for (const w of Object.values(weights)) total += w;
+  if (total <= 0) return out;
+  for (const [attr, w] of Object.entries(weights)) {
+    const basis = COMBINE.PHYSICAL_BASIS[attr];
+    if (!basis) continue;
+    for (const axis of PHYSICAL_AXES) out[axis] += (w / total) * (basis[axis] ?? 0);
+  }
+  return out;
+}
+
+/**
+ * The published table: what share of a man's athletic composite each drill
+ * carries, at his position. Every row sums to 1 over the six drills; callers
+ * renormalise over the drills he actually ran.
+ */
+export const POSITION_DRILL_WEIGHTS: Record<Position, Record<DrillKey, number>> = (() => {
+  const out = {} as Record<Position, Record<DrillKey, number>>;
+  const flat = COMBINE.DRILL_FLAT_SHARE / DRILL_KEYS.length;
+  const derivedShare = 1 - COMBINE.DRILL_FLAT_SHARE;
+  for (const position of Object.keys(COMBINE_ANCHOR) as Position[]) {
+    const demand = physicalDemand(position);
+    const raw = {} as Record<DrillKey, number>;
+    let sum = 0;
+    for (const drill of DRILL_KEYS) {
+      let v = 0;
+      for (const axis of PHYSICAL_AXES) v += (DRILL_ATTRS[drill][axis] ?? 0) * demand[axis];
+      raw[drill] = v;
+      sum += v;
+    }
+    const row = {} as Record<DrillKey, number>;
+    // A position the engine says nothing physical about at all falls back to
+    // the flat average rather than to a divide by zero.
+    for (const drill of DRILL_KEYS) row[drill] = sum > 0 ? flat + derivedShare * (raw[drill] / sum) : 1 / DRILL_KEYS.length;
+    out[position] = row;
+  }
+  return out;
+})();
+
+/**
+ * ===========================================================================
+ * AND HOW MUCH OF A MAN'S REAL GRADE EACH DRILL CARRIES, ALSO BY POSITION
+ * ===========================================================================
+ * This is a DIFFERENT question from the table above and it must not be
+ * conflated with it. That one is what the composite a GM reads WEIGHS. This
+ * one is what actually PREDICTS ability at the position — and the two only
+ * look alike because the same fact drives both: a fast tackle is not a better
+ * pass protector, and a strong corner is not better in coverage.
+ *
+ * Strength is over half of what the engine says a left tackle's job is made
+ * of, so a better tackle really is stronger and his bench should read his
+ * grade. Nothing in a tackle's weight vector rewards a 4.9 forty, so his forty
+ * should read the card he already prints and the day he had, and nothing else.
+ * At corner the forty is the other way round.
+ *
+ * ANCHORED ON THE TWO NUMBERS THAT WERE ALREADY THERE. COMBINE.ABILITY_WEIGHT
+ * (0.78) and COMBINE.FORTY_ABILITY_WEIGHT (0.30) are now the league-wide mean
+ * for their drill rather than a flat value for every position; a drill's
+ * weight is its anchor scaled by how relevant it is at this position against
+ * how relevant it is on average across the positions that run it, raised to
+ * COMBINE.ABILITY_RELEVANCE. Holding the mean is what stops this quietly
+ * changing how much a workout reveals league-wide, which is the fog figure the
+ * scouting layer is tuned against.
+ *
+ * THE BOUND IS A SOFT ONE AND THAT IS NOT A STYLE CHOICE. drillZ spends a
+ * unit-variance budget — attribute weight is sqrt(WEIGHT_SUM_SQ - ability^2 -
+ * noise^2) — so an ability weight past sqrt(WEIGHT_SUM_SQ - NOISE_WEIGHT^2)
+ * would take the budget imaginary and the printed spread would stop matching
+ * COMBINE_ANCHOR. A `Math.min` there would pile every strongly-relevant drill
+ * onto exactly the cap, which is this codebase's most repeated defect; the
+ * cap is approached through softBound and never reached.
+ * ===========================================================================
+ */
+export const DRILL_ABILITY_WEIGHT: Record<Position, Record<DrillKey, number>> = (() => {
+  const positions = Object.keys(COMBINE_ANCHOR) as Position[];
+  // The hard ceiling the unit-variance budget allows, and the soft one we aim at.
+  const cap = COMBINE.ABILITY_CAP_FRACTION
+    * Math.sqrt(Math.max(0, COMBINE.WEIGHT_SUM_SQ - COMBINE.NOISE_WEIGHT * COMBINE.NOISE_WEIGHT));
+  // Each drill's mean composite weight across the positions that actually run
+  // it — the denominator that makes "relevant FOR this position" mean
+  // something relative rather than absolute.
+  const meanWeight = {} as Record<DrillKey, number>;
+  for (const drill of DRILL_KEYS) {
+    const runs = positions.filter((p) => drill !== 'bench' || !(SKIPS_BENCH.includes(p) || COMBINE_ANCHOR[p].bench[1] <= 0));
+    meanWeight[drill] = runs.reduce((s, p) => s + POSITION_DRILL_WEIGHTS[p][drill], 0) / Math.max(1, runs.length);
+  }
+  const out = {} as Record<Position, Record<DrillKey, number>>;
+  for (const position of positions) {
+    const row = {} as Record<DrillKey, number>;
+    for (const drill of DRILL_KEYS) {
+      const base = drill === 'forty' ? COMBINE.FORTY_ABILITY_WEIGHT : COMBINE.ABILITY_WEIGHT;
+      const relevance = meanWeight[drill] > 0 ? POSITION_DRILL_WEIGHTS[position][drill] / meanWeight[drill] : 1;
+      const raw = base * Math.pow(Math.max(1e-6, relevance), COMBINE.ABILITY_RELEVANCE);
+      // Identity while the tilt is modest; compressed toward `cap` past it and
+      // never touching it. sd is a third of the headroom so the asymptote sits
+      // strictly above the two-sd knee — at exactly half, softBound's own
+      // `room` collapses to zero and it degenerates into the clamp this is
+      // written to avoid.
+      row[drill] = base >= cap ? cap : softBound(raw, base, (cap - base) / 3, 0, cap, 2);
+    }
+    out[position] = row;
+  }
+  return out;
+})();
 
 /** Standard-normal quantile (Acklam's rational approximation, |err| < 1.2e-9). */
 function probit(p: number): number {
@@ -585,13 +746,23 @@ export function generateCombineTesting(rng: Rng, position: Position, trueAttrs: 
     return softTail(z + weightPull * weightZ, COMBINE.SOFT_KNEE_Z, COMBINE.SOFT_LIMIT_Z);
   };
 
+  /*
+   * Each drill's ability weight is now the position's, not the league's — see
+   * DRILL_ABILITY_WEIGHT above. The forty is still on average the drill that
+   * says least about whether a man can play, but at a corner it says rather
+   * more than that average and at a tackle rather less, which is the point.
+   * The unit-variance budget is unchanged, so every printed spread is still
+   * the sd in COMBINE_ANCHOR.
+   */
+  const ability = DRILL_ABILITY_WEIGHT[position] ?? DRILL_ABILITY_WEIGHT.LB;
+
   // Timed drills: a HIGHER z is a BETTER athlete, so it subtracts seconds.
-  const fortyYard = anchor.forty[0] - anchor.forty[1] * drillZ(DRILL_ATTRS.forty, -COMBINE.WEIGHT_PULL, COMBINE.FORTY_ABILITY_WEIGHT);
-  const threeCone = anchor.cone[0] - anchor.cone[1] * drillZ(DRILL_ATTRS.cone, -COMBINE.WEIGHT_PULL);
-  const shuttle = anchor.shuttle[0] - anchor.shuttle[1] * drillZ(DRILL_ATTRS.shuttle, -COMBINE.WEIGHT_PULL);
+  const fortyYard = anchor.forty[0] - anchor.forty[1] * drillZ(DRILL_ATTRS.forty, -COMBINE.WEIGHT_PULL, ability.forty);
+  const threeCone = anchor.cone[0] - anchor.cone[1] * drillZ(DRILL_ATTRS.cone, -COMBINE.WEIGHT_PULL, ability.cone);
+  const shuttle = anchor.shuttle[0] - anchor.shuttle[1] * drillZ(DRILL_ATTRS.shuttle, -COMBINE.WEIGHT_PULL, ability.shuttle);
   // Jumps and the bench: a higher z adds inches / reps.
-  const vertical = anchor.vertical[0] + anchor.vertical[1] * drillZ(DRILL_ATTRS.vertical, -COMBINE.WEIGHT_PULL);
-  const broadJump = anchor.broad[0] + anchor.broad[1] * drillZ(DRILL_ATTRS.broad, -COMBINE.WEIGHT_PULL);
+  const vertical = anchor.vertical[0] + anchor.vertical[1] * drillZ(DRILL_ATTRS.vertical, -COMBINE.WEIGHT_PULL, ability.vertical);
+  const broadJump = anchor.broad[0] + anchor.broad[1] * drillZ(DRILL_ATTRS.broad, -COMBINE.WEIGHT_PULL, ability.broad);
   const benchReps = SKIPS_BENCH.includes(position) || anchor.bench[1] <= 0
     ? null
     // A rep count cannot go negative, and Math.max() there would be the very
@@ -599,7 +770,7 @@ export function generateCombineTesting(rng: Rng, position: Position, trueAttrs: 
     // the asymptote itself sits above zero: the floor is unreachable rather
     // than crowded.
     : Math.max(1, Math.round(anchor.bench[0] + anchor.bench[1] * softTail(
-        drillZ(DRILL_ATTRS.bench, COMBINE.WEIGHT_PULL),
+        drillZ(DRILL_ATTRS.bench, COMBINE.WEIGHT_PULL, ability.bench),
         COMBINE.SOFT_KNEE_Z,
         Math.min(COMBINE.SOFT_LIMIT_Z, (anchor.bench[0] - 1) / anchor.bench[1]),
       )));

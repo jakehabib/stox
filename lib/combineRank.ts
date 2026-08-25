@@ -1,4 +1,4 @@
-import { CombineTesting, COMBINE_ANCHOR } from './gen/prospectProfile';
+import { CombineTesting, COMBINE_ANCHOR, POSITION_DRILL_WEIGHTS, DrillKey } from './gen/prospectProfile';
 import type { Position } from './tuning';
 
 /**
@@ -68,6 +68,48 @@ export function rankValue(value: number, peers: number[], lowerIsBetter: boolean
 export type ProspectCombineRanks = Partial<Record<CombineMeasurable, MeasurableRank>>;
 
 /**
+ * This file names the drills after the columns on the player card; the
+ * generator names them after the anchor table it rolls them from. One map,
+ * declared once, rather than the two vocabularies being restated wherever they
+ * meet.
+ */
+const DRILL_OF: Record<CombineMeasurable, DrillKey> = {
+  fortyYard: 'forty',
+  vertical: 'vertical',
+  broadJump: 'broad',
+  threeCone: 'cone',
+  shuttle: 'shuttle',
+  benchReps: 'bench',
+};
+
+/**
+ * WHAT THE COMPOSITE WEIGHS, at this position. The app owner: *"athletic
+ * testing matters differently across position. 40 time matters more for a CB
+ * than it does a LT."*
+ *
+ * The table is derived from the engine rather than typed in — see
+ * POSITION_DRILL_WEIGHTS in lib/gen/prospectProfile.ts, which multiplies what
+ * the game says a position's play is made of by which physical qualities each
+ * of those skills rests on by what each drill measures. A corner's rank leans
+ * on the forty, the shuttle and the three-cone; a tackle's on the bench, the
+ * three-cone and the broad; an edge rusher sits between them.
+ *
+ * Relative, and renormalised over the drills a man actually ran by every
+ * caller below — a position that skips the bench keeps working, with the other
+ * five rescaled.
+ *
+ * Returns undefined for a position with no anchor at all, which is the same
+ * "no opinion" every reader here already handles by falling back to flat.
+ */
+export function positionDrillWeights(position: string): Partial<Record<CombineMeasurable, number>> | undefined {
+  const row = POSITION_DRILL_WEIGHTS[position as Position];
+  if (!row) return undefined;
+  const out: Partial<Record<CombineMeasurable, number>> = {};
+  for (const key of COMBINE_MEASURABLES) out[key] = row[DRILL_OF[key]];
+  return out;
+}
+
+/**
  * Rank every measurable `subject` has a recorded value for against
  * `positionPeers` — the full position group's testing rows for the same
  * draft class, subject included. Pure and DB-free: the caller loads the class
@@ -93,6 +135,11 @@ export function rankProspectCombine(subject: CombineTesting, positionPeers: Comb
  * the plain average of his per-measurable percentiles. Used where a single
  * public signal is more useful than six separate ones (e.g. weighing into
  * the consensus big-board score in prospectProfile.ts).
+ *
+ * DELIBERATELY STILL FLAT, unlike the athletic rank below. This one feeds
+ * PUBLIC PERCEPTION — bigBoardScore's testing swing — and the public does not
+ * weight a workout by position. The board's stopwatch bias is a bias; see
+ * CONSENSUS.FORTY_FIXATION for the same decision made about the same thing.
  */
 export function overallTestingPercentile(ranks: ProspectCombineRanks): number | null {
   const values = Object.values(ranks).filter((r): r is MeasurableRank => r != null).map((r) => r.percentile);
@@ -111,12 +158,20 @@ export function overallTestingPercentile(ranks: ProspectCombineRanks): number | 
  * nothing and runs 4.47.
  *
  * WHO CALLS IT. lib/consensus.ts, twice and for two different jobs, which is
- * why it takes weights. publicAthleticism() calls it flat — the six drills
- * averaged, the read this file's own athletic rank is built on. roomStopwatch-
- * Read() calls it with CONSENSUS.FORTY_FIXATION of the weight on the forty,
- * because a draft room grades the number it quotes on television. The gap
- * between those two reads is what leaves the athletic rank saying something
- * the consensus board has not already said; see THE ATHLETIC RANK below.
+ * why it takes weights. publicAthleticism() passes none, so it gets the
+ * DEFAULT — this position's own drill weights, the read this file's athletic
+ * rank is built on. roomStopwatchRead() overrides them with
+ * CONSENSUS.FORTY_FIXATION of the weight on the forty and the rest split flat,
+ * because a draft room grades the number it quotes on television and it quotes
+ * it for everybody. The gap between those two reads is what leaves the
+ * athletic rank saying something the consensus board has not already said; see
+ * THE ATHLETIC RANK below.
+ *
+ * IT WAS FLAT FOR EVERYBODY UNTIL RECENTLY, and that was the defect the app
+ * owner named: *"athletic testing matters differently across position. 40 time
+ * matters more for a CB than it does a LT."* Six drills averaged equally meant
+ * a 330lb tackle's forty counted for exactly as much of his athletic rank as a
+ * corner's did. The default is now positionDrillWeights() above.
  *
  * It used to be neither — consensus.ts inverted the generator's formulas by
  * hand and anchored ONLY the 40, scoring the other four against flat constants
@@ -138,10 +193,14 @@ export function testingAthleticism(
 ): number | null {
   const anchor = COMBINE_ANCHOR[position as Position];
   if (!anchor) return null;
+  // Omitting `weights` means "weight this the way his position is played",
+  // never "weight everything the same" — a caller that wants the flat average
+  // has to say so, because on this board the flat average is the unusual read.
+  const w6 = weights ?? positionDrillWeights(position);
   let sum = 0;
   let total = 0;
   const add = (key: CombineMeasurable, z: number) => {
-    const w = weights?.[key] ?? 1;
+    const w = w6?.[key] ?? 1;
     if (w <= 0) return;
     sum += w * z;
     total += w;
@@ -178,8 +237,20 @@ function normalCdf(z: number): number {
  * ===========================================================================
  * "Athletic 4 of 16" is the fourth-best tester among the sixteen left tackles
  * in this draft class. It is built by ranking every drill a man ran against
- * the men at HIS OWN POSITION, averaging those finishes, and then ordering his
- * POSITION GROUP on that average.
+ * the men at HIS OWN POSITION, taking a WEIGHTED mean of those finishes — the
+ * weight being what that drill is worth at that position — and then ordering
+ * his POSITION GROUP on that mean.
+ *
+ * THE MEAN WAS UNWEIGHTED AND THAT WAS THE SECOND WRONG DENOMINATOR. The app
+ * owner, on seeing a 290lb tackle read as an ordinary athlete off an excellent
+ * tackle workout: *"and remember, athletic testing matters differently across
+ * position. 40 time matters more for a CB than it does a LT."* He had run 5.29
+ * — twelfth of sixteen — and finished FIRST in his group in the three-cone,
+ * FIRST in the shuttle and SECOND on the bench, and the drill that means least
+ * for the job he is being hired to do was counting for exactly as much of his
+ * rank as the three that mean most. The weights are in POSITION_DRILL_WEIGHTS
+ * (lib/gen/prospectProfile.ts) and they are DERIVED from the engine's own
+ * account of what each position's play is made of, not typed in.
  *
  * IT USED TO BE ORDERED AGAINST THE WHOLE CLASS AND THAT WAS THE WRONG
  * DENOMINATOR. Each drill was already placed inside the position group — a
@@ -233,6 +304,42 @@ function normalCdf(z: number): number {
  * starters against the board's 71.8%), which is what stops the draft being
  * solved by a stopwatch.
  *
+ * WHAT THE POSITION WEIGHTS THEN BOUGHT, and it is the interaction rather than
+ * either half. The room's forty fixation stays GLOBAL (CONSENSUS.FORTY_FIXATION
+ * — a bias that adjusted itself sensibly by position would not be one), so the
+ * board now pays for a drill that only predicts anything at some positions.
+ * The men it underpays hardest are exactly the owner's tackle. Measured over
+ * 30 freshly generated classes (11,796 tested prospects, scripts/_pdw_bargain.ts,
+ * career peaks rolled through lib/progression.ts), among picks in rounds 4-7:
+ *
+ *                                            n    mean board   peak   70+ starter
+ *   every pick in rounds 4-7               3798      160       70.7      55.7%
+ *   slow forty + top-quartile, OLD flat      102      150       78.0      90.2%
+ *   slow forty + top-quartile, position-w    122      153       77.5      86.1%
+ *
+ * The cohort was always good; the weighted composite finds a FIFTH MORE of
+ * them at the same quality — 105 starters against 92 — and on the offensive
+ * line, where the forty is worth 0.07 of a man's rank against a corner's 0.21,
+ * it finds 49 against 36. Over 40 classes the class-wide acceptance numbers
+ * move with it (scripts/_pdw_measure.ts, an in-memory rebuild of the harness
+ * the figures above this paragraph came from, so it is the before-and-after
+ * that is comparable and not the levels):
+ *
+ *                                                       before     after
+ *   rounds 4-7 top-quartile tester -> 70+ starter        62.2%     63.7%
+ *   ... base rate for rounds 4-7                         55.5%     55.6%
+ *   rounds 1-2 top-quartile tester -> bust (<78)         25.2%     25.4%
+ *   ... base rate for rounds 1-2                         34.6%     34.6%
+ *   "best tester of the 8 left" beats "best board rank"  45.4%     46.0%
+ *   ... and loses to it                                  38.7%     38.0%
+ *   following the stopwatch ALONE -> 70+ starters        62.8%     63.3%
+ *   ... against the BOARD alone                          68.8%     68.9%
+ *   board+athletic recovering an unscouted true rating   0.715     0.719
+ *
+ * The last two are the guard rails and both held: the stopwatch on its own is
+ * still six points of starter rate worse than simply following the board, so
+ * scouting still has to happen, and the fog is where it was.
+ *
  * MISSING EVENTS ARE AVERAGED OVER, NEVER SCORED AS FAILURES. A man is ranked
  * on the drills he actually ran; a corner who was never going to bench is not
  * pushed down his group for it, because the battery that group runs is
@@ -274,12 +381,28 @@ export function classAthleticRanks(
 
   const scored = tested
     .map((p) => {
-      const finishes = Object.values(rankProspectCombine(p.testing, peers.get(p.position)!))
-        .filter((r): r is MeasurableRank => r != null);
-      return {
-        id: p.id,
-        position: p.position,
-        events: finishes.length,
+      const ranked = rankProspectCombine(p.testing, peers.get(p.position)!);
+      const finishes = Object.entries(ranked)
+        .filter((e): e is [CombineMeasurable, MeasurableRank] => e[1] != null);
+      /*
+       * THE AVERAGE IS NOT AN AVERAGE ANY MORE, AND THAT IS THE POINT. It used
+       * to be the plain mean of his six finishes, which said a forty was worth
+       * as much to a left tackle as to a corner. It is now weighted by what
+       * each drill is worth AT HIS POSITION — see positionDrillWeights above,
+       * derived from the engine's own account of what his job is made of.
+       *
+       * Weights are relative and are renormalised over the drills he actually
+       * RAN (the divisor is the weight accumulated, not a constant), so a
+       * corner who was never going to bench has that column dropped and the
+       * other five rescaled, exactly as before. A position with no weights at
+       * all falls back to 1 apiece, which is the old flat mean.
+       */
+      const w6 = positionDrillWeights(p.position);
+      let wSum = 0;
+      let wTotal = 0;
+      for (const [key, r] of finishes) {
+        const w = w6?.[key] ?? 1;
+        if (w <= 0) continue;
         // MeasurableRank.percentile is rounded to a whole number, which is
         // right on a card tile and wrong as an input to an average: a group of
         // twenty-five offers only twenty-five finishes, so six rounded
@@ -288,9 +411,14 @@ export function classAthleticRanks(
         // 39.8% of every class sharing a rank with somebody. This is
         // rankValue's own formula with the rounding left off — the same
         // finish, at full precision.
-        percentile: finishes.length === 0
-          ? null
-          : finishes.reduce((sum, r) => sum + (100 * (r.outOf - r.rank)) / (r.outOf - 1), 0) / finishes.length,
+        wSum += w * ((100 * (r.outOf - r.rank)) / (r.outOf - 1));
+        wTotal += w;
+      }
+      return {
+        id: p.id,
+        position: p.position,
+        events: finishes.length,
+        percentile: wTotal <= 0 ? null : wSum / wTotal,
         // The same six numbers against the same position anchors, never
         // collapsed into finishes at all. Only ever used to separate men the
         // average could not tell apart — see the tiebreak note below.

@@ -103,9 +103,15 @@ export function bandCutoffs(shape: BoardShape = DEFAULT_SHAPE) {
 // ---------------------------------------------------------------------------
 
 /**
- * 0..1 "how did he test", 1 = best, position-adjusted. Recovered by inverting
- * each of generateCombineTesting's per-measurable formulas back to the single
- * 20..99 quality proxy they were all generated from, then averaging.
+ * 0..1 "how did he test", 1 = best, position-adjusted twice over: each drill
+ * is scored against that position's own anchor, and the six are then combined
+ * in the proportions that drill matters AT that position (testingAthleticism's
+ * default — see positionDrillWeights in lib/combineRank.ts, derived from the
+ * engine's own account of what the job is made of). A corner's read leans on
+ * the forty, the shuttle and the three-cone; a tackle's on the bench, the
+ * three-cone and the broad. It used to be the flat six-way average for
+ * everybody, which is what the app owner objected to: *"40 time matters more
+ * for a CB than it does a LT."*
  *
  * Deliberately NOT a percentile against the current class. A percentile moves
  * every time a prospect is drafted out of the pool, which would quietly
@@ -163,10 +169,18 @@ export function publicAthleticism(position: string, testing: Partial<CombineTest
  * WHAT THE ROOM ACTUALLY REACTS TO IS NOT THE WHOLE WORKOUT
  * ---------------------------------------------------------------------------
  * publicAthleticism() above is the six-drill read the draft board's Athletic
- * column publishes. This is the narrower thing the consensus grade moves on:
- * the same drills against the same anchors, with the forty carrying
- * CONSENSUS.FORTY_FIXATION of the weight and the other five splitting the
- * rest.
+ * column publishes, weighted the way the position is played. This is the
+ * narrower thing the consensus grade moves on: the same drills against the
+ * same anchors, with the forty carrying CONSENSUS.FORTY_FIXATION of the weight
+ * and the other five splitting the rest, FLAT AND THE SAME FOR EVERY POSITION.
+ *
+ * That asymmetry is deliberate and it is the whole mechanic. The public column
+ * knows a tackle is not hired to run; the room does not, because a room quotes
+ * the forty for everybody. A bias that corrected itself by position would not
+ * be a bias. So the deepest bargains on the board are men who ran slow at a
+ * position where speed is nearly irrelevant and tested superbly in the drills
+ * that position actually needs — see the cohort measurement in
+ * lib/combineRank.ts.
  *
  * It is the difference between these two reads that makes the stopwatch worth
  * looking at. When the room priced the whole workout, the public grade already

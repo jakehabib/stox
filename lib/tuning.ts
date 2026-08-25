@@ -2023,18 +2023,34 @@ export const CONSENSUS = {
   TESTING_PULL: 6,
   /**
    * How much of the room's stopwatch reaction is the forty alone; the other
-   * five drills split the rest. 1/6 is the flat average the room used to
-   * grade, and it is the flat average the PUBLIC Athletic column still
-   * publishes (lib/combineRank.ts).
+   * five drills split the rest.
+   *
+   * THIS ONE STAYS GLOBAL ON PURPOSE, AND THAT IS THE WHOLE MECHANIC. The
+   * PUBLIC Athletic column is weighted per position now (COMBINE.PHYSICAL_BASIS
+   * — a corner's rank leans on the forty, the shuttle and the three-cone, a
+   * tackle's on the bench, the three-cone and the broad), and how much of a
+   * man's real grade a drill carries is weighted per position too. This number
+   * is not, because it is a BIAS, and a bias that adjusted itself sensibly by
+   * position would not be one. Every room in the league quotes the forty for
+   * everybody, including the positions where it means nothing.
    *
    * The gap between the two reads is the point. A room grades the number it
-   * quotes, and what it quotes is the forty — which, by design, is the drill
-   * carrying the least of a man's actual ability (COMBINE.FORTY_ABILITY_WEIGHT).
-   * So the five drills that DO carry ability go unpriced by the board, and a
-   * front office that reads the whole workout is looking at something the
-   * consensus never charged for. That is the mechanism behind a late-round
-   * gem, and it is also simply what draft rooms do: the forty is read out on
-   * television and the three-cone is read by the position coach.
+   * quotes, and what it quotes is the forty — which, on average across
+   * positions, is the drill carrying the least of a man's actual ability
+   * (COMBINE.FORTY_ABILITY_WEIGHT). So the drills that DO carry ability go
+   * unpriced by the board, and a front office that reads the whole workout is
+   * looking at something the consensus never charged for.
+   *
+   * WHERE IT NOW GOES FURTHEST WRONG IS WHERE THE BARGAIN IS. Because the room
+   * pays for the forty everywhere and the forty only predicts anything at some
+   * positions, the men the board underpays hardest are those who ran slow at a
+   * position where speed is nearly irrelevant and tested superbly in the drills
+   * that position actually needs — the 290lb tackle who ran 5.29 and finished
+   * first in his group in both the three-cone and the shuttle. That man used to
+   * read as an average tester because his worst drill counted like his best.
+   *
+   * It is also simply what draft rooms do: the forty is read out on television
+   * and the three-cone is read by the position coach.
    */
   FORTY_FIXATION: 0.75,
   /**
@@ -3526,8 +3542,143 @@ export const COMBINE = {
    * ATTR_WEIGHT comment was protecting: the card shows the stopwatch and the
    * speed rating side by side, and the drill a reader can check against a
    * printed rating is now the one most tightly tied to it.
+   *
+   * IT IS THE ANCHOR NOW, NOT THE WHOLE STORY. This and ABILITY_WEIGHT are the
+   * league-wide averages a drill's ability weight is centred on; the figure a
+   * given position actually uses is tilted around them by how much that drill
+   * matters at that position — see PHYSICAL_BASIS and ABILITY_RELEVANCE below,
+   * and drillAbilityWeight() in lib/gen/prospectProfile.ts. A fast tackle is
+   * not a better pass protector and a strong corner is not better in coverage,
+   * so the forty says even less than 0.30 about a tackle and rather more than
+   * 0.30 about a corner. The mean across positions is still these two numbers,
+   * which is what keeps the room's fixation mispriced by the same amount ON
+   * AVERAGE while making it wildly wrong at some positions and roughly right
+   * at others. That variance is the gem.
    */
   FORTY_ABILITY_WEIGHT: 0.30,
+  /**
+   * ==========================================================================
+   * WHAT A DRILL IS WORTH DEPENDS ON WHERE THE MAN LINES UP
+   * ==========================================================================
+   * The app owner: *"athletic testing matters differently across position. 40
+   * time matters more for a CB than it does a LT."* He is right, and until
+   * this table existed the composite was a flat six-way average for everybody
+   * — a 330lb left tackle's forty counted for exactly as much of his athletic
+   * rank as a corner's did.
+   *
+   * THESE WEIGHTS ARE NOT TYPED IN, THEY ARE DERIVED, and this table is the
+   * only judgement in the chain. The chain is:
+   *
+   *   lib/ratings.ts POSITION_WEIGHTS   what a position's PLAY is made of, in
+   *                                     this engine — trueOvr is computed from
+   *                                     it and the sim runs on trueOvr, so it
+   *                                     is the game's own statement of what a
+   *                                     job needs
+   *          x  PHYSICAL_BASIS          which raw physical qualities each of
+   *                                     those skills rests on   <- THIS TABLE
+   *          =  a per-position demand over speed / acceleration / agility /
+   *             strength
+   *          x  DRILL_ATTRS (lib/gen/prospectProfile.ts)   what each drill
+   *                                     measures, a table that already existed
+   *          =  how much each drill is worth at each position
+   *
+   * So the weights are a statement about THIS simulation rather than about the
+   * real NFL, and they follow the engine if the engine is retuned — retune
+   * POSITION_WEIGHTS and a tackle's bench re-prices itself with no second
+   * table to remember.
+   *
+   * WHAT IS GENUINELY A JUDGEMENT CALL, SAID PLAINLY. Nothing in the codebase
+   * says what a three-cone is measuring, or how much of "pass blocking" is
+   * anchor strength and how much is a kick slide. The rows below are my read
+   * and nothing more; they are the place to argue, and every number downstream
+   * moves when they do. A row that does not sum to 1 is deliberate — the
+   * remainder is technique, instinct or hands, which no stopwatch reaches, and
+   * the gap is why zone coverage (mental) carries less physical demand than
+   * man coverage (a footrace) and why ball skills carry almost none. An
+   * attribute absent from this table contributes NO physical demand at all:
+   * awareness, football IQ, decision making, vision, ball security, hands,
+   * short and deep accuracy, kick accuracy and work ethic are not things a
+   * combine can time. [TUNE]
+   */
+  PHYSICAL_BASIS: {
+    // The four axes the drills actually measure, read as themselves.
+    speed: { speed: 1 },
+    acceleration: { acceleration: 1 },
+    agility: { agility: 1 },
+    strength: { strength: 1 },
+    // Blocking. Pass protection is an anchor plus a kick slide; run blocking
+    // is displacement, which is nearly all strength off the snap.
+    passBlock: { strength: 0.45, agility: 0.30, acceleration: 0.15 },
+    runBlock: { strength: 0.65, acceleration: 0.20 },
+    footwork: { agility: 0.70, acceleration: 0.25 },
+    // Front seven. A rush is won off the snap and around the corner; holding
+    // the point and shedding a block are strength.
+    passRush: { acceleration: 0.40, agility: 0.25, strength: 0.20, speed: 0.10 },
+    runStop: { strength: 0.55, acceleration: 0.15 },
+    blockShed: { strength: 0.70, agility: 0.10 },
+    pursuit: { speed: 0.55, acceleration: 0.30, agility: 0.10 },
+    tackling: { strength: 0.35, acceleration: 0.15 },
+    // Secondary. Man coverage is a footrace with a change of direction in it;
+    // zone is mostly reading the quarterback; press is hands and a jam.
+    coverage: { speed: 0.40, agility: 0.35, acceleration: 0.20 },
+    zone: { speed: 0.20, agility: 0.20, acceleration: 0.15 },
+    press: { strength: 0.40, agility: 0.25, acceleration: 0.15 },
+    ballHawk: { agility: 0.15, speed: 0.10 },
+    // Ball carriers and receivers.
+    elusiveness: { agility: 0.55, acceleration: 0.30 },
+    power: { strength: 0.60, acceleration: 0.15 },
+    route: { agility: 0.35, acceleration: 0.30, speed: 0.10 },
+    release: { acceleration: 0.30, agility: 0.20, strength: 0.20 },
+    contested: { strength: 0.35, acceleration: 0.15 },
+    // Quarterback and specialists. Arm strength and leg drive are physical
+    // facts a weight room shows up in; where the ball goes is not.
+    armStrength: { strength: 0.35 },
+    pocket: { agility: 0.20 },
+    kickPower: { strength: 0.35, acceleration: 0.20 },
+  } as Record<string, Partial<Record<'speed' | 'acceleration' | 'agility' | 'strength', number>>>,
+  /**
+   * How much of every position's composite stays a flat six-way average.
+   *
+   * IT IS NOT ZERO AND IT MUST NOT BE. Derived alone, a left tackle's forty
+   * comes out at 5% of his athletic rank, which is not "matters less" but
+   * "does not count" — and a tackle who runs 5.6 really is a problem, whatever
+   * the engine's weight vector says. The floor is also what keeps a position
+   * the engine is physically silent about from degenerating: a kicker is
+   * graded on kick power and kick accuracy, and without this his rank would
+   * rest on two drills.
+   *
+   * So the published weight is a quarter flat and three quarters derived. That
+   * still leaves a corner's forty worth roughly two and a half times a
+   * tackle's, which is the effect the owner asked for; going lower buys a
+   * sharper table at the cost of drills that no longer count at all.
+   */
+  DRILL_FLAT_SHARE: 0.25,
+  /**
+   * How hard a drill's ABILITY weight (not its composite weight) tilts with
+   * its relevance at the position. 0 = the old behaviour, every position gets
+   * the same split; 1 = ability weight moves in direct proportion to how much
+   * the drill matters there.
+   *
+   * This is the second of the three things this feature separates and it is
+   * the one about TRUTH rather than about presentation: a better tackle really
+   * is stronger, because strength is over half of what the engine says his job
+   * is made of, so his bench should read his grade. A better tackle is not
+   * meaningfully faster, so his forty should read his card and the day he had.
+   * 0.6 rather than 1.0 because the relevance shares are themselves derived
+   * through two tables of judgement, and a square-law response to them would
+   * put more confidence in the chain than it has earned.
+   */
+  ABILITY_RELEVANCE: 0.6,
+  /**
+   * Fraction of the unit-variance budget an ability weight may ever occupy,
+   * approached through softBound and never reached. sqrt(WEIGHT_SUM_SQ -
+   * NOISE_WEIGHT^2) is the hard ceiling — at it, a drill's attribute weight is
+   * zero and above it the budget goes imaginary and the printed spread would
+   * stop matching COMBINE_ANCHOR. Held just under so a tackle's bench, which
+   * the derivation pushes hardest, still leaves the drill something of his
+   * physical profile to read.
+   */
+  ABILITY_CAP_FRACTION: 0.99,
   /**
    * What the three weights on a drill square-sum to. Each drill's attribute
    * weight is derived as sqrt(WEIGHT_SUM_SQ - ability^2 - noise^2) rather than
