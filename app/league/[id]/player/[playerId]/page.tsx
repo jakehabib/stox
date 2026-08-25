@@ -17,10 +17,11 @@ import {
   loadPlayerSeasons, reconstructPlayerSeasons, withAges, ageBasisYear, buildCareerTable,
   yearOverYearOvr,
 } from '@/lib/playerSeasons';
+import { CutButton } from '@/components/CutButton';
 import { resignListCutoff } from '@/lib/contractClock';
 import { franchiseTagBlockReason } from '@/lib/franchiseTag';
 import { fifthYearOptionApplies, fifthYearOptionBlockReason, type FifthYearOptionDecision } from '@/lib/fifthYearOption';
-import { ContractRoom } from '@/components/contract/ContractRoom';
+import { ContractActions } from '@/components/ContractActions';
 import { ContractLedger } from '@/components/ds/ContractLedger';
 import { FullScoutButton } from '@/components/FullScoutButton';
 import { ShortlistStar } from '@/components/ShortlistStar';
@@ -1324,86 +1325,96 @@ export default async function PlayerPage({
         }
       />
       {player.contract ? (
-        /* ACROSS THE TABLE. Your books on the left, his agent on the right, and
-           the decisions on the line between them — see ContractRoom. Every
-           figure below is still resolved here, on the server, and handed over
-           already rendered; the room is a layout and holds no arithmetic. */
-        <ContractRoom
-          leagueId={league.id}
-          playerId={player.id}
-          playerName={`${player.firstName} ${player.lastName}`}
-          position={player.position}
-          age={player.age}
-          contract={{
-            years: player.contract.years, yearsRemaining: player.contract.yearsRemaining, signedYear: player.contract.signedYear,
-            baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
-            guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
-          }}
-          capMode={settings.capMode}
-          capSpace={capSpace}
-          resignHref={resignHref}
-          tag={tagCard}
-          option={optionCard}
-          isOwnRoster={isOwnRoster && !!userTeam}
-          clubAbbr={player.team?.abbr ?? '—'}
-          clubName={player.team ? `${player.team.city} ${player.team.nickname}` : 'Unsigned'}
-          seasonYear={league.seasonYear}
-          /* A release from the cap page's route back under the ceiling is one
-             step of a sequence, so it returns to the sheet that listed it
-             rather than dropping the GM on /roster to find his way back for
-             the second cut. */
-          releaseReturnTo={searchParams?.from === 'cap' ? `/league/${league.id}/cap` : undefined}
-          ledger={
+        <div className="space-y-4">
+          {/* THE DEAL AS SIGNED. Only what the ledger below does not carry, and
+              only what this cap mode actually charges: with the simplified cap
+              there is no bonus proration, so there is no bonus line to quote,
+              and with the cap off there are no cap figures at all. */}
+          {settings.capMode !== 'OFF' && (
+            <div className="panel p-5 grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <StatNumber value={formatMoney(contractTotal)} label="Total value" size="md" tip={tip('apy')} />
+                <div className="text-[11px] text-muted mt-1">
+                  {formatMoney(Math.round(contractTotal / Math.max(1, player.contract.years)))} a year across the deal
+                </div>
+              </div>
+              {settings.capMode === 'REALISTIC' && (
+                <div>
+                  <StatNumber value={formatMoney(player.contract.signingBonus)} label="Signing bonus" size="md" tip={tip('proration')} />
+                  <div className="text-[11px] text-muted mt-1">
+                    {formatMoney(bonusPerYear)} a year on the cap through {bonusThrough}
+                  </div>
+                </div>
+              )}
+              <div>
+                <StatNumber
+                  value={`${formatMoney(market)}/yr`}
+                  label="Market value"
+                  size="md"
+                  tip={tip('marketValue')}
+                  // Market-rate stays the default ink — only a deviation big
+                  // enough to matter earns green or red.
+                  color={valueTier === 'bargain' ? 'text-accent' : valueTier === 'overpay' ? 'text-bad' : 'text-chalk'}
+                />
+                <div className="text-[11px] text-muted mt-1">
+                  {valueTier === 'market'
+                    ? 'paid at market rate'
+                    : `${valueTier === 'bargain' ? 'surplus +' : 'over by '}${formatMoney(Math.abs(market - hit))}`}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="panel p-5 space-y-4">
+            {/* The question this box answers is "what does he cost me for the
+                rest of the deal, and what does it cost to get out" — and that
+                is a per-year table. The dead-money column is what turns it
+                from a statement into a decision. */}
+            {/* WHAT YOU CAN DO, THEN WHAT IT COSTS — in that order.
+                Release sat at the very bottom of this pane, under a
+                year-by-year ledger tall enough to push it off the screen. The
+                app owner: *"the release button on the player card needs to be
+                near the top. right now it's buried."* The decisions are the
+                reason a GM opens this tab; the table is the evidence he reads
+                them against, and evidence belongs under the decision it
+                supports. */}
+            {isOwnRoster && userTeam && (
+              <div className="space-y-3 pb-3 border-b border-line/60">
+                <ContractActions
+                  leagueId={league.id} playerId={player.id} playerName={`${player.firstName} ${player.lastName}`} ovr={view.scoutedOvr} position={player.position} age={player.age}
+                  contract={{
+                    years: player.contract.years, yearsRemaining: player.contract.yearsRemaining, signedYear: player.contract.signedYear,
+                    baseSalaries: player.contract.baseSalaries, signingBonus: player.contract.signingBonus,
+                    guaranteed: player.contract.guaranteed, voidYears: player.contract.voidYears,
+                  }}
+                  availableSpaceForExtension={capSpace + hit} capSpace={capSpace} capMode={settings.capMode}
+                  resignHref={resignHref}
+                  // Non-null wherever this renders: the same three conditions
+                  // that gate this block are the ones tagCard resolves under.
+                  tag={tagCard!}
+                  option={optionCard}
+                />
+                {restructureFrees > 0 && (
+                  <p className="text-sm text-muted">
+                    A maximum restructure takes {formatMoney(restructureFrees)} off {league.seasonYear} and moves it into the
+                    {player.contract.yearsRemaining > 2 ? ' years' : ' year'} after it.
+                  </p>
+                )}
+                {/* A release from the cap page's route back under the ceiling
+                    is one step of a sequence, so it returns to the sheet that
+                    listed it rather than dropping the GM on /roster to find
+                    his way back for the second cut. */}
+                <CutButton leagueId={league.id} playerId={player.id} returnTo={searchParams?.from === 'cap' ? `/league/${league.id}/cap` : undefined} />
+              </div>
+            )}
+
             <ContractLedger
               contract={player.contract}
               capMode={settings.capMode}
               seasonYear={league.seasonYear}
-              /* Market value joins the row it belongs in — beside remaining,
-                 guaranteed and dead-if-cut, which are the other three answers
-                 to "what is this deal worth now". Resolved here, from
-                 `marketValue` and `classifyContractValue`, and never a second
-                 time inside the ledger. */
-              market={settings.capMode === 'OFF' ? null : { value: market, tier: valueTier }}
             />
-          }
-          dealAsSigned={
-            /* THE DEAL AS SIGNED. Only what the ledger does not carry, and only
-               what this cap mode actually charges: with the simplified cap
-               there is no bonus proration, so there is no bonus line to quote,
-               and with the cap off there are no cap figures at all. */
-            settings.capMode !== 'OFF' ? (
-              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-line/60">
-                <div>
-                  <StatNumber value={formatMoney(contractTotal)} label="Total value" size="sm" tip={tip('apy')} />
-                  <div className="text-[11px] text-muted mt-1">
-                    {formatMoney(Math.round(contractTotal / Math.max(1, player.contract.years)))} a year across the deal
-                  </div>
-                </div>
-                {settings.capMode === 'REALISTIC' && (
-                  <div>
-                    <StatNumber value={formatMoney(player.contract.signingBonus)} label="Signing bonus" size="sm" tip={tip('proration')} />
-                    <div className="text-[11px] text-muted mt-1">
-                      {formatMoney(bonusPerYear)} a year on the cap through {bonusThrough}
-                    </div>
-                  </div>
-                )}
-                <div className="col-span-2 text-[11px] text-muted">
-                  {valueTier === 'market'
-                    ? 'Paid at market rate.'
-                    : `${valueTier === 'bargain' ? 'Surplus of ' : 'Over the market by '}${formatMoney(Math.abs(market - hit))} against what the rating is worth.`}
-                </div>
-              </div>
-            ) : null
-          }
-          restructureNote={
-            restructureFrees > 0 ? (
-              <p className="text-sm text-muted">
-                A maximum restructure takes {formatMoney(restructureFrees)} off {league.seasonYear} and moves it into the
-                {player.contract.yearsRemaining > 2 ? ' years' : ' year'} after it.
-              </p>
-            ) : undefined
-          }
-        />
+          </div>
+        </div>
       ) : player.status === 'FREE_AGENT' && userTeam ? (
         <div className="panel p-5">
           <SignOfferForm leagueId={league.id} teamId={userTeam.id} playerId={player.id} ovr={view.scoutedOvr} position={player.position} age={player.age} capSpace={capSpace} capMode={settings.capMode} returnTo={returnTo} />

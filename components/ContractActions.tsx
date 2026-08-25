@@ -1,13 +1,17 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
+import { ExtendContractForm } from './ExtendContractForm';
 import { RestructureForm } from './RestructureForm';
 import { CapMode } from '@/lib/types';
-import { CutButton } from './CutButton';
+import { DeltaChip, deltaTint, useDeltaWatch } from './ds/DeltaChip';
+import { formatMoney } from '@/lib/cap';
 import { FranchiseTagButton } from './FranchiseTagButton';
 import { FifthYearOptionButton } from './FifthYearOptionButton';
+import { contractClockSentence } from '@/lib/contractClock';
 
-export interface ContractShape {
+interface ContractShape {
   years: number; yearsRemaining: number; signedYear: number;
   baseSalaries: string; signingBonus: number; guaranteed: number; voidYears: number;
 }
@@ -65,40 +69,13 @@ export interface ContractShape {
  *    of millions of dollars. They are ordinary buttons at ordinary button
  *    size now, with the extension as the primary action, which is all that
  *    was ever wrong with them.
- *
- * ===========================================================================
- * WHAT MOVED WHEN THE CARD BECAME A ROOM, AND WHAT DID NOT
- * ===========================================================================
- * Every rule above is unchanged. The four decisions they record were the app
- * owner's, several of them fixes to complaints he raised, and none of them is
- * re-opened here: the extension is still refused at the entrance for a man
- * whose deal is up, the tag still sits with the other contract decisions and
- * still greys itself with its reason, Re-sign still names the man, and the
- * option still renders above the tag for the man who has both.
- *
- * TWO THINGS CHANGED, BOTH OF THEM ABOUT WHERE A PANE OPENS RATHER THAN ABOUT
- * WHO MAY PRESS WHAT.
- *
- * A. THE EXTENSION NO LONGER REPLACES THE SCREEN. This component used to
- *    return the negotiation INSTEAD of itself — which meant opening talks
- *    took away the cap sheet you needed to decide what to offer. The room
- *    (components/contract/ContractRoom.tsx) owns the mode now and mounts the
- *    negotiation in the other half of the same screen, so the ledger never
- *    moves. Hence `mode`/`onMode` rather than local state: two panes have to
- *    agree about which one is open.
- *
- * B. RELEASE IS PART OF THIS SET. It was a sibling of this component on the
- *    page, and the reason it sat there — *"the release button on the player
- *    card needs to be near the top. right now it's buried"* — is a rule about
- *    the strip, not about the page. Keeping it here is what stops the next
- *    layout from separating them again.
  */
 export function ContractActions({
-  leagueId, playerId, playerName, contract, capSpace, capMode, resignHref, tag, option,
-  mode, onMode, onDone, releaseReturnTo, restructureNote,
+  leagueId, playerId, playerName, ovr, position, age, contract,
+  availableSpaceForExtension, capSpace, capMode, resignHref, tag, option,
 }: {
-  leagueId: string; playerId: string; playerName: string;
-  contract: ContractShape; capSpace: number; capMode: CapMode;
+  leagueId: string; playerId: string; playerName: string; ovr: number; position: string; age: number;
+  contract: ContractShape; availableSpaceForExtension: number; capSpace: number; capMode: CapMode;
   /**
    * Where his re-sign is actually negotiated — his own row, opened. Null when
    * the window is not taking him this league year, which is the man with a
@@ -122,31 +99,40 @@ export function ContractActions({
    * cannot be given yet — the same sentence the server refuses with.
    */
   option: { blocked: string | null; decided: 'EXERCISED' | 'DECLINED' | null; optionYear: number } | null;
-  /**
-   * Which pane is open, owned by the room because the extension opens in the
-   * OTHER half of it. This strip only ever asks for a change.
-   */
-  mode: 'none' | 'extend' | 'restructure';
-  onMode: (next: 'none' | 'extend' | 'restructure') => void;
-  /** A move landed and the club's books moved with it — the room says so. */
-  onDone: () => void;
-  /** Where a release lands the GM. Straight through to CutButton; never invented here. */
-  releaseReturnTo?: string;
-  /**
-   * What a maximum restructure would free, in the page's own words and from
-   * the page's own call to the restructure function. It sits under the button
-   * that would do it rather than in the cap sheet, which is the rule the whole
-   * screen follows: a figure lives with the control that moves it.
-   */
-  restructureNote?: React.ReactNode;
 }) {
+  const [mode, setMode] = useState<'none' | 'extend' | 'restructure'>('none');
+  const cap = useDeltaWatch(capSpace);
+  const done = () => { cap.arm(); setMode('none'); };
+
+  if (mode === 'extend') {
+    return (
+      <div className="space-y-3">
+        <button onClick={() => setMode('none')} className="btn-ghost text-sm px-0">← Back</button>
+        <ExtendContractForm
+          leagueId={leagueId} playerId={playerId} ovr={ovr} position={position} age={age}
+          availableSpace={availableSpaceForExtension} capMode={capMode}
+          contract={contract} onDone={done}
+        />
+      </div>
+    );
+  }
+
+  if (mode === 'restructure') {
+    return (
+      <div className="space-y-3">
+        <button onClick={() => setMode('none')} className="btn-ghost text-sm px-0">← Back</button>
+        <RestructureForm leagueId={leagueId} playerId={playerId} contract={contract} capSpace={capSpace} onDone={done} />
+      </div>
+    );
+  }
+
   // His deal is up. That is the Re-sign window's negotiation, not this
   // screen's — signposted, not errored, and explained so the missing button
   // does not read as something broken.
   const expiring = contract.yearsRemaining <= 1;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 pt-1">
       {expiring ? (
         <div className="space-y-3">
           {resignHref ? (
@@ -164,21 +150,29 @@ export function ContractActions({
                   that "keeping him is a re-sign rather than an extension",
                   which tells the user about our own vocabulary rather than
                   about his player — the explainer voice the owner has objected
-                  to four separate times.
-
-                  WHERE HIS CLOCK IS NOW. It opened with
-                  `contractClockSentence(...)` — and that sentence is the last
-                  line of the cap sheet on the other side of this strip, so on
-                  the room layout it was printing twice, six inches apart,
-                  word for word. The clock is the sheet's; what belongs to the
-                  BUTTON is the reason to press it today rather than in March,
-                  which is what is left. */}
+                  to four separate times. What is actually useful here is the
+                  clock, and the clock is worded in one place now so that this
+                  card and the re-sign screen cannot describe the same man two
+                  ways (lib/contractClock.ts). */}
               <p className="text-sm text-muted">
-                Get to him now and he will still take something like a hometown price. The closer he gets
+                {contractClockSentence(contract.yearsRemaining)}
+                {' '}Get to him now and he will still take something like a hometown price. The closer he gets
                 to the open market, the less of one he will take.
               </p>
             </div>
-          ) : null}
+          ) : (
+            // Suppressed for a tagged man: the tag control's own line already
+            // says what his season is, and two sentences about the same year
+            // is how a card starts reading like a form.
+            //
+            // Suppressed for a man with an option on his deal for a stronger
+            // reason than tidiness — this sentence would be FALSE. It reads
+            // "he is next offseason's question, not this one's", which is
+            // exactly right for an ordinary man at one year left and exactly
+            // wrong for a first-rounder whose option is answered in this
+            // window and never again. The option control owns his clock.
+            !tag.isTagged && !option && <p className="text-sm text-muted">{contractClockSentence(contract.yearsRemaining)}</p>
+          )}
           {/* ABOVE THE TAG, because for the man who has both it is the only one
               of the two that can actually be pressed: the tag is for a deal
               that is UP, and his has a season to run. */}
@@ -202,26 +196,9 @@ export function ContractActions({
       ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap gap-2">
-            {/* Pressed, this fills the other half of the room rather than
-                replacing this one — so it is a toggle with a live state, not
-                a door. Pressed again it closes the talks pane; nothing about
-                the negotiation is undone by that, which is the panel's own
-                footer copy. */}
-            <button
-              onClick={() => onMode(mode === 'extend' ? 'none' : 'extend')}
-              aria-pressed={mode === 'extend'}
-              className={mode === 'extend' ? 'btn-secondary' : 'btn-primary'}
-            >
-              {mode === 'extend' ? 'Close extension talks' : 'Negotiate Extension'}
-            </button>
+            <button onClick={() => setMode('extend')} className="btn-primary">Negotiate Extension</button>
             {capMode === 'REALISTIC' && (
-              <button
-                onClick={() => onMode(mode === 'restructure' ? 'none' : 'restructure')}
-                aria-pressed={mode === 'restructure'}
-                className="btn-secondary"
-              >
-                Restructure
-              </button>
+              <button onClick={() => setMode('restructure')} className="btn-secondary">Restructure</button>
             )}
           </div>
           {/* A man whose option has just been PICKED UP has two years left and
@@ -237,25 +214,15 @@ export function ContractActions({
           )}
         </div>
       )}
-      {restructureNote}
-
-      {/* RELEASE, WITH THE OTHER DECISIONS. Its confirm step is the control's
-          own and is deliberately not shortened — a release is irreversible and
-          is the one move in this game that can cost more to take than to skip.
-          See CutButton. */}
-      <CutButton leagueId={leagueId} playerId={playerId} returnTo={releaseReturnTo} />
-
-      {/* The restructure opens UNDER the strip rather than over the cap sheet,
-          for the same reason the extension opens beside it: its whole argument
-          is a comparison against the years already on the books, and those are
-          on screen, six inches to the left, the entire time. */}
-      {mode === 'restructure' && (
-        <div className="pt-3 border-t border-line/60 space-y-3">
-          <RestructureForm
-            leagueId={leagueId} playerId={playerId} contract={contract}
-            capSpace={capSpace} onDone={onDone}
-          />
-          <button onClick={() => onMode('none')} className="btn-ghost text-sm px-0">Never mind</button>
+      {/* Present only in the couple of seconds after a move actually changed
+          the number. It states the change; the cap page still states the
+          state. Renders nothing at all otherwise, so the resting layout of
+          this section is exactly what it was. */}
+      {cap.delta !== null && (
+        <div className="flex items-center gap-2">
+          <span className="label-sm">Cap space</span>
+          <span className={`stat-value text-stat-md ${deltaTint(cap.delta)}`}>{formatMoney(capSpace)}</span>
+          <DeltaChip delta={cap.delta} format={formatMoney} />
         </div>
       )}
     </div>
