@@ -710,6 +710,25 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — A club knocked out in the first round was handed the
+  champion's pick.** The draft order was seeded on regular-season record alone,
+  so how far a club went in January counted for nothing: a 15-2 side that lost
+  its wild-card game sorted last of thirty-two and took pick 32, the selection
+  that belongs to the club holding the trophy. The app owner, after a first-round
+  exit: *"i was knocked out in the first round yet got pick #32. it shouldn't
+  operate that way."* The board is now built the way a real one is — everyone who
+  missed the playoffs first, worst record first, then the wild-card losers, the
+  divisional losers, the conference losers, the runner-up, and the champion last,
+  with point differential still breaking ties inside each group. The exit was
+  already on file from the day the final was played; nothing had been reading it.
+  No group size is assumed, so a league running an unusual bracket gets the same
+  complete order split differently rather than two clubs on one slot. The order
+  the draft runs and the order the trade and draft screens project come from one
+  function, and the projection picks up the playoff exits the moment the final is
+  played, so the pick you are told you hold in the re-signing window is the pick
+  you make. A brand-new league's first draft, with no season on file, still ranks
+  on record alone. Shipped in `36fb94b`.
+
 - **2026-08-25 — A restructured contract read "Signed" on the player's own
   record.** `restructureContract` writes its transaction as type `SIGN`, and the
   career record only separated out an extension — so converting a man's base
