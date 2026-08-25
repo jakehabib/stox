@@ -727,6 +727,62 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — The athletic rank was ordered against all four hundred men in
+  the class rather than against the prospect's own position, and combine
+  testing told a front office almost nothing the public board had not already
+  said.** Supersedes the Athletic-column entry below, which describes the
+  cross-class ordering this replaces. Every drill was already placed inside the
+  position group, but the average that came out of it was then ranked across
+  the whole class, so a left tackle's card read "67th of 400 in the class" — a
+  field he is never chosen out of. The app owner: *"this athletic rank is not
+  what im looking for. it should also be ranked against same position players,
+  not the general class."* The ordering now happens inside the position group
+  too. The card reads **4th of 16 at LT in this class**; the board column reads
+  **4/16**, denominator and all, because fourth of sixteen tackles and fourth
+  of forty-eight corners are not the same finish. Both screens take the figure
+  from one function, so they cannot drift apart. He also asked for it *"on the
+  main draft hub so you dont have to click into the prospect"* — it already is,
+  and it is in the view a GM lands on: the scouting hub has no view toggle at
+  all and the column sits mid-table, and during a live draft **The Board** is
+  the default tab with the column above the fold.
+  The larger half is what he wanted the column FOR: *"there should be a
+  moderate correlation between combine performance, draft stock and ability. it
+  should be one of the ways maybe we can spot a late round gem."* It was not
+  one, and the reason was that the consensus board already priced the whole
+  workout — whatever testing knew, the board knew, so the column added rho
+  -0.20 on top of a board rank two places away, and tilting a late pick toward
+  the stopwatch actually cost you (73.2 mean career peak against 74.1 for
+  simply following the board). Three things move together now. The forty
+  carries little of a man's grade and mostly the speed his card already prints;
+  the other five drills carry more of it; and the draft room grades the drill
+  it quotes on television and little else, at a reduced markup. The five drills
+  that carry ability therefore go unpriced by the public board, which is the
+  gap a GM who reads the whole workout is paid for — and it is what a draft
+  room really does, since the forty is the number read out on air and the
+  three-cone is the number the position coach cares about. Every printed
+  testing spread is unchanged: each drill's attribute weight is derived from
+  the same unit-variance budget rather than being its own constant, and
+  position by position the printed numbers match the anchors to the third
+  decimal. Measured over 40 generated classes with careers rolled forward
+  through the game's own progression model, before to after: a man taken in
+  rounds four to seven who tested in the top quarter of his position becomes a
+  genuine starter 68.5% to 73.9% of the time against a base rate of 66.1% to
+  65.9%; a top-quartile tester taken in the first two rounds busts 17.7% to
+  15.9% against a base of 22.1% to 22.3%; and "take the best tester of the
+  eight men still on your board" beats "take the best board rank left" on 34.8%
+  to 41.6% of late picks while losing to it on 38.9% to 39.4%. It is an edge,
+  not a cheat code — following the stopwatch alone and ignoring the board still
+  produces 38.6% starters against the board's 71.8%, so scouting keeps paying.
+  The fog did not widen: board rank and athletic rank together recover rho
+  0.740 to 0.743 of an unscouted prospect's true rating, the leak having moved
+  from the board column to the athletic one rather than grown, and the board's
+  own rank is slightly weaker than before. Testing is rolled once when a class
+  is created and nothing is backfilled, so a class already on your board keeps
+  its old numbers and gets only the board half of this; measured on four real
+  saves that still lifts the figure's independent signal from -0.25/-0.33 to
+  -0.32/-0.40, and the next class your league mints gets the whole change.
+  Shipped in `a13d57e`.
+
 - **2026-08-25 — A prospect's six combine numbers sat on his card and nowhere
   on the draft board, and nothing said where they left him in the class.** The
   testing was already there and already public — forty, vertical, broad,
