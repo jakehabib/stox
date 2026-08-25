@@ -204,7 +204,7 @@ export const GLOSSARY = {
   },
   fifthYearOption: {
     term: 'Fifth-year option',
-    definition: 'A club option on a fifth season, carried only by a first-round pick\'s rookie deal. It is answered in the re-sign window after his third season, and the price is set by his position and by what he has done with those three years: an All-Star costs what a franchise tag on him would, a starter the average of the ten biggest cap hits at his position, and everyone else the average of the third through twentieth.',
+    definition: 'A club option on a fifth season, carried only by a first-round pick\'s rookie deal. It is answered over the offseason that follows his third season — any time from the final whistle through the draft, and not once the new league year has opened — and the price is set by his position and by what he has done with those three years: an All-Star costs what a franchise tag on him would, a starter the average of the ten biggest cap hits at his position, and everyone else the average of the third through twentieth.',
     why: 'It is most of what separates a first-round pick from a second-round one — five years of a good player at a price you fixed on draft night, instead of four. Picking it up guarantees that season the moment you press it, so releasing him afterwards costs you the whole salary; turning it down saves the money and sends him to free agency a year early, where thirty-one other clubs get a bid.',
   },
   rookieScale: {
@@ -382,8 +382,16 @@ export const GLOSSARY = {
   },
   athleticRank: {
     term: 'Athletic rank',
-    definition: 'Where a prospect finishes among the men at his own position in this class, once every drill he ran is placed against that same group and those finishes are averaged. Fourth of sixteen is the fourth-best workout of the sixteen tackles in the class.',
-    why: 'A guard is timed against guards and ranked against guards, so the figure means the same thing for a 330-pound tackle as for a corner. It is public — the whole league watched the same stopwatch — and it grades a workout, not a football player. The board leans on the forty and little else, so the rest of the workout is a read the consensus has not priced; plenty of men near the top of it will still never start.',
+    // ONE LINE, and `why` is deliberately absent — the interface marks it
+    // optional for exactly this ("omitted where there is nothing honest to
+    // add"). The app owner: *"lets also simplify the athletic tooltip. lets
+    // just say something like 'athletic rank based on combine and pro day vs
+    // his position'"*. What was here explained the averaging method and then
+    // spent three sentences on which drills the consensus board does and does
+    // not price — a mechanic worth discovering, not tooltip material. Pro day
+    // stays in the line because it is the one thing a reader could get wrong:
+    // a man who tested at his own school is on this same scale.
+    definition: 'Athletic rank based on his combine and pro day numbers, against the men at his own position in this class.',
   },
   proDay: {
     term: 'Pro day',

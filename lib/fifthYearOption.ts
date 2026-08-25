@@ -55,6 +55,75 @@ import { positionSalaryBand } from './cap';
 export type FifthYearOptionDecision = 'EXERCISED' | 'DECLINED';
 
 /**
+ * ===========================================================================
+ * WHEN IT CAN BE ANSWERED: THE WHOLE OFFSEASON, NOT ONE PHASE OF IT
+ * ===========================================================================
+ * The app owner: *"5th year options should be available not just in the
+ * re-sign window of that season"*, and he is describing the real rule. A club
+ * has from the end of its third season until the deadline in the spring to
+ * decide, which is months, and this game had collapsed it into the single
+ * phase where the re-sign list happens to live. A GM who opened a
+ * first-rounder's card in the offseason, or after free agency, or on draft
+ * day, was told the decision belonged to a window he was standing next to.
+ *
+ * THE TWO REAL CONSTRAINTS, and they are both real:
+ *
+ *   not before his third season is complete — the club is buying a fifth year
+ *   on three years of evidence, and
+ *
+ *   not after his fourth season begins — an option year picked up in November
+ *   would be a club buying a season it is already watching.
+ *
+ * The phases below are the offseason as this game actually runs it, in order:
+ * PLAYOFFS ends -> OFFSEASON (the housekeeping steps) -> RESIGN -> FREE_AGENCY
+ * -> DRAFT -> PRESEASON opens the new season. So the window is every phase
+ * from the final whistle through the draft, and it maps onto the real calendar
+ * closely enough to be worth saying: the real deadline falls in early May,
+ * after free agency and around the draft, and training camp is past it.
+ *
+ *   OFFSEASON     IN. His third season is over — the contract ledger stepped
+ *                 onto the new league year at the final whistle. This is the
+ *                 phase the owner was standing in when he asked.
+ *   RESIGN        IN. Where it used to be, and where the AI wave answers.
+ *   FREE_AGENCY   IN. A club that has just seen what its position costs on the
+ *                 open market is better placed to price an option, not worse.
+ *   DRAFT         IN. The real deadline sits right about here.
+ *   PRESEASON     OUT. The league year has opened; he is into his fourth
+ *                 season. Camp is past the deadline in the real sport too.
+ *   REGULAR       OUT. Retroactive.
+ *   PLAYOFFS      OUT. Retroactive, and by the end of it his deal is up.
+ *   FANTASY_DRAFT OUT. It is the inaugural setup phase of a fantasy league and
+ *                 runs before a single season has been played there, so nobody
+ *                 in it can have three seasons behind him. It is not part of
+ *                 any league year's offseason and listing it would be a rule
+ *                 with nothing behind it.
+ *
+ * `yearsRemaining` DOES NOT PIN THE YEAR ON ITS OWN, which is why this list is
+ * load-bearing rather than decoration. `ageContractsForYear` runs once a league
+ * year, at the final whistle, so a first-rounder sits at `yearsRemaining === 1`
+ * continuously from the end of his third season until the end of his fourth —
+ * through the whole offseason AND through all of the fourth season itself. The
+ * count says "three played, one to go"; the phase says WHICH of those two
+ * halves the league is standing in. Together they name exactly one offseason
+ * in a rookie deal's life. Neither test reads `League.seasonYear`, which is the
+ * point: through OFFSEASON weeks 1-2 the ledger is a year ahead of that clock
+ * (RESET_STANDINGS is what moves it), and a window that mixed the two would let
+ * a club answer on one side of the roll and be refused on the other.
+ */
+export const FIFTH_YEAR_OPTION_PHASES: readonly string[] = ['OFFSEASON', 'RESIGN', 'FREE_AGENCY', 'DRAFT'];
+
+/**
+ * Is the calendar half of the rule satisfied? Exported because the front-office
+ * brief asks the same question as a QUERY — it is looking for whoever is due,
+ * not judging one man — and a second `phase === 'RESIGN'` written out there is
+ * exactly the greyed-for-a-reason-the-server-does-not-hold defect this module
+ * exists to prevent. It had one, and this is what replaced it.
+ */
+export function fifthYearOptionWindowOpen(phase: string): boolean {
+  return FIFTH_YEAR_OPTION_PHASES.includes(phase);
+}
+
+/**
  * ---------------------------------------------------------------------------
  * THE THREE TIERS, AND THE REAL RULE EACH ONE IS
  * ---------------------------------------------------------------------------
@@ -205,15 +274,24 @@ export function fifthYearOptionBlockReason(opts: {
   if (opts.decided === 'DECLINED') {
     return 'You have turned his option down. He plays out this deal and reaches free agency when it ends.';
   }
-  if (opts.phase !== 'RESIGN') {
-    return `The option is answered in the re-sign window, after his third season. Right now: ${opts.phaseLabel}.`;
-  }
+  /*
+   * THE COUNT IS ASKED BEFORE THE CALENDAR, and the order was the other way
+   * round while the window was one phase wide. It matters now. `yearsRemaining`
+   * is a fact about the man that does not move with the week, so "too early"
+   * and "too late" are true whenever they are true and are the more useful
+   * thing to be told; the phase can then say something specific rather than
+   * generic, because by the time it is reached the count is known to be right
+   * and the only question left is which side of the league year we are on.
+   */
   if (opts.yearsRemaining > 1) {
     const seasons = `${opts.yearsRemaining} seasons`;
-    return `Too early. He has ${seasons} of his rookie deal still to play, and the option is answered after his third.`;
+    return `Too early. He has ${seasons} of his rookie deal still to play, and the option is answered over the offseason after his third.`;
   }
   if (opts.yearsRemaining < 1) {
-    return 'Too late. His rookie deal is up, and an option year had to be picked up before his fourth season, not after it.';
+    return 'Too late. His rookie deal is up, and an option year had to be picked up over the offseason before his fourth season, not after it.';
+  }
+  if (!fifthYearOptionWindowOpen(opts.phase)) {
+    return `Too late. The option is answered over the offseason, from the final whistle through the draft — this league year has already opened and he is into the last season of his rookie deal. Right now: ${opts.phaseLabel}.`;
   }
   return null;
 }

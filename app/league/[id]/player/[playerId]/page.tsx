@@ -7,7 +7,7 @@ import { loadScoutMods } from '@/lib/dynasty';
 import { ratingColor, playerLabel, positionMoves, relatedPositions, POSITION_WEIGHTS, ATTRIBUTE_BY_KEY, AttrMap } from '@/lib/ratings';
 import { rankProspectCombine, classAthleticRanks, ordinal, CombineMeasurable } from '@/lib/combineRank';
 import { draftClassScope } from '@/lib/draft';
-import { formatMoney, capHit, capCommitted, askingPrice, marketValue, proration, prorationYears, restructureContract } from '@/lib/cap';
+import { formatMoney, capHit, capCommitted, askingPrice, marketValue, proration, prorationYears, restructureContract, capChargeYear } from '@/lib/cap';
 import { classifyContractValue } from '@/lib/analytics';
 import { generateScoutingReport } from '@/lib/scoutingProse';
 import { teamCapSummary } from '@/lib/cap-summary';
@@ -819,9 +819,21 @@ export default async function PlayerPage({
       // The season it buys: the one after the last he is currently owed. On an
       // exercised deal that is the year already on the row, so the standing
       // line and the contract table name the same year.
+      //
+      // COUNTED FROM THE LEDGER, NOT FROM `League.seasonYear`, for the reason
+      // `fifthYearOptionQuote` spells out at length (lib/freeagency.ts): the
+      // contract ledger steps onto the new league year the instant the season
+      // ends, while the league clock waits for RESET_STANDINGS, so through
+      // OFFSEASON weeks 1-2 counting `yearsRemaining` forward from the clock
+      // names the season he is about to PLAY as the season the option buys —
+      // a year early. That was invisible while the decision was only live in
+      // RESIGN, which is after the roll. It is not invisible now that the
+      // window opens at the final whistle, and the card and the priced preview
+      // would have disagreed by a year on the phase the owner asked for.
       optionYear: decided === 'EXERCISED'
         ? c.signedYear + c.years - 1
-        : league.seasonYear + Math.max(1, c.yearsRemaining),
+        : capChargeYear({ phase: league.phase, week: league.week, seasonYear: league.seasonYear })
+          + Math.max(1, c.yearsRemaining),
     };
   })();
 

@@ -5,6 +5,7 @@ import { CapMode } from './types';
 import { Position, rosterMinFor } from './tuning';
 import { parseSettings } from './settings';
 import { startersAt, lineupUnit } from './lineup';
+import { fifthYearOptionWindowOpen } from './fifthYearOption';
 
 /** Position codes as a person would say them in a sentence. */
 const POSITION_NOUN: Record<string, string> = {
@@ -191,11 +192,20 @@ export async function buildFrontOfficeBrief(
    * A FIFTH-YEAR OPTION IS WAITING ON AN ANSWER
    * ===========================================================================
    * This is the item the feature needs, and it is the reason the option did not
-   * get a press of its own in `OFFSEASON_STEPS`. The decision is live in exactly
-   * one window, it is answered once and never again, and it lives on the
-   * player's own card — which nobody opens unless something sends them there.
-   * The brief is this game's standing home for "things waiting on you", so it is
-   * what sends them.
+   * get a press of its own in `OFFSEASON_STEPS`. The decision is live for one
+   * offseason and one only, it is answered once and never again, and it lives on
+   * the player's own card — which nobody opens unless something sends them
+   * there. The brief is this game's standing home for "things waiting on you",
+   * so it is what sends them.
+   *
+   * THE WINDOW IS IMPORTED, NOT WRITTEN OUT. This line read
+   * `league.phase === 'RESIGN'` and was the second copy of a rule that lives in
+   * lib/fifthYearOption.ts — so when the window widened to the whole offseason,
+   * the card went live and the brief that is supposed to SEND him to that card
+   * stayed silent through OFFSEASON, FREE_AGENCY and DRAFT. The three
+   * per-player facts below are the same three `fifthYearOptionApplies` and
+   * `fifthYearOptionBlockReason` test, expressed as a query because this is
+   * looking for whoever is due rather than judging one man.
    *
    * IT IS EMITTED BEFORE THE EXPIRING-CONTRACT ITEM RATHER THAN SORTED ABOVE
    * IT. Both are `Contracts` and the urgency ordering is by CATEGORY, so within
@@ -219,7 +229,7 @@ export async function buildFrontOfficeBrief(
    * here: a headline a GM can act on and a door out of it, not a list. The door
    * is his contract face, which is where the control and the price actually are.
    */
-  const dueOptions = league.phase === 'RESIGN'
+  const dueOptions = fifthYearOptionWindowOpen(league.phase)
     ? await prisma.player.findMany({
       where: {
         teamId, status: 'ACTIVE', draftRound: 1,
@@ -237,8 +247,9 @@ export async function buildFrontOfficeBrief(
       headline: `${man.firstName} ${man.lastName}'s fifth-year option is due`
         + (others > 0 ? ` — and ${others} more` : ''),
       detail: `He is a first-round pick with one year of his rookie deal left, so his option has to be answered `
-        + `now or not at all. Pick it up and you control him for a fifth season at a price his position sets, `
-        + `fully guaranteed from the moment you say yes. Turn it down and he is a free agent a year early.`,
+        + `this offseason — any time between now and the end of the draft, and not once the new league year opens. `
+        + `Pick it up and you control him for a fifth season at a price his position sets, fully guaranteed from `
+        + `the moment you say yes. Turn it down and he is a free agent a year early.`,
       action: 'Answer it',
       // Straight to the money, the same as the expiring-contract item below:
       // the button says "answer it", and without ?view=contract the card opens

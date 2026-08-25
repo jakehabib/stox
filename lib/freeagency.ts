@@ -1337,7 +1337,15 @@ export async function declineFifthYearOption(opts: {
         leagueId: opts.leagueId, seasonYear: opts.seasonYear, week: opts.week, type: 'OPTION',
         teamId: player.teamId, playerId: opts.playerId,
         headline: `${player.firstName} ${player.lastName}'s fifth-year option declined`,
-        detail: `${formatMoney(quote.optionSalary)} turned down — he is a free agent after ${opts.seasonYear}`,
+        // THE YEAR COMES OFF THE QUOTE, WHICH COUNTS FROM THE LEDGER. The
+        // caller passes `League.seasonYear` for the row's own stamp — when this
+        // happened, in league-clock terms, the same as every other transaction
+        // — but the last season he is actually owed is a contract fact, and
+        // through OFFSEASON weeks 1-2 the clock is a year behind the ledger.
+        // Answering in the offseason rather than the re-sign window is now
+        // allowed (lib/fifthYearOption.ts), so the wire would have told a GM his
+        // man reaches free agency a year before he does.
+        detail: `${formatMoney(quote.optionSalary)} turned down — he is a free agent after ${quote.seasonYear}`,
       },
     });
   });

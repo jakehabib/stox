@@ -121,7 +121,8 @@ export function FifthYearOptionButton({ leagueId, playerId, playerName, blocked,
           Fifth-Year Option
         </button>
         <p className="text-xs text-muted inline-flex items-center gap-1.5">
-          A first-round pick only, answered once, in this window. Nothing is decided until you have seen the price.
+          A first-round pick only, answered once, and only this offseason. Nothing is decided until you have seen
+          the price.
           <Tooltip text={tip('fifthYearOption')} />
         </p>
       </div>

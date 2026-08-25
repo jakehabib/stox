@@ -1856,19 +1856,28 @@ async function runOffseasonStepClaimed(
       const { kept, tagged } = await runAiResignWave(leagueId, league.seasonYear, league.week, settings.capMode, rng);
       await prisma.league.update({ where: { id: leagueId }, data: { phase: 'RESIGN', week: 1 } });
       /**
-       * AFTER THE PHASE FLIP, AND THAT IS NOT A STYLE CHOICE.
+       * AFTER THE PHASE FLIP, AND IT NO LONGER HAS TO BE — BUT IT STAYS.
        *
-       * This step still reads `OFFSEASON` on the League row while it runs — the
-       * line above is what opens the window — and the option's shared rule
-       * refuses outside RESIGN, in the same order and with the same sentence
-       * the user's greyed control carries (lib/fifthYearOption.ts). Run before
-       * the flip it was blocked on every single man: measured on a scratch
-       * league driven three seasons by `advanceWeek`, 31 clubs' first-rounders
-       * came due and the wave answered **zero** of them, silently, because
-       * every quote came back "the option is answered in the re-sign window.
-       * Right now: Offseason." That is precisely the greyed-for-a-reason-the-
-       * server-does-not-hold defect in reverse, and the only thing that caught
-       * it was driving the real path.
+       * This step still reads `OFFSEASON` on the League row while it runs; the
+       * line above is what opens the re-sign window. When the option could only
+       * be answered in RESIGN, running before the flip blocked the wave on every
+       * single man: measured on a scratch league driven three seasons by
+       * `advanceWeek`, 31 clubs' first-rounders came due and the wave answered
+       * **zero** of them, silently, because every quote came back "the option is
+       * answered in the re-sign window. Right now: Offseason." That is precisely
+       * the greyed-for-a-reason-the-server-does-not-hold defect in reverse, and
+       * the only thing that caught it was driving the real path.
+       *
+       * OFFSEASON is now inside the window too (lib/fifthYearOption.ts), so the
+       * position is no longer load-bearing — but it is left exactly where it is,
+       * and the AI is deliberately NOT widened to answer anywhere else in the
+       * offseason. A front office makes its call once, at one point in the
+       * spring, which is both realistic and the only shape that cannot answer
+       * twice; and by the time the league reaches FREE_AGENCY or DRAFT every
+       * option this wave was going to answer already carries a decision, so a
+       * second pass would find nothing and could only ever race the first. The
+       * user's window is wider than the AI's on purpose: he is one club making
+       * one decision on his own clock, not thirty-one being simulated.
        *
        * The re-sign wave above is unaffected by its own position because it
        * takes no view on phase, and it stays where it was rather than being
@@ -2971,13 +2980,16 @@ export async function resignDecisionsForTeam(
    * is simply not a candidate for a second one. He is re-signed or he walks,
    * which is the conservative half of the real rule.
    *
-   * WHAT PHASE THIS RUNS IN, because the fifth-year option wave below was
+   * WHAT PHASE THIS RUNS IN, because the fifth-year option wave below was once
    * caught by exactly this. The AI's re-sign pass runs inside the OFFSEASON
    * step named RESIGN, a few lines BEFORE the phase flip that opens the window
    * — so the League row still reads OFFSEASON here. `applyFranchiseTag` takes
    * no view on phase (the RESIGN-only rule lives one level up, in
    * `applyFranchiseTagAction` and lib/franchiseTag.ts, where the user's greyed
    * control reads it), so this is not blocked the way the option quote was.
+   * (The option's own window has since widened to the whole offseason, OFFSEASON
+   * included, so that particular trap is closed on that side. The tag's has
+   * not: it is still RESIGN-only, and this paragraph is still live for it.)
    * And the one thing that DOES read the phase resolves the same either side
    * of the flip: `capChargeYear` files the accelerated bonus a year early only
    * through OFFSEASON weeks 1-2, and this step is week 5 of 5. If a phase gate
