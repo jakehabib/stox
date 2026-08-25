@@ -735,7 +735,7 @@ ever force-pushed over, so every state below still exists in git history).
   figures are not quite like for like: the market has been rewired since 7.7
   was recorded. And the correlation between a club's window and its record
   came in at **0.497** against a pre-registered floor of 0.50: missed, by
-  0.003, and reported rather than tuned to. Shipped in `HASH`.
+  0.003, and reported rather than tuned to. Shipped in `c11defc`.
 
 - **2026-08-25 — Two paragraphs under the career table explained a column
   header and a view toggle.** Under a man's season-by-season record sat *"Regular
