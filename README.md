@@ -727,6 +727,42 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — The top of the draft was priced on a pick-for-pick auction
+  chart and outbid the best player any club could put on the table.** The first
+  overall pick was worth 3000 points while the very most a premium-position
+  player can ever reach is 2520, so a single high first outweighed a
+  92-overall receiver and a late first together — and the meter said the club
+  would take less. The Jimmy Johnson table is what one pick costs in OTHER
+  picks; it was being used unchanged as what a pick costs in men, and nothing
+  had ever reconciled the two. What a pick is really worth was measured in the
+  game's own units instead of argued about: over 400 generated draft classes,
+  take the prospect who actually sits at each slot on the public board, develop
+  him all the way to his own ceiling, stand him at 26 on the last year of his
+  rookie deal — his best case, with the bust risk spent — and price him off the
+  same curve that prices everyone else. From the bottom of round one down the
+  chart already sat at essentially exactly that, which is why every real trade
+  the value model is calibrated on comes out right; climb the round and it
+  pulls away, until the first pick is priced 64% above the best outcome it has.
+  So the climb of round one is bent back onto the top of the player market and
+  nothing else moves: the first overall pick is now worth the best proven
+  non-quarterback in the league and never more (3000 -> 1797, which is what a
+  neutral 96 is worth), pick 3 goes 2200 -> 1584, pick 16 1000 -> 951, and
+  picks 31 through 224 are the old table to the point. It is a bend and not a
+  cap — the bound is approached and never reached, the first pick still
+  out-prices the second and always will. The deal that started this now comes
+  back declined at 80% where it was accepted at 110%, and a 93 or better is
+  dearer than any single pick in the draft. Two things alongside it: a club
+  with almost no cap room was marking down every incoming contract in the
+  league by a flat 40%, from a 60 on the minimum to a 99 on $30M, charging a
+  man's own quality against dollars that are the same dollars whoever is paid
+  them — while the screen and the executor already refuse a deal there is no
+  room for, twice. That markdown is now a fifth. And the rule that stops a
+  cornerstone being bought with depth had a second clause that counted
+  first-round-quality pieces against a fixed line, so it got easier the bigger
+  the man being sold; those pieces must now be worth as much between them as
+  the one piece would have had to be on its own. Real two-first packages for a
+  franchise quarterback still pass. Shipped in `4fe73e3`.
+
 - **2026-08-25 — A club's refusal never named a single move that would have
   turned it into a yes.** The trade screen said no, said how far off the offer
   was through the acceptance meter, and stopped. Working out what would
