@@ -727,6 +727,53 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — A first-round pick's fifth-year option could only be answered
+  during the re-sign window, so a club standing anywhere else in the offseason
+  was refused a decision it was entitled to make, and the front-office brief
+  held a second copy of that rule.** `5a6f6bc`. The app owner: *"5th year
+  options should be available not just in the re-sign window of that season."*
+  In the real sport the deadline falls in the spring following his third
+  season, so a club has months; this game had collapsed that into the single
+  phase where the re-sign list happens to live, and a GM who opened a
+  first-rounder's card in the offseason, after free agency, or on draft day was
+  told the decision belonged to a window he was standing next to. It is now
+  live in **OFFSEASON, RESIGN, FREE_AGENCY and DRAFT** — the whole offseason,
+  final whistle through the draft. PRESEASON, REGULAR and PLAYOFFS stay out:
+  his fourth season has begun and an option year picked up in November would be
+  a club buying a season it is already watching.
+  The phase list is load-bearing, not decoration. `ageContractsForYear` runs
+  once a league year, at the final whistle, so a first-rounder sits at
+  `yearsRemaining === 1` continuously from the end of his third season through
+  the whole of his fourth — the count alone cannot tell those two halves apart,
+  and a window that trusted it would have let a club answer a year late. The
+  count says "three played, one to go"; the phase says which half the league is
+  standing in. Neither reads `League.seasonYear`, which is the point: through
+  OFFSEASON weeks 1-2 the contract ledger is a year ahead of that clock.
+  Measured on the same man on both sides of that roll — `League.seasonYear`
+  reading 2026 with the ledger already on 2027, then 2027 after
+  `RESET_STANDINGS` — the quote named the same current year, the same option
+  year and the same price.
+  The brief was the second copy: `lib/frontOffice.ts` gated its "option is due"
+  item on `league.phase === 'RESIGN'` of its own, so widening the rule alone
+  would have left the card live through three phases while the panel that
+  exists to send a GM to that card stayed silent. It asks the shared predicate
+  now. Widening also exposed two year-off-by-ones on the pre-roll side, both
+  previously unreachable because RESIGN is after the roll: the player card
+  counted the option year forward from the league clock rather than the ledger,
+  disagreeing by a year with its own priced preview, and the declined-option
+  wire entry said a man reached free agency a year before he does.
+  The AI keeps its single call, in the RESIGN offseason step, which is inside
+  the widened window — a front office makes its decision at one point in the
+  spring, and by free agency every option it was going to answer already
+  carries one. Every refusal sentence that named the re-sign window is
+  rewritten to say what is actually true: too early, too late, or the phase the
+  league is standing in. Also in this commit, at the app owner's request —
+  *"lets also simplify the athletic tooltip. lets just say something like
+  'athletic rank based on combine and pro day vs his position'"* — the
+  **Athletic rank** glossary entry drops its explanation of the averaging
+  method and its three sentences on which drills the consensus board does and
+  does not price, and is one line.
+
 - **2026-08-25 — Half the league's twenty colours were unreadable as text, a
   roster's own starter tag among them, and the same "no data" dash was drawn at
   four different opacities across six surfaces.** A polish pass over the eight
