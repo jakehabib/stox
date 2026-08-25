@@ -794,6 +794,25 @@ ever force-pushed over, so every state below still exists in git history).
   re-registered. Ten simulated league years drift 1.8 points LESS than before
   the week's work. Shipped in `e19d251`.
 
+- **2026-08-25 — Every rookie arrived nearly finished, so a first-round pick was
+  a better player than a better bet.** The app owner: *"those entry overalls seem
+  pretty high across the board."* A first-round pick arrived at 81.0 overall with
+  7.8 points of ceiling above him, and a seventh-rounder arrived with 7.6 — the
+  runway was flat across the whole draft, so an early pick was a better player
+  but never a better bet. A draftee's ceiling is his rating plus his potential
+  roll, so lowering entry on its own just drags the whole potential ladder down
+  with it. Instead the rating comes down by 4 and the potential roll goes up by
+  4: entry falls, runway rises, ceilings stay. Six constants move rather than
+  two, because the rating roll is bent at both ends and inside a bend the rating
+  falls by less than 4 while the bonus rises by exactly 4 — so the whole geometry
+  translates together. A first-rounder now enters at **76.8** with **11.6** of
+  runway, is still about three points behind at 23 (the roster does feel weaker
+  for a season or two — that is the trade), and closes to within two points by
+  27. The potential tier ladder holds to within 5.9% at its worst row, which is
+  systematic rather than noise and inside the band it already ran at. Long-run
+  rating inflation nearly halves as a side effect: ten-season league drift
+  +3.49 → +1.43. Shipped in `4f354f6`.
+
 - **2026-08-20 — Visual redesign kickoff.** Starting a staged visual
   redesign (design tokens → dashboard → player page → rest of the app) to
   move away from the generic dark-dashboard look. Game logic, simulation,
