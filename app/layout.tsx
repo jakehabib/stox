@@ -1,6 +1,11 @@
 import type { Metadata, Viewport } from 'next';
 import { Barlow_Condensed } from 'next/font/google';
 import './globals.css';
+// The reactions that fire when an action succeeds — one stylesheet, no
+// library, and every duration in it is a token declared in globals.css above.
+// Kept separate so it can be read as one list of moments rather than found
+// scattered through the design system.
+import './moments.css';
 
 // A bold condensed display face for headings and nav — the one typographic
 // move that does the most to read as "broadcast sports graphics" instead of

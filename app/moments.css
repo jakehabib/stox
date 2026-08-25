@@ -1,0 +1,305 @@
+/* ===========================================================================
+   MOMENTS — the reactions that fire when an action succeeds.
+   ===========================================================================
+   One stylesheet, no library, nothing that touches the simulation. Every
+   moment here is a keyframe plus a class, and every class is additive: no
+   existing rule is redefined, so this file can be edited alongside a rebuild
+   of any page without the two meeting.
+
+   THE RULE THESE ARE HELD TO, which is a design constraint and not a
+   preference: a moment earns its animation by being RARE or by being a
+   DECISION. Scouting a man costs a charge. Drafting him is the only pick you
+   get at that slot. Losing a shortlisted prospect to a rival happens to you
+   once or twice a draft. Advancing a week is neither rare nor a decision, and
+   nothing in this file is wired to it — nor to a page load, a table sort or a
+   tab switch. The effect depends on most of the game staying still.
+
+   FOUR THINGS HOLD THROUGHOUT.
+
+   1. NOTHING FIRES ON A FAILED ACTION. Every class below is applied on the
+      success path — the star fills when the write comes back, not when the
+      button goes down.
+   2. NOTHING IS GATED BEHIND A FRAME. Final values are in the DOM at frame
+      one; only decoration moves, and every control accepts the next click the
+      instant the server answers.
+   3. DURATIONS ARE THE TOKENS IN globals.css AND NOTHING ELSE. --dur-tick for
+      a press or a pip, --dur-state for a value changing, --dur-reveal for the
+      two or three earned moments. prefers-reduced-motion collapses all three
+      to 1ms up there, so it is handled once for this whole file rather than
+      once per animation.
+   4. REDUCED MOTION LOSES THE MOVEMENT, NEVER THE INFORMATION. Every animation
+      here uses `both`/`forwards` so a 1ms run lands on its END STATE rather
+      than on nothing, and any moment whose meaning lived only in the movement
+      carries a second, static channel as well: the steal keeps its gold ring,
+      the sniped prospect keeps his strike-through.
+
+   HOW THEY ARE FIRED. Most of these need no JavaScript at all. A CSS
+   animation runs when a node carrying it is INSERTED, so a feed row for a new
+   pick, or a card raised for a selection, animates once by existing — and the
+   same node re-rendered by router.refresh() does not animate again, which is
+   exactly the behaviour wanted. Where a moment has to fire on a node that was
+   already there, components/ds/Moments.tsx remounts it with a key; see the
+   note there about why re-adding a class to a live node does not work.
+   ======================================================================== */
+
+/* --- The primitives ------------------------------------------------------ */
+
+@keyframes moment-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes moment-pop {
+  0%   { opacity: 0; transform: scale(0.82); }
+  60%  { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* Fills, overshoots by a hair, settles. This is the click. */
+@keyframes moment-star {
+  0%   { transform: scale(0.55) rotate(-28deg); }
+  60%  { transform: scale(1.24) rotate(6deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+/* One beat of the draft clock. Deliberately smaller than it wants to be — a
+   draft is 224 of these, and anything that reads as a bounce the first time
+   reads as a stutter by the third round. */
+@keyframes moment-clock {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.09); }
+  100% { transform: scale(1); }
+}
+
+/* The card turning over. */
+@keyframes moment-flip {
+  from { opacity: 0; transform: perspective(900px) rotateY(72deg); }
+  to   { opacity: 1; transform: perspective(900px) rotateY(0); }
+}
+
+/* The club badge going on. */
+@keyframes moment-stamp {
+  0%   { opacity: 0; transform: scale(1.7); }
+  58%  { opacity: 1; transform: scale(0.94); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/*
+ * A row that has just arrived, acknowledged in colour as well as in movement.
+ * Painted as an inset shadow rather than a background so it can sit over any
+ * surface without briefly erasing that surface's own. The green one says a
+ * pick landed; the red one says the pick that landed was one of yours.
+ */
+@keyframes moment-flash {
+  from { box-shadow: inset 0 0 0 9999px rgba(74, 222, 128, 0.13); }
+  to   { box-shadow: inset 0 0 0 9999px rgba(74, 222, 128, 0); }
+}
+@keyframes moment-flash-lost {
+  from { box-shadow: inset 0 0 0 9999px rgba(248, 113, 113, 0.16); }
+  to   { box-shadow: inset 0 0 0 9999px rgba(248, 113, 113, 0); }
+}
+
+/* Drawn left to right across a name that is no longer available to you. */
+@keyframes moment-strike {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* Gold, and only for a man the board says should not still be there. */
+@keyframes moment-steal {
+  0%   { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); }
+  45%  { box-shadow: 0 0 26px 3px rgba(234, 179, 8, 0.34); }
+  100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); }
+}
+
+/* The fog coming off a man you have just had in the building. */
+@keyframes moment-fog {
+  from { opacity: 1; backdrop-filter: blur(6px); }
+  to   { opacity: 0; backdrop-filter: blur(0); }
+}
+
+@keyframes moment-bar {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* --- Scouting ------------------------------------------------------------ */
+
+/*
+ * THE FOG LIFT. Sits on the wrapper around a block of attributes that was a
+ * range a second ago and is measured now — the workout is the one scouting
+ * spend that turns guesses into numbers, so the block is briefly covered and
+ * then is not. Drawn as a ::before rather than a real element so no server
+ * component has to grow a child for it, and pointer-events stay off
+ * throughout: the panel underneath is live the whole time.
+ */
+.moment-fogged { position: relative; }
+.moment-fogged::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  pointer-events: none;
+  background: rgba(10, 10, 11, 0.72);
+  backdrop-filter: blur(6px);
+  animation: moment-fog calc(var(--dur-reveal) * 1.4) var(--ease-out) forwards;
+}
+
+/*
+ * Then the rows come in, in the order they are weighted, and the measured
+ * bars grow from their own left edge rather than appearing at length. The
+ * stagger is a fraction of a tick per row and it is expressed in the token,
+ * so reduced motion flattens the SEQUENCE as well as the movement — otherwise
+ * a 1ms animation would still be queued behind a 140ms delay and the block
+ * would fill in visibly, row by row, for a reader who asked for none of it.
+ *
+ * .moment-step is put on the row, not on the wrapper's direct children, so
+ * the panel can keep whatever column structure it has: :nth-child counts
+ * within each column, which is why a two-column attribute grid fills both
+ * columns together, top to bottom, instead of finishing one before it starts
+ * the other.
+ */
+.moment-sequence .moment-step {
+  animation: moment-rise var(--dur-state) var(--ease-out) both;
+}
+.moment-sequence .moment-step .moment-bar {
+  transform-origin: left center;
+  animation: moment-bar var(--dur-state) var(--ease-out) both;
+}
+.moment-sequence .moment-step:nth-child(1),
+.moment-sequence .moment-step:nth-child(1) .moment-bar { animation-delay: calc(var(--dur-tick) * 0.5); }
+.moment-sequence .moment-step:nth-child(2),
+.moment-sequence .moment-step:nth-child(2) .moment-bar { animation-delay: calc(var(--dur-tick) * 1.0); }
+.moment-sequence .moment-step:nth-child(3),
+.moment-sequence .moment-step:nth-child(3) .moment-bar { animation-delay: calc(var(--dur-tick) * 1.5); }
+.moment-sequence .moment-step:nth-child(4),
+.moment-sequence .moment-step:nth-child(4) .moment-bar { animation-delay: calc(var(--dur-tick) * 2.0); }
+.moment-sequence .moment-step:nth-child(5),
+.moment-sequence .moment-step:nth-child(5) .moment-bar { animation-delay: calc(var(--dur-tick) * 2.5); }
+.moment-sequence .moment-step:nth-child(6),
+.moment-sequence .moment-step:nth-child(6) .moment-bar { animation-delay: calc(var(--dur-tick) * 3.0); }
+.moment-sequence .moment-step:nth-child(7),
+.moment-sequence .moment-step:nth-child(7) .moment-bar { animation-delay: calc(var(--dur-tick) * 3.5); }
+.moment-sequence .moment-step:nth-child(n+8),
+.moment-sequence .moment-step:nth-child(n+8) .moment-bar { animation-delay: calc(var(--dur-tick) * 4.0); }
+
+/* The confidence figure. The movement is a rise; the NUMBER is counted by
+   Moments.tsx, which reads the same reduced-motion setting and simply prints
+   the final figure when it is set. */
+.moment-figure {
+  animation: moment-rise var(--dur-state) var(--ease-out) both;
+}
+
+/* --- The shortlist star -------------------------------------------------- */
+
+.moment-star {
+  display: inline-block;
+  animation: moment-star var(--dur-tick) var(--ease-out) both;
+}
+
+/* --- Draft day ----------------------------------------------------------- */
+
+/* One beat per second of the clock. */
+.moment-clock-tick {
+  display: inline-block;
+  animation: moment-clock var(--dur-tick) var(--ease-out) both;
+}
+
+/* The selection card. The face turns, the name lands behind it, the badge
+   goes on last — three beats inside one --dur-reveal-scale moment, which is
+   the only place in the draft that gets one. */
+.moment-pick-card { animation: moment-flip var(--dur-reveal) var(--ease-out) both; }
+.moment-pick-name {
+  animation: moment-rise var(--dur-state) var(--ease-out) both;
+  animation-delay: calc(var(--dur-reveal) * 0.55);
+}
+.moment-pick-badge {
+  animation: moment-stamp var(--dur-state) var(--ease-out) both;
+  animation-delay: calc(var(--dur-reveal) * 0.8);
+}
+
+/*
+ * A PICK LANDING ON THE FEED. Rows are keyed by pick id and only the newest
+ * one carries this, so a name arriving is the only thing on the feed that
+ * moves — every row already on screen holds still, which is what makes the
+ * new one readable.
+ *
+ * Both channels are in one declaration on purpose. Two classes each carrying
+ * an `animation` shorthand do not add up; the later rule replaces the earlier
+ * one outright, and the colour half would be silently dropped.
+ */
+.moment-landed {
+  animation: moment-rise var(--dur-state) var(--ease-out) both,
+             moment-flash var(--dur-reveal) var(--ease-out) both;
+}
+/* The same arrival, when the man who just came off the board was on your
+   shortlist. Green is the wrong colour for that. */
+.moment-lost {
+  animation: moment-rise var(--dur-state) var(--ease-out) both,
+             moment-flash-lost var(--dur-reveal) var(--ease-out) both;
+}
+
+/*
+ * A RIVAL TAKES A MAN OFF YOUR BOARD. The line is drawn across his name, and
+ * it STAYS drawn — that is the end state, so a reader who has asked for
+ * reduced motion sees him struck through rather than seeing nothing. He is
+ * already gone from Best Available on the same render; this is the feed
+ * saying which one of yours it was.
+ */
+.moment-sniped { position: relative; }
+.moment-sniped::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 55%;
+  height: 1.5px;
+  background: #f87171;
+  transform-origin: left center;
+  pointer-events: none;
+  animation: moment-strike var(--dur-state) var(--ease-out) both;
+  animation-delay: var(--dur-tick);
+}
+
+/* The run being called. Fires when the pattern turns on, and again if the run
+   moves to a different position — never on every pick. */
+.moment-called { animation: moment-pop var(--dur-state) var(--ease-out) both; }
+
+/*
+ * A STEAL. Reserved for a prospect sitting well past where the public board
+ * says he should have gone — twice a draft, if that. The glow is the moment;
+ * the ring is what is left of it, and what a reduced-motion reader gets
+ * instead, because "this one is gold" must survive the animation being off.
+ */
+.moment-steal {
+  position: relative;
+  box-shadow: inset 2px 0 0 0 rgba(234, 179, 8, 0.85);
+}
+/*
+ * THE GLOW GOES ON A PSEUDO-ELEMENT, AND THAT IS NOT A STYLE CHOICE.
+ *
+ * Put the keyframes on the row itself and its own `box-shadow` — the gold
+ * edge, the half that is supposed to survive — is what the animation
+ * overwrites: a filled animation holds its last keyframe on the property
+ * forever, and that keyframe is "no shadow". The static channel would then be
+ * destroyed by the very thing it exists to outlive, and a reduced-motion
+ * reader would see an ordinary row. Two elements, two box-shadows, and each
+ * keeps its own.
+ */
+.moment-steal::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  animation: moment-steal calc(var(--dur-reveal) * 2) var(--ease-out) both;
+}
+
+/* --- Contracts ----------------------------------------------------------- */
+
+/* The three contract outcomes reuse the primitives above rather than growing
+   keyframes of their own: signed and released already have their own cards in
+   the app, and all these classes add is the beat on which they arrive. */
+.moment-signed   { animation: moment-pop var(--dur-state) var(--ease-out) both; }
+.moment-released { animation: moment-rise var(--dur-state) var(--ease-out) both; }

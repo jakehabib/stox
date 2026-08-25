@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useTransition, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { runWorkoutAction } from '@/app/actions/scouting';
 import { CommitmentCard } from './CommitmentCard';
+import { signalMoment } from './Moments';
 
 /**
  * The one scarce scouting decision in the game, staged as a decision.
@@ -64,6 +65,38 @@ export function WorkoutButton({
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
+  /*
+   * THE FOG LIFTS OFF THE NEW NUMBERS, NOT OFF THE OLD ONES.
+   *
+   * A workout's information does not arrive here. It arrives in the
+   * Attributes panel two sections down, which is server-rendered and knows
+   * nothing about this button — so the reveal has to be announced, and it has
+   * to be announced at the right moment. Signalling on the action's reply
+   * would uncover the ranges that were on screen BEFORE the workout, because
+   * the refresh has not landed yet.
+   *
+   * The refresh therefore runs inside a transition, and the signal goes out
+   * when that transition finishes — which is the frame the measured values
+   * are committed to the DOM. `armed` keeps it to workouts that actually
+   * happened: a refusal never sets it, so a refused slot never uncovers
+   * anything.
+   */
+  const [refreshing, startRefresh] = useTransition();
+  const armed = useRef(false);
+  const wasRefreshing = useRef(false);
+  useEffect(() => {
+    if (wasRefreshing.current && !refreshing && armed.current) {
+      armed.current = false;
+      signalMoment(`workout:${playerId}`);
+    }
+    wasRefreshing.current = refreshing;
+  }, [refreshing, playerId]);
+
+  const landed = () => {
+    armed.current = true;
+    startRefresh(() => router.refresh());
+  };
+
   if (done) {
     return <span className="text-[11px] text-gold whitespace-nowrap" title="One workout per prospect per year.">✓ Worked out</span>;
   }
@@ -96,7 +129,7 @@ export function WorkoutButton({
             setBusy(false);
             if (!r.ok) { setError(r.message); return; }
             setStaged(false);
-            router.refresh();
+            landed();
           }}
         >
           {busy ? 'Flying him in…' : `Fly him in — ${remaining} left, then ${remaining - 1}`}
@@ -143,7 +176,7 @@ export function WorkoutButton({
             setError(r.message);
             return false;
           }
-          router.refresh();
+          landed();
           setStaged(false);
           return `${r.measured?.length ?? 0} traits measured`;
         }}

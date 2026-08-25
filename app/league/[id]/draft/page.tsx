@@ -138,6 +138,33 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     select: { playerId: true },
   });
   const shortlistIds = new Set(shortlistEntries.map((s) => s.playerId));
+  /*
+   * ...AND THE ONES ALREADY CALLED, WHICH IS A DIFFERENT SET AND HAS TO BE.
+   *
+   * Selection clears Player.isDraftee (lib/draft.ts), so the set above —
+   * correctly scoped to the class still on the board, for the reason spelled
+   * out in the comment on the query — goes empty on a man the INSTANT he is
+   * drafted. Every backward-looking surface on this page wants the opposite:
+   * the selection feed's "★ Our shortlist" chip, the pick card's Shortlisted
+   * badge and the class recap all exist to say "that one was ours", and all
+   * three could only ever have marked rows that had just left the set. They
+   * have therefore never once fired. Measured on a live save: forty men
+   * starred, eleven of them off the board, nought chips.
+   *
+   * Scoped by draftYear + draftRound — the same pair lib/draft.ts uses to
+   * recover a class after its members stop being draftees — so an entry left
+   * over from a previous draft still does not count.
+   */
+  const shortlistTakenEntries = await prisma.shortlistEntry.findMany({
+    where: {
+      teamId: team.id,
+      player: { leagueId: league.id, draftYear: league.seasonYear, draftRound: { not: null } },
+    },
+    select: { playerId: true },
+  });
+  const shortlistTakenIds = new Set(shortlistTakenEntries.map((s) => s.playerId));
+  /** Was he ever on our board — whether or not he is still available. */
+  const wasOnOurShortlist = (playerId: string) => shortlistIds.has(playerId) || shortlistTakenIds.has(playerId);
   const shortlistOnly = searchParams.shortlist === '1';
 
   // THE NAME SEARCH. The app owner: *"we should be able to search by name for
@@ -846,7 +873,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       boardRank: read?.rank,
       boardGrade: read?.grade,
       ourFile: !view.revealed && view.confidence >= FILE_MIN ? { low: view.ovrLow, high: view.ovrHigh } : undefined,
-      shortlisted: shortlistIds.has(p.player!.id),
+      shortlisted: wasOnOurShortlist(p.player!.id),
     };
   };
   const recapRoundOne: RecapLeaguePick[] = recapPickRows.filter((p) => p.round === 1 && p.player).map(recapLeaguePick);
@@ -1066,7 +1093,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       player: { id: p.id, firstName: p.firstName, lastName: p.lastName, position: p.position, college: p.college },
       boardRank: read?.rank,
       ourRank: ourRank.get(p.id),
-      shortlisted: shortlistIds.has(p.id),
+      shortlisted: wasOnOurShortlist(p.id),
       atOurNeed: holes.has(p.position) ? p.position : undefined,
       slide: read ? overall - read.rank : undefined,
       positionCount: gone,
@@ -1122,7 +1149,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             label: label.label, labelClass: label.className,
           }
         : undefined,
-      shortlisted: shortlistIds.has(p.id),
+      shortlisted: wasOnOurShortlist(p.id),
       slide: read ? overallOf(lastPick.round, lastPick.slot) - read.rank : undefined,
       note: notes.join(' '),
     };
@@ -1187,6 +1214,10 @@ export default async function DraftPage({ params, searchParams }: { params: { id
       revealed: view.revealed,
       confidence: view.confidence,
       shortlisted: shortlistIds.has(p.id),
+      // How far past his own grade he is already sitting. bcastIndex is the
+      // count of selections made, so the card on the clock is the next one —
+      // a man the room had 12th who is still here at 30 has slid 18.
+      slid: read ? bcastIndex + 1 - read.rank : undefined,
     };
   };
   const roomBest = broadcast

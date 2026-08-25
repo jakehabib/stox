@@ -104,12 +104,28 @@ export function SelectionFeed({ rows, made, total, leagueId }: {
         >
           {rows.map((row, i) => {
             const chips = chipsFor(row);
+            /*
+             * A NAME COMING OFF THE BOARD, AND THE ONE CASE WHERE IT STINGS.
+             *
+             * Only the newest row reacts. Every row already on the feed holds
+             * still, which is the whole reason the new one is readable — and
+             * it is also why opening this page mid-draft does not set forty
+             * rows moving at once.
+             *
+             * When the man who just went was on OUR shortlist and somebody
+             * else took him, the arrival is red rather than green and his name
+             * is struck through where it lands. That is the draft's only real
+             * loss, and it should not be acknowledged in the same colour as a
+             * pick going the way we wanted.
+             */
+            const newest = i === 0;
+            const sniped = newest && row.shortlisted && !row.isUser;
             return (
               <div
                 key={row.pickId}
                 className={`flex items-start gap-3 px-4 py-2 border-b border-line/50 last:border-0 ${
                   row.isUser ? 'bg-accent/[0.07] border-l-2 border-l-accent' : ''
-                } ${i === 0 ? 'commit-flash' : ''}`}
+                } ${sniped ? 'moment-lost' : newest ? 'moment-landed' : ''}`}
               >
                 <div className="w-9 shrink-0 pt-0.5 text-right">
                   <div className="stat-value text-sm text-chalk leading-none">{row.overall}</div>
@@ -120,7 +136,7 @@ export function SelectionFeed({ rows, made, total, leagueId }: {
                   <div className="flex items-baseline gap-2 min-w-0">
                     <a
                       href={`/league/${leagueId}/player/${row.player.id}`}
-                      className="text-sm font-semibold truncate hover:text-accent2"
+                      className={`text-sm font-semibold truncate hover:text-accent2 ${sniped ? 'moment-sniped' : ''}`}
                     >
                       {row.player.firstName} {row.player.lastName}
                     </a>

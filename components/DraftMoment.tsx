@@ -148,8 +148,18 @@ function SelectionCard({ moment, onDismiss }: { moment: SelectionMoment; onDismi
       role="dialog"
       aria-label={`${team.city} select ${player.firstName} ${player.lastName}`}
     >
+      {/*
+        THE ONE PICK A YEAR THAT GETS THE FULL BEAT. The face turns over, the
+        name lands behind it, and the club badge goes on last — three moves
+        inside one --dur-reveal, which is the budget globals.css sets aside for
+        "the two or three earned moments" and this is one of them.
+
+        None of it gates anything: every number on this card is in the DOM at
+        frame one, the dismiss button is focused and live immediately, and Esc
+        works before the flip has finished.
+      */}
       <div
-        className="relative w-full max-w-2xl overflow-hidden rounded-lg border-2 shadow-elevated bg-card text-left"
+        className="moment-pick-card relative w-full max-w-2xl overflow-hidden rounded-lg border-2 shadow-elevated bg-card text-left"
         onClick={(e) => e.stopPropagation()}
         style={{
           ['--team-accent' as never]: accent,
@@ -165,7 +175,9 @@ function SelectionCard({ moment, onDismiss }: { moment: SelectionMoment; onDismi
 
         <div className="relative px-6 pt-5 pb-4">
           <div className="flex items-center gap-3">
-            <TeamLogo seed={team.id} abbr={team.abbr} size={44} />
+            <span className="moment-pick-badge inline-flex shrink-0">
+              <TeamLogo seed={team.id} abbr={team.abbr} size={44} />
+            </span>
             <div>
               <div className="label-sm">{pick.year} Draft · Round {pick.round} · Pick {pick.overall} overall</div>
               <div className="font-display font-extrabold text-2xl uppercase tracking-wide leading-none mt-1 text-team">
@@ -181,7 +193,7 @@ function SelectionCard({ moment, onDismiss }: { moment: SelectionMoment; onDismi
                 <span className={`font-semibold text-sm ${positionBadgeClass(player.position)}`}>{player.position}</span>
                 <span className={`text-xs font-medium ${player.labelClass}`}>{player.label}</span>
               </div>
-              <h2 className="font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1 text-chalk truncate">
+              <h2 className="moment-pick-name font-display font-extrabold text-3xl uppercase tracking-wide leading-none mt-1 text-chalk truncate">
                 {player.firstName} {player.lastName}
               </h2>
               <div className="text-sm text-muted mt-1.5">

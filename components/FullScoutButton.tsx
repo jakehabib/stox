@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState, useTransition, useCallback } from 'react';
+import { useEffect, useRef, useState, useTransition, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { fullScoutAction, fullScoutPanelAction, type FullScoutPanelData } from '@/app/actions/dynasty';
 import { ActionButton } from './ds/ActionButton';
 import { DeltaChip, deltaTint, useDeltaWatch } from './ds/DeltaChip';
+import { signalMoment } from './ds/Moments';
 
 /**
  * FULL SCOUT, on one player.
@@ -37,8 +38,26 @@ export function FullScoutButton({ leagueId, teamId, playerId, compact }: {
   const [panel, setPanel] = useState<FullScoutPanelData | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [, startTransition] = useTransition();
+  const [revealing, startTransition] = useTransition();
   const router = useRouter();
+
+  /*
+   * The file lands two sections down the player card, not here. Same
+   * mechanism as a workout (see WorkoutButton): the refresh runs in a
+   * transition and the reveal is announced when that transition commits, so
+   * the fog comes off the NEW numbers rather than off the ranges that were on
+   * screen a moment ago. `armed` is set only by a spend that happened — a
+   * refusal reveals nothing.
+   */
+  const armed = useRef(false);
+  const wasRevealing = useRef(false);
+  useEffect(() => {
+    if (wasRevealing.current && !revealing && armed.current) {
+      armed.current = false;
+      signalMoment(`fullscout:${playerId}`);
+    }
+    wasRevealing.current = revealing;
+  }, [revealing, playerId]);
 
   const load = useCallback(() => {
     // An empty query returns the default board plus the live charge count;
@@ -59,6 +78,7 @@ export function FullScoutButton({ leagueId, teamId, playerId, compact }: {
     charges.arm();
     load();
     setConfirming(false);
+    armed.current = true;
     startTransition(() => router.refresh());
     return 'File complete';
   };

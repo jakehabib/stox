@@ -34,6 +34,7 @@ import { StatNumber } from '@/components/ds/StatNumber';
 import { RatingBadge } from '@/components/ds/RatingBadge';
 import { OvrChangeChip } from '@/components/ds/OvrChangeChip';
 import { PlayerCardTabs } from '@/components/ds/PlayerCardTabs';
+import { ConfidenceFigure, MomentReveal } from '@/components/ds/Moments';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { generateTeamLogoParams } from '@/lib/gen/teamLogo';
 import { loadWorkoutSlots } from '@/lib/workouts';
@@ -1139,8 +1140,13 @@ export default async function PlayerPage({
       {!view.revealed && (
         <div className="panel border-l-2 border-l-accent2 p-4 flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-[16rem] flex-1">
+            {/* The figure counts to what the file now says. It is the one
+                count-up in the application and it is deliberately the only
+                one — see ds/Moments.tsx for why this number earns it and no
+                other does. It moves only when a scouting spend on THIS man
+                raised it, and prints flat on every other render. */}
             <div className="text-sm font-medium inline-flex items-center gap-1.5">
-              Scouting confidence: {Math.round(view.confidence)}%
+              Scouting confidence: <ConfidenceFigure value={view.confidence} subject={player.id} />
               <Tooltip text={tip('scoutingConfidence')} />
             </div>
             <p className="text-xs text-muted mt-1 max-w-lg">{view.notes}</p>
@@ -1189,7 +1195,11 @@ export default async function PlayerPage({
         <SectionHeading
           title="Scouting Report"
           tip={tip('scoutingConfidence')}
-          action={<span className="text-xs text-muted">{Math.round(view.confidence)}% confidence</span>}
+          action={
+            <span className="text-xs text-muted inline-flex items-center gap-1">
+              <ConfidenceFigure value={view.confidence} subject={player.id} /> confidence
+            </span>
+          }
         />
         {/* Hedging in this prose is driven by each attribute's own displayed
             band width, not one aggregate number — so it can never assert more
@@ -1211,8 +1221,20 @@ export default async function PlayerPage({
           }
         />
         {/* Down one column and then down the next, rather than across: the
-            order is the information here, and a row-major grid zig-zags it. */}
-        <div className="panel p-5 grid sm:grid-cols-2 gap-x-8">
+            order is the information here, and a row-major grid zig-zags it.
+
+            WRAPPED SO A WORKOUT CAN BE SEEN LANDING HERE. Nothing happens on
+            a page load — the panel paints exactly as it always did. It reacts
+            only when WorkoutButton or FullScoutButton says the spend has come
+            back and the new values are on screen: the fog comes off the block
+            and the rows fill in, in the order they are weighted. That is the
+            whole purchase, so it is the one place in scouting that gets a
+            beat. */}
+        <MomentReveal
+          signal={[`workout:${player.id}`, `fullscout:${player.id}`]}
+          className="panel p-5 grid sm:grid-cols-2 gap-x-8"
+          revealClassName="moment-fogged moment-sequence"
+        >
           {[attrRows.slice(0, Math.ceil(attrRows.length / 2)), attrRows.slice(Math.ceil(attrRows.length / 2))].map((col, i) => (
             <div key={i} className="space-y-3">
               {col.map((a) => {
@@ -1221,12 +1243,12 @@ export default async function PlayerPage({
                 // reason a known potential is not drawn as a range.
                 const exact = view.revealed || a.locked;
                 return (
-                  <div key={a.key} className="flex items-center gap-3">
+                  <div key={a.key} className="moment-step flex items-center gap-3">
                     <span className="text-sm text-muted w-32 shrink-0">{a.label}</span>
                     <div className="flex-1 h-2 bg-raised rounded-full overflow-hidden relative">
                       {exact ? (
                         <div
-                          className={`absolute h-full rounded-full ${a.share > 0 ? 'bg-accent2/70' : 'bg-line'}`}
+                          className={`moment-bar absolute h-full rounded-full ${a.share > 0 ? 'bg-accent2/70' : 'bg-line'}`}
                           style={{ width: `${a.actual ?? a.observed}%` }}
                         />
                       ) : (
@@ -1250,7 +1272,7 @@ export default async function PlayerPage({
               })}
             </div>
           ))}
-        </div>
+        </MomentReveal>
       </div>
     </div>
   );

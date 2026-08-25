@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { toggleShortlistAction } from '@/app/actions/draft';
+import { useMomentBurst } from './ds/Moments';
 
 /**
  * The star that puts a prospect in front of your area scouts every week.
@@ -25,16 +26,42 @@ export function ShortlistStar({ leagueId, teamId, playerId, initial, label = fal
 }) {
   const [on, setOn] = useState(initial);
   const [pending, startTransition] = useTransition();
+  const [burst, fire] = useMomentBurst();
   const router = useRouter();
 
+  /*
+   * THE STAR FOLLOWS THE WRITE, NOT THE CLICK.
+   *
+   * It used to flip the instant the button went down and then send the
+   * request. That reads well right up until the write is refused — an owner
+   * check, a dropped connection — at which point the board is showing a
+   * shortlist the database does not have, and the man it says your scouts are
+   * working every week is a man nobody is watching. So `on` now comes back
+   * from the action, which returns the row it actually wrote.
+   *
+   * The burst is armed on the same answer and only when he went ON the board.
+   * Taking a man off is not a moment; it is housekeeping.
+   */
   const toggle = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setOn((v) => !v);
     startTransition(async () => {
-      await toggleShortlistAction(leagueId, teamId, playerId);
-      router.refresh();
+      try {
+        const r = await toggleShortlistAction(leagueId, teamId, playerId);
+        setOn(r.shortlisted);
+        if (r.shortlisted) fire();
+        router.refresh();
+      } catch {
+        // Leave the star exactly where it was. A control that lies about what
+        // is in the database is worse than one that appears not to have moved.
+      }
     });
   };
+
+  /* Remounted on each burst, which is what makes a CSS animation run a second
+     time — see the note in ds/Moments.tsx. */
+  const star = (glyph: string, className: string) => (
+    <span key={burst} className={`${className} ${burst > 0 && on ? 'moment-star' : ''}`}>{glyph}</span>
+  );
 
   if (label) {
     return (
@@ -46,7 +73,7 @@ export function ShortlistStar({ leagueId, teamId, playerId, initial, label = fal
           on ? 'border-gold/50 text-gold bg-gold/10' : 'border-line text-muted hover:text-chalk hover:border-muted'
         } ${pending ? 'opacity-60' : ''}`}
       >
-        <span className="text-xs leading-none">{on ? '★' : '☆'}</span>
+        {star(on ? '★' : '☆', 'text-xs leading-none')}
         {on ? 'Shortlisted' : 'Shortlist'}
       </button>
     );
@@ -59,7 +86,7 @@ export function ShortlistStar({ leagueId, teamId, playerId, initial, label = fal
       title={on ? 'Remove from shortlist' : 'Add to shortlist'}
       className={`text-base leading-none ${on ? 'text-gold' : 'text-line hover:text-muted'}`}
     >
-      {on ? '★' : '☆'}
+      {star(on ? '★' : '☆', '')}
     </button>
   );
 }

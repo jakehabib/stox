@@ -57,7 +57,15 @@ export function RunWatch({ entries, windowSize, order, complete = false }: {
         <p className="text-sm text-muted">Nothing has come off the board yet.</p>
       ) : (
         <div className="space-y-3">
-          <p className="text-sm text-chalk/85">
+          {/*
+             THE RUN BEING CALLED. Keyed on the position, so the line arrives
+             once when the pattern turns on and again only if the run moves to
+             a different position — never on every pick, and never at all
+             while the board is thinning evenly. A run detector that announces
+             itself every five seconds is a decoration; this one speaks when
+             there is something to say.
+          */}
+          <p key={isRun ? lead.position : 'quiet'} className={`text-sm text-chalk/85 ${isRun && !complete ? 'moment-called' : ''}`}>
             {complete ? (
               <>
                 The draft closed on a {lead.position} run — {lead.inWindow} of the last {windowSize}{' '}

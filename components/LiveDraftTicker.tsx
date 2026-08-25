@@ -314,7 +314,33 @@ export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComp
             ? 'Board stopped'
             : ticking
               ? 'Picking…'
-              : `Next pick in ${secondsLeft}s`}
+              : (
+                /*
+                 * THE CLOCK, BEATING. One pulse a second and a colour that
+                 * moves with it, because a number that changes silently in a
+                 * corner is not a clock — it is a label that happens to
+                 * disagree with itself every second.
+                 *
+                 * Deliberately the smallest animation in the app. A draft is
+                 * 224 of these; anything that reads as a bounce the first time
+                 * reads as a stutter by the third round. The `key` is the
+                 * second itself, so the span is a new node on every tick and
+                 * the keyframe runs — see ds/Moments.tsx on why re-adding a
+                 * class to a live node does not.
+                 */
+                <>
+                  Next pick in{' '}
+                  <span
+                    key={secondsLeft}
+                    className={`moment-clock-tick font-semibold ${
+                      secondsLeft <= 1 ? 'text-bad' : secondsLeft <= 2 ? 'text-warn' : 'text-chalk'
+                    }`}
+                  >
+                    {secondsLeft}
+                  </span>
+                  s
+                </>
+              )}
       </div>
 
       {running ? (

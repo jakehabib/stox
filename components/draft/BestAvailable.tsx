@@ -18,13 +18,58 @@ export interface AvailableRow {
   revealed: boolean;
   confidence: number;
   shortlisted: boolean;
+  /**
+   * How far past his own board rank he is already sitting — the selection now
+   * on the clock minus where the room graded him. Positive means the slot the
+   * board said he would go in has been and gone and he is still here.
+   */
+  slid?: number;
 }
 
-function Row({ leagueId, row, side }: { leagueId: string; row: AvailableRow; side: 'ours' | 'room' }) {
+/**
+ * A STEAL, AND WHY THE BAR IS THIS HIGH.
+ *
+ * A first-round grade still on the board a round's worth of picks past his
+ * own slot is the thing a GM leans forward for. Two rounds of names sliding
+ * three or four picks is not — that is a board thinning, and painting it gold
+ * would spend the colour on nothing.
+ *
+ * THE NUMBERS ARE MEASURED, NOT CHOSEN. Run out against a live save: through
+ * the first thirty-eight selections the most-slid top-thirty-two man on the
+ * board reached fourteen picks past his grade, and nobody else got past
+ * eleven. So a bar of twelve fires somewhere in the thirties in a draft where
+ * the room disagrees with itself, and never at all in one where it does not.
+ *
+ * AND ONLY ONE ROW EVER CARRIES IT. Both conditions can be true of three men
+ * at once, and three gold rows is a colour scheme rather than a moment — so
+ * the page marks the single most-slid of them and leaves the rest to their
+ * ordinary rows. The window closes on its own, too: once the room's top
+ * thirty-two are gone, usually somewhere in the fifties, nothing on this page
+ * can qualify again for the rest of the night.
+ */
+const STEAL_BOARD_CUT = 32;
+const STEAL_SLIDE = 12;
+
+/** The one man on either board who should not still be there, or nobody. */
+function stealOf(rows: AvailableRow[]): string | undefined {
+  let best: AvailableRow | undefined;
+  for (const r of rows) {
+    if (r.boardRank === undefined || r.boardRank > STEAL_BOARD_CUT) continue;
+    if ((r.slid ?? 0) < STEAL_SLIDE) continue;
+    if (!best || (r.slid ?? 0) > (best.slid ?? 0)) best = r;
+  }
+  return best?.playerId;
+}
+
+function Row({ leagueId, row, side, steal = false }: {
+  leagueId: string; row: AvailableRow; side: 'ours' | 'room';
+  /** He is the steal. The glow runs once; the gold edge is what is left of it. */
+  steal?: boolean;
+}) {
   const gap = row.ourRank !== undefined && row.boardRank !== undefined ? row.boardRank - row.ourRank : undefined;
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2 border-b border-line/40 last:border-0">
+    <div className={`flex items-center gap-3 px-4 py-2 border-b border-line/40 last:border-0 ${steal ? 'moment-steal' : ''}`}>
       <span className={`stat-value text-sm w-8 shrink-0 text-right ${side === 'ours' ? 'text-accent2' : 'text-chalk'}`}>
         {side === 'ours' ? row.ourRank : row.boardRank}
       </span>
@@ -39,6 +84,7 @@ function Row({ leagueId, row, side }: { leagueId: string; row: AvailableRow; sid
         <div className="text-[11px] text-muted truncate mt-0.5">
           {row.college}
           {side === 'room' && row.bandLabel ? ` · ${row.bandLabel}` : ''}
+          {steal && <span className="text-gold"> · still here {row.slid} picks past his grade</span>}
         </div>
       </div>
       <div className="shrink-0 text-right">
@@ -88,6 +134,10 @@ export function BestAvailable({ leagueId, ours, room, verdict }: {
   /** The single sharpest disagreement, in one line. */
   verdict?: string;
 }) {
+  // One steal on the page, or none. Worked out across both columns together —
+  // the same man often sits in both, and he is one moment, not two.
+  const stealId = stealOf([...ours, ...room]);
+
   return (
     <div className="section">
       <div className="section-head">
@@ -120,7 +170,7 @@ export function BestAvailable({ leagueId, ours, room, verdict }: {
               </p>
             </div>
           ) : (
-            ours.map((r) => <Row key={r.playerId} leagueId={leagueId} row={r} side="ours" />)
+            ours.map((r) => <Row key={r.playerId} leagueId={leagueId} row={r} side="ours" steal={r.playerId === stealId} />)
           )}
         </div>
 
@@ -132,7 +182,7 @@ export function BestAvailable({ leagueId, ours, room, verdict }: {
           {room.length === 0 ? (
             <p className="text-sm text-muted px-4 py-6">The board is empty. Everybody has been called.</p>
           ) : (
-            room.map((r) => <Row key={r.playerId} leagueId={leagueId} row={r} side="room" />)
+            room.map((r) => <Row key={r.playerId} leagueId={leagueId} row={r} side="room" steal={r.playerId === stealId} />)
           )}
         </div>
       </div>
