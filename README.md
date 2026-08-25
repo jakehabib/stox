@@ -710,6 +710,33 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — College workouts were shut for the whole season the class was
+  on the board.** A draft class is generated in week one and is not selected
+  until the draft after it, so a GM looks at those four hundred men for a full
+  season before he can do anything about them. Private workouts — the one scarce
+  scouting decision left in the game — were gated on a whitelist of two phase
+  names, `RESIGN` and `FREE_AGENCY`, which shut the window for every one of
+  those weeks. The app owner: *"we cant do our college workouts until the
+  offseason, that should be available up until the draft begins."* The whitelist
+  is gone: `workoutsOpen()` reads the draft's own state through
+  `draftIsStarted()`, the same predicate `draftPlayer()` enforces at the podium
+  and the same flag the war room's Start button sets, so the window runs from
+  the day a class lands on the board to the moment that draft goes on the clock
+  and not one phase further. The board is not empty in the earlier phases —
+  every `REGULAR` and `PLAYOFFS` save on hand is carrying its full 400-man
+  class. It also opens the war room itself, where the Start confirmation was
+  already telling a GM with unspent slots there was *"still time to fly somebody
+  in"* and sending him to a page that had shut an hour earlier. The budget moved
+  with the window and had to: five slots were counted per league year and zeroed
+  at `RESET_STANDINGS`, which falls in the MIDDLE of a class's life, so a window
+  this wide would have paid out five during the season and five more after the
+  turn of the year — ten workouts against a class the design gives five. The
+  slot counter and the per-prospect stamp are both keyed on the class year now,
+  and the counter resets where a class is actually minted, in `PRESEASON`.
+  Verified against live saves in every phase: three spent against the 2026 class
+  still reads two left both in the 2026 season and in the 2027 free agency that
+  follows it. Shipped in `1f82bab`.
+
 - **2026-08-25 — A climbing cap ceiling was four unlabelled steps and a summary
   quoting only its two ends.** The multi-year outlook draws each season's ceiling
   as its own chalk step, because the ceiling is not flat — it climbs with the
