@@ -91,8 +91,13 @@
   .pill {
     @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border;
   }
+  /* Placeholder sits at full `muted`, not muted/60. On this control's own
+     surface (bg-raised) muted/60 composites to 2.81:1 — a placeholder is
+     text, often the only statement of what a field wants, and that is below
+     the 4.5:1 floor. Full muted measures 5.33:1 there and is still plainly
+     dimmer than the value the user types, which is text-chalk at 14.5:1. */
   .input {
-    @apply bg-raised border border-line rounded-md px-3 py-2 text-sm text-chalk placeholder:text-muted/60
+    @apply bg-raised border border-line rounded-md px-3 py-2 text-sm text-chalk placeholder:text-muted
            focus:outline-none focus:ring-1 focus:ring-accent2/60 focus:border-accent2/60;
   }
   .label-sm { @apply text-xs uppercase tracking-wider text-muted font-medium; }
@@ -114,7 +119,17 @@
      is (0,1,0) — silently lost to it, and every numeric column in the app
      was rendering a left-aligned header over right-aligned figures. Inherited
      from the table, any explicit alignment on a cell wins. */
-  .table-clean { @apply w-full text-sm border-separate border-spacing-0 text-left; }
+  /* Tabular figures on the table, not on the cells that happen to remember.
+     Every one of these tables stacks digits in a column — age, years left,
+     record, snap counts — and the ones carrying money or a rating already
+     opted in individually via .stat-value or font-mono. The plain cells did
+     not, so `Age` rendered proportional on the roster, cap, draft and free
+     agency boards while the OVR column right beside it rendered tabular:
+     the same role, two treatments, on four of the busiest pages. Setting it
+     once here is what makes a column of numbers a column. Digits only —
+     letters are untouched, so no label or player name shifts. */
+  .table-clean { @apply w-full text-sm border-separate border-spacing-0 text-left;
+    font-variant-numeric: tabular-nums; }
   .table-clean th { @apply label-sm px-3 py-2 border-b border-line sticky top-0 bg-card; }
   .table-clean td { @apply px-3 py-2 border-b border-line/60; }
   .table-clean tr:hover td { @apply bg-raised/50; }
@@ -164,8 +179,17 @@
      --team-accent was in scope where it was declared. The lightening is not
      cosmetic: several curated team primaries (oxblood, midnight, forest) sit
      around 1.6:1 against the near-black background and are unreadable as
-     small text raw. */
-  .text-team { color: color-mix(in srgb, var(--team-accent) 60%, white 40%); }
+     small text raw.
+
+     The mix is 50/50 because 60/40 was not enough. Measured across all twenty
+     COLOR_PAIRS primaries (lib/gen/teamLogo.ts) against the three surfaces
+     this class actually lands on — card, raised and ink, plus the 5%
+     team-tinted starter row — 60/40 left six of the twenty short of 4.5:1,
+     bottoming out at 4.04:1 on midnight (#1e1e2e) over `raised`. 50/50 puts
+     the worst case at 5.03:1 and every other team above it. Half the team
+     colour is still unmistakably the team's colour; it is the smallest step
+     that clears the bar, which is why it is not 40/60. */
+  .text-team { color: color-mix(in srgb, var(--team-accent) 50%, white 50%); }
 
   /* Rating chip — the proprietary rating shape (RatingBadge). A notched top
      corner instead of a plain rounded square, echoing the shield/hexagon
