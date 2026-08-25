@@ -663,7 +663,7 @@ ever force-pushed over, so every state below still exists in git history).
   stays on purpose: every surviving note explains data that is **missing** — a
   lineman the box score writes no line for, a career seeded before the league
   kept records — and without them a card with no numbers reads as broken rather
-  than as honest. Shipped in `HASHPLACEHOLDER`.
+  than as honest. Shipped in `744d958`.
 
 - **2026-08-25 — A man four years into his professional career still had a
   live college season ticking over on his card.** The College Profile block was
