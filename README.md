@@ -727,6 +727,50 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — Half the league's twenty colours were unreadable as text, a
+  roster's own starter tag among them, and the same "no data" dash was drawn at
+  four different opacities across six surfaces.** A polish pass over the eight
+  busiest pages — roster, draft board, cap, free agency, trade centre, player
+  card, depth chart, league home — plus the ten alongside them. Nothing moved:
+  no column, control, panel or figure changed position, wording or count. Every
+  claim below is a measured composite ratio against the surface the text
+  actually sits on, not an impression.
+  The worst of it was the club colour. `.text-team` exists because raw team
+  primaries are unreadable small, but it mixed only 60/40 with white, and
+  against all twenty `COLOR_PAIRS` primaries on the surfaces it really lands on
+  six finished under 4.5:1 — midnight bottoming out at **4.04:1**. It is 50/50
+  now, worst club **5.03:1**, which is the smallest step that clears the floor
+  and keeps the colour recognisably the club's. Worse still, the roster's
+  STARTER tag never used the utility at all: it set `color: teamColor` raw, so
+  the label describing the row measured **2.72:1** for Boston's teal and
+  **1.08:1** for the midnight pair. It now goes through `.text-team`, and sits
+  at 10px like every other micro-label rather than 9px, which was the smallest
+  type in the application.
+  The draft board's empty shortlist star was painted in `text-line`, the
+  *border* token, at **1.36:1** — a control a GM is meant to hunt down a
+  three-hundred-man board was invisible until the pointer crossed it. The three
+  depth surfaces separated two facts with a middot at the same 1.36:1, which is
+  to say they did not separate them. The unit dividers telling you where offence
+  ends and defence begins sat at **2.97:1**. The standings' cut line, **3.90:1**.
+  Placeholder text in every input, **2.81:1**.
+  The rest was one inconsistency wearing six costumes: the "nothing here" dash
+  appeared as muted/45, muted/50, muted/60 and full muted depending on which
+  file drew it — **2.16:1 to 5.82:1** — and twice disagreed with itself inside a
+  single table, on the contract ledger and again on the draft board, where two
+  adjacent columns printed the same mark in two weights. All of them now match
+  the treatment the roster already used. Every one of the eighteen pages
+  measured afterwards reports zero text below the floor.
+  Digits line up too: `.table-clean` never asked for tabular figures, so `Age`
+  set proportionally on the roster, cap, draft and free agency boards while the
+  OVR column beside it set tabular. Asking once on the table fixes all
+  twenty-nine call sites without moving a letter.
+  Flagged and deliberately not changed: the tooltip trigger is 14×14 against a
+  40px touch guideline, but measured at 390px it sits **4px** from the column
+  sort link it annotates and **0px** from its neighbour on the trade centre.
+  Growing its hit area would swallow taps meant for that control, and growing
+  the control itself would move the header — so it is recorded here rather than
+  quietly traded for a regression. Shipped in `f3a9c8c` and `38b5e6e`.
+
 - **2026-08-25 — The athletic rank was ordered against all four hundred men in
   the class rather than against the prospect's own position, and combine
   testing told a front office almost nothing the public board had not already
