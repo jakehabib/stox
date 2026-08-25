@@ -40,6 +40,13 @@ const GATE_PHASES = new Set(['RESIGN', 'DRAFT', 'FANTASY_DRAFT']);
  * collected and folded into a span strip — real per-week results, the record
  * at both ends of the run — while the panel itself renders the LAST week,
  * which is where the league actually now stands.
+ *
+ * "Not to be stopped" means not stopped BY THE APP. The user stopping their
+ * own run is the opposite thing, and it is why `stopped` travels: a run that
+ * was called off is folded from the weeks it actually played, never from the
+ * weeks the mode was aiming at, and the strip says so. A report reading
+ * "Weeks 3-17" after a stop at week 8 would be a fabricated figure, which is
+ * the one failure this panel exists to avoid.
  */
 /** "Weeks 8-10", or "Week 17 - The Final" when the span crosses into January. */
 function spanLabel(first: string, last: string): string {
@@ -50,13 +57,14 @@ function spanLabel(first: string, last: string): string {
   return `${first} \u2013 ${last}`;
 }
 
-function foldSpan(reports: WeekReport[]): WeekReportSpan | null {
+function foldSpan(reports: WeekReport[], stopped: boolean): WeekReportSpan | null {
   if (reports.length < 2) return null;
   const first = reports[0];
   const last = reports[reports.length - 1];
   const withChange = reports.filter((r) => r.changed);
   return {
     weeks: reports.length,
+    stopped,
     label: spanLabel(first.weekLabel, last.weekLabel),
     results: reports.map((r) => {
       if (!r.result) return { label: r.weekLabel, outcome: '—' as const, mine: null, theirs: null, oppAbbr: null };
@@ -157,6 +165,29 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
   // disappears after 7 seconds and leaves a button that just doesn't work.
   const [capBlock, setCapBlock] = useState<CapBlock | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
+  /**
+   * THE RUN IS IN FLIGHT — the state half of `inFlight` below.
+   *
+   * `pending` from useTransition cannot answer this (see the ref comment), so
+   * anything the RENDER needs to know about a run in progress reads this
+   * instead: the disabled Advance button, the progress popover, and the stop
+   * control that has to outlive both.
+   */
+  const [running, setRunning] = useState(false);
+  /** True only for a multi-week batch — the only kind of run there is anything to stop. */
+  const [batch, setBatch] = useState(false);
+  /** The user asked for the run to end; the week in flight is still finishing. */
+  const [stopping, setStopping] = useState(false);
+  /** "week", "playoff round", "offseason step" — what the stop control promises to finish. */
+  const [stepNoun, setStepNoun] = useState('week');
+  /**
+   * `pending` alone used to gate all of this and could not: it goes false at
+   * the first await (see below), so the disabled state and the progress
+   * popover both flickered off while the advance was still running. `running`
+   * is the durable half; `pending` is kept in the OR so the very first frame
+   * of a run is covered before the state update has landed.
+   */
+  const busy = running || pending;
   // The week report and the Tier-0 moment. Both are transient results of an
   // advance, not standing conditions, and both are dismissible without a
   // decision — so neither blocks anything the user wants to do next.
@@ -175,11 +206,15 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
    * comes from useTransition, and on React 18.3 it goes false at the FIRST
    * `await` inside the transition — so the button re-enables the instant the
    * server action is dispatched and stays enabled for the whole two or three
-   * seconds the advance actually takes. A double click sends two.
+   * seconds the advance actually takes. A double click sends two. That is why
+   * the button is disabled on `running` (set before the transition, cleared in
+   * the finally) rather than on `pending`: `running` is true for the WHOLE
+   * batch, including the seventeenth week of an advance to the playoffs.
    *
-   * A ref, not state: it has to be readable and writable synchronously inside
-   * the same click handler, and a state update would not be visible until the
-   * next render — which is exactly the window being closed.
+   * A ref AS WELL as that state: the ref has to be readable and writable
+   * synchronously inside the same click handler, and a state update would not
+   * be visible until the next render — which is exactly the window being
+   * closed. Two presses in one frame never see `running` change.
    *
    * THIS IS THE OPTIMISATION, NOT THE GUARANTEE. It saves a wasted round trip
    * and a refusal the user did not need to see. It cannot speak for a second
@@ -188,6 +223,22 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
    * in lib/season.ts. Never one instead of the other.
    */
   const inFlight = useRef(false);
+  /**
+   * STOP THE BATCH — a ref for exactly the reason above, and one more.
+   *
+   * The loop below is a long-lived async closure. A state value read inside it
+   * was captured at the render that started the run and will never change, no
+   * matter how many times the user presses Stop; a ref's `.current` is read
+   * fresh on every pass. `stopping` state exists alongside it only so the
+   * control can redraw.
+   *
+   * It is read AFTER the in-flight advanceWeekAction resolves, never during.
+   * advanceWeek writes results, progression, injuries, contracts and cap
+   * charges for a whole week; abandoning that halfway would leave the league
+   * in a shape nothing else in this codebase is written to read. So the
+   * promise the control makes is "after this week", and it keeps it.
+   */
+  const stopRequested = useRef(false);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -197,21 +248,52 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
+  /**
+   * ASK THE RUN TO END. Idempotent, and a no-op outside a batch: a single
+   * advance is one round trip with no seam in it, so there is nothing a stop
+   * could act on and pretending otherwise would be worse than having no
+   * control at all.
+   */
+  const requestStop = () => {
+    if (!batch || stopRequested.current) return;
+    stopRequested.current = true;
+    setStopping(true);
+  };
+
+  /**
+   * He hit the wrong option, and the reflex when that happens is Escape — so
+   * Escape is the same control, not a second behaviour. Bound only while a
+   * batch is running, so it cannot take the key from the report panel (which
+   * mounts after the run ends and closes on Escape itself) or from anything
+   * else on the page.
+   */
+  useEffect(() => {
+    if (!batch) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') requestStop(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+    // requestStop closes over `batch` and the ref, and `batch` is the dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batch]);
+
   const runSingle = () => {
     setMenuOpen(false);
     if (inFlight.current) return;
     inFlight.current = true;
+    setRunning(true);
     startTransition(async () => {
       try {
         setProgress('Working…');
         const result = await advanceWeekAction(leagueId);
-        setProgress(null);
         if (result.blocked) { refuse(result); return; }
         finish(result.summary, result.report ? [result.report] : [], result.trophy ?? null);
       } finally {
         // In a finally so a server action that throws does not leave the
-        // button dead for the rest of the page's life.
+        // button dead — or the progress popover up, with a stop control on it
+        // that can never be answered — for the rest of the page's life.
         inFlight.current = false;
+        setProgress(null);
+        setRunning(false);
       }
     });
   };
@@ -223,6 +305,10 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
     if (mode === 'week') return runSingle();
     if (inFlight.current) return;
     inFlight.current = true;
+    stopRequested.current = false;
+    setStopping(false);
+    setRunning(true);
+    setBatch(true);
     startTransition(async () => {
       try {
         const initial = await getLeaguePhaseAction(leagueId);
@@ -243,17 +329,26 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
         // end, covering the span.
         const reports: WeekReport[] = [];
         let earnedTrophy: TrophyData | null = null;
+        // Did the USER end this run, as opposed to the mode reaching its
+        // target? Only this flag may put the word "stopped" on screen, and it
+        // is set in exactly one place below.
+        let calledOff = false;
         // Driving this one week at a time from the client (instead of one
         // opaque server-side loop) is what makes real progress visible —
         // "Working through week 3…" — instead of a single static spinner label
-        // for however long the whole batch takes.
+        // for however long the whole batch takes. It is also the whole reason
+        // a stop is possible at all: there is a seam between every week, and
+        // the flag is read there.
         while (iterations < MAX_ITERATIONS) {
+          setStepNoun(PHASE_NOUN[phase] ?? 'step');
           setProgress(`Working through ${PHASE_NOUN[phase] ?? 'step'} ${week}…`);
           const result = await advanceWeekAction(leagueId);
           // The cap gate refused to move time — stop the batch immediately
           // rather than spinning MAX_ITERATIONS times against a closed door.
+          // A stop pressed during this same week is simply dropped: the finally
+          // clears the flag, and the refusal is the thing the user needs to
+          // read. Nothing is handled twice.
           if (result.blocked) {
-            setProgress(null);
             refuse(result);
             return;
           }
@@ -266,16 +361,45 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
           phase = result.phase;
           week = result.week;
           iterations++;
+          // THE MODE'S OWN CONDITIONS GO FIRST, and the order is the point. If
+          // this week was the one the mode was driving at — the playoffs
+          // arrived, a gate phase needs the user — then the run finished, and
+          // a stop pressed while it was in flight has nothing left to stop. It
+          // must not relabel a completed run as a called-off one, and it must
+          // not swallow the message a gate phase produces.
           if (stopAfter(phase, week, mode, midseasonWeek, startPhase, iterations)) break;
+          // Read fresh from the ref on every pass, and only between weeks: the
+          // week just written is whole, and the next one has not been asked for.
+          if (stopRequested.current) { calledOff = true; break; }
         }
-        setProgress(null);
+        /*
+         * WHAT ACTUALLY HAPPENED, NOT WHAT WAS ASKED FOR.
+         *
+         * `iterations` and `reports` are counted from advances that returned,
+         * so both already describe the real run. The only thing a stop adds is
+         * the word for it — and the week it landed on is read back off the
+         * last report rather than restated from the mode, so a run called off
+         * at week 8 cannot report having reached the playoffs.
+         */
+        const landed = reports.length > 0
+          ? reports[reports.length - 1].weekLabel
+          : `${PHASE_NOUN[phase] ?? 'step'} ${week}`;
+        const ran = `${iterations} ${iterations === 1 ? 'advance' : 'advances'}`;
         finish(
-          iterations > 1 ? `Advanced ${iterations} week${iterations === 1 ? '' : 's'}. ${lastSummary}` : lastSummary,
+          calledOff
+            ? `Stopped at ${landed} — ${ran} taken. ${lastSummary}`
+            : iterations > 1 ? `Advanced ${iterations} week${iterations === 1 ? '' : 's'}. ${lastSummary}` : lastSummary,
           reports,
           earnedTrophy,
+          calledOff,
         );
       } finally {
         inFlight.current = false;
+        stopRequested.current = false;
+        setProgress(null);
+        setStopping(false);
+        setBatch(false);
+        setRunning(false);
       }
     });
   };
@@ -311,7 +435,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
    * the intersection where a Tier-0 moment and a whole stretch of season
    * arrive on the same press. See the gate below.
    */
-  const finish = (text: string, reports: WeekReport[], earned: TrophyData | null) => {
+  const finish = (text: string, reports: WeekReport[], earned: TrophyData | null, calledOff = false) => {
     setCapBlock(null);
     router.refresh();
     // Every week's coach payload travels, not just the last one. The panel
@@ -323,7 +447,11 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
     // press cover a stretch" — see foldSpan, which returns null under two
     // reports. A multi-advance that only got one step in (Advance to Offseason
     // pressed on the final itself) has no stretch and is not treated as one.
-    const span = foldSpan(reports);
+    //
+    // `calledOff` only ever travels with the span it belongs to. A stop that
+    // landed after a single week produces a plain one-week report, which is
+    // exactly what happened and claims nothing further.
+    const span = foldSpan(reports, calledOff);
     const staged = reports.length > 0
       ? { report: reports[reports.length - 1], span, coach: reports.map((r) => r.coach) }
       : null;
@@ -429,8 +557,15 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
         />
       )}
       <div className="flex">
-        <button onClick={runSingle} disabled={pending} className={`btn-primary ${OPTIONS.length > 0 ? 'rounded-r-none' : ''}`}>
-          {pending ? (progress ?? 'Working…') : 'Advance ▸'}
+        {/* The live progress sentence belongs to the popover below, not here.
+            This button used to render it, and it was harmless only because
+            `pending` blinked off a moment later; held for a whole batch it
+            grows the button to the width of "Working through week 14…",
+            which overflows the header at 390px and shoves the popover — and
+            the stop control on it — off the right of the screen. One word
+            here, the detail one line below it, nothing moving sideways. */}
+        <button onClick={runSingle} disabled={busy} className={`btn-primary ${OPTIONS.length > 0 ? 'rounded-r-none' : ''}`}>
+          {busy ? 'Working…' : 'Advance ▸'}
         </button>
         {OPTIONS.length > 0 && (
           /* THIS STAYS A BARE ▾ ON PURPOSE, and it was briefly not one.
@@ -444,7 +579,7 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
              reader; what it does not get is a poster. */
           <button
             onClick={() => setMenuOpen((v) => !v)}
-            disabled={pending}
+            disabled={busy}
             className="btn-primary rounded-l-none border-l border-black/20 px-2"
             aria-label="More advance options"
             aria-expanded={menuOpen}
@@ -466,18 +601,45 @@ export function AdvanceWeekButton({ leagueId, currentPhase }: { leagueId: string
           ))}
         </div>
       )}
-      {pending && progress && (
-        <div className="absolute right-0 top-full mt-2 w-72 card card-pad text-sm z-30 animate-fadeUp shadow-lg flex items-center gap-2.5">
-          <span className="w-3.5 h-3.5 rounded-full border-2 border-accent/30 border-t-accent animate-spin shrink-0" />
-          {progress}
+      {busy && progress && (
+        /* THE PROGRESS POPOVER, AND NOW THE WAY OUT OF THE RUN.
+           The stop lives here rather than beside the Advance button because
+           this is the only thing on screen that is moving, so it is where the
+           eye already is — and because the Advance button is disabled for the
+           whole batch (that is the point of `busy`), which a control meant to
+           interrupt the batch obviously cannot be.
+           It is only rendered for a multi-week run: a single advance is one
+           round trip that is already over by the time a hand reaches it, and
+           a stop that could not stop anything would be a lie in button form.
+           Its label swaps on the press itself, not at the end of anything —
+           the motion rules say animation never gates input, and this is the
+           control that rule was written for. */
+        <div className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-1.5rem)] card card-pad text-sm z-30 animate-fadeUp shadow-lg">
+          <div className="flex items-center gap-2.5">
+            <span className="w-3.5 h-3.5 rounded-full border-2 border-accent/30 border-t-accent animate-spin shrink-0" />
+            {progress}
+          </div>
+          {batch && (
+            <button
+              onClick={requestStop}
+              disabled={stopping}
+              className="btn-secondary w-full mt-2.5 min-h-[40px] text-xs disabled:opacity-100"
+              aria-live="polite"
+            >
+              {/* Says what it does, at both stages. The week in flight is
+                  finished either way — claiming otherwise would be the same
+                  false figure this file already refuses to print. */}
+              {stopping ? `Stopping — finishing this ${stepNoun}…` : `Stop after this ${stepNoun}`}
+            </button>
+          )}
         </div>
       )}
-      {!pending && toast && (
+      {!busy && toast && (
         <div className="absolute right-0 top-full mt-2 w-80 card card-pad text-sm z-30 animate-fadeUp shadow-lg">
           {toast}
         </div>
       )}
-      {!pending && capBlock && (
+      {!busy && capBlock && (
         <div className="absolute right-0 top-full mt-2 w-[22rem] card card-pad z-30 animate-fadeUp shadow-lg border-bad/40 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div className="label-sm text-bad">{capBlock.title ?? 'Over the salary cap'}</div>

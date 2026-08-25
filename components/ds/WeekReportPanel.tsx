@@ -42,6 +42,14 @@ import { CoachComments } from './CoachComments';
 export interface WeekReportSpan {
   /** How many advances this report covers. 1 for a single week. */
   weeks: number;
+  /**
+   * The user called the run off part-way rather than it reaching the target
+   * they picked. Everything else in this object is already counted from the
+   * weeks that actually ran, so this only supplies the WORD for it — without
+   * it a run stopped at week 8 reads exactly like a run that was always meant
+   * to end at week 8, and the reader has no way to tell their own stop worked.
+   */
+  stopped?: boolean;
   label: string;
   /** One chip per week of the span, oldest first. */
   results: { label: string; outcome: 'W' | 'L' | 'T' | '—'; mine: number | null; theirs: number | null; oppAbbr: string | null }[];
@@ -137,6 +145,14 @@ export function WeekReportPanel({ report, span, coach, onClose, onAdvance, leagu
             <div className="panel px-3 py-2.5">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="label-sm shrink-0">{span.weeks} advances</span>
+                {/* Deliberate, not a failure: the run ended where the reader
+                    said to end it. Stated in the strip that carries the real
+                    weeks, so the count and the reason are read together. */}
+                {span.stopped && (
+                  <span className="label-sm shrink-0 text-accent2 border border-accent2/40 bg-accent2/10 rounded px-1.5 py-0.5">
+                    Stopped on your call
+                  </span>
+                )}
                 {span.results.map((g, i) => (
                   <span
                     key={i}

@@ -134,6 +134,14 @@ export async function advanceWeekAction(leagueId: string) {
  * from the client (one advanceWeekAction call per week, with real progress
  * shown between each) instead of one opaque server-side loop the UI can't
  * see inside of.
+ *
+ * That shape is also what makes the run interruptible. There is a seam between
+ * every week where the client is holding the loop and nothing is mid-write, so
+ * AdvanceWeekButton's Stop is checked there and the batch simply does not ask
+ * for the next week. An opaque server loop would have had nowhere to put it
+ * short of tearing up a half-written week — advanceWeek commits results,
+ * progression, injuries, contracts and cap charges together, and none of the
+ * rest of this codebase is written to read half of that.
  */
 export async function getLeaguePhaseAction(leagueId: string) {
   await assertLeagueOwner(leagueId);
