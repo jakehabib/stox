@@ -727,6 +727,36 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-25 — The athletic rank averaged all six combine drills equally, so
+  a 330lb left tackle's forty counted for exactly as much of his workout as a
+  corner's.** `5a4071d`. The app owner: *"and remember, athletic testing matters
+  differently across position. 40 time matters more for a CB than it does a
+  LT."* His case was a 290lb tackle who ran 5.29 — twelfth of sixteen — and
+  finished **first** in his group in the three-cone, **first** in the shuttle
+  and **second** on the bench: an excellent tackle workout reading as ordinary
+  because the drill that means least for the job counted like the three that
+  mean most. Three separate things changed and they are not the same question.
+  **What the composite weighs** is now per position, and the weights are
+  derived rather than typed in — the engine's own account of what a position's
+  play is made of, multiplied by which physical qualities each of those skills
+  rests on, multiplied by what each drill measures. A corner's forty carries
+  0.205 of his rank against a tackle's 0.074; a tackle's bench carries 0.320
+  against a corner's 0.086; an edge rusher sits between. **What actually
+  predicts ability** moves with it, because a fast tackle is not a better pass
+  protector and a strong corner is not better in coverage: a tackle's bench now
+  reads 0.80 of his real grade and his forty 0.21. **What the draft room
+  overpays for stays global** — every room quotes the forty for everybody,
+  including the positions where it means nothing, and a bias that corrected
+  itself by position would not be a bias. That last asymmetry is the prize: a
+  rounds 4-7 pick who ran slow for his position but tested top-quartile now
+  peaks at 77.5 against a 70.7 base and starts 86% of the time against 56%, and
+  the weighted composite finds a fifth more of those men than the flat mean did.
+  The owner's own tackle goes from 5th of 16 to 1st. Printed testing numbers are
+  unchanged (worst spread move 2.0%), and the guard rails held — following the
+  stopwatch alone still lands 63.3% starters against the board's 68.9%. A class
+  already on the board gets the re-ordered rank; the ability half arrives with
+  the next class a league mints.
+
 - **2026-08-25 — A first-round pick's fifth-year option could only be answered
   during the re-sign window, so a club standing anywhere else in the offseason
   was refused a decision it was entitled to make, and the front-office brief
