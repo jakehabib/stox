@@ -662,7 +662,7 @@ async function runOneLeague(idx: number): Promise<LeagueResult> {
  * quiet exactly when the database is the problem.
  * ===========================================================================
  */
-function runCanaries(): string[] {
+function runCanaries(): { lines: string[]; ok: boolean } {
   const lines: string[] = [];
   const sample = { id: 'x', trueOvr: 71, position: 'WR' as string };
 
@@ -675,16 +675,14 @@ function runCanaries(): string[] {
   const c = sample.trueOvr === 71 && sample.position === 'WR';
   lines.push(`  C  real read: ${c ? 'passed, as required' : 'FAILED — THE HARNESS CANNOT READ ITS OWN DATA'}`);
 
-  if (a || b !== undefined || !c) {
-    lines.push('  CANARIES FAILED — refusing to run. Nothing this file printed afterwards would mean anything.');
-  }
-  return lines;
-}
-function canariesPassed(): boolean {
-  const sample = { id: 'x', trueOvr: 71, position: 'WR' as string };
-  return !((sample as Record<string, unknown>).trueOvr === 99)
-    && (sample as Record<string, unknown>).trueOverall === undefined
-    && sample.trueOvr === 71;
+  // ONE EVALUATION, NOT TWO. The verdict is computed from the same three
+  // values that were printed, rather than by a second function repeating the
+  // same three tests — which is a shape that goes wrong exactly once, silently,
+  // when somebody edits one copy. A canary whose printed result and whose gate
+  // can disagree is not a canary.
+  const ok = !a && b === undefined && c;
+  if (!ok) lines.push('  CANARIES FAILED — refusing to run. Nothing this file printed afterwards would mean anything.');
+  return { lines, ok };
 }
 
 function mergeAwards(into: Record<string, Record<string, number>>, from: Record<string, Record<string, number>>) {
@@ -742,8 +740,9 @@ function printCensus(c: RunCensus) {
 
 async function main() {
   console.log('CANARIES');
-  for (const line of runCanaries()) console.log(line);
-  if (!canariesPassed()) process.exit(1);
+  const canaries = runCanaries();
+  for (const line of canaries.lines) console.log(line);
+  if (!canaries.ok) process.exit(1);
 
   if (MERGE_DIR) {
     const merged = emptyCensus();
