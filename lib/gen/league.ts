@@ -1,6 +1,6 @@
 import { prisma } from '../db';
 import { Rng, clamp } from '../rng';
-import { LEAGUE, CAP, Position, POSITIONS, ROSTER_TARGETS, SCOUTING, GENERATION, FREE_AGENCY } from '../tuning';
+import { LEAGUE, CAP, Position, POSITIONS, ROSTER_TARGETS, SCOUTING, GENERATION, FREE_AGENCY, rosterMinFor } from '../tuning';
 import type { LeagueStart } from '../types';
 import { LeagueSettings, serializeSettings, DEFAULT_SETTINGS, capGrowthRate } from '../settings';
 import {
@@ -27,6 +27,7 @@ import { defaultGmProfile, parseGmProfile } from '../ai/gm';
 import { observe } from '../scouting';
 import { writeJson } from '../json';
 import { AttrMap } from '../ratings';
+import { STARTERS_AT_POSITION } from '../lineup';
 
 /** A contract an imported file asked for, instead of a market-rate one. */
 export interface PlannedContract {
@@ -136,6 +137,41 @@ export function fringeShortfall(poolSize: number): number {
 
 /**
  * ---------------------------------------------------------------------------
+ * HOW BIG A BRAND-NEW CLUB IS, AT WHATEVER CEILING THE LEAGUE WAS SET TO
+ * ---------------------------------------------------------------------------
+ * `GENERATION.INITIAL_ROSTER_MIN/MAX` is 47..48, and it was read straight, so
+ * every club in every league was born at 47 or 48 men whatever
+ * `settings.rosterMax` said. A league created with a 46-man ceiling therefore
+ * began with all thirty-two clubs OVER the limit, and stayed there: cut-down
+ * day runs at the end of the first rookie draft, which is in the league's
+ * SECOND year, so nothing looks at a roster size for a whole season. Measured
+ * on a `rosterMax: 46` league in the settings matrix, INV-08 reported 387
+ * club-readings over the limit across one season, clubs sitting at 47 and 48
+ * from week 1.
+ *
+ * THE BAND IS SCALED, NOT CLAMPED, and the difference matters. Clamping 47..48
+ * to a 46-man ceiling would put every club EXACTLY at the limit with no open
+ * slots at all — which is the failure the 47..48 band was itself chosen to
+ * avoid (see INITIAL_ROSTER_MIN in lib/tuning.ts: a club born with no room is
+ * shut out of its own first free agency). So the HEADROOM is what is preserved:
+ * 48 against a 53-man ceiling is five slots free, and five slots free is what a
+ * club gets at any ceiling. The floor is the league's own roster minimum, so a
+ * scaled-down club is still born legal at both ends.
+ *
+ * AT THE DEFAULT CEILING THIS IS BIT-FOR-BIT WHAT IT WAS. rosterMax 53 gives
+ * hi = min(48, 53 - 5) = 48 and lo = min(47, 48) = 47, so the same
+ * `rng.int(47, 48)` is drawn from the same stream at the same point and every
+ * default league generates exactly as it did.
+ */
+function initialRosterTarget(rng: Rng, rosterMax: number): number {
+  const headroom = LEAGUE.ROSTER_MAX - GENERATION.INITIAL_ROSTER_MAX;
+  const hi = Math.min(GENERATION.INITIAL_ROSTER_MAX, rosterMax - headroom);
+  const lo = Math.min(GENERATION.INITIAL_ROSTER_MIN, hi);
+  return Math.max(rosterMinFor(rosterMax), rng.int(lo, hi));
+}
+
+/**
+ * ---------------------------------------------------------------------------
  * WHY A GENERATED ROSTER NEEDS TOPPING UP
  * ---------------------------------------------------------------------------
  * `generateRoster` rolls `rng.int(min, ideal)` men per position, which sums to
@@ -150,8 +186,8 @@ export function fringeShortfall(poolSize: number): number {
  * for the slot he is actually filling and lands as ordinary depth rather than
  * as a surprise starter.
  */
-function topUpRoster(rng: Rng, roster: GeneratedPlayer[], teamStrength: number, names: NameRegistry): GeneratedPlayer[] {
-  const target = rng.int(GENERATION.INITIAL_ROSTER_MIN, GENERATION.INITIAL_ROSTER_MAX);
+function topUpRoster(rng: Rng, roster: GeneratedPlayer[], teamStrength: number, names: NameRegistry, rosterMax: number): GeneratedPlayer[] {
+  const target = initialRosterTarget(rng, rosterMax);
   const counts = new Map<Position, number>();
   for (const p of roster) counts.set(p.position, (counts.get(p.position) ?? 0) + 1);
 
@@ -470,10 +506,46 @@ export async function createLeague(opts: {
     // $23.8M where the best in a randomized league is on $37.8M. The fix is
     // here, giving the pool `generateRoster`'s shape plus a fringe tail, not a
     // cleverer curve in the draft.
-    const poolSize = LEAGUE.TEAM_COUNT * LEAGUE.ROSTER_MAX + FREE_AGENCY.POOL_FLOOR;
+    const poolSize = LEAGUE.TEAM_COUNT * settings.rosterMax + FREE_AGENCY.POOL_FLOOR;
+    const drawnAt: Record<string, number> = {};
     for (let i = 0; i < poolSize; i++) {
       const p = generatePlayer(rng, { names });
+      drawnAt[p.position] = (drawnAt[p.position] ?? 0) + 1;
       registerPlayer(p, { status: 'FREE_AGENT', isDraftee: true, teamId: null }, false);
+    }
+
+    /**
+     * ===================================================================
+     * A POOL THAT CANNOT SHAPE THIRTY-TWO LEGAL ROSTERS IS NOT A POOL
+     * ===================================================================
+     * Every man above is an independent draw from POSITION_FREQUENCY
+     * (lib/gen/players.ts), and a kicker's share of that table is 2 of 103.5.
+     * Over a 1,696-man pool that is a MEAN of 33 kickers with a standard
+     * deviation of about 6 — against thirty-two clubs that each need exactly
+     * one. So roughly one fantasy league in five is dealt a pool with fewer
+     * kickers in it than there are clubs, and in that league at least one club
+     * cannot acquire one by any route: not by drafting well, not by trading,
+     * not off the wire. There is no kicker to have.
+     *
+     * MEASURED on a real fantasy league standing mid-draft: 30 kickers and 42
+     * punters in an 1,816-man pool. Two clubs were structurally unable to kick
+     * an extra point all season, and nothing anywhere said so.
+     *
+     * THE FLOOR IS EXACTLY WHAT THE LEAGUE HAS TO FIELD — thirty-two clubs
+     * times the number of that position on the field, read from
+     * STARTERS_AT_POSITION so it is the lineup's own definition rather than a
+     * second list that can drift from it. Nothing above that: how DEEP the
+     * pool runs at a position is a question about the market and the draw
+     * answers it fine, and topping up past the requirement would quietly
+     * rewrite the positional shape of every fantasy league. This only ever adds
+     * men to a position the draw left short of playable, which on a measured
+     * pool means kickers and punters and nothing else.
+     */
+    for (const pos of POSITIONS) {
+      const mustField = LEAGUE.TEAM_COUNT * (STARTERS_AT_POSITION[pos] ?? 0);
+      for (let held = drawnAt[pos] ?? 0; held < mustField; held++) {
+        registerPlayer(generatePlayer(rng, { position: pos, names }), { status: 'FREE_AGENT', isDraftee: true, teamId: null }, false);
+      }
     }
   } else {
     /**
@@ -515,7 +587,7 @@ export async function createLeague(opts: {
       // Rolled up front with the club's window — see strengthByAbbr above.
       const strength = strengthByAbbr.get(team.abbr) ?? rng.normal(0, 4);
       // Topped up to a legal roster before it is written — see topUpRoster.
-      rosterByAbbr.set(team.abbr, topUpRoster(rng, generateRoster(rng, strength, names), strength, names));
+      rosterByAbbr.set(team.abbr, topUpRoster(rng, generateRoster(rng, strength, names), strength, names, settings.rosterMax));
     }
 
     if (rebuildAbbr !== null) {
@@ -526,7 +598,7 @@ export async function createLeague(opts: {
       const dealt = dealLastPlaceRoster(rng, {
         startStrength: strengthByAbbr.get(rebuildAbbr) ?? 0,
         floorOverall: floor,
-        build: (strength) => topUpRoster(rng, generateRoster(rng, strength, names), strength, names),
+        build: (strength) => topUpRoster(rng, generateRoster(rng, strength, names), strength, names, settings.rosterMax),
         overallOf: (roster) => teamOverallFrom(ovrsAtFor(roster)),
       });
       strengthByAbbr.set(rebuildAbbr, dealt.strength);
@@ -935,7 +1007,13 @@ export async function createLeague(opts: {
 
   // --- Fantasy draft state --------------------------------------------------
   if (fantasy) {
-    const order = buildSnakeOrder(rng.shuffle(teams.map((t) => t.id)), LEAGUE.ROSTER_MAX);
+    // ROUNDS = THE LEAGUE'S OWN CEILING, not the tuning constant. A fantasy
+    // draft fills every roster to exactly `rounds` men, so reading
+    // LEAGUE.ROSTER_MAX here handed all thirty-two clubs 53 players in a league
+    // whose settings said 46 — over the limit from the first snap of the first
+    // season, with nothing until the SECOND year's cut-down day to look at it.
+    // Same defect as initialRosterTarget above, on the other start type.
+    const order = buildSnakeOrder(rng.shuffle(teams.map((t) => t.id)), settings.rosterMax);
     await prisma.draftState.create({
       data: { leagueId: league.id, kind: 'FANTASY', round: 1, pickIndex: 0, order: writeJson(order) },
     });
