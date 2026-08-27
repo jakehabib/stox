@@ -72,6 +72,31 @@ other — `lib/invariants.ts` reports violations by ID.
   first `fillTeamsToRosterMinimum` pass; a USER team below the line is the
   user's own call to make and the game never signs on his behalf, so this
   check reports it rather than acting on it.
+- **INV-25** — Outside that same window, every club has at least one `ACTIVE`
+  player at **every position its lineup actually fields** — every key of
+  `STARTERS_AT_POSITION` in `lib/lineup.ts` with a non-zero count, kicker and
+  punter included.
+
+  INV-08 and INV-20 count a roster and cannot see the shape of one, and a
+  roster of the right size with nobody at a position is exactly as unplayable
+  as one nine men short. This codebase has lost the specialists more than
+  once — cut-down day used to release a club's only kicker because the
+  production score it ranked men by could not read a field goal (`6511cc3`) —
+  and a head count is blind to that by construction.
+
+  One man is the bar rather than the full starter count: a club with two of the
+  three receivers it fields is thin, which is a football problem, and a club
+  with none is broken, which is this document's problem. Checked against
+  `STARTERS_AT_POSITION` rather than against a list written out here, so a
+  position added to the lineup is covered the day it is added.
+
+  Exempt in `OFFSEASON`, `RESIGN` and `FANTASY_DRAFT` for the same reason
+  INV-20 is. The fantasy window is the extreme case: a league that opens with a
+  fantasy draft has thirty-two EMPTY rosters by construction and fills them one
+  pick at a time, so mid-draft this rule reported all thirty-two clubs missing
+  all sixteen positions — a hundred per cent false-positive rate on a state the
+  game creates deliberately. The rule that matters through that phase is
+  INV-18, and it is exempt from nothing.
 
 ## Draft picks
 
@@ -103,6 +128,21 @@ other — `lib/invariants.ts` reports violations by ID.
   exactly what made the original version of this check, keyed off the
   *current* `seasonYear`, a false positive against next year's not-yet-run
   draft — see **Known violations**.)
+- **INV-29** — A player taken with a `DraftPick` whose `year` is the league's
+  current `seasonYear`, who is still `ACTIVE` on the club that drafted him, is
+  on a rookie deal: `isRookieDeal === true`, `years === CAP.ROOKIE_DEAL_YEARS`,
+  and an APY between the league minimum and `CAP.ROOKIE_SCALE_R1_PICK1` plus a
+  quarter.
+
+  The bug this is shaped around actually shipped: the fantasy branch of
+  `draftPlayer` handed out 1,696 players and wrote not one contract. INV-04
+  caught THAT one, because those men were `ACTIVE` with nothing on file. It
+  would not catch a contract written at the wrong SCALE, which is the other half
+  of the same seam and the half a $360M preset came through.
+
+  Only the current year's picks, and only men still on the club that drafted
+  them: a rookie since cut, traded or extended is no longer on the deal the
+  draft wrote, and holding him to it would flag ordinary roster management.
 
 ## Contracts & cap
 
@@ -385,6 +425,54 @@ other — `lib/invariants.ts` reports violations by ID.
   player page renders one row per. Every lineman in the league would collect an
   empty stat line every season.
 
+## Numbers
+
+- **INV-26** — No stored number in a league is non-finite, negative where it
+  cannot be, or outside its legal band. Player age 15..60, experience `>= 0`,
+  `trueOvr` and `potential` and every value in `trueAttrs` 0..99,
+  `injuryWeeks >= 0`, `lastSeasonOvr` 0..99 when set; contract `years`,
+  `signingBonus`, `guaranteed`, `voidYears` and every base salary `>= 0` and
+  finite; team `wins`, `losses`, `ties`, `pointsFor`, `pointsAgnst` `>= 0`.
+
+  **NaN and Infinity are the point, and they are harder to catch than they
+  look.** An `Int` column rejects them at the driver, so they cannot be stored
+  directly — but every rating in this game lives inside a JSON blob
+  (`Player.trueAttrs`) and every salary schedule inside another
+  (`Contract.baseSalaries`), and JSON has no NaN: `JSON.stringify(NaN)` is the
+  string `"null"`. So a rating that went non-finite reaches the database as a
+  null inside an otherwise valid attribute map, reads back as `undefined`, and
+  turns every average computed from it into NaN with nothing on disk looking
+  wrong. That is why the `Number.isFinite` tests are applied to the PARSED
+  contents rather than to the columns.
+
+- **INV-30** — Nothing in the database points at a league, club or player that
+  no longer exists. Checked **database-wide rather than per league**, because
+  that is what an orphan is: a row whose parent has been deleted is by
+  definition not in a league any more, so no league-scoped query can ever see
+  it. That is exactly how 18,247 orphaned `CapCharge` rows accumulated
+  unnoticed — five of every six cap charges on the dev database — while every
+  other rule here ran clean on every league in it.
+
+  Most of these columns are foreign keys now and they are still checked: a rule
+  the schema enforces cannot be violated by application code, but it can be
+  violated by a migration that ships without its constraint, by a hand edit in
+  psql, and by a `deleteMany` in a script that reaches a table the cascade does
+  not. Four columns have no foreign key at all today — `Contract.teamId`,
+  `TradeRecord.teamAId`/`teamBId`, `Transaction.teamId` — so for those this is
+  the only check there is.
+
+  `LeagueRecord.playerId` is deliberately excluded, and it is the one edge in
+  the schema where a dangling id is correct: a seeded backstory's all-time
+  record holders are LEGENDS who never played a down in the save and have no
+  `Player` row by design, the column is not nullable, and `playerName` /
+  `teamAbbr` are denormalised onto the row precisely so it still displays.
+  Measured: 1,784 of 2,994 `LeagueRecord` rows, an even fourteen per league,
+  which is every league on the dev database and a leak in none of them.
+
+  In a shared database the reading that means anything is a DIFFERENCE.
+  `npm run sim:health` takes the count before and after its run and reports only
+  what its own leagues added.
+
 ## Games
 
 - **INV-15** — A `Game` with `played === true` has `homeScore >= 0`,
@@ -438,6 +526,41 @@ other — `lib/invariants.ts` reports violations by ID.
   bug below. (Checked after the harness calls `advanceWeek` once more to let
   the transition actually run; a completed draft still showing `DRAFT` right
   before that call is expected, not a violation.)
+- **INV-27** — For every season the save actually played, each club's stored
+  `TeamSeasonRecord` satisfies `wins + losses + ties === ` the number of
+  `played`, `kind: 'REGULAR'` games that club appears in for that year.
+
+  `TeamSeasonRecord` is the only surviving copy of a finished season's
+  standings — `RESET_STANDINGS` wipes `Team.wins` a few offseason steps later —
+  so a record that does not add up is a standings table that will be wrong
+  forever, on the History page and in every dynasty number derived from it.
+  Regular-season games only: postseason results deliberately never touch
+  `Team.wins` (see `simulatePlayoffRound` in `lib/season.ts`).
+
+  Scoped to years at or after `League.startYear`. Every league is generated with
+  a seeded backstory (`lib/gen/leagueHistory.ts`) that writes real
+  `TeamSeasonRecord` rows for years BEFORE the league opened and no `Game` rows
+  at all. That history is invented rather than simulated, and holding it to this
+  rule would flag every league in the game on its very first step.
+- **INV-28** — For every season the save actually played and finished (one that
+  has a `CHAMPION` transaction), there is exactly one `CHAMPION` row, exactly
+  one row of each type in `AWARDED_TYPES`, and at least one `ALL_STAR` row.
+
+  Both directions matter and the second is the more dangerous. A season whose
+  award pass threw, or whose field came back empty, leaves a year with no MVP
+  and nothing anywhere saying so — the trophy screen simply has a gap in it and
+  nobody notices until someone scrolls back six seasons. And
+  `recordSeasonAwards` has no per-row guard, so anything that runs it twice
+  writes a SECOND MVP for the same year and every count of a player's or a GM's
+  honours silently doubles.
+
+  A year with no champion at all is a season still being played, not a broken
+  one, and is skipped. A year carrying the retired `AWARD_ROTY` is a year played
+  before the rookie award was split in two, and is not held to `AWARD_OROTY` /
+  `AWARD_DROTY`: 3,670 of those rows sit in saves on the dev database across 189
+  leagues, and without that clause this rule reported 118 of 141 played
+  league-seasons as missing both rookie trophies — a phantom bug, measured and
+  discarded.
 
 ## Transition invariants (checked across a step, not from one snapshot)
 

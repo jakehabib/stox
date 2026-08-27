@@ -6,7 +6,12 @@ import { parseSettings, capGrowthRate } from './settings';
 import { rosterMinFor } from './tuning';
 import { PHASE_LABELS } from './season';
 import { SeasonStats } from './types';
+import { AttrMap } from './ratings';
 import { ContractLike } from './cap';
+import { STARTERS_AT_POSITION } from './lineup';
+import { AWARDED_TYPES } from './awardTypes';
+import { ALL_STAR_TYPE } from './allStars';
+import { CAP } from './tuning';
 
 /**
  * ===========================================================================
@@ -31,13 +36,76 @@ const ACTIVE_STATUSES = new Set(['ACTIVE', 'FREE_AGENT', 'RETIRED']);
  * Phases where a roster under the minimum is legal: contracts have expired and
  * free agency has not opened yet. Mirrors CAP_ROLLOVER_PHASES in lib/season.ts,
  * which exempts the same window from cap compliance for the same reason.
+ *
+ * FANTASY_DRAFT is the third, and it is the most extreme of them: a league that
+ * opens with a fantasy draft has THIRTY-TWO EMPTY ROSTERS by construction and
+ * fills them one pick at a time, so mid-draft every club in the league is under
+ * the floor and most have nobody at most positions. Measured on a live
+ * mid-draft league, this window reported all thirty-two clubs on INV-20 and all
+ * thirty-two on INV-25 — a hundred per cent false-positive rate on a state the
+ * game creates deliberately. The check that matters through this phase is
+ * INV-18 (the draft must finish and the phase must move on), and that one is
+ * not exempt from anything.
  */
-const ROSTER_FLOOR_EXEMPT_PHASES = new Set(['OFFSEASON', 'RESIGN']);
+const ROSTER_FLOOR_EXEMPT_PHASES = new Set(['OFFSEASON', 'RESIGN', 'FANTASY_DRAFT']);
 const VALID_PHASES = new Set(Object.keys(PHASE_LABELS));
 
 function violation(id: string, severity: 'error' | 'warning', message: string, ids: string[]): Violation | null {
   if (ids.length === 0) return null;
   return { id, severity, message, count: ids.length, sample: ids.slice(0, 5) };
+}
+
+/**
+ * ===========================================================================
+ * THE GAME READ, AND WHY IT IS TWO READS RATHER THAN ONE
+ * ===========================================================================
+ * INV-15 used to be `prisma.game.findMany({ where: { leagueId, played: true } })`
+ * — every played game in the league's whole history, box score JSON and all,
+ * re-fetched and re-parsed after EVERY simulated step. A box score is the
+ * biggest string this schema stores, and the set of them only ever grows, so
+ * the cost of checking a league rose with the square of how far it had been
+ * simulated. Measured on the deepest league on the dev database (2,830 played
+ * games), one `checkInvariants` call cost 7.9 SECONDS, of which the queries
+ * were 1.3 and the JSON parsing was the rest. That is the whole reason a
+ * ten-season soak was out of reach: the harness, not the game, was the clock.
+ *
+ * THE SPLIT IS NOT A NARROWING. Both halves below together check strictly MORE
+ * than the single read did:
+ *
+ *   EVERY played game in history, forever, is checked for a negative score and
+ *   for an empty box score — in SQL, so nothing crosses the wire but the ids of
+ *   rows that are already wrong. `length("boxScore") < 3` is exactly the old
+ *   `!box || Object.keys(box).length === 0` test: `{}` is two characters and
+ *   the column is NOT NULL with a `{}` default, so an unwritten box score is
+ *   two characters and anything shorter is empty too. So a later step that
+ *   wipes a game played six seasons ago is still caught.
+ *
+ *   RECENT games — this league year and the one before it — are additionally
+ *   PARSED, which is the part that cannot be done in SQL and the part that
+ *   catches a box score that is present but malformed. Two league years is
+ *   generous rather than tight: a game is written once, by the step that plays
+ *   it, and is then re-checked on every one of the ~30 steps of that season and
+ *   the ~30 of the next. A row that survives sixty parses unchanged is not
+ *   going to start failing on the sixty-first, because nothing in the game
+ *   rewrites a played game.
+ * ===========================================================================
+ */
+async function recentBoxScores(leagueId: string): Promise<{ id: string; boxScore: string }[]> {
+  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { seasonYear: true } });
+  return prisma.game.findMany({
+    where: { leagueId, played: true, seasonYear: { gte: league.seasonYear - 1 } },
+    select: { id: true, boxScore: true },
+  });
+}
+
+/** Ids of played games anywhere in history with a negative score or an empty box score. */
+async function brokenGamesAnywhere(leagueId: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "Game"
+    WHERE "leagueId" = ${leagueId} AND played
+      AND ("homeScore" < 0 OR "awayScore" < 0 OR length("boxScore") < 3)
+    LIMIT 50`;
+  return rows.map((r) => r.id);
 }
 
 /** Full snapshot check — everything checkable from one point-in-time read of a league. */
@@ -47,9 +115,14 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
     prisma.player.findMany({ where: { leagueId } }),
     prisma.contract.findMany({ where: { player: { leagueId } } }),
     prisma.draftPick.findMany({ where: { leagueId } }),
-    prisma.game.findMany({ where: { leagueId, played: true } }),
+    recentBoxScores(leagueId),
     prisma.draftState.findUnique({ where: { leagueId } }),
-    prisma.team.findMany({ where: { leagueId }, select: { id: true, abbr: true } }),
+    prisma.team.findMany({
+      where: { leagueId },
+      // wins/losses/ties/points are read by INV-26, which is the only reason
+      // this is not the two-column select it used to be.
+      select: { id: true, abbr: true, wins: true, losses: true, ties: true, pointsFor: true, pointsAgnst: true },
+    }),
   ]);
   const settings = parseSettings(league.settings);
   const contractByPlayerId = new Map(contracts.map((c) => [c.playerId, c]));
@@ -225,9 +298,13 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
   }
 
   // --- INV-15: completed games have sane scores + a real box score ---
-  push(violation('INV-15', 'error', 'Completed game has a negative score or an empty/unparseable box score',
+  // Two reads, checking strictly more than the one read this used to be — see
+  // recentBoxScores() above for why history is scanned in SQL and only the
+  // recent window is parsed.
+  push(violation('INV-15', 'error', 'Completed game has a negative score or an empty box score',
+    await brokenGamesAnywhere(leagueId)));
+  push(violation('INV-15', 'error', 'Completed game has a box score that will not parse',
     games.filter((g) => {
-      if (g.homeScore < 0 || g.awayScore < 0) return true;
       const box = readJson<Record<string, unknown> | null>(g.boxScore, null);
       return !box || Object.keys(box).length === 0;
     }).map((g) => g.id)));
@@ -241,6 +318,221 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
   }
   if (draftState?.complete && (league.phase === 'DRAFT' || league.phase === 'FANTASY_DRAFT')) {
     out.push({ id: 'INV-18', severity: 'error', message: `Draft is complete but League.phase is still '${league.phase}' — the league is stuck`, count: 1, sample: [league.id] });
+  }
+
+  /**
+   * --- INV-25: every club can put eleven men on the field, and a kicker ---
+   *
+   * INV-08 and INV-20 count a roster. They cannot see the SHAPE of one, and a
+   * roster of the right size with nobody at a position is exactly as unplayable
+   * as one that is nine men short. This codebase has lost the specialists more
+   * than once — cut-down day used to release a club's only kicker because the
+   * production score it ranked men by could not read a field goal (6511cc3) —
+   * and the symptom of that is invisible to a head count.
+   *
+   * Checked against STARTERS_AT_POSITION, which is THE definition of who is on
+   * the field, so a position added to a lineup is covered here the day it is
+   * added rather than the day somebody remembers to update a list. One man is
+   * the bar rather than the full starter count: a club with two of the three
+   * receivers it fields is thin, which is a football problem; a club with none
+   * is broken, which is this file's problem.
+   *
+   * Exempt in the same window as INV-20, and for the same reason: through
+   * OFFSEASON and RESIGN every expiring contract has been released and free
+   * agency has not opened, so rosters are legitimately in pieces.
+   */
+  if (!ROSTER_FLOOR_EXEMPT_PHASES.has(league.phase)) {
+    const fielded = (Object.keys(STARTERS_AT_POSITION) as (keyof typeof STARTERS_AT_POSITION)[])
+      .filter((pos) => STARTERS_AT_POSITION[pos] > 0);
+    const positionsByTeam = new Map<string, Set<string>>();
+    for (const p of players) {
+      if (p.status !== 'ACTIVE' || !p.teamId) continue;
+      const set = positionsByTeam.get(p.teamId) ?? positionsByTeam.set(p.teamId, new Set()).get(p.teamId)!;
+      set.add(p.position);
+    }
+    push(violation('INV-25', 'error', 'A club has nobody at a position its lineup has to field',
+      teams.flatMap((t) => {
+        const has = positionsByTeam.get(t.id) ?? new Set<string>();
+        const missing = fielded.filter((pos) => !has.has(pos));
+        return missing.length > 0 ? [`${t.abbr} has nobody at ${missing.join('/')}`] : [];
+      })));
+  }
+
+  /**
+   * --- INV-26: no impossible numbers anywhere in stored league state ---
+   *
+   * NaN AND INFINITY ARE THE POINT, and they are harder to catch than they
+   * look. An `Int` column rejects them at the driver, so they cannot be stored
+   * directly — but every rating in this game lives inside a JSON blob
+   * (`Player.trueAttrs`) and every salary schedule inside another
+   * (`Contract.baseSalaries`), and JSON has no NaN: `JSON.stringify(NaN)` is
+   * the string "null". So a rating that went non-finite reaches the database as
+   * a null inside an otherwise valid attribute map, reads back as `undefined`,
+   * and turns every average computed from it into NaN with nothing on disk
+   * looking wrong. That is what the `Number.isFinite` tests below are for, and
+   * it is why they are applied to the PARSED contents and not to the columns.
+   *
+   * The bands are the ones the rest of the game already asserts: ratings are
+   * 0..99 (lib/ratings.ts), a contract cannot run negative years or negative
+   * money, and a club cannot have won a negative number of games.
+   */
+  {
+    const bad: string[] = [];
+    const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+    const inBand = (n: unknown, lo: number, hi: number) => finite(n) && n >= lo && n <= hi;
+
+    for (const p of players) {
+      if (!inBand(p.age, 15, 60)) bad.push(`player ${p.id} age ${p.age}`);
+      if (!finite(p.experience) || p.experience < 0) bad.push(`player ${p.id} experience ${p.experience}`);
+      if (!inBand(p.trueOvr, 0, 99)) bad.push(`player ${p.id} trueOvr ${p.trueOvr}`);
+      if (!inBand(p.potential, 0, 99)) bad.push(`player ${p.id} potential ${p.potential}`);
+      if (!finite(p.injuryWeeks) || p.injuryWeeks < 0) bad.push(`player ${p.id} injuryWeeks ${p.injuryWeeks}`);
+      if (p.lastSeasonOvr !== null && !inBand(p.lastSeasonOvr, 0, 99)) bad.push(`player ${p.id} lastSeasonOvr ${p.lastSeasonOvr}`);
+      const attrs = readJson<AttrMap>(p.trueAttrs, {});
+      for (const [k, v] of Object.entries(attrs)) {
+        if (!inBand(v, 0, 99)) { bad.push(`player ${p.id} attr ${k}=${v}`); break; }
+      }
+    }
+    for (const c of contracts) {
+      if (!finite(c.years) || c.years < 0) bad.push(`contract ${c.id} years ${c.years}`);
+      if (!finite(c.signingBonus) || c.signingBonus < 0) bad.push(`contract ${c.id} signingBonus ${c.signingBonus}`);
+      if (!finite(c.guaranteed) || c.guaranteed < 0) bad.push(`contract ${c.id} guaranteed ${c.guaranteed}`);
+      if (!finite(c.voidYears) || c.voidYears < 0) bad.push(`contract ${c.id} voidYears ${c.voidYears}`);
+      const salaries = readJson<number[]>(c.baseSalaries, []);
+      for (const v of salaries) {
+        if (!finite(v) || v < 0) { bad.push(`contract ${c.id} baseSalary ${v}`); break; }
+      }
+    }
+    for (const t of teams) {
+      for (const [k, v] of [['wins', t.wins], ['losses', t.losses], ['ties', t.ties], ['pointsFor', t.pointsFor], ['pointsAgnst', t.pointsAgnst]] as const) {
+        if (!finite(v) || v < 0) bad.push(`team ${t.abbr} ${k} ${v}`);
+      }
+    }
+    push(violation('INV-26', 'error', 'A stored number is non-finite, negative where it cannot be, or outside its legal band', bad));
+  }
+
+  /**
+   * --- INV-27: a club's record adds up to the games it actually played ---
+   *
+   * `TeamSeasonRecord` is the only surviving copy of a finished season's
+   * standings (RESET_STANDINGS wipes Team.wins a few steps later), so a season
+   * whose wins, losses and ties do not add up to that club's played regular
+   * season games is a standings table that will be wrong forever, on the
+   * History page and in every dynasty number derived from it.
+   *
+   * REGULAR games only, because postseason results deliberately never touch
+   * Team.wins — see simulatePlayoffRound in lib/season.ts.
+   *
+   * SCOPED TO SEASONS THIS SAVE ACTUALLY PLAYED. Every league is generated with
+   * a seeded backstory (lib/gen/leagueHistory.ts) that writes real
+   * TeamSeasonRecord rows for years BEFORE the league opened and no Game rows
+   * at all — that history is invented, not simulated, and holding it to this
+   * rule would flag every league in the game on its first step.
+   */
+  {
+    const startYear = await resolveStartYear(league);
+    const mismatched = await prisma.$queryRaw<{ abbr: string; year: number; rec: number; played: bigint }[]>`
+      SELECT t.abbr, r.year, r.wins + r.losses + r.ties AS rec, count(g.id) AS played
+      FROM "TeamSeasonRecord" r
+      JOIN "Team" t ON t.id = r."teamId"
+      LEFT JOIN "Game" g
+        ON g."leagueId" = r."leagueId" AND g."seasonYear" = r.year
+       AND g.played AND g.kind = 'REGULAR'
+       AND (g."homeTeamId" = r."teamId" OR g."awayTeamId" = r."teamId")
+      WHERE r."leagueId" = ${leagueId} AND r.year >= ${startYear}
+      GROUP BY t.abbr, r.year, r.wins, r.losses, r.ties
+      HAVING r.wins + r.losses + r.ties <> count(g.id)
+      LIMIT 50`;
+    push(violation('INV-27', 'error', "A club's stored season record does not add up to the regular-season games it played",
+      mismatched.map((m) => `${m.abbr} ${m.year}: record sums to ${m.rec}, played ${Number(m.played)}`)));
+  }
+
+  /**
+   * --- INV-28: a season that finished handed out its trophies, once each ---
+   *
+   * Every season the save actually played must have exactly one champion and
+   * exactly one of every award in AWARDED_TYPES, plus an All-Star class. The
+   * failure this exists to catch is silent by construction: a season whose
+   * award pass threw, or whose field came back empty, produces a year with no
+   * MVP and nothing anywhere that says so — the trophy screen simply has a gap
+   * in it, and nobody notices until someone scrolls back six seasons.
+   *
+   * TWO of a trophy is the other half, and it is the more dangerous one:
+   * `recordSeasonAwards` has no per-row guard, so anything that runs it twice
+   * writes a second MVP for the same year, and every count of a player's or a
+   * GM's honours doubles.
+   *
+   * Scoped to played seasons for the same reason as INV-27, and to seasons that
+   * have a champion recorded — the current season is mid-flight and has none
+   * yet, which is not a violation.
+   */
+  {
+    const startYear = await resolveStartYear(league);
+    const rows = await prisma.transaction.findMany({
+      where: { leagueId, seasonYear: { gte: startYear }, type: { in: ['CHAMPION', ALL_STAR_TYPE, 'AWARD_ROTY', ...AWARDED_TYPES] } },
+      select: { seasonYear: true, type: true },
+    });
+    const byYear = new Map<number, Map<string, number>>();
+    for (const r of rows) {
+      const m = byYear.get(r.seasonYear) ?? byYear.set(r.seasonYear, new Map()).get(r.seasonYear)!;
+      m.set(r.type, (m.get(r.type) ?? 0) + 1);
+    }
+    const gaps: string[] = [];
+    for (const [year, counts] of [...byYear.entries()].sort((a, b) => a[0] - b[0])) {
+      // A year with no champion is a year still being played, not a broken one.
+      if ((counts.get('CHAMPION') ?? 0) === 0) continue;
+      if ((counts.get('CHAMPION') ?? 0) !== 1) gaps.push(`${year}: ${counts.get('CHAMPION')} champions`);
+      // A YEAR PLAYED BEFORE THE ROOKIE AWARD WAS SPLIT IN TWO IS NOT MISSING
+      // ANYTHING. `AWARD_ROTY` is written by nothing on this build and read
+      // everywhere (see lib/awardTypes.ts), and 3,670 of those rows are sitting
+      // in saves on the dev database — 189 leagues' worth. Holding those years
+      // to a rule their build did not have would report 118 of 141 played
+      // league-seasons as missing both rookie trophies, which is what this
+      // check said before this clause and it was wrong every time.
+      const preSplitRookieAward = (counts.get('AWARD_ROTY') ?? 0) > 0;
+      for (const type of AWARDED_TYPES) {
+        if (preSplitRookieAward && (type === 'AWARD_OROTY' || type === 'AWARD_DROTY')) continue;
+        const n = counts.get(type) ?? 0;
+        if (n !== 1) gaps.push(`${year}: ${n} x ${type}`);
+      }
+      if ((counts.get(ALL_STAR_TYPE) ?? 0) === 0) gaps.push(`${year}: no All-Stars selected`);
+    }
+    push(violation('INV-28', 'error', 'A completed season is missing a trophy, or handed one out twice', gaps));
+  }
+
+  /**
+   * --- INV-29: this year's draftees are on rookie deals at rookie prices ---
+   *
+   * The bug this is shaped around actually shipped: the fantasy branch of
+   * `draftPlayer` handed out 1,696 players and wrote not one contract. INV-04
+   * caught that one because those men were ACTIVE with nothing on file. It
+   * would NOT catch a contract written at the wrong SCALE, which is the other
+   * half of the same seam and the one a $360M preset came through.
+   *
+   * Only picks used in the current league year, and only men still on the club
+   * that drafted them: a rookie who has since been cut, traded or extended is
+   * no longer on the deal the draft wrote, and holding him to it would flag
+   * ordinary roster management.
+   */
+  {
+    const rookieCeiling = CAP.ROOKIE_SCALE_R1_PICK1 * 1.25;
+    const playerById = new Map(players.map((p) => [p.id, p]));
+    const offScale: string[] = [];
+    for (const pick of picks) {
+      if (pick.year !== league.seasonYear || !pick.used || !pick.playerId) continue;
+      const player = playerById.get(pick.playerId);
+      if (!player || player.status !== 'ACTIVE' || player.teamId !== pick.ownerTeamId) continue;
+      const c = contractByPlayerId.get(pick.playerId);
+      if (!c) continue; // INV-04's finding, not this one's
+      if (!c.isRookieDeal) { offScale.push(`${pick.playerId} r${pick.round}p${pick.slot}: not flagged as a rookie deal`); continue; }
+      if (c.years !== CAP.ROOKIE_DEAL_YEARS) { offScale.push(`${pick.playerId} r${pick.round}p${pick.slot}: ${c.years}-year rookie deal`); continue; }
+      const salaries = readJson<number[]>(c.baseSalaries, []);
+      const apy = (salaries.reduce((a, b) => a + b, 0) + c.signingBonus) / Math.max(1, c.years);
+      if (!Number.isFinite(apy) || apy < CAP.MIN_SALARY || apy > rookieCeiling) {
+        offScale.push(`${pick.playerId} r${pick.round}p${pick.slot}: ${formatMoney(Math.round(apy))}/yr`);
+      }
+    }
+    push(violation('INV-29', 'error', 'A rookie drafted this year is not on a rookie-scale contract', offScale));
   }
 
   return out;
@@ -304,4 +596,91 @@ export function checkStatRollup(before: Awaited<ReturnType<typeof snapshotStatTo
   }
   if (bad.length > 0) out.push({ id: 'INV-T1', severity: 'error', message: 'Season stats did not fully roll into career stats', count: bad.length, sample: bad.slice(0, 5) });
   return out;
+}
+
+/**
+ * ===========================================================================
+ * INV-30 — NOTHING POINTS AT A ROW THAT NO LONGER EXISTS
+ * ===========================================================================
+ * DATABASE-WIDE, NOT PER-LEAGUE, because that is what an orphan is: a row
+ * whose league, club or player has been deleted is by definition not IN a
+ * league any more, so no league-scoped query can ever see it. That is exactly
+ * how 18,247 orphaned `CapCharge` rows accumulated unnoticed — five of every
+ * six cap charges on the dev database — while every check in this file ran
+ * clean on every league in it (see the comment on CapCharge in
+ * prisma/schema.prisma, and INV-23 in GAME_INVARIANTS.md).
+ *
+ * MOST OF THESE ARE NOW FOREIGN KEYS, AND THEY ARE STILL CHECKED. A rule the
+ * schema enforces cannot be violated by application code — but it can be
+ * violated by a migration that ships without its constraint, by a hand-edit in
+ * psql, and by a `deleteMany` in a script that reaches a table the cascade
+ * does not. Four of the columns below have no foreign key at all today
+ * (`Contract.teamId`, `TradeRecord.teamAId`/`teamBId`, `LeagueRecord.playerId`,
+ * `Transaction.teamId`), so for those this is the only check there is.
+ *
+ * HOW TO READ THE RESULT IN A SHARED DATABASE. This counts every orphan on the
+ * server, including ones that were already there before the caller started. A
+ * harness should take this reading before and after its run and report the
+ * DIFFERENCE — that is the number its own leagues created, and the only number
+ * it is entitled to claim.
+ * ===========================================================================
+ */
+export async function checkOrphans(): Promise<Violation[]> {
+  // (child table, child column, parent table) — every pointer in the schema
+  // that names a League, a Team or a Player from a row that is not one.
+  const edges: [string, string, string][] = [
+    ['CapCharge', 'teamId', 'Team'],
+    ['Contract', 'playerId', 'Player'],
+    ['Contract', 'teamId', 'Team'],
+    ['DraftPick', 'leagueId', 'League'],
+    ['DraftPick', 'ownerTeamId', 'Team'],
+    ['DraftPick', 'originalTeamId', 'Team'],
+    ['DraftPick', 'playerId', 'Player'],
+    ['PlayerSeason', 'leagueId', 'League'],
+    ['PlayerSeason', 'playerId', 'Player'],
+    ['PlayerSeason', 'teamId', 'Team'],
+    ['TeamSeasonRecord', 'leagueId', 'League'],
+    ['TeamSeasonRecord', 'teamId', 'Team'],
+    ['TradeRecord', 'leagueId', 'League'],
+    ['TradeRecord', 'teamAId', 'Team'],
+    ['TradeRecord', 'teamBId', 'Team'],
+    ['ChampionRoster', 'leagueId', 'League'],
+    ['ChampionRoster', 'teamId', 'Team'],
+    ['ChampionRoster', 'playerId', 'Player'],
+    ['LeagueRecord', 'leagueId', 'League'],
+    // LeagueRecord.playerId IS DELIBERATELY NOT HERE, and this is the one edge
+    // in the schema where a dangling id is correct. Every league is generated
+    // with a seeded backstory (lib/gen/leagueHistory.ts) whose all-time record
+    // holders are LEGENDS — men who never played a down in this save and have
+    // no Player row by design. The column is not nullable, so a legend's record
+    // carries a synthetic `recordId`, and `playerName`/`teamAbbr` are
+    // denormalised onto the row precisely so it still displays. Measured on the
+    // dev database: 1,784 of 2,994 LeagueRecord rows, an even fourteen per
+    // league, which is every league in it and not a leak in any of them.
+    ['Transaction', 'leagueId', 'League'],
+    ['Transaction', 'teamId', 'Team'],
+    ['Transaction', 'playerId', 'Player'],
+    ['Game', 'leagueId', 'League'],
+    ['DepthChartSlot', 'teamId', 'Team'],
+    ['DepthChartSlot', 'playerId', 'Player'],
+  ];
+
+  const found: string[] = [];
+  for (const [child, column, parent] of edges) {
+    // Identifiers are quoted from this literal list and never from input, so
+    // there is nothing here for a value to interpolate into. A NULL pointer is
+    // "not applicable", not an orphan, so it is excluded rather than counted.
+    const rows = await prisma.$queryRawUnsafe<{ n: bigint }[]>(
+      `SELECT count(*) AS n FROM "${child}" c
+       LEFT JOIN "${parent}" p ON p.id = c."${column}"
+       WHERE c."${column}" IS NOT NULL AND p.id IS NULL`,
+    );
+    const n = Number(rows[0]?.n ?? 0);
+    if (n > 0) found.push(`${child}.${column} -> ${parent}: ${n}`);
+  }
+  // One violation carrying every edge, so a caller differencing two readings
+  // compares like with like rather than matching up a variable-length list.
+  return found.length === 0
+    ? []
+    : [{ id: 'INV-30', severity: 'error', message: 'Rows point at a league, club or player that no longer exists', count: found.length, sample: found }];
 }
