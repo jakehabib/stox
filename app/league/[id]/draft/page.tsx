@@ -250,11 +250,35 @@ export default async function DraftPage({ params, searchParams }: { params: { id
    * the selection card all ask about overlapping sets of the same class.
    */
   const viewCache = new Map<string, ScoutedPlayerView>();
+  /**
+   * ...EXCEPT IN A FANTASY DRAFT, WHERE NOBODY ON THE BOARD IS A PROSPECT.
+   *
+   * A fantasy league empties all 32 rosters into one pool and flags every man
+   * in it `isDraftee` — that flag is how the pool is addressed, not a claim
+   * about his career. The men in it are the league's own professionals: four
+   * seasons of experience, a college behind them, contracts and box scores on
+   * file. lib/scouting.ts draws the line for the whole game and draws it at
+   * exactly this: *"A free agent with five seasons of production behind him is
+   * not a mystery; you can watch the tape ... uncertainty about men whose
+   * careers are on film is just a worse spreadsheet."*
+   *
+   * Hardcoding the flag put a 26-year-old with four professional years behind
+   * him on the board under a 40-point ceiling band reading 59-99 and a
+   * projection reading "Unevaluated" — the same man the Free Agency screen
+   * quotes an exact rating for, and the same man the roster page shows in full
+   * the moment he is picked. Every ceiling in the pool read 59-99, so the
+   * column that is supposed to separate the board carried one value.
+   *
+   * Off the flag he takes the OTHER PROS tier that scope block specifies:
+   * current exact, ceiling +/-5. The hardcode stays for a rookie draft, where
+   * it is load-bearing for the reason spelled out above it.
+   */
+  const fantasyPool = league.phase === 'FANTASY_DRAFT';
   const viewOf = (p: { id: string; position: string; trueAttrs: string; trueOvr: number; potential: number }): ScoutedPlayerView => {
     let v = viewCache.get(p.id);
     if (!v) {
       v = buildScoutedView({
-        isProspect: true,
+        isProspect: !fantasyPool,
         position: p.position as any, trueAttrs: readJson(p.trueAttrs, {}), trueOvr: p.trueOvr, potential: p.potential,
         report: reportMap.get(p.id), settings, isOwnRoster: false, isUserView: true, dynasty: scoutMods,
       });
@@ -346,6 +370,15 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   for (const r of classReports) reportMap.set(r.playerId, r);
 
   const rows = pool.map((p) => ({ p, view: viewOf(p) }));
+  /**
+   * WHAT THE RATING COLUMN IS ACTUALLY SHOWING, asked of the views rather than
+   * of a setting. `settings.scoutingEnabled` is a league-wide switch and stays
+   * true in a fantasy league, where this board is not fogged at all — so the
+   * header read "Scouted" over a column of exact numbers and pointed the
+   * glossary at the range entry. Same repair, and the same reasoning, as the
+   * Free Agency board next door.
+   */
+  const boardFogged = rows.some((r) => !r.view.revealed);
 
   // -------------------------------------------------------------------------
   // OUR BOARD
@@ -380,8 +413,21 @@ export default async function DraftPage({ params, searchParams }: { params: { id
     return null;
   };
 
+  /**
+   * THE DEFAULT SORT HAS TO BE A COLUMN THAT HAS NUMBERS IN IT.
+   *
+   * `consensus` everywhere it exists — it is the board's own order and the one
+   * the room argues about. It does not exist in a fantasy draft: the
+   * consensus, the athletic ranks and the class size are all read off
+   * `classPool`, which is scoped by `draftYear`, and a fantasy pool has none.
+   * The board therefore opened sorted by a rank every row was missing, which
+   * compares as NaN and leaves whatever order the query happened to return.
+   * Ask the map rather than the phase, so this is right for any other pool
+   * that arrives without a public board.
+   */
+  const defaultSort: SortKey = consensus.size > 0 ? 'consensus' : 'ovr';
   const sortKey: SortKey = (['consensus', 'ours', 'pos', 'ovr', 'age', 'potential', 'athletic'] as SortKey[]).includes(searchParams.sort as SortKey)
-    ? (searchParams.sort as SortKey) : 'consensus';
+    ? (searchParams.sort as SortKey) : defaultSort;
   const dir = searchParams.dir === 'asc' ? 1 : -1;
 
   const sorted = [...rows].sort((a, b) => {
@@ -1664,7 +1710,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 </th>
                 <th>
                   <span className="inline-flex items-center gap-1">
-                    <Link href={sortHref('ovr')} scroll={false} prefetch={false} className="hover:text-chalk">{settings.scoutingEnabled ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
+                    <Link href={sortHref('ovr')} scroll={false} prefetch={false} className="hover:text-chalk">{boardFogged ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
                     {/* The legend used to be withheld here, and the reason it
                         was withheld is now fixed. The cell's ink came off
                         `ratingColor(view.scoutedOvr)` — the centre of the fog,
@@ -1677,7 +1723,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                         legend is simply true, and the glossary says what a
                         colourless range means. The range is still the thing to
                         read, so it leads. */}
-                    <Tooltip placement="bottom" text={settings.scoutingEnabled ? `${tip('scoutedRange')} ${define('ratingColours')}` : `${tip('overall')} ${tip('ratingColours')}`} />
+                    <Tooltip placement="bottom" text={boardFogged ? `${tip('scoutedRange')} ${define('ratingColours')}` : `${tip('overall')} ${tip('ratingColours')}`} />
                   </span>
                 </th>
                 <th>
@@ -1723,7 +1769,18 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             <tbody>
               {sorted.map(({ p, view }) => {
                 const potentialForLabel = view.potentialRevealed ? p.potential : (view.potLow + view.potHigh) / 2;
-                const label = playerLabel({ ovr: view.scoutedOvr, potential: potentialForLabel, isDraftee: true, experience: 0, confidence: view.confidence });
+                /* `isDraftee`/`experience` say whether the man is PROVEN, not
+                   which pool he is in, and the tag reads "... Prospect" off
+                   them. Hardcoded, a fantasy pool of established
+                   professionals came back "Franchise Prospect" on every row
+                   of the top of the board — graded on a ceiling rather than
+                   on the career they have already had, and calling a
+                   31-year-old centre a prospect. A rookie class is unproven
+                   by definition and keeps exactly what it had. */
+                const label = playerLabel({
+                  ovr: view.scoutedOvr, potential: potentialForLabel, confidence: view.confidence,
+                  isDraftee: !fantasyPool, experience: fantasyPool ? p.experience : 0,
+                });
                 const read = consensus.get(p.id);
                 const ath = athletic.get(p.id);
                 // "Our file vs the board" goes through ownGradeFor, never a raw
