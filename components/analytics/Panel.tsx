@@ -49,7 +49,15 @@ export function Panel({ span, eyebrow, title, tip, flag, aside, asideTip, why, c
         </div>
         {flag && <Flag tone={flag.tone}>{flag.text}</Flag>}
         {!flag && aside && (
-          <span className="label-sm text-[10px] shrink-0 text-right inline-flex items-center gap-1.5">
+          /* `shrink-0` ONLY ONCE THERE IS ROOM TO SHRINK INTO. A caption is
+             usually four words ("12 of 45 contracts") and must not be squeezed
+             by the title beside it — but the Luck Ledger's is a full sentence,
+             and a fixed 355px of it inside a 300px card head is 45px of
+             horizontal page scroll on a handset. Below `sm` it may shrink and
+             wrap onto a second line, which is what a caption in a card head
+             should do on a phone; at every width where it fit before, it still
+             sits on one line and nothing has moved. */
+          <span className="label-sm text-[10px] min-w-0 sm:shrink-0 text-right inline-flex flex-wrap justify-end items-center gap-1.5">
             {aside}
             {/* Right-hand caption, so the bubble opens inward from its right
                 edge — centred would hang half of an 18rem bubble off the card. */}

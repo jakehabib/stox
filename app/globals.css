@@ -698,10 +698,35 @@
   }
   @media (max-width: 520px) {
     [role='tooltip'] {
-      position: fixed;
+      /* `!important` ON THE POSITION, AND THAT IS THE WHOLE REPAIR.
+
+         This rule lives in `@layer components`; `absolute` on the bubble is a
+         Tailwind UTILITY, and the utilities layer is emitted after this one.
+         So `position: fixed` lost, every other line here won, and the result
+         was worse than doing nothing: `left: 12px` and `right: 12px` resolved
+         against the 14px trigger instead of the screen, `width: auto` then
+         shrank to fit what was left, and every help bubble in the game
+         rendered on a handset as a 22px sliver of wrapped text. Measured on
+         the live DOM at 390px, where the computed position read `absolute`.
+
+         The vertical pin is new for the same reason the horizontal one was
+         written. Placement comes from `bottom-full` / `top-full` — 100% of the
+         CONTAINING BLOCK, which is the trigger while the bubble is absolute
+         and the whole viewport once it is fixed. Left alone, the corrected
+         `position: fixed` would have put every bubble exactly one screen
+         above, or one screen below, the screen. Pinned to the foot of the
+         viewport it is a sheet: full width, no word lost, never clipped by an
+         ancestor, and — because a fixed box is out of flow against the
+         viewport — it can no longer push the document sideways. Hiding the
+         bubbles was measured as taking the dashboard from 410px of document
+         width to exactly 390. */
+      position: fixed !important;
       left: 0.75rem !important;
       right: 0.75rem !important;
+      top: auto !important;
+      bottom: 1rem !important;
       width: auto !important;
+      max-width: none !important;
       transform: none !important;
       margin: 0 !important;
     }

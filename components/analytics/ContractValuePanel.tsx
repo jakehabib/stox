@@ -4,7 +4,7 @@ import { formatMoney } from '@/lib/cap';
 import { PlayerAvatar } from '@/components/PlayerAvatar';
 import { positionBadgeClass } from '@/components/ds/positionColor';
 import { tip } from '@/lib/glossary';
-import { Panel, Note, TableTwin, ColLabel } from './Panel';
+import { Panel, Note, TableTwin, ColLabel, ChartBox } from './Panel';
 import { VIZ } from './viz';
 
 export interface ValueRow extends SurplusRow {
@@ -65,6 +65,19 @@ export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, tea
         </p>
       ) : (
         <>
+          {/* THE BOARD IS 502px WIDE AT ITS NARROWEST and the panel it sits in
+              is 300 on a handset, because four of the five tracks carry a
+              minimum: 34 for the portrait, 190 for the name, 100 for the bar
+              and 72 + 66 for the two money columns. With nothing to scroll in,
+              those minimums came out of the card and pushed the whole
+              Analytics page 202px sideways — measured at 390px, the single
+              largest source of horizontal scroll left on the route. `ChartBox`
+              is this department's own answer to exactly that ("wide content
+              scrolls here, never on the page body"), and the two header
+              tooltips are already set to open downward, which is what a
+              bubble inside a scroller has to do. Nothing moves at a width
+              where the board already fits. */}
+          <ChartBox>
           <div className="grid grid-cols-[34px_minmax(190px,320px)_minmax(100px,1fr)_72px_66px] gap-2.5 label-sm text-[9.5px] pb-1.5 border-b border-line">
             <span />
             <span>Player</span>
@@ -104,6 +117,7 @@ export function ContractValuePanel({ span = 7, bargains, overpays, leagueId, tea
               </Link>
             );
           })}
+          </ChartBox>
 
           <Note>
             {worst ? (
