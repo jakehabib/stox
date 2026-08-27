@@ -250,7 +250,7 @@ export default async function LeagueLayout({ children, params }: { children: Rea
   return (
     <div className="min-h-screen">
       <LeagueWireTicker items={tickerItems} />
-      <header className="border-b border-line bg-surface/80 backdrop-blur sticky top-0 z-20">
+      <header className="app-header border-b border-line bg-surface/80 backdrop-blur sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 shrink-0">
             <Link href="/" className="flex items-center gap-2 shrink-0">

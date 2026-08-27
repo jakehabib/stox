@@ -33,6 +33,38 @@
     --dur-state: 220ms;   /* a value or bar changing */
     --dur-reveal: 450ms;  /* the two or three earned moments */
     --ease-out: cubic-bezier(.2,.7,.3,1);
+
+    /* --- The palette, as custom properties ------------------------------
+       tailwind.config.ts is the single source of truth for every colour in
+       this application; these are not a second copy of it, they are the
+       SAME values read back out of it through theme(). Plain CSS needs them
+       because a pseudo-element gradient, a color-mix() and app/moments.css
+       cannot spell `bg-card` — and before this existed those places carried
+       raw hexes, which is exactly how a re-skin reaches nine tenths of the
+       app and leaves the reactions painted in the previous palette.
+       Change a colour in the config and every one of them follows. */
+    --c-ink: theme('colors.ink');
+    --c-surface: theme('colors.surface');
+    --c-card: theme('colors.card');
+    --c-raised: theme('colors.raised');
+    --c-line: theme('colors.line');
+    --c-muted: theme('colors.muted');
+    --c-chalk: theme('colors.chalk');
+    --c-accent: theme('colors.accent');
+    --c-accent2: theme('colors.accent2');
+    --c-warn: theme('colors.warn');
+    --c-bad: theme('colors.bad');
+    --c-gold: theme('colors.gold');
+
+    /* THE CLUB RAIL. Stadium Night's one structural device: a 3px bar of the
+       club's own colour down the left edge of every plate, a band across the
+       masthead, a rule under the nav, the underline on the live tab. It is
+       NOT the raw primary. Several curated club primaries (oxblood, midnight,
+       forest — lib/gen/teamLogo.ts) sit near 1.6:1 on this near-black page
+       and a 3px bar of them reads as a smudge rather than as a colour. Lifted
+       toward a cold stadium-light teal, which is enough to make every club
+       legible as structure while still being unmistakably that club's. */
+    --rail: color-mix(in srgb, var(--team-accent) 62%, #7fe9e0 38%);
   }
   @media (prefers-reduced-motion: reduce) {
     :root {
@@ -40,34 +72,95 @@
       --ease-out: linear;
     }
   }
+  /* Stadium Night is a DENSE skin. 13px body against the 14px that came
+     before is the single change that buys the most: a roster row, a cap
+     table and a fact strip all get shorter at once, and more of the board
+     fits on one screen. It is only affordable because the palette moved with
+     it — `muted` on `card` went from 5.52:1 to 8.35:1 in the same pass — so
+     the type got smaller and every pair on the page got MORE legible, not
+     less. Line-height comes down with it (1.4 from 1.5) because Plex's
+     x-height is large enough to carry the tighter setting. */
   body {
     @apply bg-ink text-chalk antialiased;
-    /* Faint yard-line hashmarks instead of a soft SaaS gradient glow —
-       reads as a field under stadium lights, not a generic AI dashboard. */
-    background-image:
-      repeating-linear-gradient(to bottom, rgba(255,255,255,0.028) 0px, rgba(255,255,255,0.028) 1px, transparent 1px, transparent 96px),
-      radial-gradient(circle at 50% -12%, rgba(255,255,255,0.05), transparent 55%);
-    background-attachment: fixed;
+    font-family: theme('fontFamily.sans');
+    font-size: 13px;
+    line-height: 1.4;
   }
-  ::selection { background: rgba(74,222,128,0.25); }
+  /* THE YARD GRID, and why it is a fixed pseudo-element rather than a
+     background-image on body.
+
+     It was `background-attachment: fixed` on body, which paints the texture
+     into the body box — so the grid stopped at the end of the content and a
+     short page showed bare ink below the fold. As a `position: fixed` layer
+     it covers the viewport whatever the document height, and it costs the
+     compositor one layer instead of re-rasterising a fixed background on
+     every scroll frame.
+
+     Both axes now, not just horizontals: a field has yard lines AND hash
+     marks, and the cross-hatch is what stops a 90rem-wide dark page reading
+     as a void. The wash at the top is the stadium light itself, and it is
+     tinted with the club rail rather than plain white — the one place the
+     club's colour reaches the whole page.
+
+     inset:0 with pointer-events:none and z-index:0, so it cannot take a
+     click and cannot enter layout. Every app surface sits above it: see
+     the .min-h-screen rule immediately below. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(90deg, rgba(255,255,255,0.026) 0 1px, transparent 1px 120px),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.016) 0 1px, transparent 1px 120px),
+      radial-gradient(ellipse 90% 45% at 50% -8%, color-mix(in srgb, var(--rail) 16%, transparent), transparent 70%);
+  }
+  /* The app shell above the texture. Without this the fixed layer paints
+     over the page instead of under it. */
+  body > div.min-h-screen { position: relative; z-index: 1; }
+  ::selection { background: color-mix(in srgb, var(--c-accent) 25%, transparent); }
   h1, h2, h3 {
     font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
     font-weight: 700;
-    letter-spacing: 0.01em;
+    /* Oswald is condensed, so it takes MORE tracking than Barlow did to stop
+       a long uppercase heading closing up into a block. */
+    letter-spacing: 0.02em;
   }
 }
 
 @layer components {
+  /* A FLAT PLATE. Stadium Night separates surfaces with a border and a
+     colour step, never with a drop shadow — `shadow-card` is now a 1px inset
+     highlight (tailwind.config.ts) and nothing else. On a near-black page a
+     16px blur under every card read as fog, and fog over a yard grid reads
+     as a rendering fault. Unlike .panel below, .card carries NO club rail:
+     the rail marks a section of the front office, and .card marks one object
+     inside it — a player, a trade offer, a matchup. */
   .card {
     @apply bg-card border border-line rounded-lg shadow-card;
   }
   .card-pad { @apply p-5; }
+  /* Fact tiles are the densest thing in the header strip and the masthead —
+     five or six of them abreast — so they shed most of their padding. The
+     figure inside them got BIGGER in the same pass (fontSize.stat-sm, 1.5rem
+     from 1.25rem); shrinking the box and growing the number is what makes a
+     tile read as a scoreboard cell rather than as a form field. */
   .stat-tile {
-    @apply bg-raised border border-line rounded-md px-3 py-2.5;
+    @apply bg-raised border border-line rounded-md;
+    padding: 0.3rem 0.6rem;
   }
+  /* Buttons speak in the display face. Uppercase Oswald with real tracking
+     is the difference between a control that looks like stadium signage and
+     one that looks like a link with a background — and the tighter box is
+     what lets a button sit inside a 12px table row without setting the row
+     height. */
   .btn {
-    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-2 text-sm font-semibold
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md text-sm
+           font-display font-semibold uppercase
            transition-colors duration-150 disabled:opacity-40 disabled:pointer-events-none;
+    padding: 0.36rem 0.8rem;
+    letter-spacing: 0.06em;
   }
   .btn-primary { @apply btn bg-accent text-ink hover:bg-accent/90; }
   .btn-secondary { @apply btn bg-raised text-chalk border border-line hover:bg-line; }
@@ -88,8 +181,14 @@
     transition-timing-function: var(--ease-out);
   }
   .btn:active:not(:disabled) { transform: translateY(1px); }
+  /* Square, not round, and tight enough to sit inline in a table cell. A
+     pill-shaped chip is a SaaS tag; a hard-cornered one with heavy tracking
+     is a jersey patch, which is what these actually label. */
   .pill {
-    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border;
+    @apply inline-flex items-center text-xs font-bold border;
+    border-radius: 2px;
+    padding: 0.02rem 0.42rem;
+    letter-spacing: 0.04em;
   }
   /* Placeholder sits at full `muted`, not muted/60. On this control's own
      surface (bg-raised) muted/60 composites to 2.81:1 — a placeholder is
@@ -100,20 +199,45 @@
     @apply bg-raised border border-line rounded-md px-3 py-2 text-sm text-chalk placeholder:text-muted
            focus:outline-none focus:ring-1 focus:ring-accent2/60 focus:border-accent2/60;
   }
-  .label-sm { @apply text-xs uppercase tracking-wider text-muted font-medium; }
+  /* Every small-caps label in the app. On the display face at 10px with wide
+     tracking it reads as a broadcast strap rather than as shrunken body copy,
+     and Oswald's narrow set means it fits the same tracking in less width
+     than the body face could. Colour is unchanged: full `muted`, which on the
+     new palette is a long way clear of the 4.5:1 floor on every surface it
+     lands on. */
+  .label-sm {
+    @apply uppercase text-muted font-display font-semibold;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+  }
   /* Broadcast lower-third tab, not a rounded pill — a solid underline bar
      marks the active section instead of a soft hover-only background. */
   .nav-link {
-    @apply relative px-3 py-2 text-sm font-display font-semibold uppercase tracking-wide
+    @apply relative text-sm font-display font-semibold uppercase
            text-muted hover:text-chalk transition-colors;
+    padding: 0.5rem 0.7rem;
+    letter-spacing: 0.11em;
   }
+  /* The lower-third bar. Squared off and thicker (3px, no radius) so it reads
+     as a broadcast underline rather than as a rounded tab indicator, and
+     inset to the item's own padding so it measures the word, not the gap. */
   .nav-link::after {
     content: '';
-    @apply absolute left-3 right-3 -bottom-[1px] h-[2px] bg-transparent rounded-full transition-colors;
+    @apply absolute -bottom-[1px] bg-transparent transition-colors;
+    left: 0.7rem;
+    right: 0.7rem;
+    height: 3px;
   }
   .nav-link:hover::after { @apply bg-line; }
   .nav-link-active { @apply nav-link text-chalk; }
-  .nav-link-active::after { @apply bg-accent; }
+  /* The live tab is marked in the CLUB's colour, not the house green — the
+     rail is the same device that runs down every panel, and the point of it
+     is that the whole front office is that club's. A soft wash of the same
+     colour lifts the tab off the band behind it. */
+  .nav-link-active::after { background: var(--rail); }
+  .nav-link-active {
+    background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--rail) 22%, transparent));
+  }
   /* text-left lives on the table, not on `th`. `.table-clean th` is
      specificity (0,1,1), so a plain `text-right` utility on a header — which
      is (0,1,0) — silently lost to it, and every numeric column in the app
@@ -128,11 +252,49 @@
      the same role, two treatments, on four of the busiest pages. Setting it
      once here is what makes a column of numbers a column. Digits only —
      letters are untouched, so no label or player name shifts. */
-  .table-clean { @apply w-full text-sm border-separate border-spacing-0 text-left;
+  /* THE BOARD. Stadium Night's tables are the densest surface in the app and
+     the one that changed most: a roster, a cap sheet and a draft board are
+     all twenty-odd columns of figures, and the graphite skin set them as a
+     list — one padding, one rule, no vertical structure. Four things make it
+     read as a board instead.
+       1. A banded header on `raised` with a 2px club rail under it, so the
+          head is a strap rather than a row that happens to be bold.
+       2. Zebra striping at 4.2% white — enough to track a row across twenty
+          columns, far too little to read as a colour.
+       3. Column rules between cells. This is the one that does the work: a
+          grid of figures with no verticals is a wall of numbers.
+       4. The hovered row is marked in the club colour AND gains a 3px rail
+          on its first cell, which is the same device as the panel edge. */
+  .table-clean { @apply w-full border-separate border-spacing-0 text-left;
+    font-size: 12px;
     font-variant-numeric: tabular-nums; }
-  .table-clean th { @apply label-sm px-3 py-2 border-b border-line sticky top-0 bg-card; }
-  .table-clean td { @apply px-3 py-2 border-b border-line/60; }
-  .table-clean tr:hover td { @apply bg-raised/50; }
+  .table-clean th {
+    @apply label-sm border-b-2 sticky top-0 text-chalk bg-raised;
+    padding: 0.34rem 0.6rem;
+    border-bottom-color: var(--rail);
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+  }
+  .table-clean td {
+    padding: 0.28rem 0.6rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--c-line) 55%, transparent);
+  }
+  /* The row portrait, not the padding, is what actually sets row height on
+     the roster and draft boards — a 28px crest holds a row open however
+     tight the cells are. The dense skin scales it rather than pretending
+     padding alone did the work. */
+  .table-clean td a > svg { width: 22px; height: 22px; }
+  .table-clean .btn { white-space: nowrap; padding: 0.28rem 0.6rem; }
+  .table-clean tbody tr:nth-child(even) td {
+    background: color-mix(in srgb, #ffffff 4.2%, transparent);
+  }
+  .table-clean td + td, .table-clean th + th {
+    border-left: 1px solid color-mix(in srgb, var(--c-line) 45%, transparent);
+  }
+  .table-clean tbody tr { position: relative; }
+  .table-clean tr:hover td { background: color-mix(in srgb, var(--rail) 13%, transparent); }
+  .table-clean tbody tr:hover td:first-child { box-shadow: inset 3px 0 0 0 var(--rail); }
 
   /* --- Redesign primitives ------------------------------------------------
      Section-based layout (heading + divider) is the default; reach for
@@ -144,25 +306,147 @@
     @apply flex items-center justify-between gap-3 pb-2 border-b border-line/70;
   }
   .section-title {
-    @apply font-display font-bold uppercase tracking-wide text-sm text-chalk;
+    @apply font-display font-bold uppercase text-chalk;
+    font-size: 14px;
+    letter-spacing: 0.09em;
   }
+  /* Wider than .label-sm's own tracking. An eyebrow sits directly above a
+     title in the same face; opening it further is what keeps the two from
+     reading as one block of caps. */
   .section-eyebrow {
     @apply label-sm;
+    letter-spacing: 0.2em;
   }
   .divider { @apply border-t border-line/60; }
 
-  /* Squarer, denser surface for tables/data blocks — distinct from .card's
-     rounder "this is one object" framing. */
-  .panel { @apply bg-card/60 border border-line/70 rounded-md; }
+  /* THE PLATE WITH THE CLUB RAIL. .panel is the app's section container —
+     a table, a chart, a block of controls — and under Stadium Night it is
+     the surface that carries the club's identity. Three decorations, and
+     every one of them is an absolutely-positioned pseudo-element so none of
+     them can enter layout, take a click, or change what is on the page:
+       ::before  the 3px club rail down the left edge
+       ::after   a notched top-right corner
+       > header  a banded gradient with a rail-tinted rule under it
+     Opaque now rather than bg-card/60: the yard grid behind the page shows
+     through a 60% plate as a moire over every table.
+     `position: relative` is load-bearing for all three. */
+  .panel {
+    @apply bg-card border border-line rounded-md;
+    position: relative;
+    box-shadow: none;
+  }
+  .panel::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--rail);
+    opacity: 0.85;
+    pointer-events: none;
+    z-index: 3;
+  }
+  /* The notch is PAINTED, not clipped. A clip-path corner would also cut any
+     tooltip that opens near it — and these panels are full of them — so this
+     is a triangle in the page's own ink laid over the corner instead. */
+  .panel::after {
+    content: '';
+    position: absolute;
+    top: 0; right: 0;
+    width: 0; height: 0;
+    z-index: 4;
+    pointer-events: none;
+    border-style: solid;
+    border-width: 0 13px 13px 0;
+    border-color: transparent var(--c-ink) transparent transparent;
+  }
+  /* A panel's own header row, wherever one exists, becomes a lit band with
+     the club rail bleeding out of its left edge. Matched structurally — the
+     first child that draws a bottom border IS the header — rather than by
+     asking every panel in the app to adopt a new class it does not need. */
+  .panel > div:first-child[class*="border-b"] {
+    position: relative;
+    background: linear-gradient(180deg, var(--c-raised), color-mix(in srgb, var(--c-raised) 55%, var(--c-card)));
+  }
+  .panel > div:first-child[class*="border-b"]::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: -1px;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(90deg, var(--rail), transparent 46%);
+  }
+
+  /* THE MASTHEAD BAND. Every front-office screen opens with PageMasthead
+     (components/ds/PageMasthead.tsx); OnTheClock wears the same plate on
+     draft day. Stadium Night gives both a 5px club band across the top and a
+     raking wash of stadium light across the face, which is what makes the
+     page announce whose front office it is before a word is read.
+
+     Both are pseudo-elements on the container, so the band cannot displace
+     the heading under it and the wash cannot cover the crest watermark —
+     which has its own clipping wrapper in the markup and keeps it. The
+     border drops from 2px of raw club colour to 1px of `line`: at 2px, the
+     several club primaries that sit near 1.6:1 on this page drew a frame
+     nobody could see, and the band above says the same thing legibly. */
+  .masthead {
+    position: relative;
+    border-width: 1px !important;
+    border-color: theme('colors.line') !important;
+  }
+  .masthead::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 5px;
+    z-index: 4;
+    pointer-events: none;
+    border-radius: 2px 2px 0 0;
+    background: linear-gradient(90deg, var(--rail), color-mix(in srgb, var(--rail) 25%, transparent) 62%, transparent);
+  }
+  .masthead::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    background:
+      linear-gradient(100deg, color-mix(in srgb, var(--rail) 22%, transparent), transparent 46%),
+      repeating-linear-gradient(90deg, rgba(255,255,255,0.035) 0 1px, transparent 1px 64px);
+  }
+
+  /* THE STICKY NAV BAND. Lit from the top and closed with a 2px club rule,
+     so the shell reads as the gantry the pages hang off rather than as a
+     strip of links. `position` is deliberately NOT set here — the header is
+     `sticky` in the markup and must stay that way; the ::after anchors to it
+     because a sticky box is already a positioned one. */
+  .app-header {
+    background: linear-gradient(180deg, var(--c-surface), var(--c-ink));
+  }
+  .app-header::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 2px;
+    z-index: 5;
+    pointer-events: none;
+    background: linear-gradient(90deg, var(--rail), transparent 38%);
+  }
 
   /* Big sports numbers — OVR, records, cap space. Always the display face,
      bold, tabular figures so digits don't jiggle across a row. Pair with
      the fontSize.stat-* scale (tailwind.config.ts) or an explicit size. */
   .stat-value {
     font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
-    font-weight: 800;
+    /* 700, not 800: Oswald is condensed enough that its heaviest weight
+       closes the counters of 6, 8 and 9 at fact-tile sizes, and a cap figure
+       that cannot be read is worse than one that is a shade lighter. */
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.01em;
+    /* Tracking goes from negative to slightly positive for the same reason.
+       Barlow needed pulling in; Oswald is already narrow, and pulling it in
+       further ran the digits of a nine-figure cap number into each other. */
+    letter-spacing: 0.005em;
     line-height: 0.95;
   }
 
@@ -181,15 +465,19 @@
      around 1.6:1 against the near-black background and are unreadable as
      small text raw.
 
-     The mix is 50/50 because 60/40 was not enough. Measured across all twenty
-     COLOR_PAIRS primaries (lib/gen/teamLogo.ts) against the three surfaces
-     this class actually lands on — card, raised and ink, plus the 5%
-     team-tinted starter row — 60/40 left six of the twenty short of 4.5:1,
-     bottoming out at 4.04:1 on midnight (#1e1e2e) over `raised`. 50/50 puts
-     the worst case at 5.03:1 and every other team above it. Half the team
-     colour is still unmistakably the team's colour; it is the smallest step
-     that clears the bar, which is why it is not 40/60. */
-  .text-team { color: color-mix(in srgb, var(--team-accent) 50%, white 50%); }
+     The mix was 50% team into pure WHITE, measured against the graphite
+     palette, where 60/40 left six of the twenty COLOR_PAIRS primaries
+     (lib/gen/teamLogo.ts) short of 4.5:1 — bottoming out at 4.04:1 on
+     midnight (#1e1e2e) over `raised`. Stadium Night changes both halves of
+     that sum: the light end is `chalk` rather than raw white, because a
+     club colour mixed into #ffffff on this page is brighter than the
+     headings around it and reads as a highlight rather than as a name; and
+     the three surfaces underneath all got darker. Re-measured across the
+     same twenty primaries on the same surfaces, 45/55 into chalk puts the
+     worst case at 5.31:1 — better than the old 50/50 managed — so the club
+     keeps MORE of its own colour than before and every team still clears the
+     floor. That is why it is 45 and not 50. */
+  .text-team { color: color-mix(in srgb, var(--team-accent) 45%, theme('colors.chalk') 55%); }
 
   /* Rating chip — the proprietary rating shape (RatingBadge). A notched top
      corner instead of a plain rounded square, echoing the shield/hexagon
@@ -228,7 +516,10 @@
 
      Set --scroll-bg on the element when the surface isn't the default card. */
   .scroll-shadow-y {
-    --scroll-bg: #18181b;
+    /* Tracks `card` in tailwind.config.ts — the cover gradients have to match
+       the scroller's own background exactly or the effect shows a seam, and a
+       stale literal here is a seam that survives a whole re-skin. */
+    --scroll-bg: theme('colors.card');
     background:
       linear-gradient(var(--scroll-bg) 30%, transparent) center top,
       linear-gradient(transparent, var(--scroll-bg) 70%) center bottom,

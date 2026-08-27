@@ -54,8 +54,12 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
   const accent = teamId ? generateTeamLogoParams(teamAbbr ?? teamId).primary : undefined;
 
   return (
+    // `masthead` is the skin hook (app/globals.css): it paints the club band
+    // across the top and the raking stadium-light wash across the face, both
+    // as absolutely-positioned pseudo-elements so neither can displace the
+    // heading or the fact strip below.
     <div
-      className="relative rounded-lg border-2 shadow-elevated"
+      className="masthead relative rounded-lg border-2 shadow-elevated"
       style={{
         ['--team-accent' as never]: accent,
         borderColor: accent ? 'var(--team-accent)' : undefined,

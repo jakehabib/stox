@@ -14,7 +14,7 @@ export function OnTheClock({ teamId, abbr, city, round, pick, clock }: {
 
   return (
     <div
-      className="relative overflow-hidden rounded-lg border-2 shadow-elevated"
+      className="masthead relative overflow-hidden rounded-lg border-2 shadow-elevated"
       style={{
         borderColor: 'var(--team-accent)',
         background: 'radial-gradient(ellipse 120% 140% at 0% 50%, color-mix(in srgb, var(--team-accent) 18%, transparent), transparent 70%)',
