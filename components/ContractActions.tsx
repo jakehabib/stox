@@ -72,7 +72,7 @@ interface ContractShape {
  */
 export function ContractActions({
   leagueId, playerId, playerName, ovr, position, age, contract,
-  availableSpaceForExtension, capSpace, capMode, resignHref, tag, option,
+  availableSpaceForExtension, capSpace, capMode, resignHref, tag, option, ledgerYear,
 }: {
   leagueId: string; playerId: string; playerName: string; ovr: number; position: string; age: number;
   contract: ContractShape; availableSpaceForExtension: number; capSpace: number; capMode: CapMode;
@@ -99,6 +99,13 @@ export function ContractActions({
    * cannot be given yet — the same sentence the server refuses with.
    */
   option: { blocked: string | null; decided: 'EXERCISED' | 'DECLINED' | null; optionYear: number } | null;
+  /**
+   * The year the contract LEDGER is currently written in — pass-through for
+   * the extension screen's copy of the ledger, which labels its rows with it.
+   * It is not `League.seasonYear`; see the header on `ledgerYear` in the
+   * player page, which resolves it once through `capChargeYear`.
+   */
+  ledgerYear: number;
 }) {
   const [mode, setMode] = useState<'none' | 'extend' | 'restructure'>('none');
   const cap = useDeltaWatch(capSpace);
@@ -111,7 +118,7 @@ export function ContractActions({
         <ExtendContractForm
           leagueId={leagueId} playerId={playerId} ovr={ovr} position={position} age={age}
           availableSpace={availableSpaceForExtension} capMode={capMode}
-          contract={contract} onDone={done}
+          contract={contract} ledgerYear={ledgerYear} onDone={done}
         />
       </div>
     );

@@ -166,6 +166,27 @@ export default async function PlayerPage({
   const shownSeasonStats = showPlayoffs ? playoffStats : seasonStats;
   const shownCareerStats = showPlayoffs ? careerPlayoffStats : careerStats;
   const hit = capHit(player.contract, settings.capMode);
+
+  /**
+   * THE YEAR THIS MAN'S CONTRACT IS CURRENTLY CHARGED TO — every money label
+   * on this page, and NOT `League.seasonYear`.
+   *
+   * `ageContractsForYear` steps the contract ledger onto the new league year
+   * at the final whistle; the league clock waits for RESET_STANDINGS in
+   * OFFSEASON week 3. Through OFFSEASON weeks 1-2 the two disagree by a year,
+   * and every figure on this page that comes out of `capHit` /
+   * `capHitSchedule` / `yearsRemaining` is already written in the LEDGER's
+   * year. Labelling those with the clock dated the whole card a year early:
+   * the "Cap Hit" headline, the expiry under Years Left, the sentence under
+   * the restructure quote and every row of the contract ledger below it.
+   *
+   * The fifth-year-option block further down already counted from here (see
+   * the comment on `optionYear`) — this is the same boundary, resolved once
+   * for the page instead of once per reader. It is also the same year
+   * `teamCapSummary` reports as `capYear` (bookYearFor, lib/cap-summary.ts),
+   * so the cap space quoted beside these figures is written in it too.
+   */
+  const ledgerYear = capChargeYear({ phase: league.phase, week: league.week, seasonYear: league.seasonYear });
   const capSummary = userTeam && settings.capMode !== 'OFF'
     ? await teamCapSummary(userTeam.id, league.seasonYear, settings.capMode)
     : null;
@@ -691,7 +712,7 @@ export default async function PlayerPage({
         // figure this strip carried for them before.
         settings.capMode !== 'OFF' && player.contract
           ? {
-              label: `Cap Hit ${league.seasonYear}`,
+              label: `Cap Hit ${ledgerYear}`,
               value: formatMoney(hit),
               detail: capTotal > 0 ? `${((hit / capTotal) * 100).toFixed(1)}% of cap` : undefined,
               tip: tip('capHit'),
@@ -712,7 +733,7 @@ export default async function PlayerPage({
         {
           label: 'Years Left',
           value: player.contract ? String(player.contract.yearsRemaining) : '—',
-          detail: player.contract ? `expires after ${league.seasonYear + Math.max(0, player.contract.yearsRemaining - 1)}` : 'no contract',
+          detail: player.contract ? `expires after ${ledgerYear + Math.max(0, player.contract.yearsRemaining - 1)}` : 'no contract',
           tip: tip('expiringContract'),
         },
       ];
@@ -832,8 +853,7 @@ export default async function PlayerPage({
       // would have disagreed by a year on the phase the owner asked for.
       optionYear: decided === 'EXERCISED'
         ? c.signedYear + c.years - 1
-        : capChargeYear({ phase: league.phase, week: league.week, seasonYear: league.seasonYear })
-          + Math.max(1, c.yearsRemaining),
+        : ledgerYear + Math.max(1, c.yearsRemaining),
     };
   })();
 
@@ -1437,10 +1457,11 @@ export default async function PlayerPage({
                   // that gate this block are the ones tagCard resolves under.
                   tag={tagCard!}
                   option={optionCard}
+                  ledgerYear={ledgerYear}
                 />
                 {restructureFrees > 0 && (
                   <p className="text-sm text-muted">
-                    A maximum restructure takes {formatMoney(restructureFrees)} off {league.seasonYear} and moves it into the
+                    A maximum restructure takes {formatMoney(restructureFrees)} off {ledgerYear} and moves it into the
                     {player.contract.yearsRemaining > 2 ? ' years' : ' year'} after it.
                   </p>
                 )}
@@ -1455,7 +1476,7 @@ export default async function PlayerPage({
             <ContractLedger
               contract={player.contract}
               capMode={settings.capMode}
-              seasonYear={league.seasonYear}
+              seasonYear={ledgerYear}
             />
           </div>
         </div>

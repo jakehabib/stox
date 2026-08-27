@@ -68,7 +68,7 @@ const OPENING_STRUCTURE: DealStructure = { escalation: DEFAULT_ESCALATION, voidY
  * up, year by year — and that was always the `details` below it, which is the
  * sentence with the figures attached rather than the sentence.
  */
-export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDone }: {
+export function ExtendContractForm({ leagueId, playerId, capMode, contract, ledgerYear, onDone }: {
   leagueId: string; playerId: string; capMode: CapMode;
   /**
    * The deal this extension would REPLACE. Display only — the session resolves
@@ -76,6 +76,20 @@ export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDo
    * screen can show what is being torn up, in full, before anything is signed.
    */
   contract: ContractLike & { guaranteed: number; voidYears?: number };
+  /**
+   * THE YEAR THE LEDGER BELOW IS WRITTEN IN, and it is NOT
+   * `session.ctx.seasonYear` — which this used to pass, and which is
+   * `League.seasonYear`, the league CLOCK.
+   *
+   * `ageContractsForYear` steps the contract ledger onto the new league year
+   * at the final whistle while the clock waits for RESET_STANDINGS, so through
+   * OFFSEASON weeks 1-2 the two are a year apart and every row of "the deal he
+   * is on now" was headed a year early. `ContractLedger` documents the hazard
+   * on its own prop; the page resolves the year once through `capChargeYear`
+   * and hands it down, so the ledger here and the ledger on the contract tab
+   * behind it cannot disagree.
+   */
+  ledgerYear: number;
   onDone?: () => void;
   /** Accepted from the old call site; the live figures all come from the session now. */
   ovr?: number; position?: string; age?: number; availableSpace?: number;
@@ -128,7 +142,7 @@ export function ExtendContractForm({ leagueId, playerId, capMode, contract, onDo
           <summary className="text-sm cursor-pointer select-none">
             The deal he is on now, before anything is added
           </summary>
-          <ContractLedger contract={contract} capMode={capMode} seasonYear={session.ctx.seasonYear} className="pt-3" />
+          <ContractLedger contract={contract} capMode={capMode} seasonYear={ledgerYear} className="pt-3" />
         </details>
       }
       structureSlot={
