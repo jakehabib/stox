@@ -196,16 +196,21 @@ export function NegotiationPanel({
 
   // WHAT HIS ROOM IS AFTER, AND NEVER WHAT IT WAS BEFORE.
   //
-  // `gate.capSpace` is not the club's cap room. `resolveNegotiationSession`
-  // adds the incumbent's current cap hit back onto it (`+ oldHit`) because the
-  // signing replaces that deal, which is correct for the gate — it has to
-  // measure what `assertCapRoom` will measure — and wrong as a displayed
-  // figure: measured at $48.5M on one re-sign while the page header for the
-  // same team said $32.7M. The room AFTER is right either way, because the
-  // refund is real; only the before was ever wrong. So the panel prints the
-  // after and nothing else, and a before/after pair here would be a lying
-  // metric the moment somebody added it. (The honest "before" exists — it is
-  // `teamCapSummary().capSpace`, which the page header is already showing.)
+  // This paragraph used to say that `gate.capSpace` was not the club's cap room
+  // — that `resolveNegotiationSession` added the incumbent's current hit back
+  // onto it, so it read $48.5M on one re-sign while the page header for the
+  // same club said $32.7M. That has not been true since the credit was split
+  // into its own field: `gate.capSpace` is now `teamCapSummary().capSpace`
+  // with nothing folded in, the same figure the header prints, and the credit
+  // lives on `gate.capCreditBack` where the gate can see its sign.
+  //
+  // The rule the paragraph was protecting survives the correction, so the panel
+  // still prints the after and nothing else: a before/after pair invites a
+  // reader to subtract, and the difference between them is `capDelta` — a
+  // figure with two more terms in it than the eye can see, which is exactly how
+  // `useNegotiation` came to draw this line by subtracting the wrong one (see
+  // there, and `OfferDecision.capDelta`). The honest before is on the page
+  // header already.
   const spaceAfter = n.spaceAfter;
 
   return (

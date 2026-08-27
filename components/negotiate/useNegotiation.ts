@@ -187,7 +187,23 @@ export function useNegotiation({ initialSession, structure, onOffer, onSigned, o
   const appending = ctx.currentContract !== null && ctx.controlYears > 0;
   const totalTerm = decision.contractYears;
   const capOn = gate.capMode !== 'OFF';
-  const spaceAfter = gate.capSpace - decision.year1CapHit;
+  /*
+   * THE ROOM AFTER, OFF THE ONE FIGURE THE CAP TURNS ON.
+   *
+   * This was `gate.capSpace - decision.year1CapHit`, which is the club's room
+   * less the WHOLE new cap hit — right only while `capSpace` had the
+   * incumbent's current hit folded into it, and it stopped having it the day
+   * that credit was split into `gate.capCreditBack` (lib/negotiation.ts). The
+   * line then charged the club for a deal it is already paying for: measured on
+   * a $22.8M man extended at a club with $72.7M of room, the panel printed
+   * $61.2M of room after and the ledger came out at $84.0M — his whole cap hit,
+   * counted twice, on the screen a GM plans his offseason on. Worse, it read as
+   * a cost: the extension frees $11.3M and the panel said it spends $11.5M.
+   *
+   * `decision.capDelta` is what `decideOffer` blocks on and what
+   * `assertCapRoom` is handed on submit — one figure, three readers.
+   */
+  const spaceAfter = gate.capSpace - decision.capDelta;
 
   const shownVerdict: Verdict = talksDead
     ? 'COLD'

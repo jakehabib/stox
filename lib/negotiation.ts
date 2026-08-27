@@ -2,7 +2,7 @@ import { Rng } from './rng';
 import {
   buildContract, buildExtension, capHit, capHitSchedule, CAP_GATE_TOLERANCE, deadMoneyOnCut, formatMoney,
   guaranteedMoney as totalGuaranteed,
-  willingnessHorizon, prorationYears as capProrationYears, TERM, type ContractLike,
+  willingnessHorizon, strandedVoidBonus, TERM, type ContractLike,
 } from './cap';
 import { CAP, POSITION_AGE_PROFILE, DEFAULT_AGE_PROFILE, type Position } from './tuning';
 import { CapMode } from './types';
@@ -1668,6 +1668,43 @@ export interface NegotiationGate {
    * does this ADD money, and if so does the added money fit.
    */
   capCreditBack: number;
+  /**
+   * ---------------------------------------------------------------------
+   * THE BONUS THE OLD DEAL LEAVES BEHIND WHEN THIS ONE TEARS IT UP.
+   * ---------------------------------------------------------------------
+   * Zero on the open market, zero on an extension, and zero on any deal that
+   * APPENDS — every one of those either has no old contract or carries its
+   * unamortised bonus forward into the new row (`buildExtension`). It is
+   * non-zero on exactly one shape: a WALK-YEAR RE-SIGN, where the deal has
+   * run out (`yearsRemaining === 0`), `extendContract` takes its replace
+   * branch, and the bonus that no season ever billed accelerates onto this
+   * season as a `CapCharge` the instant the new deal is signed.
+   *
+   * IT HAS TO BE HERE BECAUSE THE GATE IS A PROMISE. `decideOffer` refuses
+   * on `year1CapHit - capCreditBack`, and the server refuses on
+   * `newHit + stranded - oldHit`. Those were the same test only while the
+   * stranded figure was zero — which is every deal WITHOUT void years on it,
+   * which is why nothing surfaced this. Measured on a 3-year deal with two
+   * void years and $18.0M of bonus, fully played:
+   *
+   *     the meter said the re-sign added   $833K
+   *     the server charged                 $8.03M
+   *     the difference                     $7.20M — the whole stranded bonus
+   *
+   * With the club's room squeezed between the two, the panel showed no cap
+   * block at all and the submit came back "Re-signing blocked by the salary
+   * cap — adds $7.97M against $4.43M of room": a refusal quoting a figure the
+   * screen beside it had never shown. That is the lying metric in the one
+   * place it costs a save — a GM planning his re-signs against a number the
+   * game does not charge.
+   *
+   * The stranded bonus is what makes letting a man walk expensive, and it is
+   * booked identically by every other exit from that contract — the tag, the
+   * cut, the trade and the walk itself (see KEEPING HIM MUST NOT BE CHEAPER
+   * THAN LOSING HIM, lib/freeagency.ts). The re-sign is the fourth, and this
+   * is what puts it on the meter as well as on the ledger.
+   */
+  capAcceleratesOnReplace: number;
   minSalary: number;
   /** Slider ceiling. Not a rule — just where the control stops. */
   maxSalary: number;
@@ -2080,8 +2117,43 @@ export type Block = 'FLOOR' | 'TERM' | 'WILLING' | 'CAP';
 
 export interface OfferDecision {
   evaluation: OfferEvaluation;
-  /** Year-1 cap hit this exact offer would carry. The number the cap gate uses. */
+  /**
+   * Year-1 cap hit this exact offer would carry. NOT the number the cap gate
+   * uses on a man already on the books — see `capDelta`, which is.
+   */
   year1CapHit: number;
+  /**
+   * ===========================================================================
+   * WHAT THIS DEAL ADDS TO THIS SEASON — the one figure the cap turns on, and
+   * the only one anything may subtract from the club's room.
+   * ===========================================================================
+   * `year1CapHit`, less the hit on the deal it replaces or absorbs, plus
+   * whatever that deal STRANDS when it is torn up (`capCreditBack` and
+   * `capAcceleratesOnReplace` on the gate). It is exactly the `delta`
+   * `assertCapRoom` is handed on the way in, which is why it is computed once,
+   * here, and carried out rather than reassembled by each screen.
+   *
+   * IT IS CARRIED BECAUSE A SCREEN REASSEMBLED IT AND GOT IT WRONG.
+   * `useNegotiation` drew its "Cap space after" as
+   * `gate.capSpace - decision.year1CapHit`, which was right for exactly as long
+   * as `capSpace` had the incumbent's hit folded into it — and it stopped
+   * having it the day the credit was split out into its own field (see
+   * `capCreditBack`). After that the line charged the club the whole new hit
+   * against room that no longer contained the old one: the incumbent's cap hit,
+   * double-counted, on the primary contract screen in the game.
+   *
+   * MEASURED, on a man carrying a $22.8M hit with two years left, extended at
+   * $24.0M/yr for three more, at a club with $72.7M of room:
+   *
+   *     "Cap space after" on the panel     $61.2M
+   *     the ledger, after actually signing $84.0M
+   *     -------------------------------------------
+   *     wrong by                           $22.8M   — his whole cap hit
+   *
+   * And wrong in the direction that stops a GM making the move: the extension
+   * FREES $11.3M, and the panel showed it costing $11.5M.
+   */
+  capDelta: number;
   capHitSchedule: number[];
   /** Everything the resulting contract is worth — on an extension, old years included. */
   totalValue: number;
@@ -2278,23 +2350,26 @@ export function decideOffer(
   // on an extension that converts salary into bonus the difference is
   // routinely NEGATIVE. See `capCreditBack` for what reading the gross figure
   // here cost. Same subtraction `assertCapRoom` performs on the way in.
-  const capDelta = year1CapHit - gate.capCreditBack;
+  // ...PLUS whatever the old deal STRANDS when this one replaces it, which is
+  // the third term `assertCapRoom` is handed on a walk-year re-sign and the
+  // one this line used to be missing. See `capAcceleratesOnReplace`.
+  const capDelta = year1CapHit - gate.capCreditBack + gate.capAcceleratesOnReplace;
   const totalValue = c.baseSalaries.reduce((a, b) => a + b, 0) + c.signingBonus;
   // What he is agreeing to, as against what the contract is worth in total.
   // On a fresh deal they are the same figure; on an extension they are not,
   // and the panel prints both under their own names.
   const newMoneyValue = ext ? ext.newMoneyTotal : totalValue;
   const contractYears = c.years;
-  // The shared function, not a second copy of the rule. This was
-  // `Math.min(contractYears + structure.voidYears, 5)` — the five-year ceiling
-  // written out a second time, in a second file, against the raw slider rather
-  // than the clamped contract. CAP.MAX_PRORATION_YEARS moving would have left
-  // it behind, and the panel would have quoted stranded money the ledger beside
-  // it disagreed with.
-  const windowYears = capProrationYears(priced);
-  const strandedVoidMoney = priced.voidYears > 0
-    ? Math.max(0, c.signingBonus - Math.round(c.signingBonus / windowYears) * contractYears)
-    : 0;
+  // THE SHARED FUNCTION, and this is the second time this line has been pulled
+  // back onto one. It was `Math.min(contractYears + structure.voidYears, 5)` —
+  // the five-year ceiling written out again, in a second file, against the raw
+  // slider rather than the clamped contract — and then it was the whole
+  // stranded-bonus formula written out again beside it. Both spellings agreed
+  // with the ledger only by hand; `strandedVoidBonus` (lib/cap.ts) is what the
+  // dead-money runway itemises, what the contract ledger draws, and what the
+  // season actually writes when the deal runs out. The panel quotes that or it
+  // quotes a number the game does not use.
+  const strandedVoidMoney = strandedVoidBonus(priced);
 
   let blocked: Block | null = null;
   let reason: string | null = null;
@@ -2429,6 +2504,7 @@ export function decideOffer(
   return {
     evaluation,
     year1CapHit,
+    capDelta,
     capHitSchedule: schedule,
     totalValue,
     newMoneyValue,
@@ -2522,7 +2598,11 @@ export function sessionFingerprint(s: NegotiationSession): string {
     // negotiation as the room is — a restructure or a trade between opening
     // the panel and pressing the button moves it, and the meter was drawn
     // against the old one.
-    s.gate.capMode, s.gate.capSpace, s.gate.capCreditBack, s.gate.minSalary, s.gate.maxYears,
+    // ...all THREE halves, now that a walk-year re-sign's stranded bonus is a
+    // term of the gate: a restructure between opening the panel and pressing
+    // the button moves it too.
+    s.gate.capMode, s.gate.capSpace, s.gate.capCreditBack, s.gate.capAcceleratesOnReplace,
+    s.gate.minSalary, s.gate.maxYears,
     // THE WHOLE RIVAL PACKAGE, not just its headline. It is scored now, so a
     // rival who dropped a year or moved his guarantee has changed the contest
     // the meter was describing every bit as much as one who raised his bid.

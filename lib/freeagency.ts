@@ -3,7 +3,7 @@ import { Rng, clamp } from './rng';
 import { AI, CAP, LEAGUE, FREE_AGENCY, ROSTER_TARGETS, Position, rosterMinFor } from './tuning';
 import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
-import { askingPrice, marketValue, buildContract, suggestedYears, capHit, capSavingsOnCut, deadMoneyOnCut, formatMoney, guaranteedMoney, maxYearsForAge } from './cap';
+import { askingPrice, marketValue, buildContract, suggestedYears, capHit, capSavingsOnCut, deadMoneyOnCut, formatMoney, guaranteedMoney, maxYearsForAge, unamortizedBonus } from './cap';
 import { buildScoutedView } from './scouting';
 import { loadDynastyProfile, parseSkills, scoutingModsFor, signBandMultFor } from './dynasty';
 import {
@@ -2820,6 +2820,28 @@ export async function resolveNegotiationSession(opts: {
   // over the cap, a deal that LOWERED a man's hit was refused. The full
   // account, with the measurement, is on `capCreditBack` in lib/negotiation.ts.
   const oldHit = incumbent && player.contract ? capHit(player.contract, capMode) : 0;
+  /*
+   * AND THE THIRD TERM OF THE GATE: what the old deal STRANDS if this one
+   * replaces it rather than appending to it.
+   *
+   * `extendContract` branches on the contract, not on the screen — a deal with
+   * years left is appended by `signExtension`, which CARRIES the unamortised
+   * bonus into the new row and charges the gate `newHit - oldHit`. A deal that
+   * has run out is REPLACED, and its bonus accelerates as a CapCharge in the
+   * same transaction, so that gate is charged `newHit + stranded - oldHit`.
+   * The meter was drawn from the first form on both, and on a walk-year deal
+   * with void years the two differ by the whole stranded bonus — $7.20M on the
+   * shape measured in `capAcceleratesOnReplace` (lib/negotiation.ts), where
+   * the panel showed no block and the submit came back refused.
+   *
+   * The same test `extendContract` branches on, written once here and read by
+   * `decideOffer`, so the meter and the write cannot disagree about which of
+   * the two shapes this offer is.
+   */
+  const replacing = incumbent && player.contract !== null && player.contract.yearsRemaining <= 0;
+  const capAcceleratesOnReplace = replacing && capMode !== 'OFF'
+    ? unamortizedBonus(player.contract, capMode)
+    : 0;
   const capSpace = capMode === 'OFF'
     ? Number.MAX_SAFE_INTEGER
     : (await teamCapSummary(teamId, seasonYear, capMode)).capSpace;
@@ -2846,6 +2868,7 @@ export async function resolveNegotiationSession(opts: {
     // Nothing to credit on the open market: he is not on your books, so the
     // whole year-1 hit is new money and the gate tests it gross.
     capCreditBack: capMode === 'OFF' ? 0 : oldHit,
+    capAcceleratesOnReplace,
     minSalary: CAP.MIN_SALARY,
     // The ceiling has to clear a rival's bid, or the one control that could
     // win the auction would stop short of the number that wins it. A re-sign
