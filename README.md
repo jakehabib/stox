@@ -727,6 +727,69 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-27 — Money conservation is now a check you run before you share a
+  build, and it found three ways the game was telling a GM the wrong price.**
+  `npm run check:money` (`scripts/checkMoneyConservation.ts`), or
+  `npm run check:cap` for the whole family in order. Nine clauses over a league
+  it builds and destroys: a trade conserves the bonus and moves both ledgers by
+  exactly `tradeCapEffect`; the gate quotes the figure the executor writes; a
+  release costs `deadMoneyOnCut` exactly once; a SEQUENCE conserves —
+  restructure twice, restructure then extend, tag then extend, trade a man
+  mid-restructure-year, then release him — because every defect in this area's
+  history was found in one mutation examined alone and a save is destroyed by
+  the second; the cap sheet's first column reconciles against the masthead tile
+  line for line; no contract in the league carries impossible money; every
+  charge files in the book year on both sides of the offseason roll; and the
+  negotiation meter's promise is held against the ledger it lands on. About
+  9,000 assertions a run, and **it proves it can fail every time**: a knowingly
+  false claim, the undefined-vs-undefined trap, and a deliberately misspelled
+  column must produce exactly two failures or the run is failed outright. It
+  builds its own league, samples blind — `id` order, never rating order — and
+  deletes by collected id, never by name.
+
+- **2026-08-27 — The negotiation panel drew two cap figures the ledger did not
+  recognise.** `16cb7c2`. `decideOffer` draws the meter on every drag of a
+  slider and `assertCapRoom` refuses on submit, and they were not one decision.
+  A walk-year re-sign is the one shape `extendContract` REPLACES rather than
+  appends to, and the replaced deal's stranded void bonus accelerates in the
+  same transaction; the meter priced only `newHit - oldHit`. On a 3-year deal
+  with two void years and $18.0M of bonus it said the re-sign added **$833K**
+  while the server charged **$8.03M**, showed no cap block, and then refused on
+  submit quoting a figure the screen had never shown. Separately, "Cap space
+  after" was `capSpace - year1CapHit`, which was right only while `capSpace` had
+  the incumbent's hit folded into it — it stopped having it when that credit
+  became its own field. On a $22.8M man extended at a club with $72.7M of room
+  the panel promised **$61.2M** of room and the ledger gave **$84.0M**: his whole
+  cap hit counted twice, and an extension that FREES $11.3M reading as one that
+  spends $11.5M. `capDelta` is now computed once and read by the block, the
+  refusal sentence and the room line alike.
+
+- **2026-08-27 — Five spellings of the void-year bill and four readings of the
+  league-minimum floor, pulled back onto one each.** `e0516b9`. Neither was
+  producing a wrong number; both are the shape that has produced wrong numbers
+  here repeatedly. `strandedVoidBonus` moves to `lib/cap.ts` and the runway, the
+  contract ledger, the negotiation panel and the pending-cap chip read it
+  instead of each spelling it out — one of them in a different form that agreed
+  only up to a rounding dollar. The restructure panel's convertible ceiling was
+  `currentBase - 1_000_000`, the league minimum as a literal in a file that
+  already imports `CAP`, and `maxRestructureRelief` had it written out again;
+  both now call `convertibleBase`, whose own comment records why it exists.
+
+- **2026-08-27 — A trade charged the acquiring club a year of proration its cap
+  hit had not contained for two seasons.** `ab779fd`. `tradeCapEffect` took a
+  flat year of signing-bonus proration off the current cap hit to find the base
+  salary that travels, but `capHit` only carries proration while
+  `yearIndex < prorationYears` — the bonus amortises over five seasons and no
+  more. On a 7-year deal in its seventh season with $15.7M of bonus the
+  acquiring club's cap moved **$7.90M** while the function reported **$4.76M**;
+  on a $27.9M bonus the same shape reported **minus $80K**, so acquiring a
+  $5.50M contract read as freeing money. `tradeCapDeltas` is what
+  `assertCapRoom` enforces, so it was not merely drawn but was the rule — a club
+  with $4M of room could be handed a $7.9M contract with nothing refusing it —
+  and the same call draws the trade screen's "space after" and backs the AI's
+  own cap refusal. `prorationThisYear` is now the one derivation, read by
+  `capHit` and `tradeCapEffect` alike.
+
 - **2026-08-27 — Every Server Action is now walked by a test that tries to
   break in, and it runs on one command.** `npm run audit:actions`
   (`scripts/actionGuardAudit.ts`). It DISCOVERS the surface rather than listing

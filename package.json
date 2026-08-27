@@ -14,7 +14,8 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:migrate:status": "prisma migrate status",
     "sim:health": "tsx scripts/simHealth.ts",
-    "audit:actions": "tsx scripts/actionGuardAudit.ts",
+    "check:money": "tsx scripts/checkMoneyConservation.ts",
+    "check:cap": "tsx scripts/checkRestructure.ts && tsx scripts/checkRestructureWrite.ts && tsx scripts/checkFranchiseTag.ts && tsx scripts/checkReSign.ts && tsx scripts/checkFifthYearOption.ts && tsx scripts/checkMoneyConservation.ts",
     "postinstall": "prisma generate"
   },
   "allowScripts": {
