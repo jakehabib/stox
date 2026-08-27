@@ -564,7 +564,13 @@ export default async function ScoutingPage({ params, searchParams }: {
               </span>
               <span className="inline-flex items-center gap-1">
                 Band
-                <Tooltip text={tip('draftBand')} />
+                {/* Last item of a legend that runs to the right-hand edge of
+                    the page, so the bubble opens INWARD from its own right
+                    edge. Centred, half of an 18rem bubble hangs past the
+                    viewport — and because the bubble is laid out whether or
+                    not anyone is hovering it, that was a permanent 106px of
+                    horizontal scroll on this route, measured at 1440. */}
+                <Tooltip text={tip('draftBand')} align="end" />
               </span>
             </span>
           </div>

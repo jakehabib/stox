@@ -813,7 +813,10 @@ function PhilosophyBadges({ p }: { p: PhilosophySummary }) {
       </span>
       <span className="pill border-line text-muted inline-flex items-center gap-1">
         {p.pickPreference}
-        <Tooltip text="This GM's bias between draft picks and immediate talent when the value is otherwise close — it doesn't change what they'll accept, only which side of an even trade they lean toward." />
+        {/* Last pill of a row that ends at the right-hand edge of the panel,
+            so it opens inward — a centred bubble here was 15px of permanent
+            horizontal page scroll on the Trade Center. */}
+        <Tooltip align="end" text="This GM's bias between draft picks and immediate talent when the value is otherwise close — it doesn't change what they'll accept, only which side of an even trade they lean toward." />
       </span>
     </div>
   );

@@ -110,7 +110,7 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
         <div className={`relative border-t border-line/60 grid grid-cols-2 sm:grid-cols-3 divide-x divide-line/40 bg-ink/30 ${
           ({ 1: 'lg:grid-cols-1', 2: 'lg:grid-cols-2', 3: 'lg:grid-cols-3', 4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5', 6: 'lg:grid-cols-6' } as Record<number, string>)[facts.length] ?? 'lg:grid-cols-5'
         }`}>
-          {facts.map((f) => {
+          {facts.map((f, i) => {
             const body = (
               <>
                 {/* Opens UPWARD, and must: this whole band sits inside the
@@ -119,7 +119,24 @@ export function PageMasthead({ teamId, teamAbbr, eyebrow, title, subtitle, actio
                     label there is always masthead to open into. */}
                 <div className="label-sm inline-flex items-center gap-1.5">
                   {f.label}
-                  {f.tip && <Tooltip text={f.tip} />}
+                  {/* THE END TILES OPEN INWARD. This strip spans the full width
+                      of the page, so the first tile's trigger sits against the
+                      left edge of the viewport and the last one's against the
+                      right — and a centred 18rem bubble hangs half of itself
+                      off whichever edge it is nearest. It is not only ugly:
+                      the bubble is laid out whether or not anyone is hovering
+                      it, so the overhang on the right gives the page a
+                      permanent horizontal scrollbar. Measured at 1440 before
+                      this: 106px of document overflow on the Scouting
+                      Department, 13 on Analytics, and a left-edge bubble on
+                      the Cap sheet starting 22px off the screen.
+
+                      `align` is the control the Tooltip already carries for
+                      exactly this, and one tile is only ever at one end, so
+                      the middle of the strip keeps the centred bubble it had.
+                      A single-fact strip takes `start` and opens rightward,
+                      which is the only direction it can. */}
+                  {f.tip && <Tooltip text={f.tip} align={i === 0 ? 'start' : i === facts.length - 1 ? 'end' : 'center'} />}
                 </div>
                 <div className={`stat-value text-stat-sm leading-none mt-1 ${f.color ?? ''}`}>{f.value}</div>
                 {f.detail && <div className="text-[11px] text-muted mt-1">{f.detail}</div>}
