@@ -1,6 +1,6 @@
 import { prisma } from './db';
 import { CapMode } from './types';
-import { ContractLike, capHit, formatMoney, proration } from './cap';
+import { ContractLike, capHit, formatMoney, strandedVoidBonus } from './cap';
 import { teamCapSummary } from './cap-summary';
 import { capForLeague, type LeagueCapFields } from './leagueYear';
 
@@ -142,21 +142,18 @@ export function expiringCapCommitment(
 }
 
 /**
- * THE BONUS A VOID YEAR PUSHED PAST THE END OF THE DEAL, which lands as a real
- * charge the day the contract runs out.
+ * THE BONUS A VOID YEAR PUSHED PAST THE END OF THE DEAL, re-exported from
+ * lib/cap.ts where it now lives beside the rest of the contract arithmetic.
  *
- * Charged so far is `proration x the real years actually played`; whatever is
- * left of the signing bonus was never billed to anybody, and void years are
- * borrowing against exactly that. `releaseUnresignedExpiringContracts`
- * (lib/season.ts) is what WRITES it — this is the same arithmetic read a press
- * early so the header can say the release is not free. Deliberately not gated
- * on `CapMode`: neither is the write, and a save switched over from REALISTIC
- * still owes what its old deals stranded.
+ * It was written out here, and again in the dead-money runway, and again in the
+ * negotiation panel, and again on the contract ledger, and again in the season's
+ * own write. The name stays exported from this module because the pending-cap
+ * chip's callers import it from here; the RULE has one implementation. See the
+ * block above `strandedVoidBonus` in lib/cap.ts for what five copies of it
+ * were costing.
  */
-export function strandedVoidBonus(c: ContractLike | null | undefined): number {
-  if (!c || !c.voidYears || c.voidYears <= 0) return 0;
-  return Math.max(0, c.signingBonus - proration(c) * c.years);
-}
+export { strandedVoidBonus } from './cap';
+
 
 /** Money in a sentence: "$9.1M", never "-$9.1M" — the clause carries the direction. */
 const money = (n: number) => formatMoney(Math.abs(n));

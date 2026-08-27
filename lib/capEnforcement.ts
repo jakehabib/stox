@@ -1,11 +1,12 @@
 import { prisma } from './db';
 import { CapMode } from './types';
-import { CAP, ONE_MAN_JOB, Position, canonicalPosition } from './tuning';
-import { readJson, writeJson } from './json';
+import { ONE_MAN_JOB, Position, canonicalPosition } from './tuning';
+import { writeJson } from './json';
 import {
   CAP_GATE_TOLERANCE,
   capHit,
   capSavingsOnCut,
+  convertibleBase,
   deadMoneyOnCut,
   formatMoney,
   marketValue,
@@ -247,10 +248,13 @@ export function maxRestructureRelief(
   seasonYear: number,
 ): { frees: number; deadMoney: number; convertible: number } {
   if (capMode !== 'REALISTIC') return { frees: 0, deadMoney: 0, convertible: 0 };
-  const bases = readJson<number[]>(contract.baseSalaries, []);
-  const yearIdx = Math.max(0, contract.years - contract.yearsRemaining);
-  const currentBase = bases[yearIdx] ?? 0;
-  const convertible = Math.max(0, currentBase - CAP.MIN_SALARY);
+  // `convertibleBase`, not this year's base less CAP.MIN_SALARY written out
+  // again here. The relief quoted in a cap refusal is a promise — "restructure
+  // him to free $X" — and the move a GM then makes runs through
+  // `restructureContract`, which clamps at that function. A second reading of
+  // the floor is a second chance to quote a figure the write path will not
+  // honour, which is the failure this whole module exists to prevent.
+  const convertible = convertibleBase(contract);
   if (convertible <= 0) return { frees: 0, deadMoney: 0, convertible: 0 };
 
   const next = computeRestructure(contract, convertible, { nowYear: seasonYear });

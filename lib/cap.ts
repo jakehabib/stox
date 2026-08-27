@@ -430,6 +430,36 @@ export function unamortizedBonus(c: ContractLike | null | undefined, mode: CapMo
 }
 
 /**
+ * THE BONUS A VOID YEAR PUSHED PAST THE END OF THE DEAL — the bill that lands
+ * the day the contract actually runs out.
+ *
+ * Charged so far is `proration x the REAL years`, the seasons somebody actually
+ * played; whatever is left of the signing bonus was borrowed against years that
+ * are not seasons at all, and it accelerates in one lump the moment the deal
+ * ends. `releaseUnresignedExpiringContracts` (lib/season.ts) is what WRITES it.
+ *
+ * NOT GATED ON `CapMode`, deliberately: neither is the write, and a save
+ * switched over from REALISTIC still owes what its old deals stranded.
+ *
+ * IT LIVES HERE BECAUSE FIVE PLACES NEEDED IT AND FIVE PLACES HAD IT. The
+ * dead-money runway itemises it a year early (lib/cap-summary.ts), the
+ * negotiation panel prices it into a deal being built (lib/negotiation.ts),
+ * the contract ledger draws it as its own line under the table
+ * (components/ds/ContractLedger.tsx), the pending-cap chip warns about it
+ * (lib/pendingCapChange.ts, which re-exports this) and the season writes it.
+ * Two of those spelled it `bonus - proration x years` and one spelled it
+ * `proration x (window - years)`; those agree to within a rounding dollar
+ * today and had nothing keeping them agreeing tomorrow. A panel quoting a
+ * stranded figure the ledger beside it disagrees with is this codebase's most
+ * persistent defect, and a void-year bill is precisely the sort of money a GM
+ * plans a whole offseason around.
+ */
+export function strandedVoidBonus(c: ContractLike | null | undefined): number {
+  if (!c || !c.voidYears || c.voidYears <= 0) return 0;
+  return Math.max(0, c.signingBonus - proration(c) * c.years);
+}
+
+/**
  * Dead money left behind by cutting a player right now.
  * REALISTIC: the unamortised signing bonus plus the guaranteed base salary
  * still owed — see the block comment above for why those are the two halves

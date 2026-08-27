@@ -1,5 +1,6 @@
 import {
-  capHit, capHitSchedule, deadMoneyOnCut, formatMoney, guaranteedMoney, proration, prorationYears, remainingValue,
+  capHit, capHitSchedule, deadMoneyOnCut, formatMoney, guaranteedMoney, proration, prorationYears,
+  remainingValue, strandedVoidBonus,
   type ContractLike,
 } from '@/lib/cap';
 import { readJson } from '@/lib/json';
@@ -42,11 +43,23 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
   contract: ContractLike & { guaranteed: number; voidYears?: number; isFranchiseTag?: boolean };
   capMode: CapMode;
   /**
-   * The league year the FIRST remaining season belongs to — row labels only.
-   * Optional: a contract carries the year it was signed and how much of it has
-   * elapsed, and those add up to the current league year, so a caller that has
-   * no league in hand still gets correctly dated rows. Pass it when you have
-   * it (a page always does) rather than relying on the arithmetic.
+   * THE LEAGUE YEAR THE CONTRACT LEDGER IS CURRENTLY WRITTEN IN — row labels
+   * only, and it is NOT `League.seasonYear`.
+   *
+   * Every figure in this table comes out of `capHitSchedule`, whose first entry
+   * is the charge for the year the LEDGER is in. `ageContractsForYear` steps
+   * that ledger the instant the season ends while `League.seasonYear` waits for
+   * RESET_STANDINGS, so through OFFSEASON weeks 1-2 the two are a year apart
+   * and a caller handing over the clock labels next year's cap hit with this
+   * year's heading — and dates every dead-money figure under it a year early.
+   * The answer is `capChargeYear({ phase, week, seasonYear })` (lib/cap.ts),
+   * which is the same boundary `teamCapSummary` reports as `capYear` and the
+   * Cap page's outlook labels its columns with.
+   *
+   * Optional, and the fallback carries the identical hazard: `signedYear` is
+   * stamped with the clock by every write path, so a deal signed or
+   * restructured inside that window backdates its own rows by a year too.
+   * Pass the ledger year — a page always has the phase and week to compute it.
    */
   seasonYear?: number;
   className?: string;
@@ -101,10 +114,15 @@ export function ContractLedger({ contract, capMode, seasonYear, className }: {
   // real deal ends. Drawn as its own line under the table for exactly that
   // reason — as a chip beside "Yr1…Yr4" it read as a fifth contract year,
   // which is the misreading that costs somebody a cap sheet.
-  // Whatever proration the void years hold that the real years never charged.
-  const voidDeadMoney = realistic
-    ? bonusPerYear * Math.max(0, bonusWindow - contract.years)
-    : 0;
+  //
+  // OFF THE SHARED FUNCTION, not spelled out here. This was
+  // `proration x (window - years)`, which is the same figure as
+  // `strandedVoidBonus`'s `bonus - proration x years` only up to the dollar
+  // `proration` rounds away — a different spelling of one rule, in a fifth
+  // file. The line this draws is the line `releaseUnresignedExpiringContracts`
+  // will actually write and the dead-money runway already itemises a year
+  // early, so all three have to be the same statement.
+  const voidDeadMoney = realistic ? strandedVoidBonus(contract) : 0;
 
   return (
     <div className={className}>

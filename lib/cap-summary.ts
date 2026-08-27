@@ -1,6 +1,6 @@
 import { prisma } from './db';
 import { CapMode } from './types';
-import { capChargeYear, capHit, capHitSchedule, deadMoneyOnCut, proration } from './cap';
+import { capChargeYear, capHit, capHitSchedule, deadMoneyOnCut, strandedVoidBonus } from './cap';
 import { CAP, rosterMinFor } from './tuning';
 import { capForLeague, type LeagueCapFields } from './leagueYear';
 import { parseSettings } from './settings';
@@ -321,12 +321,12 @@ export async function deadMoneyRunway(
   }));
 
   for (const c of deals) {
-    // The arithmetic is releaseUnresignedExpiringContracts's own, character for
-    // character: charged so far is proration x the REAL years, and whatever is
-    // left of the bonus is what the void years pushed past the end of the deal.
-    // Deriving it a second way here is how a panel ends up quoting a figure the
-    // game does not use.
-    const stranded = Math.max(0, c.signingBonus - proration(c) * c.years);
+    // The shared function, not the arithmetic written out a second time.
+    // `releaseUnresignedExpiringContracts` (lib/season.ts) is what WRITES this
+    // bill; `strandedVoidBonus` (lib/cap.ts) is the one statement of what it
+    // comes to, and this panel names the exact row that will appear next year,
+    // so the two may never be spelled separately.
+    const stranded = strandedVoidBonus(c);
     if (stranded <= 0) continue;
     items.push({
       kind: 'SCHEDULED',

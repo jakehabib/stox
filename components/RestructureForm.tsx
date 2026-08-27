@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { restructureContractAction } from '@/app/actions/roster';
-import { formatMoney, capHit, capHitSchedule, deadMoneyOnCut, proration, prorationYears, restructureContract as computeRestructure, usableVoidYears } from '@/lib/cap';
+import { formatMoney, capHit, capHitSchedule, convertibleBase, deadMoneyOnCut, proration, prorationYears, restructureContract as computeRestructure, usableVoidYears } from '@/lib/cap';
 import { CAP } from '@/lib/tuning';
 
 /**
@@ -30,7 +30,21 @@ export function RestructureForm({ leagueId, playerId, contract, capSpace, onDone
   const bases: number[] = JSON.parse(contract.baseSalaries);
   const yearIdx = Math.max(0, contract.years - contract.yearsRemaining);
   const currentBase = bases[yearIdx] ?? 0;
-  const maxConvert = Math.max(0, currentBase - 1_000_000);
+  /*
+   * THE CEILING ON THE SLIDER IS THE CEILING THE SERVER ENFORCES, and it is
+   * read out of the one function that owns it.
+   *
+   * This was `currentBase - 1_000_000` — the league minimum written out as a
+   * literal, in a fourth place. `restructureContract` (lib/cap.ts) clamps
+   * every request at `convertibleBase`, whose whole job is to be that one
+   * answer, and its own comment says why: "three readings of one floor is
+   * three chances to disagree about what a man may be left on." The literal
+   * happens to equal CAP.MIN_SALARY today, so nothing was visibly wrong — it
+   * is a lying metric with the fuse still in it. Move the minimum and this
+   * slider would have offered a GM dollars the server silently refused to
+   * convert, and priced the whole panel off them.
+   */
+  const maxConvert = convertibleBase(contract);
 
   const [convert, setConvert] = useState(Math.round(maxConvert / 2 / 100_000) * 100_000);
   const [addVoidYears, setAddVoidYears] = useState(0);
