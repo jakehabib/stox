@@ -5,6 +5,7 @@ import { readJson, writeJson } from './json';
 import { buildContract, rookieScaleApy, marketValue, suggestedYears, capHit } from './cap';
 import { parseGmProfile, playerValue, teamNeeds, RosterPlayer, defaultGmProfile } from './ai/gm';
 import { AI, CAP, CONSENSUS, LEAGUE, Position } from './tuning';
+import { STARTERS_AT_POSITION } from './lineup';
 // Type only. The runtime import stays dynamic, inside the two functions that
 // need it, exactly as draftPlayer does it — capEnforcement pulls the whole cap
 // sheet in behind it and this module is imported by every draft screen.
@@ -690,7 +691,7 @@ export async function runAiPicksUntilUser(leagueId: string, userTeamId: string, 
     if (!pickInfo) { draftComplete = true; break; }
     if (pickInfo.teamId === userTeamId) break;
 
-    const player = await pickBestAvailable(leagueId, pickInfo.teamId, rng, pickInfo.state.kind);
+    const player = await pickBestAvailable(leagueId, pickInfo.teamId, rng, pickInfo.state.kind, fantasyPicksPerTeam(pickInfo.state));
     if (!player) { draftComplete = true; break; }
     await draftPlayer({ leagueId, playerId: player.id, teamId: pickInfo.teamId, seasonYear });
     picksMade += 1;
@@ -743,7 +744,7 @@ export async function draftOneAiPick(leagueId: string, userTeamId: string, rng: 
   const pickInfo = await currentPick(leagueId);
   if (!pickInfo || pickInfo.teamId === userTeamId) return null;
 
-  const player = await pickBestAvailable(leagueId, pickInfo.teamId, rng, pickInfo.state.kind);
+  const player = await pickBestAvailable(leagueId, pickInfo.teamId, rng, pickInfo.state.kind, fantasyPicksPerTeam(pickInfo.state));
   if (!player) return null;
 
   const team = await prisma.team.findUniqueOrThrow({ where: { id: pickInfo.teamId } });
@@ -1117,7 +1118,89 @@ async function classBoard(leagueId: string, needIds: string[]): Promise<Map<stri
   return board;
 }
 
-async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng, kind: string) {
+/**
+ * The positions a lineup actually fields, which is the list a roster has to
+ * cover. Derived from STARTERS_AT_POSITION rather than written out, so a
+ * position added to the lineup is covered here the day it is added instead of
+ * the day somebody remembers this list exists.
+ */
+const FIELDED_POSITIONS: Position[] = (Object.keys(STARTERS_AT_POSITION) as Position[])
+  .filter((pos) => STARTERS_AT_POSITION[pos] > 0);
+
+/**
+ * ===========================================================================
+ * THE BOARD IS THE BEST AVAILABLE AT EVERY POSITION, NOT THE BEST AVAILABLE
+ * ===========================================================================
+ * This was `orderBy: { trueOvr: 'desc' }, take: 60` — the sixty highest-rated
+ * free agents in the league, full stop — and that is a blind top-N over a
+ * distribution whose shape is exactly what makes it wrong. A kicker's overall
+ * is computed from kicking attributes against a scale every other position
+ * outscores, so kickers and punters sit near the BOTTOM of any league-wide
+ * rating sort by construction. They were therefore not on the board at all.
+ *
+ * MEASURED across twelve real free-agent pools, "where does the best man at
+ * this position sit in a rating sort":
+ *
+ *   a 1,956-man fantasy pool   best K rank 141, best P rank 66
+ *   a 560-man pool             best K rank 139, best P rank 209
+ *   a 260-man pool             best K rank 102, best P rank 7
+ *
+ * — and in seven of the twelve, at least one whole position was absent from the
+ * top sixty. Not always a specialist, either: one pool had no QUARTERBACK in
+ * its top sixty, another none of TE/LT/LG/RG/EDGE/DT/CB. A club drafting off
+ * that board cannot take a position it cannot see, however badly it needs one,
+ * and a fantasy draft is thirty-two clubs building whole rosters off it.
+ *
+ * So the board is built the way a real one is: a column per position, the best
+ * twelve at each.
+ *
+ * WHAT THIS DROPS, AND WHY IT CANNOT CHANGE A PICK. It is not a superset of the
+ * old board: measured over 58 real free-agent pools, an average of 2.5 of the
+ * old sixty (worst case 18) fall outside the top twelve at their own position,
+ * because a crowded room like corner or receiver can put more than twelve men
+ * in a league-wide top sixty. Every one of those men is, by definition, behind
+ * twelve BETTER men at the same position who are on the board. A club that
+ * wants that position takes one of the twelve; a club that does not want it was
+ * never taking the thirteenth. So the men this loses are unreachable by
+ * construction, and the men it gains are the ones a whole position hung on.
+ * (At a depth of eight the same figure is 6.8 and the argument is identical —
+ * twelve is chosen because the query costs the same either way.)
+ *
+ * ONE QUERY, NOT SIXTEEN. `row_number() OVER (PARTITION BY position ...)` in
+ * the database, because this runs once per pick and a fantasy draft is 1,696
+ * of them; sixteen round trips a pick would be twenty-seven thousand a draft.
+ */
+const BOARD_DEPTH_PER_POSITION = 12;
+
+async function veteranBoard(leagueId: string) {
+  return prisma.$queryRaw<{
+    id: string; firstName: string; lastName: string; position: string;
+    trueOvr: number; age: number; potential: number; weeksUnsigned: number;
+  }[]>`
+    SELECT id, "firstName", "lastName", position, "trueOvr", age, potential, "weeksUnsigned"
+    FROM (
+      SELECT p.*, row_number() OVER (PARTITION BY p.position ORDER BY p."trueOvr" DESC, p.id ASC) AS rn
+      FROM "Player" p
+      WHERE p."leagueId" = ${leagueId} AND p."teamId" IS NULL AND p.status = 'FREE_AGENT'
+    ) ranked
+    WHERE rn <= ${BOARD_DEPTH_PER_POSITION}`;
+}
+
+/**
+ * How many turns each club gets in a fantasy draft, read off the stored order
+ * rather than off a constant.
+ *
+ * `buildSnakeOrder` (lib/gen/league.ts) writes TEAM_COUNT x rounds entries and
+ * the rounds are the league's own `settings.rosterMax`, so this is the league's
+ * ceiling however it was configured — which is the whole reason it is derived
+ * here instead of read from LEAGUE.ROSTER_MAX, where a 46-man league would get
+ * the 53-man answer.
+ */
+function fantasyPicksPerTeam(state: { order: string }): number {
+  return Math.floor(readJson<string[]>(state.order, []).length / LEAGUE.TEAM_COUNT);
+}
+
+async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng, kind: string, picksPerTeam: number) {
   const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
   const roster = await prisma.player.findMany({ where: { teamId }, select: { id: true, position: true, trueOvr: true, age: true, potential: true } });
   const profile = parseGmProfile(team.gmProfile, rng);
@@ -1159,9 +1242,7 @@ async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng, kin
   // rating on purpose: these are established players with years of tape, and
   // the fog this game models is a fog about twenty-two-year-olds, not a
   // general amnesia. There is no consensus board for them to read.
-  const veterans = await prisma.player.findMany({
-    where: { leagueId, teamId: null, status: 'FREE_AGENT' }, orderBy: { trueOvr: 'desc' }, take: 60,
-  });
+  const veterans = await veteranBoard(leagueId);
   if (veterans.length === 0) return null;
 
   // Same roster-construction charge the rookie path takes. It matters MORE
@@ -1170,6 +1251,72 @@ async function pickBestAvailable(leagueId: string, teamId: string, rng: Rng, kin
   // at a position off a single board. Every position starts at zero held, so
   // this is inert until a club has actually filled a room.
   const heldByPos = positionCounts(roster);
+
+  /**
+   * ===========================================================================
+   * A CLUB DOES NOT LEAVE THIS DRAFT UNABLE TO KICK OFF
+   * ===========================================================================
+   * A fantasy draft builds all thirty-two rosters from nothing, and it is the
+   * only draft in the game where a position can end at ZERO. Every other roster
+   * in football arrives already shaped — generated with a kicker, or inheriting
+   * last year's — so "this club has no kicker" is a state only this phase can
+   * create, and until now it created it routinely.
+   *
+   * MEASURED, on the first week of two fantasy leagues built by the settings
+   * matrix in scripts/simHealth.ts, before this block: 638 and 775 club
+   * readings of INV-25 across a single season each, with clubs opening the
+   * season like this —
+   *
+   *   DEN has nobody at K/P.  DAL has nobody at QB/K/P.  CHI has nobody at K.
+   *
+   * A club with no kicker cannot take the field. A club with no quarterback is
+   * not a football team.
+   *
+   * TWO CAUSES, AND THIS IS THE SECOND. The first was the board itself and is
+   * fixed in `veteranBoard` below. This is what remains once every position is
+   * visible: a kicker is worth so little to a draft board — TRADE_VALUE_TIER
+   * discounts him, then AI.DRAFT_POSITION_VALUE multiplies him by 0.35 — that
+   * he is essentially never the best VALUE on any board, at any point, however
+   * badly the club needs one. That is correct valuation and the wrong answer,
+   * and it is exactly how a real fantasy drafter behaves too: nobody takes a
+   * kicker on value. They take him with their last pick, because the roster
+   * needs one and the pick was going to be spent on a body regardless.
+   *
+   * So that is the rule, and it costs the club nothing it would otherwise have
+   * bought: WHEN A CLUB HAS EXACTLY AS MANY PICKS LEFT AS IT HAS EMPTY
+   * LINEUP POSITIONS, ITS REMAINING PICKS GO TO THOSE POSITIONS. Above that it
+   * drafts on value exactly as before; at that point the two are the same
+   * decision, since every remaining pick is already committed.
+   *
+   * WHY THE PICK COUNT IS EXACT. A fantasy draft is a snake of one round per
+   * roster spot (`buildSnakeOrder` in lib/gen/league.ts), every roster starts
+   * empty and every turn adds exactly one man, so a club's picks remaining IS
+   * `picksPerTeam - roster.length`. And `picksPerTeam` is counted off the
+   * stored pick order itself rather than off a constant, so a league playing to
+   * a smaller ceiling gets its own number. Nothing has to be inferred and
+   * nothing can drift.
+   *
+   * ROOKIE DRAFTS ARE UNTOUCHED. A rookie draft adds seven men to a roster of
+   * fifty-three that already has a kicker on it, so this condition cannot fire
+   * there — but it is gated on the draft kind anyway rather than left to
+   * arithmetic, because a rule that only works by accident is a rule waiting to
+   * stop working.
+   */
+  if (kind === 'FANTASY') {
+    const emptySlots = FIELDED_POSITIONS.filter((pos) => heldAt(heldByPos, pos) === 0);
+    const picksLeft = picksPerTeam - roster.length;
+    if (emptySlots.length > 0 && picksLeft <= emptySlots.length) {
+      // The scarcest hole first, measured by how thin the board is at it, so a
+      // club two picks from the end takes the position it is likeliest to miss
+      // out on rather than the one that happens to sort first.
+      const supply = (pos: string) => veterans.filter((v) => v.position === pos).length;
+      const target = [...emptySlots].sort((a, b) => supply(a) - supply(b))[0];
+      const best = veterans.filter((v) => v.position === target).sort((a, b) => b.trueOvr - a.trueOvr)[0];
+      if (best) return best;
+      // Nobody left at that position at all — fall through and draft on value
+      // rather than returning nothing and ending the whole draft.
+    }
+  }
 
   const board = veterans
     .map((p) => {
