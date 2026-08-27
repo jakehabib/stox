@@ -100,6 +100,24 @@ export default async function SchedulePage({
       }, 0) / remaining.length
     : null;
 
+  /**
+   * A SEASON THAT HAS NOT BEEN DRAWN YET IS NOT A SEASON THAT IS OVER, and
+   * this strip printed the second sentence over the first.
+   *
+   * `ensureSeasonSchedule` runs in PRESEASON, so from the final whistle until
+   * the new season opens — the whole of OFFSEASON, RESIGN, FREE_AGENCY and
+   * DRAFT, which is four phases of a GM's calendar and most of what a new save
+   * walks through in its first hour — the league year has already rolled and
+   * there are no fixtures in it. Every tile then fell through to its
+   * end-of-season branch: "season complete", "none", "nothing left", under a
+   * masthead reading "2027 · Re-sign Window". The body underneath said the
+   * true thing ("No games scheduled yet") and the four figures above it
+   * contradicted it.
+   *
+   * The two states are told apart by whether there is a schedule at all.
+   */
+  const scheduleDrawn = myGames.length > 0;
+
   return (
     <div className="space-y-6">
       <PageMasthead
@@ -111,22 +129,30 @@ export default async function SchedulePage({
           ? 'Your season on top, the rest of the league by week below.'
           : 'The league slate, one week at a time.'}
         facts={userTeam ? [
-          { label: 'Your Record', value: `${myWins}-${myLosses}`, detail: `${myPlayed.length} of ${myGames.length} played` },
+          {
+            label: 'Your Record',
+            value: scheduleDrawn ? `${myWins}-${myLosses}` : '—',
+            detail: scheduleDrawn ? `${myPlayed.length} of ${myGames.length} played` : 'no football played yet',
+          },
           {
             label: 'Next Up',
             value: nextOpp ? nextOpp.abbr : '—',
-            detail: nextGame ? `Week ${nextGame.week} · ${nextGame.homeTeamId === userTeam.id ? 'home' : 'away'}` : 'season complete',
+            detail: nextGame
+              ? `Week ${nextGame.week} · ${nextGame.homeTeamId === userTeam.id ? 'home' : 'away'}`
+              : scheduleDrawn ? 'season complete' : 'fixtures not out',
           },
           {
             label: 'Games Left',
-            value: String(remaining.length),
-            detail: remaining.length > 0 ? 'still to play' : 'none',
+            value: scheduleDrawn ? String(remaining.length) : '—',
+            detail: remaining.length > 0 ? 'still to play' : scheduleDrawn ? 'none' : 'nothing drawn',
           },
           {
             label: 'Remaining SOS',
             tip: tip('strengthOfSchedule'),
             value: sos !== null ? sos.toFixed(3).replace(/^0/, '') : '—',
-            detail: sos !== null ? (sos > 0.55 ? 'a hard run in' : sos < 0.45 ? 'a soft run in' : 'about average') : 'nothing left',
+            detail: sos !== null
+              ? (sos > 0.55 ? 'a hard run in' : sos < 0.45 ? 'a soft run in' : 'about average')
+              : scheduleDrawn ? 'nothing left' : 'no opponents yet',
             color: sos !== null ? (sos > 0.55 ? 'text-bad' : sos < 0.45 ? 'text-accent' : undefined) : undefined,
           },
         ] : []}
@@ -280,7 +306,15 @@ export default async function SchedulePage({
         </div>
       )}
 
-      {games.length === 0 && <p className="text-sm text-muted">No games scheduled yet.</p>}
+      {games.length === 0 && (
+        <div className="panel p-6 space-y-2">
+          <div className="label-sm">Nothing drawn yet</div>
+          <p className="text-sm text-chalk/90 leading-relaxed max-w-2xl">
+            The {league.seasonYear} slate goes up when the new season opens in preseason camp. Until then the
+            offseason is the calendar — the re-sign window, free agency and the draft all come first.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

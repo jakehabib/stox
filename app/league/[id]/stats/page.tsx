@@ -685,13 +685,21 @@ export default async function StatsPage({ params, searchParams }: { params: { id
           myTeam
             ? [
               { label: 'Stat Lines', value: `${myLineCount} of ${roster.length}`, detail: 'men with production' },
-              { label: 'Games Played', value: String(maxGp), detail: playoffs ? 'deepest postseason run' : 'longest season on the books' },
+              /* `maxGp` is the longest anybody's season has run, so at zero the caption
+                 has nothing to be the longest of — and that is a state a GM stands in
+                 for four phases, from the final whistle to the new schedule going up.
+                 It says which of the two it is. */
+              { label: 'Games Played', value: String(maxGp), detail: maxGp === 0 ? 'none played yet' : playoffs ? 'deepest postseason run' : 'longest season on the books' },
               { label: 'Ranked Against', value: withStats.length.toLocaleString(), detail: 'players league-wide' },
             ]
             : [
               { label: 'Players Ranked', value: withStats.length.toLocaleString(), detail: playoffs ? 'with postseason stats' : 'with recorded stats' },
               { label: 'Clubs', value: String(teams.length), detail: playoffs ? `${teamRows.length} in the bracket` : 'all reporting' },
-              { label: 'Games Played', value: String(maxGp), detail: playoffs ? 'deepest postseason run' : 'longest season on the books' },
+              /* `maxGp` is the longest anybody's season has run, so at zero the caption
+                 has nothing to be the longest of — and that is a state a GM stands in
+                 for four phases, from the final whistle to the new schedule going up.
+                 It says which of the two it is. */
+              { label: 'Games Played', value: String(maxGp), detail: maxGp === 0 ? 'none played yet' : playoffs ? 'deepest postseason run' : 'longest season on the books' },
             ]
         }
       />
