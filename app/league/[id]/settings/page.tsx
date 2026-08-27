@@ -133,14 +133,14 @@ export default async function SettingsPage({ params }: { params: { id: string } 
             tip="Normally your own players' true ratings are always visible. Turning this on fogs them too, for a harder, more realistic mode where even your own scouts can be wrong about your guys."
           />
           <NumberField
-            label="Scouting focus / week (base)" name="scoutingBudgetPerWeek" defaultValue={settings.scoutingBudgetPerWeek}
+            label="Scouting focus / week (base)" name="scoutingBudgetPerWeek" defaultValue={settings.scoutingBudgetPerWeek} min={0} max={10000}
             tip="Base focus your front office generates per period, before your scouts' speed scales it. Focus is a finite allowance, not a running total: it refills every week (and pays one large lump for the pre-draft window), and only half of a period's grant can be carried over. Raise this to make scouting cheap, lower it to force harder triage. See the Scouting Department page for the live budget and price list."
           />
         </Section>
 
         <Section title="Progression & Injuries">
           <NumberField
-            label="Progression speed multiplier" name="progressionSpeed" defaultValue={settings.progressionSpeed} step="0.1"
+            label="Progression speed multiplier" name="progressionSpeed" defaultValue={settings.progressionSpeed} step="0.1" min={0} max={5}
             tip="Scales every player's growth and decline roll, applied at development checkpoints roughly every 4 weeks through the season. 1.0 is the tuned default; higher makes careers arc faster."
           />
           <Toggle
@@ -148,7 +148,7 @@ export default async function SettingsPage({ params }: { params: { id: string } 
             tip="Whether players can get hurt during simulated games at all. Off means every game is played at full health."
           />
           <NumberField
-            label="Injury severity multiplier" name="injurySeverity" defaultValue={settings.injurySeverity} step="0.1"
+            label="Injury severity multiplier" name="injurySeverity" defaultValue={settings.injurySeverity} step="0.1" min={0} max={5}
             tip="Scales how many weeks an injury keeps a player out. Doesn't change how often injuries happen, only how long they last."
           />
           <Toggle
@@ -163,7 +163,7 @@ export default async function SettingsPage({ params }: { params: { id: string } 
             tip="Master switch for trading — off disables both your own trade offers and unsolicited AI-to-you offers."
           />
           <NumberField
-            label="AI trade frequency (0-1)" name="aiTradeFrequency" defaultValue={settings.aiTradeFrequency} step="0.05"
+            label="AI trade frequency (0-1)" name="aiTradeFrequency" defaultValue={settings.aiTradeFrequency} step="0.05" min={0} max={1}
             tip="Rough odds, each week, that an AI team proactively sends you an unsolicited trade offer. 0 means AI teams never approach you first — you can still trade with them, you just have to initiate."
           />
           <Toggle
@@ -171,7 +171,7 @@ export default async function SettingsPage({ params }: { params: { id: string } 
             tip="When on, no trades (yours or the AI's) go through past the deadline week until free agency opens for the new league year — same shape as the real NFL's deadline and offseason trading freeze."
           />
           <NumberField
-            label="Trade deadline (week)" name="tradeDeadlineWeek" defaultValue={settings.tradeDeadlineWeek}
+            label="Trade deadline (week)" name="tradeDeadlineWeek" defaultValue={settings.tradeDeadlineWeek} min={1} max={Math.max(1, settings.seasonLength)}
             tip="Last regular-season week trades are allowed. Defaults to 9, matching the real NFL's Tuesday-after-week-9 deadline for a 17-game season."
           />
           <Toggle
@@ -190,7 +190,7 @@ export default async function SettingsPage({ params }: { params: { id: string } 
 
         <Section title="Simulation">
           <NumberField
-            label="Sim variance multiplier" name="simVariance" defaultValue={settings.simVariance} step="0.1"
+            label="Sim variance multiplier" name="simVariance" defaultValue={settings.simVariance} step="0.1" min={0} max={5}
             tip="How much randomness affects a game's outcome versus the two teams' actual rating gap. Higher means more upsets; lower means the better roster wins more consistently."
           />
           <Toggle
@@ -279,11 +279,26 @@ function Toggle({ label, name, defaultChecked, tip }: { label: string; name: str
   );
 }
 
-function NumberField({ label, name, defaultValue, step = '1', tip }: { label: string; name: string; defaultValue: number; step?: string; tip?: string }) {
+/**
+ * A NUMBER BOX THAT OFFERS ONLY WHAT THE SERVER WILL ACCEPT.
+ *
+ * `updateSettingsAction` clamps every one of these through its own `num()`
+ * helper, so a hostile or fat-fingered value can never reach the sim. It could
+ * still be TYPED, though, and the box would show it, the form would post it,
+ * and the screen would come back rendering a different number from the one the
+ * GM just entered with nothing said about it — a control quietly lying about
+ * what it did. The bounds below are the same ones that helper clamps to (see
+ * app/actions/league.ts), so the stepper stops where the rule stops and the
+ * browser refuses out-of-range input before it is sent.
+ *
+ * The server clamp is still the authority and is not to be removed: a form
+ * POST is a POST, and `min`/`max` on an input protect nothing on their own.
+ */
+function NumberField({ label, name, defaultValue, step = '1', min, max, tip }: { label: string; name: string; defaultValue: number; step?: string; min?: number; max?: number; tip?: string }) {
   return (
     <label className="flex items-center justify-between text-sm gap-4">
       <span className="inline-flex items-center gap-1.5">{label}{tip && <Tooltip text={tip} />}</span>
-      <input type="number" step={step} name={name} defaultValue={defaultValue} className="input w-32 text-right" />
+      <input type="number" step={step} min={min} max={max} name={name} defaultValue={defaultValue} className="input w-32 text-right" />
     </label>
   );
 }
