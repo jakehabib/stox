@@ -727,6 +727,113 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-27 — Every Server Action is now walked by a test that tries to
+  break in, and it runs on one command.** `npm run audit:actions`
+  (`scripts/actionGuardAudit.ts`). It DISCOVERS the surface rather than listing
+  it — every exported async function in `app/actions/**` is read off the source,
+  and one with no case written for it is a FAILURE, not a skip — so the next
+  action somebody adds without a guard fails the audit on the day it is added.
+  Each one is then called for real, from a script, through a genuine Next
+  request context (`scripts/requestContext.ts`, which installs a real cookie jar
+  so `assertLeagueOwner` runs exactly as it does behind a POST; this repo has
+  shipped probes that measured nothing, and a test asserting on `ownsLeague` in
+  isolation would be another). Three claims per action: it refuses a caller
+  holding a different save's credential; it refuses an id belonging to another
+  save even when the league id is the caller's own; and it answers hostile input
+  in the game's own words rather than throwing a database error at the browser —
+  a Prisma message in the refusal fails the test even though the action
+  "refused". It creates its own two scratch leagues and deletes them by
+  collected id, never by name. **The audit was proved able to fail**: with
+  `cutImpactAction`'s membership check removed and an unguarded action added,
+  it reported both, naming the stranger's player it had just read out. Runs in
+  about three minutes, most of which is creating and deleting the two leagues.
+
+- **2026-08-27 — The Settings screen's own file said its enums were
+  whitelisted, and two of the three were cast.** `c8646bb`. The comment at the
+  top of `app/actions/league.ts` about a crafted request writing "a capMode
+  nothing in the codebase handles" described league CREATION;
+  `updateSettingsAction` cast `capMode`, `difficulty` and `recapVerbosity`
+  straight out of the form, with `capGrowth`'s neighbouring comment saying
+  "Whitelisted rather than cast, unlike its two neighbours above" — the codebase
+  noticing the hole and leaving it. Measured: a POST setting `capMode` to
+  `"BANANA"` was stored, survived `parseSettings`, and left a save whose
+  restructure tool answered *"Restructuring only applies in Realistic cap
+  mode"* on a league the Settings screen no longer had a name for. **The six
+  numbers were worse and are not only a crafted-request problem**: each was
+  `Number(formData.get(k) || current[k])` with no floor, no ceiling and no test
+  that the result was a number, and the form's inputs are bare
+  `<input type="number">` with no `min` or `max` — so typing `abc` stored
+  `null` (JSON has no NaN), and typing `-40` into the trade-deadline box means
+  the deadline has *always* passed, which switches trading off for the life of
+  that save while the screen still shows it enabled. All three enums go through
+  `pick()` now and the numbers through `num()`, clamped to the range each one
+  actually means; a blank box still means "leave it as it was". Clamped rather
+  than refused, because a save that discards eleven correct fields over the
+  twelfth is friction on the common path. `parseSettings` also heals `capMode`,
+  which was the one enum its "should play, not crash" line never covered.
+  **Handed off:** `app/league/[id]/settings/page.tsx` renders no bounds on those
+  number inputs; the server clamps them now, but the control should not offer
+  the value.
+
+- **2026-08-27 — Two clicks at once spent one charge and got two of
+  everything.** `5425cff`. All three scarce abilities counted the same way —
+  read the ledger, decide, write `used + 1` from the value that was read — so
+  two requests in flight both read the same count, both decided yes, and both
+  wrote the same number. Measured on a two-charge Full Scout allowance: two
+  scouts issued concurrently revealed TWO players and left `fullScoutUsed` at
+  1. Private workouts did it against a five-slot budget; Insider had the
+  identical shape. Each spend is a compare-and-set now — `updateMany` with the
+  ledger as it was read in the `WHERE`, which is how `beginRookieDraftAction`
+  has claimed the draft all along — so the second caller matches no row and is
+  told where the charge went. Re-measured: two charges, two reveals; one slot,
+  one workout, one refusal. Also here: `fullScoutAction` took the club to file
+  the report under from the request, so it could spend the GM's allowance
+  filling in a rival's book; and `purchaseSkillAction` looked its argument up on
+  a plain object, so `'__proto__'` walked past the `if (!def)` guard and blanked
+  the Dynasty page with "Cannot read properties of undefined".
+
+- **2026-08-27 — Three roster previews answered for players in other people's
+  saves, and a double-click handed the GM a Prisma stack.** `076f9ab`.
+  `cutImpactAction` ran the ownership check and then looked the player up by
+  primary key: measured from a save the caller owned, it returned a stranger's
+  player by name with his $9.6M cap hit, his $2.8M of dead money and his club's
+  remaining cap space. `franchiseTagImpactAction` and
+  `fifthYearOptionImpactAction` were the same shape. **`setDepthChartAction` was
+  the loosest write in the game** — a slot was written at position
+  `NOT_A_POSITION`, another at a ten-megabyte position string, one man sent 200
+  times produced 200 rows off a single call, and a player id from another save
+  was accepted, so a depth-chart row pointed across the league boundary. It now
+  applies the roster's own rules, comparing position exactly as
+  `reconcileDepthChart` does so the two cannot disagree about a valid row.
+  `restructureContractAction` took `NaN` all the way to a Prisma write whose
+  validation dump — absolute file paths included — was returned as the sentence
+  on the GM's screen, and `fifthYearOptionAction`'s `decision` was `=== 'EXERCISE'`
+  with an else, so any typo *declined* a one-way, once-per-career option. New
+  `lib/actionError.ts` draws the line the catch blocks could not: an error the
+  game threw on purpose keeps its own words; a database failure is answered by
+  the caller's own sentence, which knows which move failed.
+
+- **2026-08-27 — Owning the save was checked; the ids that came with it were
+  not.** `cef7291`. `assertLeagueOwner` proves the caller may act on THIS
+  league and says nothing about the player id, club id or trade asset in the
+  same request — and six actions stopped there. Measured across two scratch
+  leagues owned by different cookies: `evaluateTradeAction` handed back a
+  foreign club's own read on its right tackle, in its own words, with the
+  number it valued him at; `toggleShortlistAction` **wrote a row into the
+  victim's league**, and a shortlisted prospect is worked free every week by
+  `lib/shortlistAttention.ts`, so it quietly rewrites another GM's scouting
+  book; the workout and Full Scout panels listed a foreign club's revealed
+  prospects. A cuid is not a secret — it is in every league URL and every
+  exported league file. `lib/owner.ts` gains the read-side guards the write side
+  already had, and where the club id was never the client's to send it is
+  derived instead, the rule `openNegotiationAction` already stated. **In the
+  draft the same trust stayed inside your own save and was not small:**
+  `draftPlayerAction` took the picking club from the request, so handing it
+  whichever AI team was on the clock put the pick in under that club's name, and
+  the three ticker actions took the id the AI runner stops at — name another
+  club, or an empty string, and the runner ran through the user's own card and
+  picked for him.
+
 - **2026-08-27 — Stadium Night ships with its motion layer, and the one
   count-up in the application is gone.** `cc379f4`. The reactions were never
   going to survive a re-skin on their own: `app/moments.css` and eight animated

@@ -14,6 +14,7 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:migrate:status": "prisma migrate status",
     "sim:health": "tsx scripts/simHealth.ts",
+    "audit:actions": "tsx scripts/actionGuardAudit.ts",
     "postinstall": "prisma generate"
   },
   "allowScripts": {
