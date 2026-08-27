@@ -553,23 +553,25 @@ export default async function ScoutingPage({ params, searchParams }: {
               )}
             </span>
             <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {/* THE WHOLE LEGEND SITS AGAINST THE RIGHT-HAND EDGE, so every
+                  bubble in it opens inward from its own right edge, not just
+                  the last one. Which item is actually rightmost moves with the
+                  viewport — the row wraps — and a centred bubble on whichever
+                  one lands there is horizontal page scroll: 106px at 1440
+                  before the last item was fixed, then 50px on the item beside
+                  it. Fixing them one at a time is a game of whack-a-mole with
+                  a flex-wrap. */}
               <span className="inline-flex items-center gap-1">
                 <span className="font-mono">▲ ▼ slot</span>
                 — the position&apos;s own pull
-                <Tooltip text={tip('positionalValue')} />
+                <Tooltip text={tip('positionalValue')} align="end" />
               </span>
               <span className="inline-flex items-center gap-1">
                 Board grade
-                <Tooltip text={tip('boardGrade')} />
+                <Tooltip text={tip('boardGrade')} align="end" />
               </span>
               <span className="inline-flex items-center gap-1">
                 Band
-                {/* Last item of a legend that runs to the right-hand edge of
-                    the page, so the bubble opens INWARD from its own right
-                    edge. Centred, half of an 18rem bubble hangs past the
-                    viewport — and because the bubble is laid out whether or
-                    not anyone is hovering it, that was a permanent 106px of
-                    horizontal scroll on this route, measured at 1440. */}
                 <Tooltip text={tip('draftBand')} align="end" />
               </span>
             </span>

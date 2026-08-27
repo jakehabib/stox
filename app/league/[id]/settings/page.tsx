@@ -273,7 +273,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Toggle({ label, name, defaultChecked, tip }: { label: string; name: string; defaultChecked: boolean; tip?: string }) {
   return (
     <label className="flex items-center justify-between text-sm cursor-pointer">
-      <span className="inline-flex items-center gap-1.5">{label}{tip && <Tooltip text={tip} />}</span>
+      {/* `start`: this form is left-aligned in the page, so a label's trigger
+          sits near the left margin and a centred bubble opens off the screen —
+          the cap-growth and difficulty bubbles began 17px and 33px past the
+          left edge at 1440. */}
+      <span className="inline-flex items-center gap-1.5">{label}{tip && <Tooltip text={tip} align="start" />}</span>
       <input type="checkbox" name={name} defaultChecked={defaultChecked} className="w-4 h-4 accent-accent" />
     </label>
   );
@@ -297,7 +301,11 @@ function Toggle({ label, name, defaultChecked, tip }: { label: string; name: str
 function NumberField({ label, name, defaultValue, step = '1', min, max, tip }: { label: string; name: string; defaultValue: number; step?: string; min?: number; max?: number; tip?: string }) {
   return (
     <label className="flex items-center justify-between text-sm gap-4">
-      <span className="inline-flex items-center gap-1.5">{label}{tip && <Tooltip text={tip} />}</span>
+      {/* `start`: this form is left-aligned in the page, so a label's trigger
+          sits near the left margin and a centred bubble opens off the screen —
+          the cap-growth and difficulty bubbles began 17px and 33px past the
+          left edge at 1440. */}
+      <span className="inline-flex items-center gap-1.5">{label}{tip && <Tooltip text={tip} align="start" />}</span>
       <input type="number" step={step} min={min} max={max} name={name} defaultValue={defaultValue} className="input w-32 text-right" />
     </label>
   );
@@ -306,7 +314,11 @@ function NumberField({ label, name, defaultValue, step = '1', min, max, tip }: {
 function SelectField({ label, name, defaultValue, options, tip }: { label: string; name: string; defaultValue: string; options: [string, string][]; tip?: string }) {
   return (
     <label className="flex items-center justify-between text-sm gap-4">
-      <span className="inline-flex items-center gap-1.5">{label}{tip && <Tooltip text={tip} />}</span>
+      {/* `start`: this form is left-aligned in the page, so a label's trigger
+          sits near the left margin and a centred bubble opens off the screen —
+          the cap-growth and difficulty bubbles began 17px and 33px past the
+          left edge at 1440. */}
+      <span className="inline-flex items-center gap-1.5">{label}{tip && <Tooltip text={tip} align="start" />}</span>
       <select name={name} defaultValue={defaultValue} className="input w-48">
         {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>

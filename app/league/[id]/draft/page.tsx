@@ -7,7 +7,7 @@ import type { ScoutedPlayerView } from '@/lib/scouting';
 import { loadScoutMods, buildDynastyState } from '@/lib/dynasty';
 import { ratingColorForRange, playerLabel } from '@/lib/ratings';
 import { positionSortKey } from '@/lib/league-data';
-import { LEAGUE } from '@/lib/tuning';
+import { LEAGUE, POSITIONS, type Position } from '@/lib/tuning';
 import { bandCutoffs, consensusBoardMap, ownGradeFor, disagreementNote } from '@/lib/consensus';
 import { classAthleticRanks } from '@/lib/combineRank';
 import type { CombineTesting } from '@/lib/gen/prospectProfile';
@@ -181,8 +181,19 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // During a live draft, only the top of the board matters pick-to-pick.
   // Off the clock, this is the whole-class scouting hub — show a lot more
   // of it (the class is ~400 deep now that a real UDFA share exists).
+  /**
+   * THE POSITION FILTER IS A URL, so it is whatever anybody types. Checked
+   * against the real position list before it reaches a query or a sentence:
+   * an unrecognised value filtered the board down to nothing and then quoted
+   * itself back in the empty state ("No ZZs left on this board"), which is a
+   * screen reading a stranger's text aloud as if it were a football position.
+   * Unknown means unfiltered — the same policy /new applies to its own
+   * `?team=` and Free Agency applies to the same parameter.
+   */
+  const posFilter = POSITIONS.includes(searchParams.pos as Position) ? searchParams.pos : undefined;
+
   const where: any = { leagueId: league.id, teamId: null, status: 'FREE_AGENT', isDraftee: true };
-  if (searchParams.pos) where.position = searchParams.pos;
+  if (posFilter) where.position = posFilter;
   if (shortlistOnly) where.id = { in: Array.from(shortlistIds) };
   if (queryTokens.length > 0) {
     where.AND = queryTokens.map((t) => ({
@@ -476,7 +487,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
    */
   const boardHref = (patch: { pos?: string | null; shortlist?: boolean; sort?: SortKey; dir?: 'asc' | 'desc'; q?: string } = {}) => {
     const p = new URLSearchParams();
-    const pos = patch.pos !== undefined ? patch.pos : searchParams.pos;
+    const pos = patch.pos !== undefined ? patch.pos : posFilter;
     const short = patch.shortlist !== undefined ? patch.shortlist : shortlistOnly;
     const q = patch.q !== undefined ? patch.q : query;
     if (pos) p.set('pos', pos);
@@ -505,7 +516,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
   // class by rating, so "of the top 80 shown" is exact — but a search or a
   // filter makes the slice a set of MATCHES instead, where "of the top 3"
   // would misdescribe both the rows and the ranking they came from.
-  const boardFiltered = !!query || shortlistOnly || !!searchParams.pos;
+  const boardFiltered = !!query || shortlistOnly || !!posFilter;
   const scoutedScope = pool.length === 0
     ? 'nobody yet'
     : boardFiltered ? `of the ${pool.length} shown` : `of the top ${pool.length} shown`;
@@ -1568,17 +1579,17 @@ export default async function DraftPage({ params, searchParams }: { params: { id
    * he is in the feed on the other view.
    */
   const boardEmptyState = (() => {
-    const posLabel = searchParams.pos ? `${searchParams.pos} ` : '';
+    const posLabel = posFilter ? `${posFilter} ` : '';
     const headline = query
       ? `No ${posLabel}prospect${shortlistOnly ? ' on your shortlist' : ''} matching “${query}”.`
       : shortlistOnly
-        ? `Nothing on your shortlist is ${posLabel ? `a ${searchParams.pos} still on the board` : 'still on the board'}.`
-        : searchParams.pos
-          ? `No ${searchParams.pos}s left on this board.`
+        ? `Nothing on your shortlist is ${posLabel ? `a ${posFilter} still on the board` : 'still on the board'}.`
+        : posFilter
+          ? `No ${posFilter}s left on this board.`
           : 'Nobody is on this board.';
     const undo: { href: string; label: string }[] = [];
     if (query) undo.push({ href: boardHref({ q: '' }), label: 'Clear the search' });
-    if (searchParams.pos) undo.push({ href: boardHref({ pos: null }), label: 'Every position' });
+    if (posFilter) undo.push({ href: boardHref({ pos: null }), label: 'Every position' });
     if (shortlistOnly) undo.push({ href: boardHref({ shortlist: false }), label: 'The whole class' });
     return (
       <tr>
@@ -1620,9 +1631,9 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                   so typing narrows whatever is already on screen instead of
                   quietly resetting it. */}
               <ProspectSearch initial={query} baseHref={boardHref({ q: '' })} matches={sorted.length} />
-              <Link href={posHref()} scroll={false} prefetch={false} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</Link>
+              <Link href={posHref()} scroll={false} prefetch={false} className={`pill ${!posFilter ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</Link>
               {positions.map((pos) => (
-                <Link key={pos} href={posHref(pos)} scroll={false} prefetch={false} className={`pill ${searchParams.pos === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</Link>
+                <Link key={pos} href={posHref(pos)} scroll={false} prefetch={false} className={`pill ${posFilter === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</Link>
               ))}
               <Link href={shortlistHref()} scroll={false} prefetch={false} className={`pill ${shortlistOnly ? 'border-gold text-gold bg-gold/10' : 'border-line text-muted'}`}>
                 ★ Shortlist {shortlistIds.size > 0 && `(${shortlistIds.size})`}
@@ -2083,7 +2094,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
             {
               label: draftJustFinished ? 'Undrafted' : 'Prospects',
               value: String(classSize),
-              detail: [searchParams.pos ? `filtered to ${searchParams.pos}` : null, query ? `searching “${query}”` : null]
+              detail: [posFilter ? `filtered to ${posFilter}` : null, query ? `searching “${query}”` : null]
                 .filter(Boolean)
                 .join(' · ') || (draftJustFinished ? 'nobody called their name' : 'in the class'),
             },

@@ -289,7 +289,11 @@ export function TradePickBoard({ picks, rounds, imminentYear, selected, onToggle
                           once it has been — the selections themselves. Read off
                           the picks rather than passed in, so the sentence and
                           the chips can never describe different states. */}
-                      <Tooltip text={yearNumbering(yearPicks)} />
+                      {/* `start`: this is the first cell of the first column
+                          of the board, 40px wide and hard against the left
+                          margin of the panel, so a centred bubble opened 60px
+                          off the left of the screen at 1440. */}
+                      <Tooltip text={yearNumbering(yearPicks)} align="start" />
                     </div>
                   )}
                 </div>
