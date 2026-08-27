@@ -3,7 +3,7 @@ import { readJson } from './json';
 import { capHit, capForYear, capChargeYear, formatMoney } from './cap';
 import { resolveStartYear } from './leagueYear';
 import { parseSettings, capGrowthRate } from './settings';
-import { rosterMinFor } from './tuning';
+import { rosterMinFor, canonicalPosition } from './tuning';
 import { PHASE_LABELS } from './season';
 import { SeasonStats } from './types';
 import { AttrMap } from './ratings';
@@ -348,7 +348,13 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
     for (const p of players) {
       if (p.status !== 'ACTIVE' || !p.teamId) continue;
       const set = positionsByTeam.get(p.teamId) ?? positionsByTeam.set(p.teamId, new Set()).get(p.teamId)!;
-      set.add(p.position);
+      // Through canonicalPosition, because a RETIRED position string is still a
+      // player who lines up somewhere: 48 rows on the dev database still carry
+      // "FB", which the rest of the game reads as a back (RETIRED_POSITIONS in
+      // lib/tuning.ts). Read raw, a club whose only back was stored as a
+      // fullback would be reported as having nobody at running back, which is
+      // a false alarm in a check somebody is meant to run before a release.
+      set.add(canonicalPosition(p.position));
     }
     push(violation('INV-25', 'error', 'A club has nobody at a position its lineup has to field',
       teams.flatMap((t) => {
