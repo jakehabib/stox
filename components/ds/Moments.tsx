@@ -106,67 +106,63 @@ export function MomentReveal({ signal, className = '', revealClassName, children
 }
 
 /**
- * THE CONFIDENCE FIGURE, counting to what the file now says.
+ * THE CONFIDENCE FIGURE, at its value from frame one.
  *
- * This is the one count-up in the application and it is deliberately the only
- * one. Everywhere else the standing rule holds — final values are in the DOM
- * at frame one, because a number withheld for effect is a number the reader
- * has to wait for. It is made an exception here because the figure IS the
- * purchase: you spent a charge to move it, and watching it move is the
- * receipt. Three things keep it honest:
+ * This USED TO COUNT UP, and it was the only count-up in the application. It
+ * was argued for on the grounds that the figure IS the purchase — you spent a
+ * charge to move it, so watching it move is the receipt — and that argument
+ * does not survive the rule it breaks. The app owner's own list, written at
+ * the top of app/globals.css, has three items on it, and the count-up broke
+ * two: "animation never delays information — final values render at frame
+ * one" and "there are no count-ups anywhere". A reader who wanted to know
+ * what he had just bought had to wait out an animation to be told, and the
+ * one number on the page he was actually looking at was the one the screen
+ * would not yet say.
  *
- *   - It runs for --dur-reveal and no longer, so the answer is never more
- *     than a blink away.
- *   - It only ever counts UP, and only from a figure the reader was already
- *     looking at on this page. A first paint prints the number flat.
- *   - The accessible name carries the final figure from frame one, so a
- *     screen reader is told the answer rather than the animation, and reduced
- *     motion skips the count entirely.
+ * So the digits are the answer immediately, and the REVEAL MOVED OFF THEM
+ * ONTO THE DECORATION AROUND THEM: on a rise for the same man, the figure
+ * gets one pass of a lift and a brightening, which is a receipt that costs
+ * the reader nothing. Nothing about the reveal gates the number — remove the
+ * animation entirely, as reduced motion does, and the same digits are in the
+ * same place at the same instant.
  */
 export function ConfidenceFigure({ value, subject, className = '' }: {
   value: number;
   /**
-   * Who this figure is about — the player id. A count-up is only ever a
+   * Who this figure is about — the player id. The reveal is only ever a
    * DELTA ON ONE MAN, so when the same node is reused for somebody else (the
    * next player card, a different row) the baseline moves with him and
-   * nothing animates. Without this the figure would count from one prospect's
-   * confidence to another's, which is not a fact about anything.
+   * nothing fires. Without this the figure would celebrate one prospect's
+   * confidence arriving at another's, which is not a fact about anything.
    */
   subject?: string;
   className?: string;
 }) {
   const target = Math.round(value);
-  const [shown, setShown] = useState(target);
+  // Bumped once per genuine rise for the same man. It is a remount key, not a
+  // value: see the note at the top of this file for why re-adding a class to
+  // a live node cannot restart a CSS animation and a fresh key can.
+  const [beat, setBeat] = useState(0);
   const from = useRef(target);
   const seen = useRef(subject);
-  const raf = useRef<number | null>(null);
 
   useEffect(() => {
     const start = from.current;
     const sameMan = seen.current === subject;
     from.current = target;
     seen.current = subject;
-    if (!sameMan || target <= start || motionReduced()) { setShown(target); return; }
-
-    // --dur-reveal, read off the same token the stylesheet uses rather than
-    // duplicated as a number here.
-    const declared = getComputedStyle(document.documentElement).getPropertyValue('--dur-reveal').trim();
-    const ms = declared.endsWith('ms') ? parseFloat(declared) : parseFloat(declared) * 1000;
-    const dur = Number.isFinite(ms) && ms > 0 ? ms : 450;
-
-    const t0 = performance.now();
-    const step = (now: number) => {
-      const k = Math.min(1, (now - t0) / dur);
-      setShown(Math.round(start + (target - start) * k));
-      if (k < 1) raf.current = requestAnimationFrame(step);
-    };
-    raf.current = requestAnimationFrame(step);
-    return () => { if (raf.current !== null) cancelAnimationFrame(raf.current); };
+    if (sameMan && target > start && !motionReduced()) setBeat((b) => b + 1);
   }, [target, subject]);
 
+  // `target` renders unconditionally and identically on every path, so the
+  // accessible name and the visible digits are the same string at frame one
+  // whether or not anything is about to animate. The two-span shape is the
+  // one this component has always rendered and is kept deliberately: the
+  // outer node carries the accessible name and is what the reveal animates,
+  // the inner one is the ink.
   return (
-    <span className={className} aria-label={`${target}%`}>
-      <span aria-hidden="true">{shown}%</span>
+    <span key={beat} className={`${className}${beat > 0 ? ' moment-confidence' : ''}`} aria-label={`${target}%`}>
+      <span aria-hidden="true">{target}%</span>
     </span>
   );
 }

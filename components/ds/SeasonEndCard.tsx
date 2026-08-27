@@ -87,7 +87,7 @@ export function SeasonEndCard({ data, season, onClose, leagueId }: {
       className="fixed inset-0 z-[60] overflow-y-auto outline-none season-stage"
       style={{
         ['--team-accent' as never]: accent,
-        background: '#0b0708',
+        background: 'var(--c-ink)',
         backgroundImage: [
           `radial-gradient(ellipse 70% 55% at 50% -8%, color-mix(in srgb, var(--team-accent) ${glow}%, transparent), transparent 72%)`,
           'repeating-linear-gradient(to bottom, rgba(255,255,255,.02) 0, rgba(255,255,255,.02) 1px, transparent 1px, transparent 84px)',
@@ -145,7 +145,7 @@ export function SeasonEndCard({ data, season, onClose, leagueId }: {
             </div>
             <h1
               className="stat-value uppercase mt-2 leading-[0.9] text-[clamp(2.1rem,7.5vw,3.4rem)]"
-              style={{ color: champion ? textColor : '#d8d5cc' }}
+              style={{ color: champion ? textColor : 'var(--c-chalk)' }}
             >
               {champion ? 'Champions' : 'Season Over'}
             </h1>
@@ -155,9 +155,9 @@ export function SeasonEndCard({ data, season, onClose, leagueId }: {
             {data.finalScore && (
               <div className="mt-3 flex items-center justify-center gap-3 flex-wrap">
                 <span className="stat-value text-stat-md">
-                  <span style={{ color: champion ? textColor : '#93939c' }}>{data.finalScore.mine}</span>
+                  <span style={{ color: champion ? textColor : 'var(--c-muted)' }}>{data.finalScore.mine}</span>
                   <span className="text-muted mx-1.5">–</span>
-                  <span style={{ color: champion ? '#93939c' : '#f87171' }}>{data.finalScore.theirs}</span>
+                  <span style={{ color: champion ? 'var(--c-muted)' : 'var(--c-bad)' }}>{data.finalScore.theirs}</span>
                 </span>
                 <span className="font-display font-bold uppercase tracking-widest text-[11px] text-muted">
                   {champion ? 'over' : 'to'} the {data.finalScore.oppCity} {data.finalScore.oppNickname}
@@ -207,7 +207,7 @@ export function SeasonEndCard({ data, season, onClose, leagueId }: {
                           style={{
                             animationDelay: `${season.weeks.length * 0.022 + i * 0.07}s`,
                             background: lastLeg && champion ? 'color-mix(in srgb, var(--team-accent) 12%, transparent)' : 'rgba(255,255,255,.025)',
-                            borderColor: lastLeg ? (champion ? 'var(--team-accent)' : 'rgba(248,113,113,.55)') : '#33262a',
+                            borderColor: lastLeg ? (champion ? 'var(--team-accent)' : 'color-mix(in srgb, var(--c-bad) 55%, transparent)') : 'var(--c-line)',
                           }}
                         >
                           <div className="text-[9px] tracking-[0.14em] uppercase font-bold text-muted truncate">{leg.round}</div>
@@ -567,9 +567,9 @@ function meaning(d: TrophyData): { k: string; v: string; sub?: string; team?: bo
 function Rule({ label, accent }: { label: string; accent?: boolean }) {
   return (
     <div className="flex items-center gap-3 mb-3">
-      <div className="h-px flex-1" style={{ background: accent ? 'color-mix(in srgb, var(--team-accent) 40%, transparent)' : '#2d2d32' }} />
+      <div className="h-px flex-1" style={{ background: accent ? 'color-mix(in srgb, var(--team-accent) 40%, transparent)' : 'var(--c-line)' }} />
       <div className="label-sm shrink-0 text-center">{label}</div>
-      <div className="h-px flex-1" style={{ background: accent ? 'color-mix(in srgb, var(--team-accent) 40%, transparent)' : '#2d2d32' }} />
+      <div className="h-px flex-1" style={{ background: accent ? 'color-mix(in srgb, var(--team-accent) 40%, transparent)' : 'var(--c-line)' }} />
     </div>
   );
 }

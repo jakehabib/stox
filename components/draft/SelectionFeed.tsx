@@ -100,7 +100,7 @@ export function SelectionFeed({ rows, made, total, leagueId }: {
       ) : (
         <div
           className="flex-1 min-h-0 overflow-y-auto scroll-shadow-y"
-          style={{ ['--scroll-bg' as never]: 'rgba(24,24,27,0.6)' }}
+          style={{ ['--scroll-bg' as never]: 'color-mix(in srgb, var(--c-card) 60%, transparent)' }}
         >
           {rows.map((row, i) => {
             const chips = chipsFor(row);

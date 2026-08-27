@@ -18,16 +18,16 @@ import type { GameShape, ShapeTone } from '@/lib/gameShape';
  *  stroke/fill cannot take a Tailwind class the way a text colour can, and a
  *  template-built class name would be purged from the build. */
 const TONE_HEX: Record<ShapeTone, string> = {
-  good: '#4ade80',
-  bad: '#f87171',
-  warn: '#fbbf24',
-  info: '#38bdf8',
-  muted: '#93939c',
+  good: 'var(--c-accent)',
+  bad: 'var(--c-bad)',
+  warn: 'var(--c-warn)',
+  info: 'var(--c-accent2)',
+  muted: 'var(--c-muted)',
 };
 
-const LINE = '#2d2d32';
-const ZERO = '#4a4a52';
-const MUTED = '#93939c';
+const LINE = 'var(--c-line)';
+const ZERO = 'color-mix(in srgb, var(--c-line) 70%, var(--c-muted))';
+const MUTED = 'var(--c-muted)';
 
 interface Props {
   shape: GameShape;
@@ -97,7 +97,7 @@ export function GameShapePath({
           <line
             key={i}
             x1={x(i)} x2={x(i)} y1={padY - 8} y2={height - padY + 8}
-            stroke={k === 1 ? '#3a3a41' : LINE}
+            stroke={k === 1 ? 'color-mix(in srgb, var(--c-line) 80%, var(--c-muted))' : LINE}
             strokeWidth={k === 1 ? 1.5 : 1}
             strokeDasharray={k === 1 ? '3 3' : undefined}
           />

@@ -653,6 +653,34 @@
     .commit-flash { animation: none; }
   }
 
+  /* --- Micro-interaction layer --------------------------------------------
+     The skin is flat and dense, which takes away the two things that used to
+     tell a reader a surface was live: the drop shadow and the hover glow.
+     These three put that back as movement instead of as decoration, and all
+     three sit on shared component classes so no page had to be edited to get
+     them. Every one animates `transform` only — never a width, a height or an
+     offset — so nothing here can reflow a neighbour or move a figure.
+
+     Durations come from the same four tokens as everything else, which means
+     all of it collapses to 1ms under prefers-reduced-motion without a rule of
+     its own, and none of it gates a click: these are hover and press states,
+     so the pointer is already where the user put it.
+     -------------------------------------------------------------------- */
+
+  /* A row lifts a pixel under the pointer. On a board of fifty rows this is
+     what separates "the row I am reading" from "the row the cursor is over",
+     and it does it without a colour the zebra striping is already using. */
+  .table-clean tbody tr {
+    transition: transform var(--dur-tick) var(--ease-out);
+  }
+  .table-clean tbody tr:hover { transform: translateY(-1px); }
+
+  /* The same beat on a fact tile. Half of these are links — cap space,
+     workouts, the depth chart's open slots — and none of them looked like it
+     until it was clicked. */
+  .stat-tile { transition: transform var(--dur-tick) var(--ease-out), border-color var(--dur-tick) var(--ease-out); }
+  a.stat-tile:hover, .stat-tile a:hover { transform: translateY(-1px); }
+
   /* --- Handset safety -----------------------------------------------------
      The help popovers are a fixed 18rem (Tooltip) and 11rem (the cap chart's
      readout). 18rem is 288px inside a 390px viewport, and because they open

@@ -158,7 +158,7 @@ export function CrestDrift({ seeds }: { seeds: FranchiseSeed[] }) {
       {/* Fades into the copy column so the headline never sits on a crest. */}
       <div
         className="absolute inset-0"
-        style={{ background: 'linear-gradient(90deg, #0a0a0b 0%, rgba(10,10,11,0.96) 28%, rgba(10,10,11,0.30) 68%, rgba(10,10,11,0.05) 100%)' }}
+        style={{ background: 'linear-gradient(90deg, var(--c-ink) 0%, color-mix(in srgb, var(--c-ink) 96%, transparent) 28%, color-mix(in srgb, var(--c-ink) 30%, transparent) 68%, color-mix(in srgb, var(--c-ink) 5%, transparent) 100%)' }}
       />
     </div>
   );

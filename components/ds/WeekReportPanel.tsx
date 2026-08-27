@@ -221,7 +221,7 @@ export function WeekReportPanel({ report, span, coach, onClose, onAdvance, leagu
 
               {r.recap && (
                 <p className="text-sm leading-relaxed text-chalk/90 border-l-2 pl-3.5 py-0.5"
-                   style={{ borderColor: 'var(--team-accent, #38bdf8)' }}>
+                   style={{ borderColor: 'var(--team-accent, var(--c-accent2))' }}>
                   {r.recap}
                 </p>
               )}

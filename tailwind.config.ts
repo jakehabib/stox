@@ -116,7 +116,21 @@ const config: Config = {
       keyframes: {
         fadeUp: { '0%': { opacity: '0', transform: 'translateY(6px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
       },
-      animation: { fadeUp: 'fadeUp .25s ease-out both' },
+      // The one entrance in the app that was NOT reading the motion tokens:
+      // `.25s ease-out` was a duration and a curve invented here and written
+      // nowhere else, so it was also the one animation that kept running at
+      // full length for a reader who had asked for reduced motion. --dur-state
+      // is the token for "something arrived" and --ease-out is the app's curve;
+      // both collapse to 1ms/linear under the media query in globals.css, and
+      // `both` means a 1ms run still lands on its END state, so nothing that
+      // uses this can be left invisible.
+      //
+      // Deliberately still a rise and NOT the rise-plus-scale the mockups
+      // showed. Half the consumers of this class are `fixed inset-0` modal
+      // backdrops (SigningMoment, DraftMoment), and scaling one of those from
+      // .96 opens a bar of bare page along all four edges for the length of
+      // the animation.
+      animation: { fadeUp: 'fadeUp var(--dur-state) var(--ease-out) both' },
     },
   },
   plugins: [],
