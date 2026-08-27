@@ -727,6 +727,103 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-27 — Every help bubble in the game was a 22-pixel sliver on a
+  phone, and the rule written to stop that is why.** `85a4ced`, `9596f5b`,
+  `41d2c8f`. `globals.css` carries a *Handset safety* block that pins the
+  tooltip to the viewport below 520px. It had never worked. The block lives in
+  `@layer components`; `absolute` on the bubble is a Tailwind UTILITY, and the
+  utilities layer is emitted after this one — so of the six declarations in
+  that rule the only one without `!important` was the one that mattered, and
+  `position: fixed` lost. Everything else won, against the wrong box: `left:
+  12px` and `right: 12px` resolved against the 14px "?" trigger rather than the
+  screen, `width: auto` shrank to what was left between them, and every bubble
+  rendered as a 22px column of wrapped words. Correcting the position alone
+  would have replaced it with an invisible bubble — placement is `bottom-full`,
+  100% of the containing block, which is the whole viewport once the box is
+  fixed — so the pin is vertical now too: a sheet at the foot of the screen,
+  full width, nothing clipped. On desktop the same 18rem bubble hangs half of
+  itself past whichever edge its trigger is nearest, and because it is laid out
+  whether or not anyone is hovering, that was permanent horizontal document
+  scroll: 106px on the Scouting Department, 15 on the Trade Center, 13 on
+  Analytics, measured at 1440. The masthead fact strip (every route in the
+  game), the scouting legend, the trade pill row, `SectionHeading` and the
+  Settings labels now open inward using the `align` prop the component already
+  carried for exactly this. Two Analytics panels were separately 202px and 45px
+  wide inside a 300px card on a handset and are fixed with `ChartBox` and a
+  wrapping caption. **Every route in the game now measures zero horizontal
+  overflow at 1440 and at 390**, where the dashboard alone was 20px before.
+  No design change: the bubbles are where they were at every width that fitted.
+
+- **2026-08-27 — The contract card on a player's page dated every figure on it
+  a year early through the first two offseason weeks.** `6e0bd72`.
+  `ageContractsForYear` steps the contract ledger onto the new league year at
+  the final whistle while `League.seasonYear` waits for RESET_STANDINGS, and
+  `capChargeYear` exists to name that boundary. The player page already called
+  it once — in the fifth-year-option block, under a long comment explaining why
+  the clock is the wrong year to count from — and then handed the clock to
+  `ContractLedger` six hundred lines further down, whose own prop
+  documentation names this as the hazard it was added for. So at OFFSEASON
+  weeks 1-2 every row of the contract table and its dead-money column, the "Cap
+  Hit {year}" headline over a figure `capHit` had already read out of the new
+  year's schedule, the expiry date under Years Left and the restructure
+  sentence were all a year early; the extension screen's copy of the ledger had
+  it too. The year is resolved once for the page and passed down, so it cannot
+  disagree with the cap space quoted beside it. Invisible in a REGULAR-season
+  league, which is why it survived.
+
+- **2026-08-27 — A fantasy draft fogged 1,900 established professionals and
+  told you every one of them was a Franchise Prospect.** `9ce2aec`. The draft
+  board hardcodes `isProspect: true`, which is load-bearing for a rookie class
+  — drafting a man clears `Player.isDraftee`, so reading the flag off the
+  record would print another club's rookie's true overall the instant he came
+  off the board. A fantasy pool is the other case: the league's own thirty-two
+  rosters emptied into one list, flagged `isDraftee` because that is how the
+  pool is addressed, every man in it carrying four seasons of experience, box
+  scores and a contract. lib/scouting.ts draws the line for the whole game —
+  *"a free agent with five seasons of production behind him is not a mystery;
+  you can watch the tape"* — and the board was on the wrong side of it: a
+  26-year-old under a 40-point ceiling band reading 59-99, and so was almost
+  everyone else, so the column that exists to separate the board carried one
+  value. Two more followed from the same place: the board opened sorted by a
+  consensus rank no fantasy pool has (comparing two missing ranks is NaN, so
+  the order was whatever the query returned), and the rating column was headed
+  "Scouted" off a league-wide switch rather than off what the views actually
+  returned. Still open and not fixed here: `classPool` is scoped by `draftYear`
+  and a fantasy pool has none, so Board Grade, Athletic and Ours stay blank all
+  draft.
+
+- **2026-08-27 — Two screens told you a season was over that had not been
+  played, and one drew a table with a header row and no rows.** `1cccef1`,
+  `73c3881`. `ensureSeasonSchedule` runs in PRESEASON, so from the final
+  whistle until the new season opens there are no fixtures in the league year
+  the clock has already rolled onto — the whole of OFFSEASON, RESIGN,
+  FREE_AGENCY and DRAFT. Through all of it the Schedule masthead fell through
+  to its end-of-season branch: under an eyebrow reading "2027 · Re-sign Window"
+  it said *season complete*, *none*, *nothing left*, while the line underneath
+  said "No games scheduled yet" and contradicted all three. Stats had the same
+  shape in one cell — "Games Played 0" captioned "longest season on the books".
+  Free Agency had no empty state at all: with nobody on the wire it drew the
+  masthead over a bare table, which is what a fantasy league looks like from
+  creation until its draft is over, one tap off the top nav. It now says which
+  of the three reasons it is, with a button to the draft where that is the
+  answer. Both position filters — Free Agency's and the Draft board's — are
+  URLs and were unvalidated: an unrecognised `?pos=` filtered the list to
+  nothing and then quoted itself back ("No ZZs left on this board"). Unknown
+  reads as unfiltered, the policy `/new` already applies to `?team=`.
+
+- **2026-08-27 — The League Settings screen offered numbers its own Server
+  Action would silently refuse.** `f827ca2`. Every number box rendered with no
+  `min` and no `max`. The write was already safe — `updateSettingsAction`
+  clamps all six through one helper — but the value could be typed, the form
+  posted it, the clamp quietly replaced it, and the screen came back rendering
+  a different number from the one entered with nothing said about the
+  substitution. A control that appears to accept a setting the league will not
+  play under is the same lying-metric shape as a wrong figure, arriving through
+  the input instead of the output. The boxes now carry the bounds the helper
+  clamps to: trade deadline 1 to the league's own season length, the three
+  multipliers 0-5, AI trade frequency 0-1, scouting focus 0-10,000. The server
+  clamp stays exactly where it is.
+
 - **2026-08-27 — A fantasy draft could hand a club no kicker, no punter and no
   quarterback, and a league told to carry 46 men was born carrying 48.**
   `2c49673`, `966d916`. Four defects, all found by running the game's own soak
