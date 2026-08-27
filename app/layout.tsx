@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Barlow_Condensed } from 'next/font/google';
+import { Oswald, IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google';
 import './globals.css';
 // The reactions that fire when an action succeeds — one stylesheet, no
 // library, and every duration in it is a token declared in globals.css above.
@@ -7,14 +7,43 @@ import './globals.css';
 // scattered through the design system.
 import './moments.css';
 
-// A bold condensed display face for headings and nav — the one typographic
-// move that does the most to read as "broadcast sports graphics" instead of
-// "generic dark SaaS dashboard." Body copy and data-dense tables stay on the
-// system sans stack for maximum legibility at small sizes.
-const display = Barlow_Condensed({
+// THE THREE FACES OF STADIUM NIGHT, all through next/font so each one is
+// self-hosted, preloaded and size-adjusted against its fallback — a raw
+// @import would cost a render-blocking round trip to a third party and a
+// visible reflow on every navigation.
+//
+// Oswald is the display face: headings, nav, buttons and every stat number.
+// It is narrower and flatter-shouldered than the Barlow Condensed it
+// replaces, which is what makes an uppercase nav item read as stadium
+// signage rather than as a webfont. It tops out at 700, where Barlow went to
+// 800: Stadium Night sets stat numbers at 700 because Oswald is narrow enough
+// that 800 closes its counters at the sizes a fact tile uses.
+const display = Oswald({
   subsets: ['latin'],
-  weight: ['600', '700', '800'],
+  weight: ['500', '600', '700'],
   variable: '--font-display',
+  display: 'swap',
+});
+
+// Body copy and data-dense tables move OFF the system sans stack. That stack
+// was a different typeface on every platform, and Stadium Night sets body at
+// 13px in tables of twenty columns — the one size at which "whatever the OS
+// ships" is not good enough. IBM Plex Sans is a grotesque drawn for exactly
+// this: dense technical reading, open apertures, unambiguous 1/l/I.
+const body = IBM_Plex_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-sans',
+  display: 'swap',
+});
+
+// Its monospaced sibling, for money, ratings and every aligned figure. Same
+// skeleton as the body face, so a cap number set in mono beside a label set
+// in sans reads as one voice rather than two.
+const mono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-mono',
   display: 'swap',
 });
 
@@ -56,14 +85,17 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#0d1117',
+  // Tracks `ink` in tailwind.config.ts — this is the colour a mobile
+  // browser paints its own chrome with, so a stale value shows as a seam
+  // above the page.
+  themeColor: '#070a0f',
   width: 'device-width',
   initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={display.variable}>
+    <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
       <body>{children}</body>
     </html>
   );
