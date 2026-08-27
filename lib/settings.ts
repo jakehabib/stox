@@ -262,6 +262,8 @@ const LEGACY_DIFFICULTY: Record<string, Difficulty> = {
   LEGEND: 'HARD',
 };
 
+const CAP_MODE_VALUES: CapMode[] = ['REALISTIC', 'SIMPLIFIED', 'OFF'];
+
 export function parseSettings(raw: string | null | undefined): LeagueSettings {
   const stored = readJson<Partial<LeagueSettings>>(raw, {});
   const merged = { ...DEFAULT_SETTINGS, ...stored };
@@ -289,6 +291,14 @@ export function parseSettings(raw: string | null | undefined): LeagueSettings {
   // crash with NaN modifiers three screens later.
   if (!(merged.difficulty in DIFFICULTY_MODS)) merged.difficulty = DEFAULT_SETTINGS.difficulty;
   if (!(merged.capGrowth in CAP_GROWTH_MODES)) merged.capGrowth = DEFAULT_SETTINGS.capGrowth;
+  // capMode was the third enum and the only one this did not heal, which is
+  // how a league came to be stored with `capMode: "BANANA"`: it flowed on to
+  // every cap reader as an unrecognised mode, and the restructure tool — which
+  // tests for REALISTIC by name — refused with "Restructuring only applies in
+  // Realistic cap mode" on a save whose Settings screen showed no mode at all.
+  // The action that writes it whitelists it now (app/actions/league.ts); this
+  // is the read side, and it is what repairs a save already carrying one.
+  if (!CAP_MODE_VALUES.includes(merged.capMode)) merged.capMode = DEFAULT_SETTINGS.capMode;
   return merged;
 }
 

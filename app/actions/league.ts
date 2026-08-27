@@ -15,12 +15,17 @@ import { loadRebuildStanding } from '@/lib/rebuildState';
 import { IRONMAN_REFUSAL } from '@/lib/rebuild';
 
 /**
- * Whitelists for the three enum-ish fields. These arrive as raw FormData, and
- * a Server Action is a public POST endpoint — the form is not the only thing
+ * Whitelists for the enum-ish fields. These arrive as raw FormData, and a
+ * Server Action is a public POST endpoint — the form is not the only thing
  * that can call it. Casting an arbitrary string straight into the settings
  * JSON let a crafted request write a difficulty of "" or a capMode nothing in
  * the codebase handles, which then fails much later, somewhere else, in a
  * league that already exists.
+ *
+ * That paragraph was true of league CREATION and only two thirds true of
+ * `updateSettingsAction`, which cast capMode, difficulty and recapVerbosity
+ * for as long as it existed. All of them go through `pick` now, and the
+ * numbers beside them go through `num`.
  */
 const LEAGUE_STARTS = ['RANDOM_ROSTERS', 'FANTASY_DRAFT', 'REBUILD'] as const;
 const CAP_MODES = ['REALISTIC', 'SIMPLIFIED', 'OFF'] as const;
@@ -29,9 +34,57 @@ const DIFFICULTIES = ['EASY', 'NORMAL', 'HARD'] as const;
  *  silently rejected here. */
 const CAP_GROWTHS = Object.keys(CAP_GROWTH_MODES) as (keyof typeof CAP_GROWTH_MODES)[];
 
+const RECAP_VERBOSITIES = ['SHORT', 'NORMAL', 'DETAILED'] as const;
+
 function pick<T extends string>(raw: FormDataEntryValue | null, allowed: readonly T[], fallback: T): T {
   const v = String(raw ?? '');
   return (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+}
+
+/**
+ * ===========================================================================
+ * THE NUMBERS ON THE SETTINGS FORM, KEPT INSIDE THEIR OWN RANGE
+ * ===========================================================================
+ * Every numeric setting was read as `Number(formData.get(k) || current[k])`
+ * and written straight into the league's settings JSON. That has no floor, no
+ * ceiling and no test that the result is even a number, and the form's inputs
+ * carry no `min`/`max` — so this is not only a crafted-request problem, it is
+ * what a player gets for typing into the box on the Settings screen:
+ *
+ *   "abc"      -> NaN      -> JSON.stringify writes `null`
+ *   Infinity   -> Infinity -> JSON.stringify writes `null`
+ *   -40        -> stored, and a negative trade-deadline week means the
+ *                 deadline has ALWAYS passed: trading is off for the rest of
+ *                 that save with no setting on the screen that says so.
+ *   1e308      -> stored, and every rate built on it saturates.
+ *
+ * A `null` is worse than a wrong number, because `parseSettings` spreads the
+ * stored blob over the defaults and `null` is a present key — so the default
+ * does not come back and the value arrives at the sim as null.
+ *
+ * Clamped rather than refused, deliberately. A settings save that throws away
+ * eleven correct fields because the twelfth was typed wrong is friction on the
+ * common path to defend the rare one; the range is the rule, and a value
+ * outside it lands on the nearest end of it. Blank still means "leave it as it
+ * was", which is what the old `|| current` did and the only behaviour the
+ * screen has ever had for an emptied box.
+ * ===========================================================================
+ */
+function num(
+  raw: FormDataEntryValue | null,
+  current: number,
+  min: number,
+  max: number,
+  opts?: { integer?: boolean },
+): number {
+  const text = String(raw ?? '').trim();
+  if (text === '') return current;
+  const n = Number(text);
+  // Not a number at all, or NaN/Infinity: keep what the save already had
+  // rather than storing a hole where a rate should be.
+  if (!Number.isFinite(n)) return Number.isFinite(current) ? current : min;
+  const clamped = Math.min(max, Math.max(min, n));
+  return opts?.integer ? Math.round(clamped) : clamped;
 }
 
 /** League names are shown in lists and page titles; an unbounded one is a
@@ -175,10 +228,25 @@ export async function updateSettingsAction(leagueId: string, formData: FormData)
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const current: LeagueSettings = JSON.parse(league.settings);
 
+  // `current` is a raw JSON.parse of whatever is stored, so its own values are
+  // not trustworthy as fallbacks — a save already carrying a null or an
+  // unrecognised enum would keep it forever. `safe` is the healed version, and
+  // it is what every fallback below falls back TO.
+  const safe = parseSettings(league.settings);
+
   const next: LeagueSettings = {
     ...current,
-    capMode: String(formData.get('capMode') || current.capMode) as LeagueSettings['capMode'],
-    difficulty: String(formData.get('difficulty') || current.difficulty) as LeagueSettings['difficulty'],
+    // WHITELISTED, NOT CAST — and this is the file whose own header says why.
+    // These two were the exception the comment above `LEAGUE_STARTS` did not
+    // know it had: `String(...) as LeagueSettings['capMode']` accepted
+    // anything, and a POST setting capMode to "BANANA" was stored, survived
+    // parseSettings (which heals difficulty and capGrowth and never healed
+    // this one), and left a save whose restructure tool answered "Restructuring
+    // only applies in Realistic cap mode" on a league the Settings screen no
+    // longer had a name for. A comment describing a rule two of its three
+    // fields did not follow is the same bug as a wrong number.
+    capMode: pick(formData.get('capMode'), CAP_MODES, safe.capMode),
+    difficulty: pick(formData.get('difficulty'), DIFFICULTIES, safe.difficulty),
     // Whitelisted rather than cast, unlike its two neighbours above: this one
     // indexes a table of RATES, and an unrecognised rung would compound the
     // whole league's ceiling at undefined. The fallback goes through
@@ -190,21 +258,30 @@ export async function updateSettingsAction(leagueId: string, formData: FormData)
     scoutingEnabled: formData.get('scoutingEnabled') === 'on',
     revealTrueRatings: formData.get('revealTrueRatings') === 'on',
     fogOnOwnRoster: formData.get('fogOnOwnRoster') === 'on',
-    scoutingBudgetPerWeek: Number(formData.get('scoutingBudgetPerWeek') || current.scoutingBudgetPerWeek),
-    progressionSpeed: Number(formData.get('progressionSpeed') || current.progressionSpeed),
+    // 0 is a legal answer — it means scouting runs on carry-over alone.
+    scoutingBudgetPerWeek: num(formData.get('scoutingBudgetPerWeek'), safe.scoutingBudgetPerWeek, 0, 10_000, { integer: true }),
+    // A multiplier, so 0 freezes development and 5 is already extreme. It may
+    // not go negative: a negative speed inverts every growth roll into decline.
+    progressionSpeed: num(formData.get('progressionSpeed'), safe.progressionSpeed, 0, 5),
     injuriesEnabled: formData.get('injuriesEnabled') === 'on',
-    injurySeverity: Number(formData.get('injurySeverity') || current.injurySeverity),
+    injurySeverity: num(formData.get('injurySeverity'), safe.injurySeverity, 0, 5),
     retirementEnabled: formData.get('retirementEnabled') === 'on',
     tradesEnabled: formData.get('tradesEnabled') === 'on',
-    aiTradeFrequency: Number(formData.get('aiTradeFrequency') || current.aiTradeFrequency),
+    // Documented on the form as 0-1, and it is a probability; anything else
+    // is not a rarer or commoner offer, it is a broken comparison.
+    aiTradeFrequency: num(formData.get('aiTradeFrequency'), safe.aiTradeFrequency, 0, 1),
     tradeDeadlineEnabled: formData.get('tradeDeadlineEnabled') === 'on',
-    tradeDeadlineWeek: Number(formData.get('tradeDeadlineWeek') || current.tradeDeadlineWeek),
+    // Inside the season it divides. Week 0 or a negative one is not "an early
+    // deadline", it is a deadline that has passed on the first day of every
+    // league year — trading switched off for the life of the save, with the
+    // Settings screen still showing it as enabled.
+    tradeDeadlineWeek: num(formData.get('tradeDeadlineWeek'), safe.tradeDeadlineWeek, 1, Math.max(1, safe.seasonLength), { integer: true }),
     franchiseTagEnabled: formData.get('franchiseTagEnabled') === 'on',
     aiAcceptsLopsided: formData.get('aiAcceptsLopsided') === 'on',
     forceTradeEnabled: formData.get('forceTradeEnabled') === 'on',
-    simVariance: Number(formData.get('simVariance') || current.simVariance),
+    simVariance: num(formData.get('simVariance'), safe.simVariance, 0, 5),
     homeFieldAdvantage: formData.get('homeFieldAdvantage') === 'on',
-    recapVerbosity: String(formData.get('recapVerbosity') || current.recapVerbosity) as LeagueSettings['recapVerbosity'],
+    recapVerbosity: pick(formData.get('recapVerbosity'), RECAP_VERBOSITIES, safe.recapVerbosity),
     // showAdvancedStats / autoAdvanceWeeks / confirmRiskyMoves are no longer
     // on the form — no system reads them, so the screen stopped offering
     // controls that do nothing. The `...current` spread above keeps whatever
