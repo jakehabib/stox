@@ -203,16 +203,6 @@ export interface WorkoutResult {
   devTrait?: string | null;
 }
 
-function profileUpsert(leagueId: string, data: { workoutYear: number; workoutUsed: number }) {
-  // Keyed on leagueId rather than the row id for the reason app/actions/dynasty.ts
-  // documents: loadDynastyProfile can hand back an in-memory default with no id.
-  return prisma.dynastyProfile.upsert({
-    where: { leagueId },
-    create: { ownerKind: 'LEAGUE', ownerKey: leagueId, leagueId, ...data },
-    update: data,
-  });
-}
-
 /**
  * Spend one slot on one prospect.
  *
@@ -252,6 +242,11 @@ export async function runWorkout(leagueId: string, teamId: string, playerId: str
   // there. A screen counting one budget over an action spending another is how
   // five slots become ten.
   const used = profile.workoutYear === classYear ? clamp(profile.workoutUsed, 0, max) : 0;
+  // The ledger EXACTLY as it was read, un-normalised. `used` is the count
+  // after the stale-class rule and the clamp, so it cannot be the thing the
+  // claim below compares against — the row still holds the raw pair.
+  const profileYear = profile.workoutYear;
+  const profileUsed = profile.workoutUsed;
   if (used >= max) {
     return { ok: false, message: `No workout slots left. All ${max} come back when next year's class lands on the board.`, remaining: 0, max };
   }
@@ -320,14 +315,50 @@ export async function runWorkout(leagueId: string, teamId: string, playerId: str
     notes: workoutNote(player.devTrait, measurable.length),
   };
 
-  await prisma.$transaction([
-    prisma.scoutingReport.upsert({
-      where: { playerId_teamId: { playerId, teamId } },
-      create: { playerId, teamId, ...payload },
-      update: payload,
-    }),
-    profileUpsert(leagueId, { workoutYear: classYear, workoutUsed: used + 1 }),
-  ]);
+  /*
+   * THE SLOT IS CLAIMED BEFORE THE REPORT IS WRITTEN.
+   *
+   * This was a read of the ledger, a decision, and then a write of `used + 1`
+   * — with the counter's value taken from the read. Two workouts requested at
+   * the same moment both read the same `used`, both decided a slot was free,
+   * and both wrote the SAME number: measured against a five-slot allowance,
+   * two prospects were flown in and `workoutUsed` came back 1.
+   *
+   * `updateMany` with the ledger we read in the WHERE is the claim — the same
+   * compare-and-set `beginRookieDraftAction` uses on the draft and the Dynasty
+   * charges now use on theirs. The second caller matches no row, is told the
+   * slot went elsewhere, and writes nothing.
+   *
+   * The insert first is what gives a save that has never opened the Dynasty
+   * screen a ledger row for the claim to match against — and it is a
+   * `createMany ... skipDuplicates` (one `INSERT ... ON CONFLICT DO NOTHING`)
+   * rather than an upsert, deliberately twice over: an upsert's UPDATE branch
+   * would write the pair we READ back over the row, undoing a claim another
+   * request had just won, and its read-then-insert shape can collide with a
+   * concurrent create instead of yielding to it.
+   */
+  await prisma.dynastyProfile.createMany({
+    data: [{ ownerKind: 'LEAGUE', ownerKey: leagueId, leagueId }],
+    skipDuplicates: true,
+  });
+  const claimed = await prisma.dynastyProfile.updateMany({
+    where: { leagueId, workoutYear: profileYear, workoutUsed: profileUsed },
+    data: { workoutYear: classYear, workoutUsed: used + 1 },
+  });
+  if (claimed.count === 0) {
+    return {
+      ok: false,
+      message: 'That slot was already being spent on somebody else. Reload the board to see who went.',
+      remaining: Math.max(0, max - used),
+      max,
+    };
+  }
+
+  await prisma.scoutingReport.upsert({
+    where: { playerId_teamId: { playerId, teamId } },
+    create: { playerId, teamId, ...payload },
+    update: payload,
+  });
 
   const remaining = max - (used + 1);
   return {

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { Rng } from '@/lib/rng';
 import { prisma } from '@/lib/db';
-import { assertLeagueOwner } from '@/lib/owner';
+import { assertLeagueOwner, assertTeamInLeague, assertTradeAssetsInLeague, userTeamId } from '@/lib/owner';
 import { readJson, writeJson } from '@/lib/json';
 import { attrsForPosition } from '@/lib/ratings';
 import { describeValue as describeValueShared } from '@/lib/tradeWords';
@@ -54,6 +54,55 @@ async function writeProfile(leagueId: string, data: ProfileWrite) {
   await profileUpsert(leagueId, data);
 }
 
+/**
+ * ===========================================================================
+ * SPENDING A CHARGE IS A CLAIM, NOT A WRITE
+ * ===========================================================================
+ * Both scarce abilities in this file counted the same way: read the ledger,
+ * decide there is a charge left, do the work, then write `used + 1`. Two
+ * requests in flight at once both read the same `used`, both decide yes, and
+ * both write the SAME number — so the counter goes up once and the ability
+ * fires twice.
+ *
+ * Measured, not reasoned about: two Full Scouts on two different prospects,
+ * issued concurrently against a profile with two charges, left
+ * `fullScoutUsed = 1` and TWO players fully revealed. A GM with a fast finger
+ * gets his season's allowance twice over, and the counter on the screen has no
+ * idea.
+ *
+ * `updateMany` with the ledger we READ in the WHERE is the claim, exactly as
+ * `beginRookieDraftAction` claims the draft: the second caller's predicate no
+ * longer matches the row the first one moved, so it comes back count 0 and is
+ * told the charge went elsewhere. It is the same shape the codebase already
+ * uses for a double submit, applied to the two counters that were missing it.
+ *
+ * The row is INSERTED first so a save that has never opened the Dynasty screen
+ * has a ledger for the claim to match against — `createMany ... skipDuplicates`,
+ * which is one `INSERT ... ON CONFLICT DO NOTHING`, rather than an upsert whose
+ * read-then-insert can collide with a concurrent create instead of yielding to
+ * it. It writes no counters, so it can never step on a claim already won.
+ * ===========================================================================
+ */
+async function claimCharge(
+  leagueId: string,
+  ledger: 'fullScout' | 'insider',
+  seen: { year: number; used: number },
+  next: { year: number; used: number },
+): Promise<boolean> {
+  await prisma.dynastyProfile.createMany({
+    data: [{ ownerKind: 'LEAGUE', ownerKey: leagueId, leagueId }],
+    skipDuplicates: true,
+  });
+  const where = ledger === 'fullScout'
+    ? { leagueId, fullScoutYear: seen.year, fullScoutUsed: seen.used }
+    : { leagueId, insiderYear: seen.year, insiderUsed: seen.used };
+  const data = ledger === 'fullScout'
+    ? { fullScoutYear: next.year, fullScoutUsed: next.used }
+    : { insiderYear: next.year, insiderUsed: next.used };
+  const claimed = await prisma.dynastyProfile.updateMany({ where, data });
+  return claimed.count > 0;
+}
+
 function safeRevalidate(leagueId: string) {
   try {
     revalidatePath(`/league/${leagueId}`, 'layout');
@@ -69,7 +118,12 @@ function safeRevalidate(leagueId: string) {
 
 export async function purchaseSkillAction(leagueId: string, skillId: DynastySkillId): Promise<DynastyActionResult> {
   await assertLeagueOwner(leagueId);
-  const def = SKILL_BY_ID[skillId];
+  // `SKILL_BY_ID[skillId]` is a lookup on a plain object with an id off the
+  // wire, so `'__proto__'` and `'constructor'` are not misses — they return
+  // something truthy from Object.prototype, walk straight past `if (!def)`,
+  // and die on `def.ranks.length` as an uncaught "Cannot read properties of
+  // undefined", which in Next blanks the Dynasty page. Own properties only.
+  const def = Object.prototype.hasOwnProperty.call(SKILL_BY_ID, skillId) ? SKILL_BY_ID[skillId] : undefined;
   if (!def) return { ok: false, message: 'Unknown upgrade.' };
 
   const state = await buildDynastyState(leagueId);
@@ -135,9 +189,12 @@ export interface FullScoutResult extends DynastyActionResult {
  * buildScoutedView reads to return the player's true ratings and exact
  * ceiling.
  *
- * The charge is decremented on DynastyProfile in the SAME transaction as the
- * reveal, keyed to the current league year, which is what makes both of the
- * properties the spec demands true:
+ * The charge is CLAIMED on DynastyProfile before the reveal is written, keyed
+ * to the current league year — see claimCharge above for why the claim
+ * replaced a single transaction that wrote both. That is what makes all three
+ * of the properties the spec demands true:
+ *   - two clicks at once spend two charges or one charge and one refusal,
+ *     never one charge and two reveals;
  *   - reloading the page cannot restore a use (the counter is in Postgres,
  *     not in a component's state);
  *   - the counter resets on a new season with no hook in lib/season.ts,
@@ -147,8 +204,14 @@ export interface FullScoutResult extends DynastyActionResult {
  * The reveal itself is permanent. You bought a complete evaluation; it does
  * not expire when the calendar turns.
  */
-export async function fullScoutAction(leagueId: string, teamId: string, playerId: string): Promise<FullScoutResult> {
+export async function fullScoutAction(leagueId: string, _teamId: string, playerId: string): Promise<FullScoutResult> {
   await assertLeagueOwner(leagueId);
+  // WHOSE FILE IT GOES INTO IS NOT THE CLIENT'S TO SAY. The charge is the
+  // save's, so the report belongs on the save's own club; a request naming an
+  // AI club spent the GM's allowance filling in a rival's scouting book. The
+  // parameter stays so the widget does not change, and is ignored — the same
+  // treatment openNegotiationAction gives its `_teamId`.
+  const teamId = await userTeamId(leagueId);
   const state = await buildDynastyState(leagueId);
   if (state.fullScout.remaining <= 0) {
     return {
@@ -159,13 +222,11 @@ export async function fullScoutAction(leagueId: string, teamId: string, playerId
     };
   }
 
-  const [league, player, team] = await Promise.all([
+  const [league, player] = await Promise.all([
     prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { seasonYear: true } }),
     prisma.player.findUnique({ where: { id: playerId }, select: { id: true, leagueId: true, firstName: true, lastName: true, position: true, trueAttrs: true, potential: true } }),
-    prisma.team.findUnique({ where: { id: teamId }, select: { id: true, leagueId: true } }),
   ]);
   if (!player || player.leagueId !== leagueId) return { ok: false, message: 'That player is not in this league.' };
-  if (!team || team.leagueId !== leagueId) return { ok: false, message: 'That team is not in this league.' };
 
   const existing = await prisma.scoutingReport.findUnique({ where: { playerId_teamId: { playerId, teamId } } });
   if (existing?.fullyRevealed) {
@@ -199,14 +260,23 @@ export async function fullScoutAction(leagueId: string, teamId: string, playerId
   const usedThisYear = profile.fullScoutYear === league.seasonYear ? profile.fullScoutUsed : 0;
   if (usedThisYear >= max) return { ok: false, message: 'No Full Scouts left this season.', remaining: 0, max };
 
-  await prisma.$transaction([
-    prisma.scoutingReport.upsert({
-      where: { playerId_teamId: { playerId, teamId } },
-      create: { playerId, teamId, scoutedOvr: 0, ovrLow: 0, ovrHigh: 99, ...payload },
-      update: payload,
-    }),
-    profileUpsert(leagueId, { fullScoutYear: league.seasonYear, fullScoutUsed: usedThisYear + 1 }),
-  ]);
+  // The charge is claimed BEFORE the reveal, and the reveal only happens if
+  // the claim was won — see claimCharge. The old order wrote both in one
+  // transaction with no compare-and-set, which is what let two concurrent
+  // calls reveal two players on one charge.
+  const won = await claimCharge(
+    leagueId, 'fullScout',
+    { year: profile.fullScoutYear, used: profile.fullScoutUsed },
+    { year: league.seasonYear, used: usedThisYear + 1 },
+  );
+  if (!won) {
+    return { ok: false, message: 'That Full Scout was already being spent somewhere else. Reload to see where it went.', remaining: max - usedThisYear, max };
+  }
+  await prisma.scoutingReport.upsert({
+    where: { playerId_teamId: { playerId, teamId } },
+    create: { playerId, teamId, scoutedOvr: 0, ovrLow: 0, ovrHigh: 99, ...payload },
+    update: payload,
+  });
 
   safeRevalidate(leagueId);
   const remaining = max - (usedThisYear + 1);
@@ -241,10 +311,14 @@ export interface FullScoutPanelData {
  * server-side because a draft class runs to several hundred players and
  * shipping the whole pool to the client just to filter it would be silly.
  */
-export async function fullScoutPanelAction(leagueId: string, teamId: string, query: string): Promise<FullScoutPanelData> {
+export async function fullScoutPanelAction(leagueId: string, _teamId: string, query: string): Promise<FullScoutPanelData> {
   await assertLeagueOwner(leagueId);
+  // Derived, never accepted — see fullScoutAction. The `alreadyRevealed` flags
+  // are read off this club's scouting reports, and a foreign team id read
+  // another save's.
+  const teamId = await userTeamId(leagueId);
   const state = await buildDynastyState(leagueId);
-  const q = query.trim();
+  const q = typeof query === 'string' ? query.trim().slice(0, 64) : '';
 
   const select = { id: true, firstName: true, lastName: true, position: true, age: true, isDraftee: true, teamId: true, team: { select: { abbr: true } } };
   const base: Record<string, unknown> = { leagueId, status: { not: 'RETIRED' } };
@@ -327,6 +401,11 @@ export interface ContractEstimate {
  */
 export async function contractEstimateAction(leagueId: string, playerId: string, years: number): Promise<ContractEstimate | null> {
   await assertLeagueOwner(leagueId);
+  // `Math.max(1, NaN)` is NaN, and an unbounded term walks into the pricing
+  // model as a contract length no deal has — a billion-year estimate came back
+  // quoted to the dollar. Nothing to render is the honest answer for a term
+  // nobody could offer. Twelve is the league term limit (maxYearsForAge).
+  if (!Number.isFinite(years) || years < 1 || years > 12) return null;
   const state = await buildDynastyState(leagueId);
   const rank = rankOf(state.skills, 'MARKET_KNOWLEDGE');
   const pct = DYNASTY.MARKET_BAND_PCT[rank];
@@ -391,6 +470,10 @@ export async function tradeIntelAction(
   get: { type: 'PLAYER' | 'PICK'; id: string }[],
 ): Promise<TradeIntelRead> {
   await assertLeagueOwner(leagueId);
+  // Same guards evaluateTradeAction carries: this runs the same evaluator, so
+  // it is the same route into another save's roster if the ids are not checked.
+  await assertTeamInLeague(leagueId, aiTeamId);
+  await Promise.all([assertTradeAssetsInLeague(leagueId, give), assertTradeAssetsInLeague(leagueId, get)]);
   const state = await buildDynastyState(leagueId);
   if (rankOf(state.skills, 'TRADE_INTEL') === 0) {
     return { unlocked: false, theirValue: 0, yourValue: 0, shortfall: 0 };
@@ -436,6 +519,8 @@ export async function insiderReadAction(
   get: { type: 'PLAYER' | 'PICK'; id: string }[],
 ): Promise<InsiderResult> {
   await assertLeagueOwner(leagueId);
+  await assertTeamInLeague(leagueId, aiTeamId);
+  await Promise.all([assertTradeAssetsInLeague(leagueId, give), assertTradeAssetsInLeague(leagueId, get)]);
   const state = await buildDynastyState(leagueId);
   if (!state.insider.unlocked) return { ok: false, message: 'Insider is not unlocked. Buy it on the Dynasty screen.' };
   if (state.insider.remaining <= 0) {
@@ -462,7 +547,15 @@ export async function insiderReadAction(
   const usedThisYear = profile.insiderYear === league.seasonYear ? profile.insiderUsed : 0;
   if (usedThisYear >= DYNASTY.INSIDER_USES_PER_SEASON) return { ok: false, message: 'No Insider calls left this season.' };
 
-  await writeProfile(leagueId, { insiderYear: league.seasonYear, insiderUsed: usedThisYear + 1 });
+  // Claimed, not written — same read-then-write double spend Full Scout had.
+  const won = await claimCharge(
+    leagueId, 'insider',
+    { year: profile.insiderYear, used: profile.insiderUsed },
+    { year: league.seasonYear, used: usedThisYear + 1 },
+  );
+  if (!won) {
+    return { ok: false, message: 'That Insider call was already being made. Reload to see what came back.' };
+  }
   safeRevalidate(leagueId);
 
   const remaining = DYNASTY.INSIDER_USES_PER_SEASON - (usedThisYear + 1);
