@@ -73,7 +73,11 @@ export function ResultKicker({ label, tone = 'warn' }: { label: string; tone?: '
   return (
     <span
       className={`text-[9px] font-extrabold tracking-[0.13em] rounded-sm px-1.5 py-px ${
-        tone === 'warn' ? 'bg-warn text-[#1a1200]' : 'bg-accent2 text-[#04202e]'
+        // `onGold`/`onAccent2` rather than the arbitrary hexes these were.
+        // Dark type on a bright fill is a PAIR — change the fill and the ink
+        // on top of it has to move with it — and an arbitrary value sits
+        // outside the palette, so a re-skin reaches the chip and not its text.
+        tone === 'warn' ? 'bg-warn text-onGold' : 'bg-accent2 text-onAccent2'
       }`}
     >
       {label}

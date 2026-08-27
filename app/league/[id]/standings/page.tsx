@@ -171,7 +171,7 @@ export default async function StandingsPage({ params }: { params: { id: string }
             <h2 className="section-title text-base">{conf.conference}</h2>
             <span className="label-sm">{conf.divisions.length} divisions</span>
           </div>
-          <div className="grid md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {conf.divisions.map((d) => (
               <div key={`${d.conference}-${d.division}`} className="panel overflow-hidden">
                 <div className="px-4 py-2.5 border-b border-line/70 flex items-center justify-between">
@@ -285,8 +285,13 @@ function PlayoffPicture({ leagueId, conf }: { leagueId: string; conf: Awaited<Re
             <div className="px-4 py-1.5 bg-ink/40 text-[10px] uppercase tracking-widest text-bad font-semibold">
               Cut line
             </div>
+            {/* 80%, not 70%. The dimming says "this is somebody else's club"
+                and it still does at 80 — the user's row beside it is at 100 —
+                but a losing streak in `bad` behind a 70% veil measured
+                4.23:1, the last rendered text on this page under the floor.
+                At 80% it is 5.15:1 and the row is still visibly quieter. */}
             {conf.inHunt.map((t) => (
-              <div key={t.id} className={`flex items-center gap-3 px-4 py-2 opacity-70 ${t.isUser ? 'bg-accent/[0.06] opacity-100' : ''}`}>
+              <div key={t.id} className={`flex items-center gap-3 px-4 py-2 opacity-80 ${t.isUser ? 'bg-accent/[0.06] opacity-100' : ''}`}>
                 <span className="w-7 shrink-0 text-center text-[10px] text-muted">—</span>
                 <div className="flex-1 min-w-0"><TeamCell leagueId={leagueId} t={t} /></div>
                 <span className="font-mono text-xs text-muted shrink-0">

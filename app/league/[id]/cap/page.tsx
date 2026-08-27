@@ -35,9 +35,17 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 
 // Fixed group -> color assignment, in POSITION_GROUPS order — identity, not
 // value-rank, drives the color per the dataviz skill's categorical rule.
+//
+// Named palette steps, not raw hexes. These are emitted as an inline
+// `background-color` on the allocation bars, which is exactly the kind of
+// path a re-skin cannot reach: the nine values here were the app's analytics
+// palette copied by hand, so when that palette was re-keyed for Stadium Night
+// this chart alone stayed painted in the previous one. --c-viz1..9 are
+// declared in app/globals.css and read straight out of tailwind.config.ts,
+// so there is now one place to change and this follows it.
 const GROUP_COLOR: Record<string, string> = {
-  QB: '#3987e5', RB: '#d95926', WR: '#199e70', TE: '#7d5bbe', OL: '#c98500',
-  DL: '#d55181', LB: '#008300', DB: '#9085e9', ST: '#e66767',
+  QB: 'var(--c-viz1)', RB: 'var(--c-viz2)', WR: 'var(--c-viz3)', TE: 'var(--c-viz9)', OL: 'var(--c-viz4)',
+  DL: 'var(--c-viz5)', LB: 'var(--c-viz6)', DB: 'var(--c-viz7)', ST: 'var(--c-viz8)',
 };
 
 export default async function CapPage({ params, searchParams }: { params: { id: string }; searchParams: { sort?: string; dir?: string; view?: string } }) {
@@ -431,7 +439,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       )}
 
       {advanced && (contractValue.bargains.length > 0 || contractValue.overpays.length > 0) && (
-        <div className="grid lg:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <ContractValueList
             title="Best Value Contracts"
             hint="Paying furthest under what the rating is worth."
@@ -449,7 +457,7 @@ export default async function CapPage({ params, searchParams }: { params: { id: 
       )}
 
       {advanced && (
-        <div className="grid lg:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div className="panel p-4">
             <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
               Cap Allocation by Position

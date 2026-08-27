@@ -55,6 +55,13 @@
     --c-warn: theme('colors.warn');
     --c-bad: theme('colors.bad');
     --c-gold: theme('colors.gold');
+    /* The analytics ramp, for the one chart that has to hand a colour to an
+       inline style rather than a class — the cap page's allocation bars. */
+    --c-viz1: theme('colors.viz1'); --c-viz2: theme('colors.viz2');
+    --c-viz3: theme('colors.viz3'); --c-viz4: theme('colors.viz4');
+    --c-viz5: theme('colors.viz5'); --c-viz6: theme('colors.viz6');
+    --c-viz7: theme('colors.viz7'); --c-viz8: theme('colors.viz8');
+    --c-viz9: theme('colors.viz9');
 
     /* THE CLUB RAIL. Stadium Night's one structural device: a 3px bar of the
        club's own colour down the left edge of every plate, a band across the
@@ -644,6 +651,32 @@
   .commit-flash { animation: commit-flash var(--dur-reveal) var(--ease-out) 1; }
   @media (prefers-reduced-motion: reduce) {
     .commit-flash { animation: none; }
+  }
+
+  /* --- Handset safety -----------------------------------------------------
+     The help popovers are a fixed 18rem (Tooltip) and 11rem (the cap chart's
+     readout). 18rem is 288px inside a 390px viewport, and because they open
+     from wherever their trigger happens to sit, that fixed width is what
+     pushed the document sideways on the handset — the largest single source
+     of horizontal scroll in the app.
+
+     Matched on role rather than on width, so this covers both popovers and
+     any future one without either having to know the rule exists. Clamped to
+     the viewport at every size, and below 520px pinned to the viewport
+     outright: the copy simply wraps, no word is lost, and nothing moves at a
+     desktop width where the clamp never binds. */
+  [role='tooltip'] {
+    max-width: calc(100vw - 1.5rem);
+  }
+  @media (max-width: 520px) {
+    [role='tooltip'] {
+      position: fixed;
+      left: 0.75rem !important;
+      right: 0.75rem !important;
+      width: auto !important;
+      transform: none !important;
+      margin: 0 !important;
+    }
   }
 }
 

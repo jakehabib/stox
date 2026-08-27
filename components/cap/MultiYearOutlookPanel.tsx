@@ -484,7 +484,13 @@ export function MultiYearOutlookPanel({ sheet, teamId, teamAbbr, accent }: {
                   <div
                     data-capb="dead"
                     data-year={y.year}
-                    className={`font-mono text-[9.5px] sm:text-[10.5px] tabular-nums leading-tight whitespace-nowrap ${y.deadTotal > 0 ? 'text-vizBad' : 'text-muted/60'}`}
+                    // FULL `muted`, not muted/60. This caption was the last
+                    // rendered text in the app under 4.5:1 — it measured
+                    // 2.99:1 on the chart plate, and for no reason: it is the
+                    // same colour and the same role as every other caption
+                    // here, just faded. The fade was carrying "this year has
+                    // no dead money", which the words themselves already say.
+                    className={`font-mono text-[9.5px] sm:text-[10.5px] tabular-nums leading-tight whitespace-nowrap ${y.deadTotal > 0 ? 'text-vizBad' : 'text-muted'}`}
                   >
                     {formatMoney(y.deadTotal)} dead
                   </div>

@@ -1277,7 +1277,7 @@ export default async function PlayerPage({
             beat. */}
         <MomentReveal
           signal={[`workout:${player.id}`, `fullscout:${player.id}`]}
-          className="panel p-5 grid sm:grid-cols-2 gap-x-8"
+          className="panel p-5 grid grid-cols-1 sm:grid-cols-2 gap-x-8"
           revealClassName="moment-fogged moment-sequence"
         >
           {[attrRows.slice(0, Math.ceil(attrRows.length / 2)), attrRows.slice(Math.ceil(attrRows.length / 2))].map((col, i) => (
@@ -1510,7 +1510,7 @@ export default async function PlayerPage({
           beside the rating, and in a half-width column at tablet size that
           left about eight pixels for the man's name — every row truncated to
           an initial. Below lg the two blocks stack at full width instead. */}
-      <div className="grid lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {userTeam && (
           <div className="section">
             <SectionHeading

@@ -130,7 +130,7 @@ export default async function RebuildPage({ params }: { params: { id: string } }
       </div>
 
       {/* ---- The moves ------------------------------------------------------ */}
-      <div className="grid lg:grid-cols-2 gap-5 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
         <div className="section">
           <SectionHeading eyebrow="Rounds one and two" title="The men you found" />
           {run.picks.length === 0 ? (

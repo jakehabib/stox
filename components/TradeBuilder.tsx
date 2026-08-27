@@ -509,7 +509,7 @@ export function TradeBuilder({
         </div>
       )}
 
-      <div className="grid md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <TeamPanel
           leagueId={leagueId} title="You send" teamId={myTeam.id} teamAbbr={myTeam.abbr} teamName={myTeam.name}
           roster={myRoster} picks={myPicks} draftRounds={draftRounds} imminentYear={imminentYear}

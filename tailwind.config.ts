@@ -92,16 +92,24 @@ const config: Config = {
       // .stat-value class (globals.css) for the display face + tabular figures.
       // Every step is LARGER than the graphite scale even though the body
       // type shrank: that widening gap is the skin's whole hierarchy, and
-      // Oswald is narrow enough to spend it. stat-xl and text-3xl are clamps
-      // rather than fixed rems because at their fixed sizes a long club name
-      // was what pushed the 390px handset sideways.
+      // Oswald is narrow enough to spend it.
+      //
+      // Every step above `sm` is a clamp, and that is a fix rather than a
+      // flourish. These sizes land in fact tiles and metric tiles that sit two
+      // abreast at 390px — a track about 180px wide — and a figure set at a
+      // fixed 2.15rem does not fit one. It cannot wrap either, so it pushed
+      // the whole document sideways instead: the cap page's four metric tiles
+      // were measurably the largest remaining source of horizontal scroll on a
+      // handset. The floors are the sizes that fit that track; the ceilings
+      // are the sizes the skin wants, and every viewport past ~615px gets
+      // them.
       fontSize: {
         xs: ['11.5px', { lineHeight: '1.35' }],
         sm: ['12.5px', { lineHeight: '1.4' }],
         base: ['13.5px', { lineHeight: '1.4' }],
         '3xl': ['clamp(1.6rem, 5.4vw, 2.35rem)', { lineHeight: '0.95' }],
-        'stat-sm': ['1.5rem', { lineHeight: '0.95', letterSpacing: '0' }],
-        'stat-md': ['2.15rem', { lineHeight: '0.92', letterSpacing: '0' }],
+        'stat-sm': ['clamp(1.2rem, 4.4vw, 1.5rem)', { lineHeight: '0.95', letterSpacing: '0' }],
+        'stat-md': ['clamp(1.5rem, 5.6vw, 2.15rem)', { lineHeight: '0.92', letterSpacing: '0' }],
         'stat-lg': ['2.75rem', { lineHeight: '0.9', letterSpacing: '-0.005em' }],
         'stat-xl': ['clamp(2.9rem, 11vw, 4.6rem)', { lineHeight: '0.85', letterSpacing: '-0.01em' }],
       },

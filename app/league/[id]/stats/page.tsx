@@ -833,7 +833,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
               )}
 
               {advanced && (
-                <div className="grid lg:grid-cols-2 gap-5">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                   <div className="panel p-4">
                     <h2 className="font-semibold mb-1 inline-flex items-center gap-1.5">
                       Passer Rating
@@ -859,7 +859,7 @@ export default async function StatsPage({ params, searchParams }: { params: { id
                 </div>
               )}
 
-              <div className="grid md:grid-cols-2 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {CATEGORIES.map((cat) => {
                   const leaders = [...withStats]
                     .filter(({ stats }) => (stats[cat.primary.key] ?? 0) > 0)

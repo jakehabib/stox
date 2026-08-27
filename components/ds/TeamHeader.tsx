@@ -122,7 +122,12 @@ export function TeamHeader({
           >
             {nextGame.winProb}% Win
           </span>
-          <Tooltip className="shrink-0" text={tip('winProbability')} />
+          {/* align="end" rather than the centred default: this pill is the
+              last thing on the widest row of the dashboard, so a bubble
+              centred on it opened 85px past the right edge of a 1440 window
+              and took the whole document sideways with it. Anchored to its
+              own right edge it opens inward, where there is always page. */}
+          <Tooltip className="shrink-0" align="end" text={tip('winProbability')} />
         </div>
       )}
       {nextGame && nextGame.why && nextGame.why.length > 0 && (
