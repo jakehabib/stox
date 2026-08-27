@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { assertLeagueOwner } from '@/lib/owner';
+import { assertLeagueOwner, assertPlayerInLeague, userTeamId as ownUserTeamId } from '@/lib/owner';
 import { draftPlayer, runAiPicksUntilUser, draftOneAiPick, currentPick, draftIsStarted } from '@/lib/draft';
 import { parseSettings } from '@/lib/settings';
 import { readJson } from '@/lib/json';
@@ -40,8 +40,21 @@ import { Rng } from '@/lib/rng';
  * "Skip ahead" is still available, but only where the owner asked for it: the
  * run button on the ticker (runDraftChunkAction), pressed on purpose.
  */
-export async function draftPlayerAction(leagueId: string, playerId: string, teamId: string) {
+export async function draftPlayerAction(leagueId: string, playerId: string, _teamId: string) {
   await assertLeagueOwner(leagueId);
+  /*
+   * WHICH CLUB IS PICKING IS NOT THE CLIENT'S TO SAY — the same rule
+   * openNegotiationAction states in app/actions/roster.ts, and for the same
+   * reason. `draftPlayer` refuses a club that is not on the clock, so this was
+   * never a route into another save; what it WAS is a route into every other
+   * club in your own. Hand it the id of whichever AI team is on the clock and
+   * the pick goes in under that club's name — a GM quietly running all
+   * thirty-two war rooms, one selection at a time, with the board showing
+   * nothing unusual afterwards.
+   *
+   * The parameter stays so the two call sites do not change, and is ignored.
+   */
+  const teamId = await ownUserTeamId(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   try {
     await draftPlayer({ leagueId, playerId, teamId, seasonYear: league.seasonYear });
@@ -190,8 +203,13 @@ export interface DraftRunChunk {
  * told to blow through his own selection would have to pick a player for him,
  * and nothing in this game does that.
  */
-export async function runDraftChunkAction(leagueId: string, userTeamId: string): Promise<DraftRunChunk> {
+export async function runDraftChunkAction(leagueId: string, _userTeamId: string): Promise<DraftRunChunk> {
   await assertLeagueOwner(leagueId);
+  // WHERE THE RUN STOPS IS A FACT ABOUT THE SAVE, NOT AN ARGUMENT. This is the
+  // id `draftOneAiPick` breaks on, so a request naming somebody else's club —
+  // or an empty string — turns the AI runner loose on the user's OWN card and
+  // picks for him. Derived here, like every other club id in this file.
+  const userTeamId = await ownUserTeamId(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
 
   const startedAt = Date.now();
@@ -282,8 +300,12 @@ export interface DraftRunStatus {
   nextUserPick: { round: number; slot: number; overall: number } | null;
 }
 
-export async function draftRunStatusAction(leagueId: string, userTeamId: string): Promise<DraftRunStatus> {
+export async function draftRunStatusAction(leagueId: string, _userTeamId: string): Promise<DraftRunStatus> {
   await assertLeagueOwner(leagueId);
+  // Derived, never accepted — see runDraftChunkAction. This one only reads,
+  // but a status computed against a different club's picks would offer the
+  // button a run it cannot keep the promise of.
+  const userTeamId = await ownUserTeamId(leagueId);
   const idle: DraftRunStatus = { live: false, userPicksLeft: 0, picksLeft: 0, nextUserPick: null };
 
   const state = await prisma.draftState.findUnique({ where: { leagueId } });
@@ -325,8 +347,10 @@ export async function draftRunStatusAction(leagueId: string, userTeamId: string)
  * One visible AI pick at a time, for a paced/live draft-day feed the client
  * calls on a timer — a no-op returning null once the user is on the clock.
  */
-export async function draftOneAiPickAction(leagueId: string, userTeamId: string) {
+export async function draftOneAiPickAction(leagueId: string, _userTeamId: string) {
   await assertLeagueOwner(leagueId);
+  // Derived, never accepted — see runDraftChunkAction.
+  const userTeamId = await ownUserTeamId(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const rng = new Rng(`draft-tick-${leagueId}-${Date.now()}-${Math.round(Math.random() * 1e6)}`);
   const result = await draftOneAiPick(leagueId, userTeamId, rng, league.seasonYear);
@@ -334,14 +358,56 @@ export async function draftOneAiPickAction(leagueId: string, userTeamId: string)
   return result;
 }
 
-export async function toggleShortlistAction(leagueId: string, teamId: string, playerId: string) {
+/**
+ * ===========================================================================
+ * THE STAR ON A PROSPECT'S ROW — THE SMALLEST WRITE IN THE GAME, AND IT WAS
+ * THE ONLY ONE THAT REACHED ANOTHER PERSON'S SAVE
+ * ===========================================================================
+ * It took a `teamId` and a `playerId` off the wire and wrote the row. Neither
+ * was checked against the league the caller had just proved they owned, so
+ * from a save he legitimately held a caller could shortlist a prospect for a
+ * club in SOMEBODY ELSE'S league — measured, a ShortlistEntry landed on a
+ * victim league's AI club — and that is not an inert row: shortlisted men are
+ * worked every week for free by lib/shortlistAttention.ts, so it quietly
+ * rewrites another GM's scouting book.
+ *
+ * Three things changed and each one closes a different hole:
+ *
+ *   WHOSE SHORTLIST. Derived from the save, never accepted. The parameter
+ *     stays so ShortlistStar does not change, and is ignored.
+ *   WHICH PLAYER. Has to be in this league. An id of the wrong shape used to
+ *     escape as a raw `Foreign key constraint violated:
+ *     ShortlistEntry_playerId_fkey` throw.
+ *   TWICE AT ONCE. Two clicks on a star both read "not shortlisted" and both
+ *     inserted; the loser came back as an unhandled unique-constraint
+ *     rejection with a Prisma stack in it. `deleteMany` + a create guarded by
+ *     the same unique key makes the pair idempotent: whichever order they land
+ *     in, the row is there once or gone, and neither caller throws.
+ * ===========================================================================
+ */
+export async function toggleShortlistAction(leagueId: string, _teamId: string, playerId: string) {
   await assertLeagueOwner(leagueId);
+  await assertPlayerInLeague(leagueId, playerId);
+  const teamId = await ownUserTeamId(leagueId);
+
   const existing = await prisma.shortlistEntry.findUnique({ where: { playerId_teamId: { playerId, teamId } } });
+  let shortlisted: boolean;
   if (existing) {
-    await prisma.shortlistEntry.delete({ where: { id: existing.id } });
+    // deleteMany, not delete: a second click that got here first has already
+    // removed the row, and `delete` on a missing row throws.
+    await prisma.shortlistEntry.deleteMany({ where: { playerId, teamId } });
+    shortlisted = false;
   } else {
-    await prisma.shortlistEntry.create({ data: { playerId, teamId } });
+    // `createMany` with skipDuplicates, because it is the only one of these
+    // that is a single statement: Prisma compiles it to
+    // `INSERT ... ON CONFLICT DO NOTHING`, so the loser of a race writes
+    // nothing instead of colliding. An `upsert` does NOT close this — it is a
+    // read followed by an insert, and both halves of a double click still get
+    // past the read (measured: the loser came back holding a unique-constraint
+    // rejection with an upsert in the stack instead of a create).
+    await prisma.shortlistEntry.createMany({ data: [{ playerId, teamId }], skipDuplicates: true });
+    shortlisted = true;
   }
   revalidatePath(`/league/${leagueId}/draft`);
-  return { shortlisted: !existing };
+  return { shortlisted };
 }

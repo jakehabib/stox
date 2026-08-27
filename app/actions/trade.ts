@@ -2,14 +2,27 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { assertLeagueOwner } from '@/lib/owner';
+import { assertLeagueOwner, assertTradeAssetsInLeague, assertTeamInLeague } from '@/lib/owner';
 import { evaluateTrade, executeTrade, rankTradePartners, isTradeDeadlinePassed, TradeAsset } from '@/lib/trade';
 import { findTradeClosers } from '@/lib/tradeClosers';
 import { parseSettings } from '@/lib/settings';
 import { readJson } from '@/lib/json';
 
+/**
+ * Price a proposal. Read-only, and it runs on every change to the package
+ * behind a debounce — so what it must never be is a way to price a package
+ * made of somebody else's players.
+ *
+ * It was. `aiTeamId`, `give` and `get` were passed to `evaluateTrade`
+ * unchecked, and it resolves every id by primary key: from a save the caller
+ * owned, naming a foreign club and one of its players returned that club's own
+ * internal read on the man, in words, with the number beside it. The two
+ * guards below are the ones `tradeClosersAction` next door already had.
+ */
 export async function evaluateTradeAction(leagueId: string, aiTeamId: string, give: TradeAsset[], get: TradeAsset[]) {
   await assertLeagueOwner(leagueId);
+  await assertTeamInLeague(leagueId, aiTeamId);
+  await Promise.all([assertTradeAssetsInLeague(leagueId, give), assertTradeAssetsInLeague(leagueId, get)]);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   return evaluateTrade({ aiTeamId, give, get, currentYear: league.seasonYear, settings: { aiAcceptsLopsided: settings.aiAcceptsLopsided } });
@@ -32,6 +45,7 @@ export async function evaluateTradeAction(leagueId: string, aiTeamId: string, gi
  */
 export async function tradeClosersAction(leagueId: string, aiTeamId: string, give: TradeAsset[], get: TradeAsset[]) {
   await assertLeagueOwner(leagueId);
+  await Promise.all([assertTradeAssetsInLeague(leagueId, give), assertTradeAssetsInLeague(leagueId, get)]);
   const [userTeam, partner] = await Promise.all([
     prisma.team.findFirst({ where: { leagueId, isUser: true }, select: { id: true } }),
     prisma.team.findUnique({ where: { id: aiTeamId }, select: { leagueId: true, isUser: true } }),
@@ -141,6 +155,7 @@ export async function executeTradeAction(
   leagueId: string, teamA: string, teamB: string, aToB: TradeAsset[], bToA: TradeAsset[],
 ): Promise<TradeActionResult> {
   await assertLeagueOwner(leagueId);
+  await Promise.all([assertTradeAssetsInLeague(leagueId, aToB), assertTradeAssetsInLeague(leagueId, bToA)]);
   const pre = await tradePreflight({ leagueId, teamA, teamB, aToB, bToA, force: false });
   if (!pre.ok) return { ok: false, message: pre.error };
 
@@ -211,6 +226,7 @@ export async function forceTradeAction(
   leagueId: string, teamA: string, teamB: string, aToB: TradeAsset[], bToA: TradeAsset[],
 ): Promise<TradeActionResult> {
   await assertLeagueOwner(leagueId);
+  await Promise.all([assertTradeAssetsInLeague(leagueId, aToB), assertTradeAssetsInLeague(leagueId, bToA)]);
   const pre = await tradePreflight({ leagueId, teamA, teamB, aToB, bToA, force: true });
   if (!pre.ok) return { ok: false, message: pre.error };
 

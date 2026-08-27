@@ -237,6 +237,83 @@ export async function userTeamId(leagueId: string): Promise<string> {
   return team.id;
 }
 
+/**
+ * OWNING THE SAVE IS NOT OWNING THE ID YOU THEN PASSED — the read side.
+ *
+ * assertPlayerOnUserTeam above is the write-side rule and it is strict: your
+ * own roster only. These two are the weaker claim the READ-ONLY actions need,
+ * which is simply "this row is part of the save you proved you own".
+ *
+ * They exist because six preview and panel actions looked their argument up by
+ * primary key alone and returned what came back. Measured from a save the
+ * caller legitimately owned: `cutImpactAction` handed back a stranger's
+ * player by name with his cap hit, his dead money and his club's remaining cap
+ * space, and `evaluateTradeAction` returned another save's front office
+ * talking about its own right tackle. A cuid is not a secret — it is on every
+ * URL and in every exported league file — so "you would have to guess it" was
+ * never the boundary.
+ *
+ * The refusal is deliberately the same for "no such row" and "not in this
+ * save", for the reason assertLeagueOwner gives about not confirming ids.
+ */
+export async function assertPlayerInLeague(leagueId: string, playerId: string): Promise<void> {
+  const player = await prisma.player.findUnique({ where: { id: playerId }, select: { leagueId: true } });
+  if (!player || player.leagueId !== leagueId) throw new Error('That player is not in this save.');
+}
+
+export async function assertTeamInLeague(leagueId: string, teamId: string): Promise<void> {
+  const team = await prisma.team.findUnique({ where: { id: teamId }, select: { leagueId: true } });
+  if (!team || team.leagueId !== leagueId) throw new Error('That club is not in this save.');
+}
+
+/**
+ * EVERY ASSET IN A PROPOSAL HAS TO BE IN THE SAVE THE PROPOSAL IS FOR.
+ *
+ * `TradeAsset` is `{ type: 'PLAYER' | 'PICK', id }` and it arrives as JSON from
+ * the browser. The trade evaluator resolves each id by primary key, so an
+ * evaluation could be run over another league's roster: measured,
+ * `evaluateTradeAction` handed back a foreign club's own scouting prose about
+ * its right tackle ("He starts for us at RT — replacing him from inside the
+ * building…") together with the number it valued him at.
+ *
+ * It also refuses the SHAPES that used to escape as database errors — a `null`
+ * where an array belongs threw `assets is not iterable`, and an unrecognised
+ * `type` fell through to `draftPick.findUniqueOrThrow` and threw
+ * `No DraftPick found` at the client.
+ *
+ * The length cap is not arithmetic about roster sizes; it is the ceiling on
+ * how much work one unauthenticated-shaped request can ask the evaluator to
+ * do. A real proposal is a handful of assets.
+ */
+const MAX_TRADE_ASSETS = 40;
+
+export async function assertTradeAssetsInLeague(leagueId: string, assets: unknown): Promise<void> {
+  if (!Array.isArray(assets)) throw new Error('That proposal is not a list of assets.');
+  if (assets.length > MAX_TRADE_ASSETS) throw new Error('That is more pieces than any trade has ever had.');
+
+  const players: string[] = [];
+  const picks: string[] = [];
+  for (const a of assets) {
+    if (!a || typeof a !== 'object') throw new Error('That proposal has a piece in it that is not an asset.');
+    const { type, id } = a as { type?: unknown; id?: unknown };
+    if (typeof id !== 'string' || id.length === 0) throw new Error('That proposal has a piece in it that is not an asset.');
+    if (type === 'PLAYER') players.push(id);
+    else if (type === 'PICK') picks.push(id);
+    else throw new Error('A trade is made of players and draft picks.');
+  }
+
+  const [playerCount, pickCount] = await Promise.all([
+    players.length > 0 ? prisma.player.count({ where: { id: { in: players }, leagueId } }) : Promise.resolve(0),
+    picks.length > 0 ? prisma.draftPick.count({ where: { id: { in: picks }, leagueId } }) : Promise.resolve(0),
+  ]);
+  // Counted against the DEDUPLICATED ids, so naming the same man twice is
+  // caught here as "not in this save" rather than passing this check and
+  // failing later inside the write.
+  if (playerCount !== new Set(players).size || pickCount !== new Set(picks).size) {
+    throw new Error('That proposal names something that is not in this save.');
+  }
+}
+
 /** The saves this viewer may see, newest first, with the user's team joined. */
 export async function listOwnedLeagues() {
   return prisma.league.findMany({

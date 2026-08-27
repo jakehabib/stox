@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { assertLeagueOwner } from '@/lib/owner';
+import { assertLeagueOwner, userTeamId } from '@/lib/owner';
 import { buildConsensusBoard, type ConsensusRead } from '@/lib/consensus';
 import { loadWorkoutSlots, runWorkout, type WorkoutResult, type WorkoutSlots } from '@/lib/workouts';
 
@@ -42,8 +42,13 @@ export interface WorkoutPanel extends WorkoutSlots {
 }
 
 /** Slot count + window state for the workout UI. Safe to call in any phase. */
-export async function getWorkoutPanelAction(leagueId: string, teamId: string): Promise<WorkoutPanel> {
+export async function getWorkoutPanelAction(leagueId: string, _teamId: string): Promise<WorkoutPanel> {
   await assertLeagueOwner(leagueId);
+  // WHOSE PANEL IT IS is a fact about the save, not an argument. Handed a club
+  // id from another league this listed that club's worked-out prospects, which
+  // is a read straight out of somebody else's scouting book. Derived, and the
+  // parameter kept so the widget does not change.
+  const teamId = await userTeamId(leagueId);
   const slots = await loadWorkoutSlots(leagueId);
   const done = await prisma.scoutingReport.findMany({
     where: { teamId, workoutYear: slots.classYear },
@@ -53,8 +58,13 @@ export async function getWorkoutPanelAction(leagueId: string, teamId: string): P
 }
 
 /** Spend one workout slot on one prospect. */
-export async function runWorkoutAction(leagueId: string, teamId: string, playerId: string): Promise<WorkoutResult> {
+export async function runWorkoutAction(leagueId: string, _teamId: string, playerId: string): Promise<WorkoutResult> {
   await assertLeagueOwner(leagueId);
+  // The slot ledger is the SAVE's (DynastyProfile is keyed on leagueId), so a
+  // request naming an AI club spent the GM's own workout writing a report into
+  // a rival's file. `runWorkout` refused a club from another league; it had no
+  // opinion about a club from this one. Derived here instead.
+  const teamId = await userTeamId(leagueId);
   const result = await runWorkout(leagueId, teamId, playerId);
   if (result.ok) {
     // Same guard the Dynasty actions use: a maintenance script or a balance
@@ -80,6 +90,10 @@ export async function runWorkoutAction(leagueId: string, teamId: string, playerI
  */
 export async function getConsensusBoardAction(leagueId: string, draftYear: number): Promise<ConsensusRead[]> {
   await assertLeagueOwner(leagueId);
+  // A non-integer year is not a class. Passed NaN, the `draftYear` filter
+  // stopped selecting anything in particular and the board came back built
+  // over rows that are not a draft class at all.
+  if (!Number.isInteger(draftYear)) return [];
   const prospects = await prisma.player.findMany({
     where: { leagueId, draftYear },
     select: {
