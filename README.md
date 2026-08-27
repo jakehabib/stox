@@ -727,6 +727,59 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-27 — A fantasy draft could hand a club no kicker, no punter and no
+  quarterback, and a league told to carry 46 men was born carrying 48.**
+  `2c49673`, `966d916`. Four defects, all found by running the game's own soak
+  test across settings nobody had ever built a league in. The first is the one a
+  new player would have hit: pick "fantasy draft" on the create screen and
+  clubs opened the season unable to field a lineup — *DEN has nobody at K/P.
+  DAL has nobody at QB/K/P. CHI has nobody at K.* — 638 club-readings across a
+  single season in one league and 775 in another. The draft board was
+  `orderBy: { trueOvr: 'desc' }, take: 60`, and a kicker's overall is computed
+  from kicking attributes against a scale every other position outscores, so
+  kickers sit near the BOTTOM of any league-wide rating sort by construction: in
+  a 1,956-man pool the best one was 141st and never appeared on any board.
+  Nor is it only the specialists — measured over twelve real pools, seven were
+  missing at least one whole position from their top sixty, one of them
+  QUARTERBACK. The board is now a column per position, the best twelve at each.
+  And because nobody takes a kicker on VALUE — correct valuation, not a bug — a
+  club whose remaining picks equal the positions it has nobody at now spends
+  them there, which is what a real fantasy drafter does with his last pick.
+  Same seed, same league, one season: **638 club-readings before, 22 after.**
+  Separately, `settings.rosterMax` was ignored three times over: generated clubs
+  were always 47-48 men, a fantasy draft always dealt 53, and the pool itself is
+  an i.i.d. draw that gives 33 kickers on average with a standard deviation of
+  6 — so about one fantasy league in five was dealt fewer kickers than it has
+  clubs, and at least one club could not get one by any route. The size band now
+  scales with the ceiling (bit-for-bit unchanged at the default 53), the draft
+  runs to the league's own ceiling, and the pool is topped up to exactly what
+  the league has to put on the field.
+
+- **2026-08-27 — The soak test ran one league shape, checked a fifth of the
+  rules that matter, and got slower the longer it ran.** `f3444b1`.
+  `npm run sim:health -- 12 10` now builds leagues across a **six-cell settings
+  matrix** — every rung of cap mode, cap growth, difficulty, league start
+  (including ironman), season length, draft rounds, roster ceiling, and
+  injuries/retirement/trades switched off — where every league it ever built
+  before was the default settings with a fantasy bit flipped. It checks **six
+  new invariants**: every club can field its lineup (INV-25), no stored number
+  is non-finite or out of band (INV-26 — and NaN is the hard one, because
+  `JSON.stringify(NaN)` is the string `"null"`, so a broken rating reaches the
+  database looking like valid data), a club's season record adds up to the games
+  it played (INV-27), a finished season handed out each trophy exactly once
+  (INV-28), this year's draftees are on rookie-scale deals (INV-29), and nothing
+  in the whole database points at a league, club or player that no longer exists
+  (INV-30). It runs **6.4x faster on a deep league** — INV-15 used to re-read
+  and re-parse every box score in a league's whole history after every step, so
+  one check cost 7.9 seconds ten seasons in and 1.2 seconds now, while checking
+  strictly more. It prints a **census** of the things no invariant can answer:
+  where every trophy went by position, what a starter is rated season by season,
+  how old the league is, how big the wire is. And it **refuses to run** unless
+  three canaries come out right — a knowingly false claim that must fail, a
+  misspelled field that must read undefined, and a real read that must pass —
+  because a probe in this repo once read a field that did not exist and reported
+  28,534 samples of zero. `--shard=i/n` splits a deep run across processes.
+
 - **2026-08-27 — Money conservation is now a check you run before you share a
   build, and it found three ways the game was telling a GM the wrong price.**
   `npm run check:money` (`scripts/checkMoneyConservation.ts`), or
