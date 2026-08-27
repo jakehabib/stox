@@ -16,6 +16,7 @@ import { PageMasthead } from '@/components/ds/PageMasthead';
 import { DepthCompare, SlotVerdictBadge, slotVerdict, type DepthCompareEntry } from '@/components/ds/DepthCompare';
 import { Tooltip } from '@/components/Tooltip';
 import { tip } from '@/lib/glossary';
+import { POSITIONS, type Position } from '@/lib/tuning';
 
 type SortKey = 'pos' | 'age' | 'ovr' | 'market';
 
@@ -23,8 +24,19 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   const { league, settings, userTeam } = await getLeagueContext(params.id);
   const team = userTeam!;
 
+  /**
+   * THE POSITION FILTER IS A URL, so it is whatever anybody types. Checked
+   * against the real position list before it reaches a query or a sentence:
+   * an unrecognised value used to filter the pool down to nothing and leave a
+   * page that looked identical to a broken one, and it now has an empty state
+   * that would have quoted the junk back ("No unsigned <whatever> anywhere in
+   * the league"). Unknown means unfiltered — the same policy /new applies to
+   * its own `?team=`.
+   */
+  const posFilter = POSITIONS.includes(searchParams.pos as Position) ? searchParams.pos : undefined;
+
   const where: any = { leagueId: league.id, status: 'FREE_AGENT', teamId: null, isDraftee: false };
-  if (searchParams.pos) where.position = searchParams.pos;
+  if (posFilter) where.position = posFilter;
 
   // The spotlight FOLLOWS the position filter. It used to be deliberately
   // unfiltered — "a fixed spotlight, not row 1 of the table" — and that put a
@@ -196,7 +208,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
   // the rating YOU can see — not by trueOvr, which would quietly rank the pool
   // using a number the fog is meant to be hiding. Chosen independently of the
   // table's sort so changing the sort never changes the comparison.
-  const focusRow = searchParams.pos
+  const focusRow = posFilter
     ? rows.reduce<typeof rows[number] | null>((best, r) => (!best || r.view.scoutedOvr > best.view.scoutedOvr ? r : best), null)
     : null;
 
@@ -212,7 +224,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
    */
   const marketQuery = (patch: { pos?: string | null; sort?: SortKey; dir?: 'asc' | 'desc' } = {}) => {
     const p = new URLSearchParams();
-    const pos = patch.pos !== undefined ? patch.pos : searchParams.pos;
+    const pos = patch.pos !== undefined ? patch.pos : posFilter;
     if (pos) p.set('pos', pos);
     p.set('sort', patch.sort ?? sortKey);
     p.set('dir', patch.dir ?? (dir === -1 ? 'desc' : 'asc'));
@@ -261,7 +273,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
           {
             label: 'On The Market',
             value: String(filteredAvailable),
-            detail: searchParams.pos ? `${searchParams.pos} · ${totalAvailable} in the whole pool` : 'all positions',
+            detail: posFilter ? `${posFilter} · ${totalAvailable} in the whole pool` : 'all positions',
           },
           ...(topAvailable && topView ? [{
             label: 'Best Available',
@@ -322,9 +334,9 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         seventeen he is not going to press.
       */}
       <div className="flex gap-2 flex-wrap">
-        <Link href={posHref()} scroll={false} prefetch={false} className={`pill ${!searchParams.pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</Link>
+        <Link href={posHref()} scroll={false} prefetch={false} className={`pill ${!posFilter ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>All</Link>
         {positions.map((pos) => (
-          <Link key={pos} href={posHref(pos)} scroll={false} prefetch={false} className={`pill ${searchParams.pos === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</Link>
+          <Link key={pos} href={posHref(pos)} scroll={false} prefetch={false} className={`pill ${posFilter === pos ? 'border-accent text-accent bg-accent/10' : 'border-line text-muted'}`}>{pos}</Link>
         ))}
       </div>
 
@@ -344,6 +356,57 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
         />
       )}
 
+      {/*
+        THE PAGE WITH NOBODY ON IT. There was no branch for this at all: an
+        empty pool drew the masthead over a table with a header row and no
+        rows, no Top Available strip, and a pill bar carrying the word "All"
+        and nothing else. It is not a rare state either — it is what a fantasy
+        league looks like from the moment it is created until its draft is
+        over, and the market is one tap off the top nav, so it is one of the
+        first screens a new save can reach. A blank table is the shape of a
+        page that has broken; the reason it is blank is a fact about the league
+        and belongs on the screen.
+
+        Three different reasons, and they take three different sentences. The
+        fantasy pool is the only one with somewhere to send you, so it is the
+        only one that carries a button.
+      */}
+      {sorted.length === 0 ? (
+        <div className="panel p-6 space-y-3">
+          <div className="label-sm">Nobody on the wire</div>
+          {league.phase === 'FANTASY_DRAFT' ? (
+            <>
+              <p className="text-sm text-chalk/90 leading-relaxed max-w-2xl">
+                Every professional in this league is in the fantasy pool, waiting to be picked. There is no free
+                agency until the draft has run — whoever is left on the board when it ends lands here, and that is
+                when this screen has something on it.
+              </p>
+              <Link href={`/league/${league.id}/draft`} className="btn-primary text-sm inline-flex">
+                Go to the fantasy draft ▸
+              </Link>
+            </>
+          ) : posFilter ? (
+            <>
+              <p className="text-sm text-chalk/90 leading-relaxed max-w-2xl">
+                No unsigned {posFilter} anywhere in the league right now.
+                {totalAvailable > 0
+                  ? ` There ${totalAvailable === 1 ? 'is 1 man' : `are ${totalAvailable} men`} on the wire at other positions.`
+                  : ' There is nobody on the wire at any position.'}
+              </p>
+              {totalAvailable > 0 && (
+                <Link href={posHref()} scroll={false} prefetch={false} className="btn-secondary text-sm inline-flex">
+                  Show the whole market ▸
+                </Link>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-chalk/90 leading-relaxed max-w-2xl">
+              Every man in the league is under contract. Nothing opens up until somebody is released or a deal runs
+              out at the end of the season — the wire fills again when the offseason does.
+            </p>
+          )}
+        </div>
+      ) : (
       <div className="panel overflow-x-auto">
         <table className="table-clean">
           <thead>
@@ -406,6 +469,7 @@ export default async function FreeAgencyPage({ params, searchParams }: { params:
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
