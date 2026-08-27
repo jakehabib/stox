@@ -2,7 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { assertLeagueOwner, assertTeamOwner, assertPlayerOnUserTeam, userTeamId } from '@/lib/owner';
+import { assertLeagueOwner, assertTeamOwner, assertPlayerOnUserTeam, assertPlayerInLeague, userTeamId } from '@/lib/owner';
+import { actionFailureMessage } from '@/lib/actionError';
 import { cutPlayer as cutPlayerLib, extendContract, restructureContract, applyFranchiseTag, fillRosterForTeam, planRosterFill, resolveNegotiationSession, negotiateOffer, fifthYearOptionQuote, exerciseFifthYearOption, declineFifthYearOption, type FillRosterPlan } from '@/lib/freeagency';
 import { decideOffer, type DealStructure, type NegotiationOutcome, type NegotiationSession, type Offer } from '@/lib/negotiation';
 import { parseSettings } from '@/lib/settings';
@@ -13,7 +14,7 @@ import { PHASE_LABELS } from '@/lib/season';
 import { autoDepthChart, reconcileDepthChart } from '@/lib/gen/league';
 import { readJson, writeJson } from '@/lib/json';
 import { AttrMap, positionMove, canChangePositionTo, relatedPositions } from '@/lib/ratings';
-import { canonicalPosition, Position } from '@/lib/tuning';
+import { CAP, canonicalPosition, LEAGUE, Position } from '@/lib/tuning';
 
 /**
  * Releasing a player is a foreseeable failure — he is already gone, somebody
@@ -33,7 +34,13 @@ export async function cutPlayerAction(leagueId: string, playerId: string): Promi
     const settings = parseSettings(league.settings);
     await cutPlayerLib({ leagueId, playerId, capMode: settings.capMode, seasonYear: league.seasonYear, week: league.week });
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : 'That release could not be completed.' };
+    // Two clicks on Release raced each other and the loser came back holding a
+    // Prisma stack — `Invalid \`tx.contract.delete()\` invocation in
+    // /home/…/lib/freeagency.ts … Record to delete does not exist.` — rendered
+    // verbatim in the confirmation the GM reads. A refusal has to name what
+    // blocked it in the game's own words, so a database-level failure is
+    // answered here rather than repeated.
+    return { ok: false, message: actionFailureMessage(err, 'He is not on the roster any more — that release has already gone through. Reload the page.') };
   }
   revalidatePath(`/league/${leagueId}`, 'layout');
   return { ok: true, message: 'Released.' };
@@ -75,6 +82,12 @@ export interface CutImpact {
  */
 export async function cutImpactAction(leagueId: string, playerId: string): Promise<CutImpact> {
   await assertLeagueOwner(leagueId);
+  // The league check proves the SAVE is yours; it says nothing about the id
+  // that followed. Without this line the panel looked the player up by primary
+  // key alone and answered for anybody in the database — measured, a stranger's
+  // save came back by name with his cap hit, his dead money and his club's
+  // remaining cap space. See assertPlayerInLeague in lib/owner.ts.
+  await assertPlayerInLeague(leagueId, playerId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
@@ -314,6 +327,9 @@ export interface FranchiseTagImpact {
  */
 export async function franchiseTagImpactAction(leagueId: string, playerId: string): Promise<FranchiseTagImpact> {
   await assertLeagueOwner(leagueId);
+  // Same reason as cutImpactAction: this preview reads a contract and a club's
+  // cap sheet, and it was reading whichever ones the id named.
+  await assertPlayerInLeague(leagueId, playerId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const settings = parseSettings(league.settings);
   const player = await prisma.player.findUniqueOrThrow({ where: { id: playerId }, include: { contract: true } });
@@ -442,6 +458,10 @@ export type FifthYearOptionImpact = Awaited<ReturnType<typeof fifthYearOptionQuo
 
 export async function fifthYearOptionImpactAction(leagueId: string, playerId: string): Promise<FifthYearOptionImpact> {
   await assertLeagueOwner(leagueId);
+  // `fifthYearOptionQuote` looks the player up by primary key and prices him
+  // against THIS league's settings, so a foreign first-rounder would come back
+  // fully quoted. The membership check belongs on this side of the call.
+  await assertPlayerInLeague(leagueId, playerId);
   return fifthYearOptionQuote({ leagueId, playerId });
 }
 
@@ -461,6 +481,14 @@ export async function fifthYearOptionAction(
   leagueId: string, playerId: string, decision: 'EXERCISE' | 'DECLINE',
 ): Promise<{ ok: boolean; message: string }> {
   await assertLeagueOwner(leagueId);
+  // A TYPE IS NOT A CHECK. `decision` is typed as a two-value union and
+  // arrives over the wire as whatever the caller sent; the branch below is
+  // `=== 'EXERCISE'` with an else, so every string in the world that is not
+  // exactly EXERCISE used to DECLINE the option — a once-per-career, one-way
+  // door answered by a typo. Whitelisted, like the settings enums.
+  if (decision !== 'EXERCISE' && decision !== 'DECLINE') {
+    return { ok: false, message: 'That is not an answer to the option — it is picked up or turned down.' };
+  }
   try { await assertPlayerOnUserTeam(leagueId, playerId); }
   catch (err) { return { ok: false, message: err instanceof Error ? err.message : 'Not your player.' }; }
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
@@ -523,6 +551,30 @@ export async function fifthYearOptionAction(
  */
 export async function restructureContractAction(leagueId: string, playerId: string, convertAmount: number, addVoidYears: number) {
   await assertLeagueOwner(leagueId);
+  /*
+   * THE TWO NUMBERS ARE CHECKED BEFORE THEY REACH THE MATH.
+   *
+   * Both arrive over the wire, and `NaN` went all the way through
+   * `computeRestructure` to a Prisma write that reported `guaranteed: NaN,
+   * signingBonus: Int is missing` — a database validation dump, absolute file
+   * paths and all, returned as the sentence on the GM's screen. Infinity and a
+   * negative conversion took the "nothing to convert" path by accident rather
+   * than by rule, and a void-year count of 9,999 is not a contract.
+   *
+   * The ceiling is read off CAP.MAX_PRORATION_YEARS rather than typed here, so
+   * it cannot drift from the number the proration math actually honours — a
+   * bonus spreads over at most that many years however many void ones are
+   * bolted on (lib/cap.ts, prorationYears). The slider on the panel stops
+   * lower still; the point is that the rule is here, where the write is, and
+   * not only on the control.
+   */
+  const VOID_YEARS_MAX = CAP.MAX_PRORATION_YEARS;
+  if (!Number.isFinite(convertAmount) || convertAmount < 0) {
+    return { ok: false, message: 'That is not an amount of money to convert.' };
+  }
+  if (!Number.isFinite(addVoidYears) || addVoidYears < 0 || addVoidYears > VOID_YEARS_MAX || !Number.isInteger(addVoidYears)) {
+    return { ok: false, message: `Void years run from none to ${VOID_YEARS_MAX}.` };
+  }
   try { await assertPlayerOnUserTeam(leagueId, playerId); }
   catch (err) { return { ok: false, message: err instanceof Error ? err.message : 'Not your player.' }; }
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
@@ -548,7 +600,7 @@ export async function restructureContractAction(leagueId: string, playerId: stri
     revalidatePath(`/league/${leagueId}`, 'layout');
     return { ok: true, message: `Restructured — new cap hit this year: $${(result.newCapHit / 1_000_000).toFixed(2)}M.` };
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : 'Restructure failed.' };
+    return { ok: false, message: actionFailureMessage(err, 'That restructure could not be written — his deal changed underneath it. Reload the page.') };
   }
 }
 
@@ -669,13 +721,75 @@ export async function changePositionAction(leagueId: string, playerId: string, n
   };
 }
 
+/**
+ * ===========================================================================
+ * ONE POSITION'S ORDER, AND NOTHING ELSE THE REQUEST FANCIES
+ * ===========================================================================
+ * `assertTeamOwner` proves the CLUB is yours. Everything after it used to be
+ * copied out of the request and into the table, which made this the loosest
+ * write in the file. Measured, from a save the caller legitimately owned:
+ *
+ *   - a slot was written at position `NOT_A_POSITION`, which no reader has a
+ *     name for, and one at a ten-megabyte position string;
+ *   - one man sent 200 times produced 200 slots for one player at one
+ *     position, off a single call;
+ *   - a player id belonging to ANOTHER SAVE was accepted, so a depth chart
+ *     row pointed across the league boundary at somebody else's roster;
+ *   - an id of the wrong shape escaped as a raw `Foreign key constraint
+ *     violated: DepthChartSlot_playerId_fkey` throw.
+ *
+ * The chart is a rendering of the roster, so the rules are the roster's: men
+ * who are actually on this club, each of them once, each filed at the position
+ * being ordered, and no more of them than a roster holds.
+ * `reconcileDepthChart` already drops a slot whose position no longer matches
+ * its player — this stops one being written that way in the first place.
+ *
+ * IT STILL RETURNS void AND STILL REFUSES SILENTLY. The editor fires this
+ * inside a transition and reads no result, and none of the refusals above is
+ * reachable by dragging a card — they are all shapes only a hand-rolled
+ * request produces. A rejected write leaves the stored order exactly as it
+ * was, which is what the screen will show on its next render.
+ * ===========================================================================
+ */
 export async function setDepthChartAction(teamId: string, position: string, orderedPlayerIds: string[]) {
   await assertTeamOwner(teamId);
-  await prisma.depthChartSlot.deleteMany({ where: { teamId, position } });
-  await prisma.depthChartSlot.createMany({
-    data: orderedPlayerIds.map((playerId, rank) => ({ teamId, playerId, position, rank })),
+  // Bounded before it reaches a query — a ten-megabyte "position" is not one,
+  // and there is no reason to hand the database a string that size to match on.
+  if (typeof position !== 'string' || position.length === 0 || position.length > 8) return;
+  if (!Array.isArray(orderedPlayerIds)) return;
+
+  const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId }, select: { id: true, leagueId: true } });
+  // A repeated man, or more men than a roster holds, is not an order this club
+  // could be in — so it is refused whole rather than quietly deduplicated into
+  // some other order the GM did not ask for. The cap is what stops the length
+  // of the array deciding how many rows this writes.
+  const wanted = orderedPlayerIds;
+  if (wanted.length > LEAGUE.ROSTER_MAX) return;
+  if (wanted.some((id) => typeof id !== 'string')) return;
+  if (new Set(wanted).size !== wanted.length) return;
+
+  const onRoster = await prisma.player.findMany({
+    where: { id: { in: wanted }, teamId, leagueId: team.leagueId },
+    select: { id: true, position: true },
   });
-  const team = await prisma.team.findUniqueOrThrow({ where: { id: teamId } });
+  const byId = new Map(onRoster.map((p) => [p.id, p]));
+  // Every man named has to be on THIS club and to be filed at THIS position —
+  // the same comparison `reconcileDepthChart` makes when it decides a stored
+  // slot is stale (`p.position !== slot.position`), so the two can never
+  // disagree about what a valid row looks like. It is also what makes the
+  // bucket name safe without a whitelist: a position no player on the roster
+  // is filed under cannot get a row written at it.
+  //
+  // A partial write would silently drop whoever failed and reorder the rest,
+  // which is a chart the GM did not ask for; refuse the whole thing instead.
+  if (wanted.some((id) => byId.get(id)?.position !== position)) return;
+
+  await prisma.$transaction([
+    prisma.depthChartSlot.deleteMany({ where: { teamId, position } }),
+    prisma.depthChartSlot.createMany({
+      data: wanted.map((playerId, rank) => ({ teamId, playerId, position, rank })),
+    }),
+  ]);
   revalidatePath(`/league/${team.leagueId}/depth-chart`);
 }
 
