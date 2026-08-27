@@ -727,6 +727,100 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-27 — Stadium Night ships with its motion layer, and the one
+  count-up in the application is gone.** `cc379f4`. The reactions were never
+  going to survive a re-skin on their own: `app/moments.css` and eight animated
+  components carried the accent, the alarm, the gold and the page ink as raw
+  literals copied out of the palette by hand, so the app would have changed
+  colour and the draft board would have gone on flashing picks in the previous
+  app's green. Every one of them reads the palette now — there is not a single
+  hardcoded colour left in `moments.css`. **Two micro-interactions were added**,
+  on shared component classes so no page had to be edited for them: a table row
+  lifts a pixel under the pointer, and a fact tile does the same. Both animate
+  `transform` alone, so neither can reflow a neighbour or move a figure, and the
+  1px press depression on `.btn` is untouched. The entrance animation was the
+  last timed thing in the app not reading the motion tokens — `.25s ease-out`,
+  written nowhere else — which also made it the one animation that ignored
+  `prefers-reduced-motion`; it reads `--dur-state` now. **A rule violation was
+  corrected**: `ConfidenceFigure` animated a scouting-confidence number upward
+  from zero, which broke two of the three motion rules written at the top of
+  `globals.css` — *"final values render at frame one"* and *"there are no
+  count-ups anywhere"* — and it broke them exactly where it hurt, because the
+  one number the reader was looking at was the one the screen would not yet
+  say. The digits are the answer immediately and the reveal moved onto the
+  decoration around them. This is not a feature removed. Verified with reduced
+  motion emulated on all ten pages: element count, rendered text and control
+  count identical to the normal run on every one, so the movement goes and the
+  information does not.
+- **2026-08-27 — A caption below the contrast floor, a page that scrolled
+  sideways, and two colours the palette could not reach.** `ac2a46d`. None of
+  these were new; putting the app beside a mockup of it is what made them
+  visible. The cap chart's *"$0 dead"* caption was `text-muted` at 60% opacity
+  and measured **2.99:1** — the last rendered text in the app under 4.5:1, on a
+  page that had already been through a legibility pass — for no reason beyond
+  the fade, since the words already said the thing the dimming was there to
+  say. Re-measuring found one more: the standings' other-club rows dim to 70%,
+  which put a losing streak in `bad` at 4.23:1; they dim to 80% now, still
+  visibly quieter, at 5.15:1. **The handset scroll had three causes and all
+  three are fixed where they start.** Tailwind's `grid-cols-N` is
+  `repeat(N, minmax(0, 1fr))`, and eleven call sites wrote `grid lg:grid-cols-2`
+  with no `grid-cols-1` base — below the breakpoint that leaves one *implicit*
+  column, and an implicit track is sized to its content's `min-width: auto`,
+  i.e. its max-content, which is how the player card's depth chart held a track
+  open at 607px inside a 390px viewport. The help popovers are a fixed 18rem,
+  clamped to the viewport now and pinned inside it below 520px, matched on
+  `role="tooltip"` so both are covered and a future one is too. The stat sizes
+  were fixed rems landing in tiles that sit two abreast at 390px, and are
+  clamps now. Roster, both player-card views and free agency go to **zero**
+  horizontal scroll at 390; what is left is 2–34px on five pages, every one of
+  them better than before. **Two colour paths sat outside the palette** and
+  would have survived the re-skin untouched: the cap page's position-group map
+  emitted inline `background-color` from nine hand-copied hexes, and
+  `ResultWeight` used arbitrary `text-[#04202e]`/`text-[#1a1200]` for the dark
+  type on its two bright chips — but a bright fill and the ink on top of it are
+  a *pair*, and half of that pair was outside the system. Both are tokens now.
+- **2026-08-27 — Flat plates, a club rail down every panel, and a table that
+  reads as a board.** `7de8532`. The shared component layer of the new skin. No
+  page was touched and no markup moved; three files gain one class name each,
+  and every decoration is an absolutely-positioned pseudo-element so none of it
+  can enter layout, take a click, or change what is on the page. The structural
+  device is the **club rail** — the team's own colour, lifted off the raw
+  primary toward a cold stadium-light teal, because several curated club
+  primaries sit near 1.6:1 on this page and a 3px bar of them reads as a smudge.
+  It runs down the left edge of every `.panel`, across the top of every
+  masthead, under the sticky nav, beneath the table head and along the hovered
+  row. **Tables changed most**: a roster, a cap sheet and a draft board are all
+  twenty-odd columns of figures and the old skin set them as a list — one
+  padding, one rule, no verticals. They get a banded head, zebra striping at
+  4.2%, column rules between cells, and a hovered row marked in the club colour.
+  The column rules are what does the work; a grid of numbers with no verticals
+  is a wall of numbers. Surfaces go flat and square — 2px radius, no drop
+  shadows, separation carried by a border lightened to stay visible at 1px. The
+  yard grid becomes a fixed pseudo-element rather than a fixed background-image
+  on `body`, which fixes a real defect on the way: the texture used to stop at
+  the end of the content, so a short page showed bare ink below the fold.
+  `.text-team` was re-measured rather than carried over — 45% club colour into
+  `chalk` instead of 50% into pure white — and the worst of the twenty club
+  primaries lands at 5.31:1 where the old mix managed 5.03:1, so the club keeps
+  *more* of its own colour than before and every team still clears the floor.
+- **2026-08-27 — Stadium Night: the palette moves to blue-black and the type
+  moves to Oswald over IBM Plex.** `a0da0b7`. The app owner picked this skin out
+  of nine rounds of design exploration and confirmed it twice — *"stadium night
+  is GREAT"*, then *"I like it a lot. The stadium night version"*. This is the
+  first of its four commits: the twelve semantic colours and the three
+  typefaces, and nothing else. The graphite ramp read as a dark SaaS dashboard
+  because it was neutral; every step carries a blue cast now and the dark end
+  goes deeper, which is both what a stadium at night looks like and what pays
+  for the denser type scale — `muted` on `card` goes from **5.52:1 to 8.35:1**,
+  so the type got smaller and every pair on the page got *more* legible rather
+  than less. Oswald replaces Barlow Condensed for display, and body copy comes
+  off the system sans stack onto IBM Plex Sans and Plex Mono: that stack was a
+  different typeface on every platform, which is the one thing a 13px table of
+  twenty columns cannot afford. All three go through `next/font`, as the display
+  face already did, so they are self-hosted and preloaded rather than costing a
+  render-blocking round trip to a third party. Swept afterwards against the
+  background actually composited behind each element, at 1440 and 390 across ten
+  pages: **zero text below 4.5:1**, worst pair 5.15:1.
 - **2026-08-25 — A multi-week advance could not be called off once it started,
   so a mis-clicked "Advance to Playoffs" burned the rest of the season with
   nothing on screen to stop it.** `2544477`. The app owner: *"there is no way
