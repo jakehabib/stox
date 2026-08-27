@@ -192,6 +192,37 @@ function yearIndex(c: ContractLike): number {
 }
 
 /**
+ * THE PRORATION ACTUALLY INSIDE THIS YEAR'S CAP HIT — nought once the deal has
+ * run past its five-year bonus window.
+ *
+ * It exists because two functions have to agree about that, and one of them
+ * did not. `capHit` charges `base + proration` only while
+ * `yearIndex < prorationYears`; `tradeCapEffect` subtracted a flat
+ * `proration(c)` from that same hit to find the base salary an acquiring club
+ * inherits. Inside the window the two are the same statement. Past it they are
+ * not, and the second one then subtracted a year of bonus that this year's hit
+ * had never contained.
+ *
+ * MEASURED, on a 7-year deal in its seventh season, $15.7M of bonus (a shape a
+ * GM reaches with one long extension and no unusual behaviour at all): the
+ * acquiring club's cap actually moved $7.90M, and `tradeCapEffect` told the cap
+ * gate and the trade screen it was taking on $4.76M. On a $27.9M bonus the same
+ * shape reported MINUS $80K — acquiring a $5.50M contract read as freeing
+ * money. `tradeCapDeltas` is what `assertCapRoom` runs on, so the understated
+ * figure was not merely drawn, it was enforced: a club with $4M of room could
+ * be handed a $7.9M contract and land over the ceiling with nothing refusing
+ * it, which is exactly the legality clause INV-19 exists to hold.
+ *
+ * So there is one derivation of "how much bonus is charged this season" and
+ * both callers read it. The rule it states is the same one `unamortizedBonus`
+ * counts remaining years against, written once.
+ */
+export function prorationThisYear(c: ContractLike | null | undefined, mode: CapMode): number {
+  if (!c || mode !== 'REALISTIC') return 0;
+  return yearIndex(c) < prorationYears(c) ? proration(c) : 0;
+}
+
+/**
  * ---------------------------------------------------------------------------
  * THE FIVE-YEAR PRORATION WINDOW, AND THE BUG THE 12-YEAR CEILING EXPOSED
  * ---------------------------------------------------------------------------
@@ -250,7 +281,7 @@ export function capHit(c: ContractLike | null | undefined, mode: CapMode): numbe
     const total = bases.reduce((a, b) => a + b, 0) + c.signingBonus;
     return Math.round(total / Math.max(1, c.years));
   }
-  return base + (yearIdx < prorationYears(c) ? proration(c) : 0);
+  return base + prorationThisYear(c, mode);
 }
 
 /**
@@ -944,7 +975,11 @@ export function tradeCapEffect(c: ContractLike | null | undefined, mode: CapMode
   const dead = unamortizedBonus(c, mode);
   return {
     frees: hit - dead,
-    takesOn: hit - (mode === 'REALISTIC' ? proration(c) : 0),
+    // THE BONUS THIS SEASON'S HIT ACTUALLY CARRIES, not a flat year of
+    // proration. Past the five-year window a deal's hit is pure base salary,
+    // and subtracting proration from it invented cap room for the acquiring
+    // club that the ledger never gave back. See `prorationThisYear`.
+    takesOn: hit - prorationThisYear(c, mode),
     dead,
   };
 }

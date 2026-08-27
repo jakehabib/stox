@@ -1057,16 +1057,28 @@ export async function executeTrade(opts: {
     ...(await tradeCapDeltas(opts.bToA, opts.teamB, opts.teamA, capMode)),
   ];
   /*
-   * The GATE still asks about `opts.seasonYear` while the acceleration CHARGE
-   * above is dated by capChargeYear(), and in the one window where those can
-   * differ — OFFSEASON weeks 1-2 with the trade deadline switched off — they
-   * are answering different questions on purpose. `tradeCapDeltas` returns
-   * this season's salary movement, so this season's sheet is the right thing
-   * to test it against; the accelerated bonus is a new charge and belongs to
-   * whichever year will actually be billed for it. Passing chargeYear here
-   * would check next year's ceiling against this year's salaries, which is
-   * neither. Flagged rather than silently reconciled: lib/capEnforcement.ts
-   * belongs to the cap workstream and this is its call to make.
+   * THE GATE AND THE CHARGE ARE IN THE SAME YEAR, and this is where it is said
+   * out loud, because the shape of the two arguments suggests otherwise.
+   *
+   * `assertCapRoom` is handed `opts.seasonYear` while the acceleration above is
+   * dated by `capChargeYear()`, and those differ through OFFSEASON weeks 1-2 —
+   * the one window a trade can reach at all, and only in a league with the
+   * deadline switched off. They do NOT come out in different years: the gate
+   * runs on `teamCapSummary`, which resolves the year it reads through
+   * `bookYearFor` (lib/cap-summary.ts) — the same `capChargeYear` boundary,
+   * applied to the current league year — so asking it about `seasonYear`
+   * inside that window returns the sheet for `seasonYear + 1`, which is the
+   * year this charge lands in and the year the ledger is already written in.
+   * Passing `chargeYear` here would in fact BREAK that: `bookYearFor` takes a
+   * year that is not the league's current one literally, so it would read a
+   * season nobody is playing.
+   *
+   * This paragraph used to claim the opposite — that the two were deliberately
+   * answering different questions, flagged for the cap workstream to settle.
+   * That was true when it was written and stopped being true when
+   * `teamCapSummary` started following the ledger; scripts/checkMoneyConservation.ts
+   * (M-8) drives a trade in OFFSEASON week 1 and holds both halves to the same
+   * year every run, so the claim is now checked rather than asserted.
    */
   // The cap is a rule of the league, and a forced trade is the player
   // overruling the league on purpose — so this is the first of the two gates
