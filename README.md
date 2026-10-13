@@ -727,6 +727,35 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-27 — The whole game is written down as a prompt another agent can
+  build from, and specifying it found four live bugs.** `b46ea46`, `ea1596c`,
+  `efebfe0`, `2425e2d`, `7898acf`, `3b3f9d5`, `917260c`, `80899d1`, `8925f88`.
+  `docs/build-prompt/` is 18,697 lines in six parts — foundation and the
+  27-model schema, the season engine, money, roster and players, every one of
+  the 39 screens, and `PART_0_START_HERE.md` carrying the ten house rules each
+  tied to the failure that produced it. It specifies behaviour and contracts
+  rather than code, and every number carries the reason it is that number,
+  because the reasoning is what stops a builder rounding 1.18 to 1.2.
+  Reading the code closely enough to specify it turned out to be the most
+  productive audit yet run on this repo. **The live draft's intermittent 500**
+  was two chunk runners against one `DraftState` both taking the same card,
+  the loser throwing a raw unique-constraint violation; `advanceWeek` had
+  solved this with a lease and the draft had not, so `DraftState.runStartedAt`
+  is now the same mechanism column for column. **The Settings screen offered a
+  scouting budget nothing spends** — the focus-point economy it sized was
+  replaced by shortlist attention, and the control validated, clamped,
+  persisted and changed nothing a player could observe, with a tooltip
+  promising a carry-over rule and a price list that do not exist. **Progression
+  checkpoints did not sum to one season**: the per-week rate was a hardcoded
+  1/16, so a 17-week season handed out 1.0625 seasons of growth and a 20-week
+  season 1.25. **A retirement roll asked two gates about two different ages**,
+  and the raw-age gate meant no early-peaking player could retire on schedule
+  while a quarterback spent a roll on odds of exactly zero — 4 backs at 30 and
+  7 at 31 carried probability that could never fire. Seven dead columns, three
+  dead constants and a draft-class comment four points out of date were
+  corrected in the same pass. The prompt also inherits the nine issues still
+  open here rather than hiding them, written as decisions for the builder.
+
 - **2026-08-27 — The rating system and the 1:1 build brief are written down, so
   neither has to be re-derived from the code again.** `2b052eb`, `b46ea46`.
   `RATING_SYSTEM_SPEC.md` is the football rating system in full: the attribute
@@ -735,7 +764,7 @@ three routes and when each is right.
   actually measured in a generated league, the soft-ceiling curve, the age
   curve with its position profiles, the three growth drivers, the three fog
   tiers, the invariants that must hold, and the recipe for verifying any of it
-  against a live database. `docs/build-brief/` opens with `PART_0_BRIEF.md`,
+  against a live database. `docs/build-prompt/` opens with `PART_0_START_HERE.md`,
   the framing for a feature-parity rebuild: what 1:1 means and what it does
   not, the game in one page, the ten house rules each tied to the specific
   failure that produced it, the verification recipe including the probe

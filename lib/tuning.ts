@@ -736,9 +736,13 @@ export const GENERATION = {
    *              - DRAFT_TIER_OFFSET + class-strength bias
    *   rating   = softly-bounded normal(tierMean, DRAFT_OVR_SD)
    *
-   * so the ramp runs from 77 at the top of round one down to 61 at the last
-   * pick and everything past it, and DRAFT_OVR_SD is how far one man sits
-   * from his own slot.
+   * so with the shipped constants the ramp runs from 73 at the top of round
+   * one (68 + 16 - 11) down to 57 at the last pick and everything past it
+   * (68 - 11), and DRAFT_OVR_SD is how far one man sits from his own slot.
+   * This read 77 and 61 until it was caught: that is the geometry from when
+   * DRAFT_TIER_OFFSET was 7, and it survived the move to 11 unchanged. Four
+   * points of draft class is not a rounding error, so recompute both ends
+   * from the three constants whenever any of them moves.
    *
    * DRAFT_OVR_SD IS THE ROLL THAT USED TO BE ROOKIE_OVR_SD (7.5), AND IT HAD
    * TO COME DOWN. The owner's tier ladder is, fitted to his own numbers, a
@@ -1303,7 +1307,7 @@ export const SIM = {
    * a drive scores, TD_SHARE_BASE and EDGE_TO_TD_SHARE decide whether the
    * score is a touchdown, and the points fall out of that.
    *
-   * KEPT, NOT DELETED, because docs/build-brief/PART_2_SEASON_ENGINE.md cites
+   * KEPT, NOT DELETED, because docs/build-prompt/PART_2_SEASON_ENGINE.md cites
    * all three by name (section 3.9, and the PUNTER_BASELINE note uses
    * UNIT_BASELINE's 60 as the worked example of a constant that is nothing
    * like the middle of anything). A docstring that implies the engine reads
