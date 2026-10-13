@@ -3086,3 +3086,293 @@ result gets told: the years these men are about to have.
 Draw the age for the avatar but **do not print it** — the avatar is generated from
 build and age so a man's face stays the one every other screen gives him, and a recap
 of a draft two phases ago would be quoting a number that has since ticked over.
+
+---
+
+## 6. The combine as a signal — the exploitable gap
+
+### 6.1 Derive what a drill is worth at a position; do not hand-type sixteen columns
+
+The brief this implements: *"athletic testing matters differently across position. 40
+time matters more for a CB than it does a LT."* Until this existed the athletic
+composite was a flat six-way average for everybody, so a 330lb left tackle's forty
+counted for exactly as much of his rank as a corner's did.
+
+Compute the chain at module load:
+
+```
+POSITION_WEIGHTS        what a position's PLAY is made of in THIS engine. trueOvr is
+  (from the rating spec) computed from it and the sim runs on trueOvr, so it is the
+                         game's own statement of what a job needs.
+  × PHYSICAL_BASIS       which raw physical qualities each of those skills rests on.
+                         ← THE ONLY JUDGEMENT IN THE CHAIN.
+  = a per-position demand over speed / acceleration / agility / strength
+  × DRILL_ATTRS          what each drill measures (§1.11), a table you already have.
+  = how much each drill is worth at each position
+```
+
+Then, per position:
+
+```
+demand[axis] = Σ over attributes: (weight / Σweights) × PHYSICAL_BASIS[attr][axis]
+raw[drill]   = Σ over axes: DRILL_ATTRS[drill][axis] × demand[axis]
+weight[drill]= DRILL_FLAT_SHARE/6 + (1 − DRILL_FLAT_SHARE) × raw[drill] / Σraw
+```
+
+**Renormalise `POSITION_WEIGHTS` first.** They do not sum to 1 (LB's deliberately sums
+to 1.18), so a position that carries more named skills would otherwise read as
+physically hungrier for it. The resulting demand does **not** sum to 1 either, and
+should not: the missing remainder is everything a stopwatch cannot reach, which at
+quarterback is most of the job.
+
+**`PHYSICAL_BASIS` — the judgement table.** A row that does not sum to 1 is
+deliberate: the remainder is technique, instinct or hands, which no stopwatch reaches,
+and the gap is why zone coverage (mental) carries less physical demand than man
+coverage (a footrace) and why ball skills carry almost none. An attribute absent from
+this table contributes **no** physical demand at all — awareness, football IQ, decision
+making, vision, ball security, hands, short and deep accuracy, kick accuracy and work
+ethic are not things a combine can time.
+
+```
+speed        { speed 1 }          acceleration { acceleration 1 }
+agility      { agility 1 }        strength     { strength 1 }
+
+passBlock    { strength .45, agility .30, acceleration .15 }
+runBlock     { strength .65, acceleration .20 }
+footwork     { agility .70, acceleration .25 }
+
+passRush     { acceleration .40, agility .25, strength .20, speed .10 }
+runStop      { strength .55, acceleration .15 }
+blockShed    { strength .70, agility .10 }
+pursuit      { speed .55, acceleration .30, agility .10 }
+tackling     { strength .35, acceleration .15 }
+
+coverage     { speed .40, agility .35, acceleration .20 }
+zone         { speed .20, agility .20, acceleration .15 }
+press        { strength .40, agility .25, acceleration .15 }
+ballHawk     { agility .15, speed .10 }
+
+elusiveness  { agility .55, acceleration .30 }
+power        { strength .60, acceleration .15 }
+route        { agility .35, acceleration .30, speed .10 }
+release      { acceleration .30, agility .20, strength .20 }
+contested    { strength .35, acceleration .15 }
+
+armStrength  { strength .35 }     pocket    { agility .20 }
+kickPower    { strength .35, acceleration .20 }
+```
+
+Nothing in the codebase says what a three-cone is measuring, or how much of "pass
+blocking" is anchor strength and how much is a kick slide. **These rows are a read and
+nothing more; they are the place to argue, and every number downstream moves when they
+do.** The point of deriving the rest from them is that the weights are a statement
+about **this simulation** rather than about the real NFL, and they follow the engine if
+the engine is retuned: move a guard's run-block weight and his bench re-prices itself
+with no second table to remember.
+
+**Keep `DRILL_FLAT_SHARE = 0.25`, and do not take it to zero.** Derived alone, a left
+tackle's forty comes out at **5%** of his athletic rank, which is not "matters less"
+but "does not count" — and a tackle who runs 5.6 really is a problem, whatever the
+engine's weight vector says. The floor is also what stops a position the engine is
+physically silent about from degenerating: a kicker is graded on kick power and kick
+accuracy, so without it his rank would rest on two drills. A quarter flat and three
+quarters derived still leaves a corner's forty worth roughly **two and a half times**
+a tackle's, which is the effect asked for; going lower buys a sharper table at the
+cost of drills that no longer count at all.
+
+Publish the table with every row summing to 1 over the six drills, and have **every**
+caller renormalise over the drills a man actually ran. The six positions that skip the
+bench simply have that column dropped and the remaining five rescaled, rather than
+being scored against a battery they were never going to run.
+
+The effect to expect: a corner's rank leans on the forty, the shuttle and the
+three-cone; a tackle's on the bench, the three-cone and the broad; an edge rusher sits
+between them. Concretely, **the forty is worth 0.07 of an offensive lineman's rank
+against 0.21 of a corner's.**
+
+### 6.2 Derive how much of a man's real grade each drill carries — separately
+
+This is a **different question** from §6.1 and must not be conflated with it. That one
+is what the composite a GM reads **weighs**. This one is what actually **predicts
+ability** at the position. The two only look alike because the same fact drives both: a
+fast tackle is not a better pass protector, and a strong corner is not better in
+coverage.
+
+```
+cap          = ABILITY_CAP_FRACTION × sqrt(WEIGHT_SUM_SQ − NOISE_WEIGHT²)
+meanWeight[d]= mean of POSITION_DRILL_WEIGHTS[p][d] over the positions that RUN d
+base         = (d == forty) ? FORTY_ABILITY_WEIGHT : ABILITY_WEIGHT
+relevance    = POSITION_DRILL_WEIGHTS[p][d] / meanWeight[d]
+raw          = base × relevance ^ ABILITY_RELEVANCE
+weight       = softBound(raw, base, (cap − base)/3, 0, cap, 2)
+```
+
+`ABILITY_WEIGHT 0.78`, `FORTY_ABILITY_WEIGHT 0.30`, `ABILITY_RELEVANCE 0.6`,
+`ABILITY_CAP_FRACTION 0.99`.
+
+**Anchor on the two league-wide means and hold them.** `ABILITY_WEIGHT` and
+`FORTY_ABILITY_WEIGHT` are the league-wide mean for their drill, not a flat value for
+every position. Holding the mean is what stops this quietly changing how much a workout
+reveals league-wide, which is the fog figure the whole scouting layer is tuned against.
+That is also exactly what keeps the room's fixation mispriced by the same amount **on
+average** while making it wildly wrong at some positions and roughly right at others —
+and **that variance is the gem.**
+
+**Use `ABILITY_RELEVANCE = 0.6`, not 1.0.** A better tackle really is stronger, because
+strength is over half of what the engine says his job is made of, so his bench should
+read his grade; a better tackle is not meaningfully faster, so his forty should read
+his card and the day he had. But the relevance shares are themselves derived through
+two tables of judgement, and a square-law response to them would put more confidence in
+the chain than it has earned.
+
+**Soft-bound the cap; never `Math.min` it.** The drill z-score spends a unit-variance
+budget — the attribute weight is `sqrt(WEIGHT_SUM_SQ − ability² − noise²)` — so an
+ability weight past `sqrt(WEIGHT_SUM_SQ − NOISE_WEIGHT²)` takes the budget imaginary
+and the printed spread stops matching the anchor table. A `Math.min` there would pile
+every strongly-relevant drill onto exactly the cap, which is this codebase's most
+repeated defect. Approach it and never reach it; set the soft sd to a third of the
+headroom so the asymptote sits strictly above the two-sd knee (at exactly half, the
+soft bound's own headroom collapses to zero and it degenerates into the clamp you are
+avoiding).
+
+**Verify the spreads did not move.** Measured over 12 classes before and after the
+ability weight was split per position, every position's printed forty / vertical /
+three-cone / bench spread is unchanged to the third decimal (LT forty 0.146 → 0.144,
+DT bench 5.07 → 5.11, CB three-cone 0.215 → 0.210). That is the acceptance test for
+this whole section: a drill that reads less of a man's grade reads **more** of his
+profile, so the total signal and the printed spread are both conserved.
+
+### 6.3 Rank testing within the position group
+
+Compute the public athletic rank like this:
+
+1. Rank every drill a man ran against the men at **his own position** in this class.
+   Share a rank on a tie (standard competition ranking: two men tied for best are both
+   rank 1 and the next man is rank 3).
+2. Take a **weighted** mean of those finishes, weighted by what each drill is worth at
+   his position (§6.1), renormalising over the drills he actually ran. A position with
+   no weights at all falls back to 1 apiece, which is the old flat mean.
+3. Order his **position group** on that mean.
+
+**Use full-precision finishes in the average, not the rounded percentile.** A rounded
+percentile is right on a card tile and wrong as an input to an average: a group of
+twenty-five offers only twenty-five finishes, so six rounded percentiles land on a
+coarse lattice and men collide who are not level. Measured over 158 classes, averaging
+the rounded figure left **39.8%** of every class sharing a rank. Use
+`100 × (outOf − rank) / (outOf − 1)` with the rounding left off.
+
+**Break ties with the continuous read.** Even at full precision, six finishes out of a
+twenty-five-man group average onto a lattice: on the average alone **22.4%** of a class
+shared a rank and the worst pile-up put **nine men** on one, which reads as a broken
+column rather than a dead heat. Separate level men by `testingAthleticism(position,
+testing)` — the same public stopwatch against the same position anchors, converted to
+z against each anchor, weighted, and pushed through a normal CDF — so it reveals
+nothing the average did not and only ever orders men the average could not tell apart.
+With the tiebreak it is **0.4%**, and never more than three. Two men alike on both did
+test the same, and should share a rank.
+
+**Rank within the position group, not against the class.** Each drill was already
+placed inside the position group — a 330-pound tackle is never going to run a 4.4, so
+ranking the raw stopwatch across a class turns the column into a proxy for "is he a
+skill player", which tells a front office nothing it could not read off the position
+badge — but the headline that came out of it read "67th of 400 in the class", and a
+tackle is not chosen out of four hundred men. *"It should also be ranked against same
+position players, not the general class."* So order the average inside the group too,
+and print "Athletic 4 of 16" — the fourth-best tester among the sixteen left tackles in
+this class.
+
+Do the ordering in **one** function so the draft board and the player card cannot
+disagree about the same man.
+
+**Average over missing events; never score them as failures.** Rank a man on the drills
+he actually ran — a corner who was never going to bench is not pushed down his group
+for it, because the battery that group runs is **measured from the group** (the modal
+event count) rather than assumed. Flag anyone below his group's usual battery as
+`thin`: his average rests on less, and the reader is told rather than sold a number
+that looks as solid as the rest.
+
+**Keep the public-perception read flat, and only that one.** The single aggregate that
+feeds public buzz — the plain mean of a man's percentiles — stays unweighted, because
+it feeds the public and the public does not weight a workout by position. That is the
+same decision as keeping the room's forty fixation global (§5.4): a bias that adjusted
+itself sensibly by position would not be one.
+
+Keep the big-board buzz score modest, so a strong workout nudges the board and does not
+rewrite the grade:
+
+```
+bigBoardScore = scoutedOvr × posValue
+              + float(−3, 3)                      # seeded per player, reseeded every 2 weeks
+              + ((testingPercentile − 50) / 50) × 8 × posValue
+```
+
+Reseed the wobble every couple of weeks rather than every render, so the board has
+risers and fallers across the season without touching anyone's true rating.
+
+### 6.4 Hit these acceptance numbers
+
+Cap the athletic rank's marginal signal **on purpose**. Inside a position group it runs
+rho **−0.56** against a man's true overall, against rho **−0.69** for the consensus
+board rank sitting two columns away on the same table — which is equally free to every
+club — and once that board rank is held fixed, the athletic rank adds rho **−0.35** of
+its own. (On stored classes in real saves the same partial reads −0.32 to −0.40.)
+
+That partial was **−0.20**, which was too little for testing to be worth acting on at
+all; it is not −0.7, because **a public column that reliably beat the board would end
+scouting.** What the move bought, over 40 classes with career peaks rolled through
+progression:
+
+| | before | after |
+|---|---|---|
+| rounds 4–7 top-quartile tester → 70+ starter | 68.5% | **73.9%** |
+| ... base rate for rounds 4–7 | 66.1% | **65.9%** |
+| rounds 1–2 top-quartile tester → bust (<78) | 17.7% | 15.9% |
+| ... base rate for rounds 1–2 | 22.1% | 22.3% |
+| "best tester of the 8 left" beats "best board rank" | 34.8% | 41.6% |
+| ... and loses to it | 38.9% | 39.4% |
+
+**The headline acceptance number: in rounds 4–7 a top-quartile tester becomes a
+genuine 70+ starter 73.9% of the time against a 65.9% base rate.** Before the change,
+tilting late picks toward the stopwatch **lost money** — 73.2 mean career peak against
+the board's 74.1. It now runs 74.3 against 74.7 and lands more quality starters (37.2%
+at 78-plus against the board's 34.0%), which is an edge worth taking without being a
+free one.
+
+**And it must stay an edge, not a solved draft.** Following the stopwatch **alone** —
+best tester anywhere on the board — still yields only ~**63%** (62.8% → 63.3% across
+the position-weighting change) against the board alone at ~**69%** (68.8% → 68.9%). So
+the stopwatch on its own is **six points of starter rate worse than simply following
+the board**, and scouting still has to happen. Following testing with no board at all
+is a disaster: 38.6% starters against the board's 71.8%. Treat those two rows as
+guard rails and re-measure them after any change to this section.
+
+What the **position weighting** then bought, and it is the interaction rather than
+either half. Because the room's forty fixation stays global while the forty only
+predicts anything at some positions, the board now pays for a drill that is often
+worthless — and the men it underpays hardest are exactly the slow-forty, top-quartile
+tester at a position where speed is nearly irrelevant. Measured over 30 freshly
+generated classes (11,796 tested prospects), among picks in rounds 4–7:
+
+| cohort | n | mean board rank | career peak | 70+ starter |
+|---|---|---|---|---|
+| every pick in rounds 4–7 | 3798 | 160 | 70.7 | 55.7% |
+| slow forty + top-quartile, flat composite | 102 | 150 | 78.0 | 90.2% |
+| slow forty + top-quartile, position-weighted | 122 | 153 | 77.5 | 86.1% |
+
+The cohort was always good; the weighted composite finds **a fifth more of them at the
+same quality** — 105 starters against 92 — and on the offensive line, where the forty
+is worth 0.07 of a man's rank against a corner's 0.21, it finds **49 against 36**.
+
+The fog did not move with it: board+athletic recovering an unscouted true rating ran
+0.715 → 0.719, and the class-wide acceptance rows moved 62.2% → 63.7% against a
+55.5% → 55.6% base.
+
+**Expect the board half of any retune to reach classes already in a save and the
+generator half not to.** Testing is rolled once, at class creation, and nothing is
+backfilled — so a class already in a save keeps the numbers it was born with. Measured
+on four real saves, that is most of the way there anyway: the athletic rank's partial
+against true overall inside a position group moves from −0.25/−0.33 to −0.32/−0.40 on
+stored classes purely off the board-side constants. The generator half arrives with the
+next class the league mints, which is one season away at worst. Nothing a player
+already owns changes value; a board grade re-computes, as it always does on every
+render.
