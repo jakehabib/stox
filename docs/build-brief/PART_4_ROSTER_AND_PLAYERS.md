@@ -3376,3 +3376,1076 @@ stored classes purely off the board-side constants. The generator half arrives w
 next class the league mints, which is one season away at worst. Nothing a player
 already owns changes value; a board grade re-computes, as it always does on every
 render.
+
+---
+
+## 7. The GM's own career
+
+### 7.1 Score the GM on results, never on actions
+
+Derive XP as a **pure function** of what is already on the books. Award nothing per
+action — not a trade, not a scouting pass, not a signing — and award everything per
+**result**. That is what makes the ledger unfarmable.
+
+| line | XP |
+|---|---|
+| regular-season win | **10** each |
+| playoff finish (total for that season, not an increment) | MISSED 0, WILDCARD **60**, DIVISIONAL **110**, CONFERENCE **170**, RUNNER_UP **260**, CHAMPION **560** |
+| major individual award won by a player on your roster | **60** each |
+| a pick who became a real contributor | **25** each |
+| a pick who became a genuine star (85+) | **+50** on top |
+| first playoff berth, ever | **100** once |
+| first championship, ever | **300** once |
+| tenure ladder | 5 seasons **100**, 10 seasons **200**, 20 seasons **400** — each rung once |
+| career-wins ladder | 50 wins **100**, 100 wins **200**, 200 wins **400** — each rung once |
+
+Size it so **a championship is worth roughly seventy regular-season wins**: the whole
+design collapses if grinding 9-8 seasons out-earns actually winning something.
+
+Score playoff **depth**, not games won, and read it off the stored
+`playoffResult`: a first-round bye means a club can reach the conference round having
+won nothing, and where you were eliminated is the honest measure either way.
+
+Scale the draft-hit bar by round, and **use the same four numbers the career page's
+draft tab prints next to every selection**, so a table saying "miss" cannot sit under
+a headline saying 46% hit rate:
+
+```
+draftHitThreshold(round) = round === 1 ? 78 : round <= 3 ? 73 : round <= 5 ? 68 : 64
+```
+
+A 68-overall day-three pick starting for you is a win; a 68-overall first-rounder is
+a bust.
+
+Count in-progress wins and losses from the live standings when the current season has
+no stored record row yet, so the figure on screen is the figure the GM just earned.
+
+Return the XP as a **breakdown** — one labelled line per source with its detail string
+and its XP — not a bare total, so a GM can see exactly what paid.
+
+**Keep the award list in one place** and include retired award types in it. A label
+map that fell behind the writer would quietly drop a real award out of a GM's career
+total **and** out of the honours list under it — the count and the cabinet lying
+together. A pre-split Rookie of the Year already banked in a save must keep paying its
+XP.
+
+### 7.2 Level, and grant one point per level gained
+
+```
+xpToNextLevel(level) = round(LEVEL_BASE × level ^ LEVEL_EXPONENT)   # 80, 1.35
+MAX_LEVEL = 50
+skillPointsAtLevel(level) = (clamp(floor(level), 1, 50) − 1) × POINTS_PER_LEVEL   # 1
+pointsAvailable = skillPointsAtLevel(level) − pointsSpent(skills)
+```
+
+So the first level costs 80 (about one good half-season) and level 20 costs ~4,000
+(about three titles).
+
+**Grant one point per level gained, and make it a function, not an event.** The
+contract is the whole rule: points earned == levels gained == `level − 1`. A GM at
+level 7 has levelled up six times and has six points. Level 1 is where every save
+starts with no XP, so it pays nothing; the first point lands at level 2.
+
+What that replaced was a ladder — a point at each of levels 2, 4, 6, 9, 12, 15, 18, 22,
+26, 30 and one every 5 after — so seven of the first ten level-ups paid nothing and a
+GM could not tell from the screen whether the next one would. Not random, but
+unreadable from the inside, which is the same complaint.
+
+**Treat multi-level jumps as the normal case**, not an edge one: a championship pays
+560 XP in the single click that ends the season, which carries a new GM from level 1 to
+level 4 at once, and a single advance can cover several weeks. Because the grant is a
+pure function of level and not an increment, three levels gained hands over exactly
+three points with no loop to get wrong.
+
+**Exactly-once is free, for the same reason.** There is no grant event to fire twice:
+nothing anywhere writes a point balance — the skills map is the only point-related
+column and only a purchase writes it. Running the state builder twice, reloading the
+page, or replaying a week produces the same number, so this needs neither the
+compare-and-set the workout ledger uses nor the round lock. Adding one would be
+inventing a race to defend against.
+
+**Need no migration, and owe nothing.** Because `pointsAvailable` is
+`earned − spent` with both derived, every save re-levels onto this rule the instant the
+code ships. The direction is safe to leave unguarded because the new rule pays at least
+as much as the old at **every** level (`level − 1 ≥ the ladder's count`, checked for all
+50 rather than assumed), so no save can come out owing points it already spent — no
+refund pass, no clawback, no stranded tree.
+
+**Balance, honestly:** the tree costs **32 points** to fill outright, so it fills at
+**level 33**. Under the ladder that was unreachable — it capped at 14 by level 50 — so
+"you must specialise" was enforced by never paying out enough. Now it is a long career
+and still leaves the first two decades of one a genuine choice about what kind of GM
+you are.
+
+### 7.3 The skill tree — three branches, one chain each, weakest first
+
+Store purchased ranks as a JSON map `{ skillId: rank }` on the GM profile row, with an
+absent key meaning rank 0. Declare each node's prerequisite **explicitly** rather than
+inferring it from array position, so re-ordering the array for display can never
+silently re-order what unlocks what. **Assert the tree is acyclic at module load** — a
+cycle makes both nodes permanently unbuyable and the UI renders two locked boxes with
+no explanation, which is the kind of bug that survives for months.
+
+Shape each chain **information first, then the ability to act on it**: you learn to
+read a prospect before you get more visits to spend, and you learn where a player is
+headed before you get to change how fast he gets there. Put the weakest node first in
+each branch so it has to be bought first.
+
+**DRAFT** — *"The only men in this league you cannot simply watch on tape. Every
+upgrade tightens what your staff can tell you about a prospect, and the last one buys
+more of the visits and evaluations that settle it."* This is the only branch fog of war
+still touches; nothing here can be pointed at a professional.
+
+| node | ranks (cost → effect) |
+|---|---|
+| **Better Evaluations** — area scouts quote tighter numbers on what a prospect is right now | 1 → current-rating ranges narrow 15%; 2 → narrow 28% |
+| **Potential Projection** (needs Evaluations) — better projection of a ceiling, the hardest read in the building | 1 → potential ranges narrow 22%; 2 → narrow 40% |
+| **Film Room** (needs Potential Projection) — more hours on tape, on the traits tape is the only way to judge | 1 → hard-to-scout mental traits narrow a **further** 18%; 2 → a further 32% |
+| **Scouting Network** (needs Film Room) — more contacts, more access | 2 → +1 workout per class and +1 Full Scout per season; 2 → +2 and +2 |
+
+Implement the narrowing as **multipliers on the half-width** the scouting layer has
+already computed, applied after its confidence and difficulty work, then floored:
+`ATTR_BAND_MULT = [1, 0.85, 0.72]`, `POT_BAND_MULT = [1, 0.78, 0.60]`, and Film Room's
+**extra** `HARD_ATTR_BAND_MULT = [1, 0.82, 0.68]` stacked on top for attributes whose
+`scoutDifficulty ≥ HARD_ATTR_DIFFICULTY = 0.7`. Index 0 is rank 0, so an unupgraded GM
+multiplies by exactly 1 and sees today's numbers. Worked example at the reference
+point: a potential range of 76-91 (half-width 7.5) becomes 79-88 at rank 2 — narrower,
+never exact.
+
+Keep the two levers **different on purpose**: Better Evaluations tightens everything a
+little, Film Room tightens the genuinely hard reads a lot, so the branch has a real
+choice in it rather than one dominant line.
+
+Floor every displayed half-width at `MIN_BAND_HALF_WIDTH = 1.0` **after** the
+multiplier. That is what guarantees a range stays a range: at 1.0 a rounded band is
+still at least `centre−1 .. centre+1`. Dropping it to 0 lets a maxed scouting GM read
+true ratings for free, which is exactly what Full Scout's scarcity exists to prevent.
+
+Make the capstone buy **more of the two things that actually settle a file** rather
+than more narrowing. Both are already recurring charges that refill on their own clock
+— Full Scouts with the league year, workouts with each new college class — so there is
+no second scarcity to tune.
+
+**DEVELOPMENT** — *"Your coaching staff. First the ability to see where a player is
+headed, then the ability to change it."*
+
+| node | ranks |
+|---|---|
+| **Breakout Watch** — staff flag young players they think are about to jump | 1 → flags up to `BREAKOUT_MAX_FLAGS = 4` players, age ≤ `BREAKOUT_MAX_AGE = 25`, whose modelled improvement odds clear `BREAKOUT_MIN_SCORE = 0.55`. **A flag is an opinion, not a promise** |
+| **Aging Insight** (needs Breakout Watch) — when a veteran starts sliding, before the tape shows it | 1 → estimates decline onset, ±`AGING_BAND_YEARS = 1.5` years |
+| **Development Insight** (needs Aging Insight) — where a man projects in three seasons | 1 → 3-year projected rating ±6; 2 → ±3.5 (`DEV_PROJECTION_BAND = [null, 6, 3.5]`, `DEV_PROJECTION_YEARS = 3`) |
+| **Coaching Staff** (needs Development Insight) — better position coaches and strength programme | 2 → +5%; 3 → +10%; 3 → +15% development speed for **your** players only |
+
+Make rank 0 of the projection `null` — with no Development Insight, show no projection
+at all. These skills may only ever **add** information; none of them may make the base
+game foggier.
+
+Derive the decline-onset and three-year projections from **the same age curve and dev
+trait multipliers the real engine uses** (rating spec §6, §7b), so the projection and
+the outcome cannot drift.
+
+Treat Coaching Staff as the one skill that changes a number the sim rolls, and
+implement it as the growth-mean multiplier that already exists
+(`DEV_SPEED_MULT = [1, 1.05, 1.10, 1.15]`). There is no XP quantity in this game and
+you must not invent one: development is an age curve × dev trait × performance roll
+against the player's ceiling, and "+15%" means the growth mean is literally 1.15×. Say
+"develop faster", never "gain XP", and say plainly at the top rank that **nothing
+raises a ceiling — this is how fast a player reaches the one he has.**
+
+**NEGOTIATION** — *"Read the other side of the table. Every point you spend here
+narrows the window between 'he might sign this' and 'he will', so you stop overpaying
+for certainty."*
+
+| node | ranks |
+|---|---|
+| **Trade Intel** — your capologist puts real numbers on how a rival values a deal | 1 → trade evaluations show what the other side values each side at. **Does not change what the AI accepts.** |
+| **Market Knowledge** (needs Trade Intel) — what a free agent will actually sign for, not the public rate | 1 → estimated signing band ±14%; 2 → ±7% (`MARKET_BAND_PCT = [null, 0.14, 0.07]`) |
+| **Insider** (needs Market Knowledge) — a contact who will tell you what a specific deal would really take | 2 → `INSIDER_USES_PER_SEASON = 2`, reveals the asking price on one trade target. Resets each new league year |
+
+Index the signing-window narrowing by **total ranks bought anywhere in the branch**
+(0..5), not by node, so it is literally "each point narrows it":
+`SIGN_BAND_MULT = [1, 0.92, 0.84, 0.76, 0.66, 0.55]`, floored at
+`SIGN_BAND_MIN = 5` interest points. At 5 ranks the band is 12 × 0.55 = 6.6 → 7
+points, i.e. 83-90 instead of 78-90.
+
+This branch needed a new job because fog is now scoped to draft prospects: every free
+agent negotiates at confidence 100, so the raw band is a constant 12 points below the
+acceptance threshold. Constant is the right answer for a man you can fully evaluate —
+but it left the mechanic with no source of variation at all. Skill is a better source
+than fog was: it varies by something the GM chose, and it never pretends not to know a
+rating it can plainly see. **Floor it well above zero**: a band that collapses to a
+point turns negotiation into a solved equation.
+
+**Prune a stored skills map to what the current tree allows, and cascade.** Drop every
+rank the tree would not have let the GM buy — an id that no longer exists, a rank above
+the node's length, a node whose prerequisite is not held — and if a prerequisite falls,
+drop everything downstream of it too. Because availability is `earned − spent` with
+both derived, pruning **refunds automatically**: conservation
+(`spent_before + unspent_before == spent_after + unspent_after == earned`) holds by
+construction, with nothing to pay out. Report what was dropped and why so a GM is told
+rather than quietly short. Rewrite the stored map opportunistically on the next
+purchase; a map holding a stale id is harmless but confusing in the database.
+
+**Give each scarce charge its own stamped-counter ledger** — `(year, used)` pairs for
+Full Scout and Insider keyed on the **league year**, and for workouts keyed on the
+**class year** (§4.5) — and treat a counter stamped with any other year as zero. That
+is how "resets on a new season" works with no season hook, and it makes the ledger
+self-healing for saves that predate it.
+
+### 7.4 Rank GMs publicly, and be honest about what the board measures
+
+Store one published row per save: `sport`, `saveKey`, `userId`, `xp`, `seasons`,
+`wins`, `losses`, `championships`, `seasonsToTitle?`, plus enough identity to render
+the franchise the way the rest of the app does (`teamName`, `teamAbbr`, `crestSeed`).
+Make `(sport, saveKey)` unique and index `(sport, xp)` for the board's read. Derive
+every column on refresh; **stamp nothing at the moment of a win**, because a stamped
+number is a number that can drift from the history it claims to describe.
+
+Four decisions carry the design, and the uncomfortable one is last:
+
+1. **Only an account can be ranked.** A cookie-owned save is anonymous by construction
+   — there is no durable identity to hang a rank on and no way to tell two browsers
+   apart from one person clearing cookies twice — so signing out is not "hidden from
+   the board", it is "not rankable". Say so in as many words: it is the honest reason
+   to make an account, and better said out loud than discovered.
+2. **Opt-in, default off**, and opting out **deletes** the rows rather than filtering
+   them, so "not listed" means the public table does not contain you. Somebody who
+   signed up an hour ago to stop losing their saves did not agree to have their
+   username and their franchise's record published.
+3. **One row per GM, not per save** — their best franchise under whichever metric is
+   being sorted on. A peak, not a total: a total across saves ranks "made eight
+   leagues" above "built one dynasty", which is the opposite of what the board is for.
+4. **Disclose what it cannot measure.** Dynasty XP comes out of a single-player
+   simulation the player controls completely. There is no server-side notion of a
+   legitimately played save and you must not invent one — someone can hold Advance for
+   an afternoon, sim twenty seasons, and outrank a person who played every week
+   carefully. So: **show the denominator on every row** ("Level 22 · 31 seasons · 2
+   titles" is honest in a way "Level 22" is not — never truncate `seasons` away on
+   mobile and never put it behind a toggle); **offer a rate, not only a total**, with a
+   per-season sort where simming twenty 8-9 years actively hurts you, one click from
+   the default and requiring `PER_SEASON_MIN_SEASONS = 3`; and **label the board for
+   what it is**. None of that is anti-cheat; it is disclosure. Real anti-cheat needs
+   server-authoritative simulation, which this game does not have.
+
+Keep the leading caveat **in the same file as the ranking code**, so if the ranking
+changes and the sentence does not, the diff is in one file and obvious: *"Everyone here
+runs their own league at their own pace, and seasons go by as fast as you care to
+click. So a big career total can just mean more years played, not better front-office
+work. Every row shows how many seasons it took, and Per Season is one tab away."*
+
+Offer four sorts: `LEVEL`, `TITLES`, `PER_SEASON`, `REBUILD`.
+
+**The rebuild board is the one column where lower is better** and the only one time
+cannot pad: how many seasons it took to win a first championship starting from the
+bottom of the league. List only a save founded as a rebuild, that has actually won a
+title, and that **never took the ironman rules off**. A normal save has not done the
+same thing, so it has no number there at all — not a large one, not a zero, none.
+**Do not list a run still going**, and say so rather than implying it: every unwon run
+is potentially a 1, and putting it at the bottom would say the opposite. Show a GM his
+own in-progress run on his own account page, where it can be labelled unfinished
+instead of ranked against finished ones. Never list an abandoned run even if it later
+wins — the measurement is of a title won under locked rules, and a save that unlocked
+them has not made that measurement. Compute it as
+`firstChampionYear − tenureStartYear + 1` from the season history, in **one** place,
+on every board load.
+
+Cap the table at `MAX_ROWS = 1000` and order by XP in SQL, so if it is ever reached
+the board loses its tail rather than an arbitrary slice.
+
+**Delete a rank row whose franchise is gone.** A rank that outlives its own franchise
+is the board lying about what exists.
+
+Make the sport a discriminator and `saveKey` an opaque string, so another sport writes
+its own rows into the same table against the same account. Hardcode the sport only in
+**this** app's writer — that is this app's job — and have the read path take a sport (or
+all of them), deriving the tab list from the sports actually present in the data.
+
+### 7.5 The GM career page, "known for", and the front-office brief
+
+**Derive the GM's reputation entirely from decisions already on the books.** Give the
+human GM no separate personality input of the kind AI clubs carry — back every badge
+with a concrete number so he can see exactly why he is "Cap Wizard" or "Draft
+Struggles" and how to change it. Scope it to one league at a time: there is no
+cross-league account identity in this schema, so "career" means tenure with this
+franchise.
+
+Summarise: tenure years, first year, W-L-T, playoff appearances, championships,
+runner-ups, best season (deepest run, ranking CHAMPION 6 > RUNNER_UP 5 > CONFERENCE 4 >
+DIVISIONAL 3 > WILDCARD 2 > MISSED 1), trades worked, picks made, draft hits and hit
+rate, average dead money per year **plus the number of seasons the cap ledger actually
+covers**, franchise tags used, signature pick, awards won by his players, and All-Stars
+produced.
+
+Three traps in that list, all of them real:
+
+- **Count a club's trades by matching the headline, not by `teamId`.** A trade
+  transaction carries no team id — both sides live on one row, encoded as
+  `Trade: {abbrA} <-> {abbrB}` — so anything counting a club's trades has to match on
+  that, in one shared function. The GM page once filtered trades by team id instead and
+  **reported zero on the same screen where the summary tile said seven**.
+- **Carry `deadMoneyYears` alongside the average and never read one without the
+  other.** Zero seasons on record is **no evidence, not a clean sheet**: an empty
+  ledger averages to $0, which clears the Cap Wizard bar without a single decision
+  behind it. Gate that badge on at least two seasons of tenure **and** two seasons that
+  actually carry a charge.
+- **Take the signature pick from the same set of used picks the hit rate is counted
+  from** — highest current rating out of exactly those — so the name on the page can
+  never be a pick the hit rate says he did not make. Null before he has used a pick.
+
+Report All-Stars as **distinct men** in the headline figure and carry selections
+alongside. A five-time All-Star quarterback is one All-Star player. "Seven All-Star
+players" is a statement about how many stars a front office assembled or developed;
+"fourteen selections" is a statement about how long it kept them — and neither number
+may be printed under the other's label. Count the honour players **earned from their
+production**, not high ratings he happened to own.
+
+Compute badges, cap the list at **6**, and order them so the identity reads first:
+
+| badge | condition |
+|---|---|
+| 👑 Dynasty Builder | ≥ 2 championships |
+| 🏆 Champion | exactly 1 championship |
+| 📈 Perennial Contender | ≥ 3 seasons and playoff rate ≥ 0.6, no ring |
+| 🔨 Rebuilder | ≥ 2 seasons and win pct < 0.4 |
+| 🔍 Draft Whiz | hit rate ≥ 0.55 |
+| 🎯 Draft Struggles | hit rate ≤ 0.25 |
+| 🧮 Cap Wizard | ≥ 2 tenure years, ≥ 2 ledger years, < $3M average dead money |
+| 💸 Cap Trainwreck | same gates, > $15M average |
+| 🦈 Trade Shark | ≥ 8 trades |
+| 🤐 Quiet Front Office | ≥ 2 seasons and ≤ 1 trade |
+| 🏷️ Tag Happy | ≥ 3 franchise tags |
+| 🏅 Trophy Case | ≥ 3 major awards |
+| ⭐ Star Factory | ≥ 4 **distinct** All-Star players (print selections too, so the figure cannot be misread) |
+
+The first four are mutually exclusive — pick one. Fall back when nothing has stood out:
+🆕 Rookie GM at zero completed seasons ("your legacy starts now"), 📋 Building a Track
+Record otherwise ("nothing's stood out yet, good or bad. Give it time").
+
+**Use the top two badges as the GM's "known for" identity**, and nothing else. It is
+the one line that says what kind of front office this is, and it is derived, so it
+changes when he changes.
+
+Keep **one exported map** for how a stored playoff result is spelled anywhere a GM sees
+it (`MISSED` → "Missed Playoffs", `WILDCARD` → "Lost Wild Card", `DIVISIONAL` → "Lost
+Divisional", `CONFERENCE` → "Lost Conference", `RUNNER_UP` → "Runner-Up", `CHAMPION` →
+"Champion"). The season log and the GM card both print it, and two copies would
+eventually spell the same enum two ways on two surfaces describing the same season.
+
+**The front-office brief** is a weekly digest of what a competent staff would bring to
+the GM's desk: roster holes, scouting progress, contracts worth getting ahead of, who
+in the league wants what you are deep at, and cap trouble with a concrete suggested
+fix. Derive every line from a system that already exists; this module only decides what
+is worth saying out loud and to whom — the game acting like staff, not doing the GM's
+job. Give each item a category, headline, detail, a short call-to-action label and a
+league-relative href.
+
+**Order it by who is waiting and on what clock**, never by the order the checks happen
+to be written in. Unsorted, "3 trade offers waiting on a response" and "you are $12M
+over the cap" both ranked **below** "TE is your thinnest position" — a standing
+condition with no deadline, no counterparty and no clock. A desk brief that leads with
+the least urgent thing on it is a list, not a brief.
+
+```
+1. Cap            — it can block the week from advancing outright. Nothing else can.
+2. Trade Offers   — somebody else is waiting on YOUR answer, and offers expire.
+                    The only item with a person on the other end of it.
+3. Contracts      — a man walks at a date, and the discount for getting ahead of it
+                    disappears before he does.
+4. Trade Market   — a real opportunity, but nothing is lost by reading it next week.
+5. Roster         — true all season and fixable all season.
+6. Scouting       — the longest clock in the game; the draft is months out.
+```
+
+Keep ties in their original order, because within one category the checks already emit
+best-first.
+
+Two rules for the items themselves. **Send the GM where the answer is**: the roster-hole
+item links to the market **pre-filtered to the position the headline just named** —
+sending him to an unfiltered market and asking him to re-select it was the brief knowing
+the answer and making him type it back. And **drop a man he has already dealt with**:
+*"when you 'set aside' a player the notification for that player should disappear."*
+"Not now" is a decision, and a brief that re-asks a question you just answered reads as
+staff who were not listening. Put the exclusion in the query so it **falls through** to
+the next man rather than going quiet — a GM with four expiring players and one parked
+still has three decisions, and the brief still names the best of them.
+
+### 7.6 Team prestige and the GM philosophy that makes AI clubs differ
+
+Store `Team.prestige` (0..100, generated `int(30, 80)`) and a `gmProfile` JSON with
+four fields: `aggression`, `winNow`, `valuePicks`, `bpaBias`.
+
+Generate the profile with the club's **roster strength** in hand:
+
+```
+tilt   = strength === undefined ? normal(0, 0.22) : strength / 14 + normal(0, 0.1)
+winNow = 0.5 + 0.5 × tanh(tilt / WINDOW.OPENING_SPAN)            # 0.52
+aggression = clamp(normal(0.50, 0.18), 0.05, 0.95)
+valuePicks = clamp(normal(0.50, 0.20), 0.05, 0.95)
+bpaBias    = clamp(normal(0.55, 0.18), 0.05, 0.95)
+```
+
+**Tie the declared window to the roster the club actually has.** `winNow` used to be an
+independent dice roll made before any player existed, so the league routinely produced
+a 4-12 roster whose GM was flagged win-now and a stacked contender that read
+rebuilding — and every system that reads `winNow` (trade pricing, free agency, draft
+lean, payroll target) was being told something about the club its own roster
+contradicted. Keep the tilt **noisy rather than a straight mapping**: a bad team with
+an impatient owner is a real thing and a good story; a league where record dictates
+attitude exactly is neither.
+
+**Squash `winNow`, do not clamp it.** Over 400,000 draws at the generator's spread,
+`clamp(tilt, 0.05, 0.95)` put **2.79% of clubs on 0.05 exactly and 2.85% on 0.95**
+against neighbouring buckets holding about 0.4% each — so on the day a league was
+created the two most extreme postures in the game were also two of its most common.
+Put it through the same squash the offseason recompute uses, because it is the same
+quantity one season early and should not be shaped differently. The other three stay
+clamped, which is a decision and not an oversight: they answer a different question
+from the club's window, and re-shaping them would move every trade tendency and pick
+preference in the game. They pile too, at between 0.6% and 1.3% on each wall — worth
+somebody's afternoon, and not what this is about.
+
+**Recompute the window every offseason**, at the standings-reset step, which is the
+last moment the season just played is still on the standings. Nothing called the
+recompute for a long time while the header claimed it ran yearly: the profile was
+written once, at generation, and never again — so a club that went 3-14 four years
+running kept the window it was born with, a dynasty kept the one it started with, and
+every consumer was pricing against the roster the club was handed on day one.
+
+Weigh three pieces of evidence, then squash **once**:
+
+- **Record**, measured from .500 and not from .400:
+  `RECORD_SPAN = 0.42`, so a 13-4 club reads 0.78 and a 4-13 club 0.22, and a 17-0 club
+  is further out again without reaching the end of the scale. `clamp((winPct − 0.4) /
+  0.4, 0, 1)` reads **exactly zero for every club at or below 6.8 wins**: over 186 real
+  club-seasons that pinned **31.7% of the league** at the bottom of its own term before
+  anything else had been counted, left the median club at 0.33, and would have read
+  **53.8%** of all club-seasons as rebuilding. That is not a league with a window, it
+  is a league of rebuilders — and it drags the money with it, because the payroll
+  target reads the same number.
+- **Age of the lineup**, centred on the league's own measured mean starter age
+  (`AGE_PIVOT = 27.6`, measured 27.98 ± 0.73 over 186 club-seasons) rather than a round
+  number, which is what stops most of the league reading the same here. Span it
+  **wide** against that spread (`AGE_SPAN = 3.0`): a starting lineup's average age moves
+  by around half a year from club to club, so a club a full year older than the league
+  reads about two wins better than its record — real, and not enough on its own to move
+  a club more than one band.
+- **Cap position**, as the share of the ceiling still free going into the new league
+  year (`CAP_PIVOT = 0.25`, `CAP_SPAN = 0.13`; measured median 15.7%, p10 2.1%, p90
+  42.9%), bounded **asymmetrically** at `CAP_UP = 0.1` and `CAP_DOWN = 0.22`. An empty
+  sheet is a hard stop on going all in, while a full one is only an option — a club
+  with money and a young roster is building, and that sentence is already the age
+  term's.
+
+Every span is a **divisor on evidence**, so a term's influence is its input's own
+spread divided by its span. Against the league this game actually produces, that puts
+last season's record at about **60%** of the window's variation, the age of the lineup
+at about a quarter, and the cap sheet at the rest — a club is what its record says it
+is, adjusted.
+
+Name the bands, and **let only the naming read them**:
+
+| label | `winNow` |
+|---|---|
+| All-In | ≥ 0.72 |
+| Competitive | ≥ 0.54 |
+| Building | > 0.36 |
+| Rebuilding | ≤ 0.36 |
+
+Measured over 186 club-seasons of real play: Rebuilding 27%, Building 30%,
+Competitive 30%, All-In 14% across the 124 club-seasons the game recomputed rather
+than generated. That is football's own shape, near enough — a handful of clubs
+genuinely all in, a similar group competitive, the largest group building, and a solid
+minority tearing it down.
+
+Publish two more named bands off the other fields, and keep them equally decorative:
+
+```
+tradeTendency  = aggression ≥ 0.62 ? 'Aggressive'
+               : aggression ≤ 0.38 ? 'Conservative' : 'Measured'
+pickPreference = valuePicks ≥ 0.62 ? 'Hoards picks'
+               : valuePicks ≤ 0.38 ? 'Trades picks for now' : 'Balanced on picks'
+```
+
+**Have nothing that decides anything read a label.** The summary only names bands of
+numbers the systems themselves read, which is what stops a quote and a decision coming
+apart.
+
+How a profile actually changes an AI club's behaviour, so the same roster in two cities
+does not draft and trade identically:
+
+- **Upside weighting.** `potentialWeight = REBUILD_POTENTIAL_WEIGHT (0.55) × (1 −
+  winNow) + CONTENDER_POTENTIAL_WEIGHT (0.18) × winNow`, applied as
+  `effectiveCeiling = trueOvr + max(0, potential − trueOvr) × potentialWeight`. This is
+  the number the trade market actually prices — and it is why a position change must
+  move the ceiling with the rating (§2.7).
+- **Payroll target.** `rosterCapTarget(winNow) = 0.68 + 0.26 × clamp(winNow, 0, 1)` —
+  0.68 at a full teardown to 0.94 all-in, about $79M of room at one end and $15M at the
+  other against a $255M cap. It was one flat 0.88 for all thirty-two, so every club's
+  books were the same shape and cap room was pure noise: the rebuild/contend axis
+  predicted nothing, where in real football it is the strongest predictor there is.
+  **Only ever scale down** — a club already under its target keeps the payroll its
+  roster earns, because scaling a contender's salaries **up** to hit a number pays men
+  above their own market value and every screen comparing the two would then be telling
+  the truth about a contract the generator invented.
+- **Draft lean.** `bpaBias` moves the blend between the valuation and the raw read, and
+  it is the term that routes around the need multiplier — which is exactly why
+  positional saturation has to apply to the whole value (§5.10).
+- **Free-agency aggression.** `overpay = 1 + (FA_MAX_OVERPAY − 1) × (aggression × 0.6 +
+  need × 0.4)` with `FA_MAX_OVERPAY = 1.22`, priced off the man's **asking price**
+  rather than his market value — the same number the free-agency board shows the user,
+  so the AI does not volunteer money nobody is asking for. Treat it as a **budget, not
+  an acceptance test**: what the man will actually take is a separate model, which is
+  why a club can bid its whole budget and still be told he would not sign it.
+- **Reasons, not just numbers.** Have the valuation emit weighted plain-language
+  reasons keyed on the window label, so a trade response reads "We're rebuilding — his
+  upside matters more to us than his current level" rather than a bar and a shrug.
+
+Export the payroll-target band from **one** place and have both roster-building paths
+read it — the single-pass randomised league and the pick-at-a-time fantasy draft
+(§8.3). Two copies of that band would be two different leagues wearing the same salary
+cap.
+
+Use `prestige` where a club's standing matters and its record does not exist yet: in
+negotiation, `winPct = played > 0 ? (wins + ties × 0.5) / played : prestige / 100` and
+`teamStrength = clamp(winPct × 0.5 + prestige / 100 × 0.5, 0, 1)`.
+
+### 7.7 The shareable GM card
+
+Build one self-contained rectangle designed to be **screenshotted** — phone or OS,
+straight into a group chat. It is the one artefact of this game other people will ever
+see, and everything about it follows from that:
+
+- **One screen, one shape.** ~380 × 560, roughly 2:3 trading-card proportions, holding
+  that shape down to a 390px phone. Nothing scrolls; nothing wraps out of the frame.
+- **Few, big numbers.** The record is the hero at ~3.4rem; six figures follow it, and
+  that is the whole card. A card with fourteen stats on it is a card nobody shares.
+- **It is a football card, not a UI.** No control, no hint, no sentence explaining the
+  artefact to itself lives inside the rectangle. The only non-fact on it is the
+  wordmark along the bottom, which is what a card manufacturer's mark has always been.
+- **It borrows the house language; it does not invent one.** Team-tinted band with the
+  crest watermark and the stadium-light hash, the same notched rating chip the rest of
+  the app uses for the level, the same stat-figure and label styles, the same team
+  accent token every other screen sets.
+
+**Pass every number in; derive none.** Take the whole career summary as one object —
+the same object the career page prints its own tiles from — plus the level the skills
+screen shows and the best deal the retrospectives panel has already graded. Allow no
+arithmetic beyond the win-rate line, and make that the **same expression** the page's
+Record tile uses so the two can never round to different percentages for the same
+record. A card that disagreed with the page behind it would be worse than no card.
+
+Lay it out as: identity band (league name, crest, city and nickname, GM name when the
+save has been claimed and **nothing invented** when it has not, the level chip) →
+the record as hero → a six-cell figure grid → **two named lines** → **"Known for"** →
+wordmark footer.
+
+Pick the two named lines in the order they say the most about a front office: the
+**player he found** (Signature Pick — name, position, round and year, with his rating
+as a chip), then the **deal he won** (Best Deal — the partner and year, what came back,
+and the percentage his return has outgained what he gave up, using the retrospective
+panel's own figure and its own verb, "outgained", so the card and the panel describe
+the quantity with one word). Fall back to Best Season when he has not yet drafted or
+dealt, so the card is never left with a hole.
+
+Render "Known for" as the **top two badges** (§7.5) as tinted pills with their icons.
+
+### 7.8 The career record and the coach room
+
+**File what happened to a man against the season it happened in.** Make the season
+table the spine and hang the sentences off it in a right-hand column. That choice is
+the design constraint: a timeline of events alone fails on a quiet career, and quiet
+careers are the common case — the longest career on record in the development database
+is a twenty-season punter with exactly **four** recorded events, all of them
+re-signings, and no draft row at all. Four pips down a long spine reads as a page that
+failed to load; twenty season rows with an empty right-hand column reads as a quiet
+career, which is what it is.
+
+**Restate one stored row per event; compute no fact about him.**
+
+| line | source |
+|---|---|
+| the draft line | `draftYear` / `draftRound` / `draftPickNo` — all three off the one record, so the pick printed is the pick stored |
+| moves and money | the transaction log (DRAFT, TRADE, SIGN, RESIGN, CUT, TAG, OPTION, POSITION): the verb from `type`, the terms from the row's own detail string, **verbatim** |
+| trophies, All-Star seasons, rings | the same rows the card's honours pill already loaded, handed straight in |
+
+**Do not re-derive a contract.** A signing row records "5-yr deal, ~$40.1M/yr" and
+that string is what you show; re-adding it into a total value would be this project's
+oldest bug — a displayed number that is not the number the system used. One query,
+two views: the pill and the record cannot disagree about what he won.
+
+Leave out, having measured rather than guessed: **injuries**, because the rows carry no
+player id (§3.6) — the games-played column already tells the reader he was short a year,
+and inventing a cause for it would not; and **weekly news and development notes**,
+which are real and correctly attributed and far too many (one career carries 95
+development notes).
+
+Keep this module **pure assembly — no I/O, no React** — and put it in the library rather
+than beside the component: importing a helper out of a client module into a server
+component compiles cleanly and then 500s at request time, and this codebase has
+shipped that bug once already.
+
+**The coach room** is the staff's read on who played well, and it must **not** rank
+players itself. Use the one shared performance ranker — the same one All-Star selection
+uses on a season and the week report uses on a week — so the two can never disagree
+about who is good. What the coach room adds is the part the ranker leaves to its caller:
+
+- **The yardstick.** The ranker takes the distribution as a parameter on purpose:
+  4,800 passing yards is an extraordinary season and an impossible afternoon. For the
+  week caller, build the population from **every game the simulation has ever played**
+  (1,515,626 qualifying box lines in the reference implementation), not this week's
+  thirty-two — a week contains one quarterback per club, and a distribution of one is
+  not a distribution. Bake the means and sds as literals so grading costs no round trip,
+  and regenerate them if the engine's stat allocation ever changes: a stale yardstick
+  makes the grades **wrong**, not merely imprecise. Gate the population to men who
+  actually played — ungated, the mean back is a third-stringer with two carries and
+  every starter looks historic.
+- **The readable unit.** The ranker outputs standard deviations, which is the right unit
+  for comparing two men and the wrong one to print — and it is not equally hard to earn
+  everywhere: the 90th percentile of a receiver's afternoon is **+1.13 sd** and a
+  corner's is **+0.59**, because a receiver's line has four moving numbers and a
+  corner's has two coin flips. A flat bar across that is not a position-relative
+  standard, it is the old bias wearing a new coat. So pass each position's composite
+  through its **own measured percentile ladder**, after which one number means exactly
+  one thing everywhere: "better than N% of games played at this position". A bar of 78
+  is then the same demand of a corner as of a quarterback. This is a calibration of the
+  shared ranker's output, not a second opinion about it — the ordering inside a position
+  stays the ranker's, untouched.
+- **The flat-run rule, which is what makes it honest.** The engine deals a defender's
+  whole afternoon in small whole numbers, mostly between four and seven, so half of a
+  linebacker's ladder is the same value repeated. Plain interpolation calls one ordinary
+  five-tackle game 50th percentile and an identical one 95th, purely from where the
+  ladder happened to be sampled. **Landing on a run must return the middle of it** —
+  the mid-rank percentile, which is the answer a full sort of all 179,940 linebacker
+  lines gives.
+- **Mention bars.** Mention a man at **78**, require **92** for a second man from the
+  same unit, and cap mentions at **5**. Scale the bar with the number of weeks being
+  summarised. Require a distinguishing event and a position-specific touch gate before
+  anybody is mentioned at all.
+- **Honesty limits, enforced rather than papered over**, because the rule against lying
+  metrics applies to prose as hard as to a table. There are **no fumbles** — the engine
+  never writes the field, so nothing may say a player put the ball on the ground. Team
+  third-down conversion is `plays/6` over `plays/4`, a constant ~67% for every club in
+  every game ever simulated: it is not a conversion rate and is never quoted. Team
+  penalties are `plays/12`: also not real, also never quoted, and never attributed to a
+  player. Unit yardage is summed from the player lines, so it is safe to quote.
+- **Concerns**, not only praise: turnovers, accuracy, efficiency, hands and kicking,
+  each against a measured bar (bad completion % 0.577, bad yards per attempt 4.0, bad
+  yards per carry 3.824, bad catch rate 0.50, bad single-game FG rate 0.50, bad
+  multi-game FG rate 0.647, bad multi-game XP rate 0.852).
+
+**Rank a man's own stats one way, everywhere.** The stats page shows a position rank in
+three places — the chips on the position cards, the paint on the ranked figure in every
+roster table, and the position number on the league leader boards — and they must agree,
+because the failure this project keeps having is a displayed value that is not the value
+the system used. Three rules:
+
+1. **Rank the number on screen, to the digit.** Quantise to the precision the cell is
+   printed at — integers for a stored count, one decimal for a rate — and sort the
+   quantised values. Rank the raw double and two passers both printed "98.4" come out
+   5th and 6th, which is a table disagreeing with itself in public. Ranking the printed
+   number means a reader can verify the order by eye, which is the only test that
+   matters.
+2. **Share a rank on a tie** — `1, 2, 3, 3, 5`, the way every real stat page does it,
+   which is also why a leader board must not print its array index. Two men on 27
+   touchdowns are both 3rd; printing one 4th because the sort happened to put him
+   second is a lie about a tie.
+3. **Two pools, both named out loud wherever they are shown.** A **counting** stat
+   ranks against every man at the position with a stat line, nothing filtered, so "4th
+   in passing yards" is the same 4th the league board shows. A **rate** ranks only among
+   men who cleared a minimum-games bar — a third-stringer who threw four passes in
+   garbage time carries a 12.0 yards per attempt that would push every starter down a
+   place, and a leaderboard a real season cannot win is not a leaderboard. Real stat
+   pages call it "qualified"; say so in the copy.
+
+**Rank nothing that is not production.** Leave out opportunity columns — attempts,
+carries, targets, field goals attempted, extra points — because they are how much work
+a man was handed, not how well he did it; still show them, without a standing attached.
+Leave out games played: that is availability. And leave out every stat the honesty
+limits above forbid quoting at all.
+
+---
+
+## 8. The fantasy draft
+
+### 8.1 How it differs from the rookie draft
+
+Offer it as a one-time, pre-PRESEASON phase chosen on the league-creation screen. It
+**redistributes the league's veterans** rather than introducing a class, and that
+single fact drives every difference:
+
+| | rookie draft | fantasy draft |
+|---|---|---|
+| pool | 400 generated prospects with college profiles and combine numbers | the league's whole veteran population, written `isDraftee` with a **null** draft year |
+| order | live `DraftPick` ownership, reseeded from standings, 7 rounds | a plain **snake** of team turns, one round per roster slot, stored as an array |
+| rounds | `settings.draftRounds` | `settings.rosterMax` — every roster starts empty and every turn adds exactly one man |
+| the clock | gated: the board is set, the GM presses Start | **always live** — he ticked the box one screen earlier and it is the only thing that happens in this phase |
+| fog | the consensus board, a club's private read, scouting | **none** — these are established men with years of tape, and the fog this game models is a fog about twenty-two-year-olds, not a general amnesia |
+| valuation | a shadow carrying the club's read (§5.10) | the true rating, deliberately |
+| contract | the rookie scale for the slot | a **veteran** deal at his own market price (§8.3) |
+| workouts | open until the draft goes on the clock | **closed** — there is no class behind this pool, and a private workout is for prospects |
+
+**Gate the rookie path on the draft kind, not on "are there any `isDraftee`
+players".** The fantasy pool is written `isDraftee` too, so left ungated the rookie
+path still fell through to the veteran branch — but only by accident, by building an
+**empty consensus board from scratch on every one of ~500 fantasy picks**.
+
+Build the snake as `1..32, 32..1, repeating` for `rounds` rounds, and **count a club's
+remaining turns off the stored order** rather than off a constant or off its roster
+size: a league playing to a smaller ceiling gets its own number, and a club somehow
+short a man does not silently budget for picks it will never take.
+
+On the advance out of the phase: convert every remaining `isDraftee` to an ordinary
+free agent with **no year filter** (a null draft year can never match a `lt`
+comparison, and leftovers stranded behind the flag made a fantasy league's free-agency
+screen read **zero available in every week of every season of its existence** while
+130 unsigned players sat invisible behind it), delete every shortlist row, and flip to
+PRESEASON week 1.
+
+### 8.2 Build the pool
+
+```
+poolSize = TEAM_COUNT × settings.rosterMax + FREE_AGENCY.POOL_FLOOR
+```
+
+At defaults that is `32 × 53 + 260 = 1,956` men, of whom 1,696 get drafted and the rest
+**are** the league's opening free-agent market. Do not use a smaller slack: measured
+with the old 120, a fantasy league opened its first free agency with a market of
+**zero** and kept it at zero for every season of its life.
+
+Draw each man from the ordinary player generator with no roster context.
+
+**Then guarantee the pool can shape thirty-two legal rosters.** Every man above is an
+independent draw from the positional frequency table, where a kicker's share is 2 of
+103.5. Over a 1,696-man pool that is a **mean of 33 kickers with a standard deviation
+of about 6** — against thirty-two clubs that each need exactly one. So roughly **one
+fantasy league in five** is dealt a pool with fewer kickers in it than there are clubs,
+and in that league at least one club cannot acquire one by **any** route: not by
+drafting well, not by trading, not off the wire. There is no kicker to have. Measured
+on a real fantasy league standing mid-draft: **30 kickers and 42 punters in an
+1,816-man pool**, and two clubs structurally unable to kick an extra point all season,
+with nothing anywhere saying so.
+
+```
+for pos in POSITIONS:
+    mustField = TEAM_COUNT × STARTERS_AT_POSITION[pos]
+    while drawn[pos] < mustField: draw one more at pos
+```
+
+**Read the floor off the lineup's own definition**, so it is the lineup speaking rather
+than a second list that can drift from it, and set it at **exactly what the league has
+to field — nothing above that.** How *deep* the pool runs at a position is a question
+about the market and the draw answers it fine; topping up past the requirement would
+quietly rewrite the positional shape of every fantasy league. On a measured pool this
+only ever adds kickers and punters.
+
+Know the one thing about a fantasy start that still does not match a randomised one:
+**the pool is richer than the league it fills.** These are undifferentiated draws — a
+median 77 OVR with no camp-body tail — where the 32 generated rosters run a median
+**73** and carry the depth a real 53-man roster carries. Priced at market, the 1,696
+men who get drafted are worth **167%** of a 32-club salary cap; the men on randomised
+rosters are worth **99%** of it. Nothing breaks, but the uniform scale in §8.3 then
+sits near 0.5 for every club, so a fantasy league's best quarterback signs for
+**$23.8M** where a randomised league's signs for **$37.8M**. **The fix is here — give
+the pool the shape `generateRoster` produces plus a fringe tail — not a cleverer
+pricing curve in the draft.** Bending the pricing to flatter the top of the board would
+put the two roster-pricing paths permanently out of step for a problem neither of them
+causes.
+
+### 8.3 Price a fantasy pick as a veteran, one pick at a time
+
+Every man in the pool is a finished football player with an age and a market — a
+29-year-old 91 is not a prospect and the rookie scale has nothing to say about him — so
+sign him the way a veteran signs: `marketValue` for the money and the
+`suggestedYears` ladder for the term, which are the **same two functions** the
+randomised league prices its 1,700 contracts with. Two ways of pricing a roster is how
+the cap page and the trade block end up disagreeing about what a player costs.
+
+Apply the age gates first, so a 33-year-old signs two years and a 35-year-old signs one
+however good he is. Build a **fresh** signing — escalating base and a real signing
+bonus, exactly like a free-agent deal signed the same week — not a contract dropped
+into a random mid-deal year.
+
+> **This branch used to write no contract at all** — a DRAFT transaction and nothing
+> else. Across the whole development database, the only 32 clubs carrying nobody on a
+> contract were the 32 clubs of one fantasy league, each with 53 players at **0.0% of a
+> $255M cap**. The salary cap is half of this game and it was inert for one of the two
+> ways to start a league: no cap space, no cap-constrained trade, no meaningful
+> extension, and a free agency where every club could outbid everyone forever.
+
+Fit a whole roster under the ceiling by **recomputing the same uniform scale the
+generator uses, at every pick**, from what the club has already committed and what the
+men it still has picks for are worth:
+
+```
+target  = capTotal × rosterCapTarget(profile.winNow)          # §7.6, shared
+budget  = max(0, target − capUsed)
+scale   = min(1, budget / max(1, hitPerApy × (thisMan + remainingBoardValue)))
+apy     = round(nominal × scale / 100_000) × 100_000
+```
+
+- **Cap the scale at 1** — like the generator, only ever scale **down**: a club with
+  room to spare pays market and does not invent a raise to hit a number.
+- **Keep the budget in cap HIT, not APY**, because the cap page, the trade gate and
+  free agency all spend cap hits and a fresh escalating deal charges about **89%** of
+  its APY in year one. Budgeting the APY instead lands all thirty-two clubs a tenth of
+  a cap below where they were aimed.
+- Estimate `remainingBoardValue` off the board itself: the undrafted pool priced and
+  sorted by market value, sampled **every `TEAM_COUNT` names down** from the top, which
+  is the slice one club takes out of a snake (the man on the clock is still in the pool
+  at index ~0, so the club's next pick is a full round further down and the one after
+  that two rounds down). It is an estimate and it does not have to be a good one: it is
+  re-derived at the club's next pick against what it really spent, so an early over- or
+  under-shoot is corrected by the rest of the draft rather than compounding. Read it
+  fresh at every pick — it is the same query the board already is, it shrinks by one
+  name per pick, and caching it would be a second copy of "who is still available" for
+  the one part of the draft allowed to be approximate.
+- **Impose one hard line, distinct from the target.** The target is what a club *means*
+  to spend and a club is allowed to miss it. The ceiling is the salary cap itself, and a
+  draft nobody can decline must not be able to push a club through it: hold back the
+  league minimum for **every man this club still has to pick** and let whatever is left
+  be the most this one can be paid. Without it, a club whose scale ran hot early arrives
+  at its last rounds with a roster it cannot legally field.
+  `ceiling = (capTotal − capUsed − MIN_SALARY × picksLeft) / max(0.01, hitPerApy)`,
+  then `apy = max(MIN_SALARY, min(apy, round(ceiling / 100_000) × 100_000))`.
+- With the cap **off**, scale nothing: everyone signs for what he is worth, which is
+  what "no salary cap" means.
+
+**Remember nothing between picks.** Read every input from the database at the pick —
+the club's payroll, its remaining turns in the stored snake, the men still on the board
+— so a draft resumed tomorrow in a fresh process, or run half by the user and half by
+the AI ticker, prices identically to one run start to finish in a single call.
+
+Measured on a full 32-club fantasy draft (1,696 picks, every one made by the AI)
+against a freshly generated randomised league, payroll as a share of the cap:
+
+| | min | p25 | med | p75 | max | over cap |
+|---|---|---|---|---|---|---|
+| randomised (fresh) | 41% | 63% | 79% | 83% | 92% | 0/32 |
+| fantasy draft | 69% | 77% | 82% | 87% | 93% | 0/32 |
+
+And it keeps the **shape** of a draft, because the curve being scaled is the board's
+own: across three drafts the median year-one cap hit runs about **$12M in round one,
+$5–6M in round eight, $2M in round forty**, and within a rounding step of the league
+minimum in the last rounds — an early pick costs a club roughly ten times what a late
+one does. Three seasons on, with the AI re-signing and shopping at full market the
+whole way, the same league sits at a 90% median with nobody over the ceiling and a
+clean invariant sheet.
+
+### 8.4 Never let a fantasy draft leave a club unable to field a lineup
+
+This is the only draft in the game where a position can end at **zero**. Every other
+roster in football arrives already shaped — generated with a kicker, or inheriting last
+year's — so "this club has no kicker" is a state only this phase can create, and until
+it was fixed it created it routinely. Measured on the first week of two fantasy leagues:
+**638 and 775 club-readings** of the lineup-gap invariant across a single season each,
+with clubs opening the season like this —
+
+> DEN has nobody at K/P. DAL has nobody at QB/K/P. CHI has nobody at K.
+
+A club with no kicker cannot take the field. A club with no quarterback is not a
+football team.
+
+**Two causes; fix both.** The first is the board, and it is the rule in §0: build the
+veteran board as the best `BOARD_DEPTH_PER_POSITION = 12` at **each** position, in one
+`row_number() OVER (PARTITION BY position ...)` query, never as a league-wide top-N. A
+club cannot take a position it cannot see, however badly it needs one. (Know what the
+per-position board drops and why it cannot change a pick: over 58 real pools, an
+average of 2.5 of the old sixty — worst case 18 — fall outside the top twelve at their
+own position, because a crowded room like corner or receiver can put more than twelve
+men in a league-wide top sixty. Every one of those men is by definition behind twelve
+**better** men at the same position who **are** on the board. A club that wants that
+position takes one of the twelve; a club that does not was never taking the
+thirteenth. So the men this loses are unreachable by construction, and the men it gains
+are the ones a whole position hung on. At depth eight the same figure is 6.8 and the
+argument is identical — twelve because the query costs the same either way.)
+
+The second cause is what remains once every position is visible: **a kicker is worth so
+little to a draft board that he is essentially never the best value on it, at any
+point, however badly the club needs one.** The tier curve discounts him and the draft
+positional multiplier then multiplies him by 0.35. That is correct valuation and the
+wrong answer — and it is exactly how a real fantasy drafter behaves too: nobody takes a
+kicker on value. They take him with their **last** pick, because the roster needs one
+and the pick was going to be spent on a body regardless.
+
+So implement that as the rule, and note it **costs the club nothing it would otherwise
+have bought**:
+
+```
+emptySlots = FIELDED_POSITIONS.filter(pos => held[pos] === 0)
+picksLeft  = picksPerTeam − roster.length
+if emptySlots.length > 0 && picksLeft <= emptySlots.length:
+    target = emptySlots sorted by how thin the board is at that position, scarcest first
+    take the best available man at `target` by rating
+    # nobody left at that position at all: fall through and draft on value rather than
+    # returning nothing and ending the whole draft
+else:
+    draft on value exactly as before
+```
+
+**When a club has exactly as many picks left as it has empty lineup positions, its
+remaining picks go to those positions.** Above that it drafts on value; at that point
+the two are the same decision, since every remaining pick is already committed.
+
+Take **the scarcest hole first**, measured by how thin the board is at it, so a club two
+picks from the end takes the position it is likeliest to miss out on rather than the one
+that happens to sort first.
+
+Derive `FIELDED_POSITIONS` from the starter table (every position with at least one
+starting slot) so a position added to the lineup is covered here the day it is added
+rather than the day somebody remembers this list exists.
+
+**The pick count is exact, and nothing has to be inferred.** A fantasy draft is a snake
+of one round per roster spot, every roster starts empty and every turn adds exactly one
+man, so a club's picks remaining **is** `picksPerTeam − roster.length` — and
+`picksPerTeam` is counted off the stored order itself rather than off a constant, so
+nothing can drift.
+
+**Gate it on the draft kind anyway.** A rookie draft adds seven men to a roster of
+fifty-three that already has a kicker, so the condition cannot fire there — but a rule
+that only works by accident is a rule waiting to stop working.
+
+Apply the **same roster-construction saturation charge** (§5.10) on this path as on the
+rookie path. It matters **more** here, not less: a fantasy draft builds all thirty-two
+rosters from nothing in one sitting, so it is the one path where a club can run its
+entire room at a position off a single board. Every position starts at zero held, so
+the charge is inert until a club has actually filled a room.
+
+---
+
+## 9. Decide these yourself — the reference implementation's answers, and why they may be wrong
+
+Everything above is specified and measured. These are the places where the reference
+implementation ships something it knows is unfinished, misplaced or inert. Make your own
+call, and know what it did.
+
+**1. The scouting-cost economy is gone, and its schema is still there.** Confidence now
+moves from exactly two places (shortlist attention, workouts), but `ScoutingReport`
+still carries `passes`, `periodPasses` and `lastWeek`, and the tuning table still
+carries `SCOUTING.BASE_POINTS_PER_WEEK (100)` and `CONFIDENCE_PER_POINT (0.45)`. They
+were a per-pass cost escalation and reveal decay — hammering one prospect getting
+steadily more expensive and steadily less informative. Either rebuild that on top of
+those columns or drop them; do not ship them inert. `Player.devFocus` ("coaching focus
+charges bought with scouting focus points") is stranded by the same removal.
+
+**2. `SCOUTING.DECAY_PER_SEASON` is 0.** The constant exists for confidence decaying on
+players you stop watching, and it does nothing. The attention ceiling below 100 bounds a
+file instead. Decide whether a file should rot.
+
+**3. Three tiers of the target distribution still miss, and the cause is not the
+ceiling curve.** Two tiers miss by more than 20% because the drafted rating roll's own
+bounds pile ~6.7 prospects per class onto exactly `DRAFT_OVR_MAX`, and those men are
+most of the Franchise tier. That is a rookie-ratings problem, not a ceiling problem (see
+the rating spec §4).
+
+**4. The rookie potential SD is narrow — 12 ± 3.5.** That makes a prospect's ceiling
+highly predictable from his current rating, which is upside the draft no longer sells.
+Scouting error carries draft uncertainty instead, and the two are unrelated. Widening
+the SD requires re-checking the top of the tier table.
+
+**5. `observe()` has no systematic per-club bias.** Error is symmetric noise, and the
+bias is drawn **inside** `observe()`, which re-runs every time confidence rises — so it
+is a per-**observation** bias, not a per-**player** one. Buying a scout does not narrow
+you around a fixed wrong belief; it re-rolls which direction you are wrong in. Measured,
+240 redraws of one prospect at confidence 8 leave a per-player mean error of sd 0.70
+against the 0.57 pure resampling predicts. There is no "this scout always overrates"
+pattern to learn, and "you think he's a 78, he's a 71" is not quite what is modelled.
+
+**6. A free per-player read of the truth out-ranks the league's collective scouting,
+which is backwards.** An unscouted club's book ranks a class at rho **0.81** against the
+truth while the public consensus board every AI club drafts off scores **0.72–0.79**, and
+sorting a board by any of its three numbers recovers **83%** of the gap between a random
+cohort and perfect information before a penny is spent. Widening the bias does not fix
+it: sweeping it 6 → 9 → 12 → 20 walks rho 0.82 → 0.73 → 0.64 → 0.47 while the heuristic
+still recovers 83% → 76% → 67% → 50% and band coverage falls 96% → 89% → 79% → 58%.
+There is no setting that closes it and keeps the band honest, **because the leak is not
+the noise level — it is that a free read of the truth ranks the class at all.** The fix
+is a different shape: build the free book from **public** facts (position, programme,
+testing, production) and make the read of the truth the thing you buy. That is a
+redesign of how every player view is produced. Consider doing it from the start.
+
+Also measured and **rejected**: narrowing the band to a quadrature aggregate. It aims at
+the wrong thing — the band's top, bottom and centre all correlate with the truth at
+0.804 / 0.810 / 0.811 over 4,800 fogged prospects, i.e. they are one number wearing
+three hats, and no width change touches that.
+
+**7. `ROOKIE_OVR_SD (7.5)` no longer shapes anything.** It is only the fallback for a
+rookie generated with no explicit rating target, which nothing in the game does. Either
+delete it or make it reachable.
+
+**8. Playing weight does not reach the combine.** `generateCombineTesting` accepts a
+body and prices weight at `WEIGHT_PULL 0.30`, and the one site that generates a class
+passes attributes only — so within a position the stopwatch is body-blind. Passing
+`{heightIn, weightLb}` at that call site is the whole fix.
+
+**9. Two constants live in the wrong file.** `DRAFT_BOARD_WINDOW (64)` and
+`DRAFT_READ_LEAN_SD (4)` / `DRAFT_READ_GAP_SD (3)` belong in the tuning table beside
+the reach constants and the positional values; `CONSENSUS_EVAL` belongs there too. They
+are defined next to their consumers only because of who held which file when they
+landed. Put every balance number in one table — nothing else in the codebase should
+hardcode one.
+
+**10. `K`/`P` at `ROSTER_TARGETS.max: 1` is now a free decision, and nobody has made
+it.** The two things that used to make raising it harmful are fixed: the roster
+composition is bound by `ideal`, not `max` (§1.6), and the two AI call sites that read
+`max > 1` as "is this a one-man job" now ask `carriesDepth()` off the `ONE_MAN_JOB` set
+instead. Setting `max: 2` before that would have flipped both — a club with a perfectly
+good kicker went from `needs.K` 0.000 to **0.293**, over free agency's 0.15 bid gate, so
+all 32 clubs would shop for a backup kicker in every wave forever; and a spare kicker's
+roster-fit gain went from 0.00 to **2.64**, pricing a man who takes no snaps as though
+he took some. Nothing has measured that a league **wants** 32 backup kickers. The
+blocker is gone; the decision is open.
+
+**11. Cut-down day carries its own copy of the release ranking.** The shared
+`releaseRanking` exists and the trim function duplicates it. That duplication is known
+and temporary — point the trim at the shared function, or the two orderings will
+eventually disagree about who goes, which is the exact failure §3.3 exists to prevent.
+
+**12. Over-max rooms are a one-way ratchet.** Nothing in the game ever unwinds one: the
+trim knows about position only far enough to keep a club's last kicker and punter, so a
+sixth quarterback survives cut-down day whenever he outranks somebody at a position the
+club is thin at. Brand-new leagues sit at 0.4% of club-positions over max; by their
+fifth season **44.8% of clubs are over max at quarterback**. The draft's contribution is
+near zero (§5.10) precisely because nothing else cleans up. A roster-shape term in the
+cut ranking would.
+
+**13. Injury rows carry no `playerId`.** 82,440 of them, none attributable, so the
+career record cannot say "missed three — hamstring" (§3.6, §7.8).
+
+**14. The fantasy pool's shape is wrong, and it is the right place to fix it.** See
+§8.2: 1,956 undifferentiated starters with no camp-body tail, worth 167% of a 32-club
+cap, which is why every fantasy contract lands at about half of market. Give the pool
+`generateRoster`'s shape plus a fringe tail.
+
+**15. Verify with a soak harness, and build it first, not last.** Generate many leagues
+across the settings matrix, simulate 10+ seasons each, and assert after **every** phase
+transition: the tier distribution still matches the rating spec §4 (this is the one that
+drifts); no NaN, no Infinity, no rating outside its band, no negative age; **no pile-up
+at any band edge** — print the histogram around every threshold and look for a spike,
+the signature of a clamp nobody knew was there; no ceiling below its own player's
+current rating; the mean and sd of starter rating by season, to catch league-wide
+inflation or collapse over a decade; and that awards go to plausible positions (MVP had
+**never** been a receiver, and nobody noticed until it was measured). The harness found
+defects no amount of code reading did.
+
+**Probe discipline, mandatory.** Carry three canaries in every probe: **(A)** an
+assertion of a knowingly FALSE claim, which must fail; **(B)** a read of a deliberately
+MISSPELLED field, which must come back undefined; **(C)** a real read that passes. If
+(A) passes or (B) returns data, the probe is measuring nothing. A probe here once read
+`stats.receptions` when the field was `rec` and reported 28,534 samples of 0.0000.
+
+**Never sample with `orderBy: { trueOvr: 'desc' }, take: N`** — sample blind. That is
+§0 again, and it is as true of a measurement as of a draft board.
+
+**Prove an engine change is the change it claims:** re-sim a fixed seed before and after
+and fingerprint the output. A kicker-progression change was verified this way — 400
+fixed-seed games hashing to `131909624` on both sides, proving the engine had not moved.
+
+**16. One stale comment to not copy.** The draft-class block in the reference
+implementation says the tier ramp "runs from 77 at the top of round one down to 61 at
+the last pick". With the shipped constants it runs **73 to 57**
+(`68 + 16 − 11` and `68 − 11`); 77/61 is the pre-translation geometry from when the
+offset was 7, and the comment did not move with it. The numbers in §1.9 are computed
+from the shipped constants. A comment describing a policy the code no longer follows is
+as much a bug as a wrong number, and several real defects here were found by reading a
+comment that contradicted the code beside it — so when you move a constant, move its
+prose.
