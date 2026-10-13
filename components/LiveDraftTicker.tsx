@@ -101,6 +101,14 @@ export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComp
   /** Non-null while the board is being run down: how many cards this run has put in. */
   const [runCount, setRunCount] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
+  /**
+   * The one thing the board itself cannot say: the server refused this run
+   * because another one holds the draft's lease (RUN_IN_PROGRESS — see
+   * runDraftChunkAction). Every other stop reason is announced by the refresh
+   * that follows it, so this is the only sentence this component carries.
+   * Cleared the moment the GM asks for the board to move again.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
   const [status, setStatus] = useState<DraftRunStatus | null>(null);
   /** Bumped when a run ends, to re-read what the GM can be offered next. */
   const [statusNonce, setStatusNonce] = useState(0);
@@ -206,6 +214,7 @@ export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComp
     inFlight.current = true;
     stopRun.current = false;
     setConfirming(false);
+    setNotice(null);
     setRunCount(0);
     let made = 0;
     let refreshedAt = Date.now();
@@ -216,6 +225,19 @@ export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComp
         made += chunk.picksMade;
         setRunCount(made);
         if (chunk.last) setLastPick(chunk.last);
+
+        /* REFUSED, NOT STOPPED. The lease is held by another runner — a
+           second tab, a stale page, or this one's own previous chunk still
+           finishing — so this call did nothing and asking again would only
+           queue up the same refusal. Mirrors what AdvanceWeekButton does with
+           advanceWeek's `blocked` result: show the server's own sentence and
+           stop. The picks the other runner is making still land on the board;
+           the refresh in the finally is what puts them on screen. */
+        if (chunk.stoppedBy === 'RUN_IN_PROGRESS') {
+          setNotice(chunk.message ?? 'The board is already being run down.');
+          setPaused(true);
+          break;
+        }
 
         if (chunk.done) {
           /* Nothing is announced when a run reaches his card or the end of the
@@ -310,7 +332,9 @@ export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComp
       <div className="pill border-line text-muted">
         {running
           ? `${lastPick ? `R${lastPick.round} · ` : ''}${runCount} selection${runCount === 1 ? '' : 's'} in`
-          : paused
+          : notice
+            ? notice
+            : paused
             ? 'Board stopped'
             : ticking
               ? 'Picking…'
@@ -352,7 +376,7 @@ export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComp
         </button>
       ) : (
         <>
-          <button onClick={() => setPaused((v) => !v)} className="btn-secondary text-xs px-2.5 py-1.5">
+          <button onClick={() => { setNotice(null); setPaused((v) => !v); }} className="btn-secondary text-xs px-2.5 py-1.5">
             {paused ? 'Resume' : 'Pause'}
           </button>
           {status?.live && (

@@ -180,8 +180,15 @@ export async function beginRookieDraftAction(leagueId: string) {
 const CHUNK_PICKS = 12;
 const CHUNK_MS = 3500;
 
-/** Why a chunk stopped. Only CHUNK_FULL means "call me again". */
-export type DraftRunStop = 'USER_ON_CLOCK' | 'DRAFT_COMPLETE' | 'BOARD_EMPTY' | 'CHUNK_FULL';
+/**
+ * Why a chunk stopped. Only CHUNK_FULL means "call me again".
+ *
+ * RUN_IN_PROGRESS is not a place the board got to — it is the busy signal: a
+ * second runner found the lease held and did nothing at all. It carries
+ * `message`, and the client shows it and stops asking, the same way
+ * AdvanceWeekButton toasts advanceWeek's refusal.
+ */
+export type DraftRunStop = 'USER_ON_CLOCK' | 'DRAFT_COMPLETE' | 'BOARD_EMPTY' | 'CHUNK_FULL' | 'RUN_IN_PROGRESS';
 
 export interface DraftRunChunk {
   picksMade: number;
@@ -190,7 +197,58 @@ export interface DraftRunChunk {
   /** True when this run is over and the client should stop asking. */
   done: boolean;
   stoppedBy: DraftRunStop;
+  /**
+   * Player-facing, and only on RUN_IN_PROGRESS. Every other stop reason is
+   * said by the board itself once the page refreshes (see the note in
+   * LiveDraftTicker's run loop), so there is nothing to word over the top of
+   * it.
+   */
+  message?: string;
 }
+
+/**
+ * ===========================================================================
+ * ONE RUNNER AT A TIME, AND IT IS THE SAME LEASE ADVANCE TAKES
+ * ===========================================================================
+ * `runDraftChunkAction` is a public POST endpoint that a client loop calls
+ * again the instant the last call lands, so two of them overlap the moment one
+ * chunk runs slow — a second tab, a double press, a retried request, or simply
+ * a chunk that took longer than the client's patience. Both runners then draft
+ * against ONE DraftState: `currentPick` reads the same `pickIndex`, both hand
+ * the same card to `draftPlayer`, and `advancePick` (lib/draft.ts) writes
+ * `pickIndex + 1` from the stale read it started with. Measured shapes: the
+ * same man updated twice, two clubs sharing one selection number, and the
+ * loser surfacing as an uncaught 500 on the draft screen.
+ *
+ * SO A RUN TAKES A LEASE ON THE DRAFT AND HOLDS IT FOR THE WHOLE CHUNK, and a
+ * call that finds it held is refused rather than raced. This is not a new
+ * scheme: it is `advanceWeek`'s lease on `League.advanceStartedAt`
+ * (lib/season.ts), column for column — compare-and-set with `updateMany`,
+ * "free or older than the expiry" in the WHERE, released in a `finally` ONLY
+ * IF IT IS STILL OURS, and a timestamp rather than a boolean so a request that
+ * dies mid-chunk cannot lock a draft out of its own board forever. The long
+ * argument for every one of those choices is written out above
+ * ADVANCE_LEASE_MS in lib/season.ts and is not repeated here.
+ *
+ * WHY THE EXPIRY IS SHORTER THAN ADVANCE'S. The lease must outlive any chunk
+ * that can finish and nothing more, and a chunk is bounded by CHUNK_MS plus
+ * the one selection that crossed the deadline plus the end-of-draft sweep —
+ * single-digit seconds, against the 90 that advance (which has no internal
+ * bound at all) has to allow for. 30s is comfortably over the worst chunk and
+ * well under the platform's own kill, so the lease is only ever taken off a
+ * request that is already dead. The client is not the guard: `inFlight` in
+ * LiveDraftTicker is an optimisation and cannot speak for a second tab.
+ * ===========================================================================
+ */
+const DRAFT_RUN_LEASE_MS = 30_000;
+
+/**
+ * Player-facing, and a busy signal rather than a decision — there is nothing
+ * for the GM to fix and nowhere to send him, so it is worded like
+ * ADVANCE_IN_PROGRESS next door.
+ */
+const DRAFT_RUN_IN_PROGRESS = 'The board is already being run down. '
+  + 'Give it a moment — the picks will land on their own.';
 
 /**
  * Run up to a chunk's worth of AI selections and report where it got to.
@@ -210,6 +268,52 @@ export async function runDraftChunkAction(leagueId: string, _userTeamId: string)
   // or an empty string — turns the AI runner loose on the user's OWN card and
   // picks for him. Derived here, like every other club id in this file.
   const userTeamId = await ownUserTeamId(leagueId);
+
+  // THE LEASE, TAKEN BEFORE A SINGLE CARD GOES IN — see the block above.
+  const heldSince = new Date();
+  const expired = new Date(heldSince.getTime() - DRAFT_RUN_LEASE_MS);
+  // `updateMany` rather than `update` because "no row matched" is the answer,
+  // not an exception. The draft is addressed by `leagueId`, which is the
+  // owned id `assertLeagueOwner` just proved and the unique key on DraftState,
+  // so there is no second id here to be anybody else's.
+  const took = await prisma.draftState.updateMany({
+    where: {
+      leagueId,
+      OR: [{ runStartedAt: null }, { runStartedAt: { lt: expired } }],
+    },
+    data: { runStartedAt: heldSince },
+  });
+  if (took.count === 0) {
+    // 0 is the answer to "somebody holds it" AND to "this league has no draft",
+    // and those are not the same answer — the same distinction advanceWeek
+    // draws. A league with no DraftState row has nothing to run and nothing to
+    // wait for, so it gets the finished shape it would have got anyway rather
+    // than being told to wait for a run that will never land.
+    const live = await prisma.draftState.findUnique({ where: { leagueId }, select: { id: true } });
+    if (!live) return { picksMade: 0, last: null, done: true, stoppedBy: 'DRAFT_COMPLETE' };
+    return { picksMade: 0, last: null, done: true, stoppedBy: 'RUN_IN_PROGRESS', message: DRAFT_RUN_IN_PROGRESS };
+  }
+
+  try {
+    return await runDraftChunk(leagueId, userTeamId);
+  } finally {
+    // ONLY IF IT IS STILL OURS. If this chunk ran long enough for its lease to
+    // expire and another call to take it, that call owns the column now and
+    // clearing it would hand a third call the door while two runners are
+    // going — which is the bug this exists to stop.
+    await prisma.draftState.updateMany({
+      where: { leagueId, runStartedAt: heldSince },
+      data: { runStartedAt: null },
+    });
+  }
+}
+
+/**
+ * The chunk itself. Split out so the lease above is a door with nothing in it
+ * and the work below cannot return past the `finally` that releases it. Both
+ * ids are already derived from the owned save by the caller.
+ */
+async function runDraftChunk(leagueId: string, userTeamId: string): Promise<DraftRunChunk> {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
 
   const startedAt = Date.now();

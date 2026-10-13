@@ -1,0 +1,16 @@
+-- ONE RUN OF THE DRAFT BOARD AT A TIME.
+--
+-- `DraftState.runStartedAt` holds the instant the chunk of AI selections
+-- currently running took the draft, and NULL when none is.
+-- `runDraftChunkAction` (app/actions/draft.ts) takes it with a compare-and-set
+-- and releases it in a `finally`; a call that finds it already held is refused
+-- instead of racing the one that holds it — two chunk runners against one
+-- DraftState both read the same `pickIndex` and both take the same card.
+--
+-- Nullable, and NULL is the correct value for every row that already exists:
+-- nobody is mid-chunk at the moment this runs. The column is a LEASE rather
+-- than a flag for exactly the reason `League.advanceStartedAt` is
+-- (20260823124500_advance_in_progress_marker): a boolean left set by a request
+-- that was killed mid-chunk is a draft nobody can ever run again, and there is
+-- no move inside the game that clears it.
+ALTER TABLE "DraftState" ADD COLUMN     "runStartedAt" TIMESTAMP(3);

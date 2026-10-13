@@ -179,6 +179,21 @@ model DraftState {
   // sitting on the clock mid-draft when this shipped would otherwise have
   // taken the @default(false) and frozen: no button on its screen, no ticker.
   started   Boolean @default(false)
+
+  // ONE RUN OF THE BOARD AT A TIME, PER DRAFT.
+  //
+  // When a chunk of AI selections is running this holds the instant that chunk
+  // started; otherwise null. Taken and released by `runDraftChunkAction`
+  // (app/actions/draft.ts) with exactly the mechanism `advanceWeek` uses on
+  // `League.advanceStartedAt` above — a compare-and-set that also matches a
+  // lease older than the expiry, so a request killed mid-chunk cannot lock a
+  // draft out of its own clock forever. The argument for why it is a TIMESTAMP
+  // rather than a boolean is written out over that column.
+  //
+  // Nullable for the same reason as that one: `migrate deploy` runs against a
+  // database with live rows in it, and null is the right value for every one of
+  // them — nobody is mid-chunk.
+  runStartedAt DateTime?
 }
 
 // ---------------------------------------------------------------------------

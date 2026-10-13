@@ -437,7 +437,45 @@ export default async function DraftPage({ params, searchParams }: { params: { id
    * that arrives without a public board.
    */
   const defaultSort: SortKey = consensus.size > 0 ? 'consensus' : 'ovr';
-  const sortKey: SortKey = (['consensus', 'ours', 'pos', 'ovr', 'age', 'potential', 'athletic'] as SortKey[]).includes(searchParams.sort as SortKey)
+  /**
+   * ===========================================================================
+   * A COLUMN WITH NO POOL BEHIND IT IS NOT SHOWN AT ALL
+   * ===========================================================================
+   * Both of these are ranks over `classPool`, and in a FANTASY draft that pool
+   * is EMPTY: the men on the board are the league's own veterans, flagged
+   * `isDraftee` with no `draftYear` at all (lib/gen/league.ts), so
+   * `draftClassScope` — which asks for a draft class by its year — matches
+   * none of them and there are no DraftPick rows to add. The result was a
+   * Board Grade column of blank cells and an Athletic column where every row
+   * read "—", on a board 1,700 rows deep.
+   *
+   * RANKING THEM AGAINST THE FANTASY POOL INSTEAD WAS CONSIDERED AND IS WRONG
+   * ON BOTH, which is why they are hidden rather than repointed:
+   *   - ATHLETIC has nothing to rank. The pool is `generatePlayer` draws, and
+   *     combine testing is rolled only by the draft-class pass that needs a
+   *     man's percentile inside his own class (lib/gen/players.ts). Not one
+   *     player in a fantasy pool has a forty time, so the column would still
+   *     be dashes with more work behind them.
+   *   - BOARD GRADE would print a number that means something it does not.
+   *     lib/consensus.ts grades a TWENTY-TWO-YEAR-OLD off public prospect
+   *     signals — testing, program, the gap to his ceiling, a medical flag —
+   *     and these are established professionals with years of tape whose exact
+   *     rating this same board already shows (see the fantasy branch of
+   *     `viewOf` above, which makes exactly this distinction). A prospect
+   *     grade over proven pros is the lying number this codebase treats as a
+   *     bug in its own right.
+   * Asked of the maps rather than of the phase, like `defaultSort` directly
+   * above, so this is right for any other pool that arrives without a public
+   * board or a stopwatch.
+   */
+  const boardGraded = consensus.size > 0;
+  const athleticRanked = athletic.size > 0;
+  // A sort by a column that is not on the page can only be a stale URL, and
+  // honouring it would order the board by a rank with no header, no arrow and
+  // no way to undo it.
+  const sortable = (['consensus', 'ours', 'pos', 'ovr', 'age', 'potential', 'athletic'] as SortKey[])
+    .filter((k) => (k === 'consensus' ? boardGraded : k === 'athletic' ? athleticRanked : true));
+  const sortKey: SortKey = sortable.includes(searchParams.sort as SortKey)
     ? (searchParams.sort as SortKey) : defaultSort;
   const dir = searchParams.dir === 'asc' ? 1 : -1;
 
@@ -1705,6 +1743,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                 {/* Between the man's own facts and the club's opinion of him,
                     which is where it belongs: everything left of here is
                     measured and everything right of here is judged. */}
+                {athleticRanked && (
                 <th className="text-right">
                   <span className="inline-flex items-center gap-1">
                     <Link href={sortHref('athletic')} scroll={false} prefetch={false} className="hover:text-chalk">Athletic{sortKey === 'athletic' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
@@ -1719,6 +1758,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     <Tooltip placement="bottom" text={tip('athleticRank')} />
                   </span>
                 </th>
+                )}
                 <th>
                   <span className="inline-flex items-center gap-1">
                     <Link href={sortHref('ovr')} scroll={false} prefetch={false} className="hover:text-chalk">{boardFogged ? 'Scouted' : 'OVR'}{sortKey === 'ovr' && (dir === -1 ? ' ▾' : ' ▴')}</Link>
@@ -1746,6 +1786,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     <Tooltip placement="bottom" text={tip('potential')} />
                   </span>
                 </th>
+                {boardGraded && (
                 <th>
                   <span className="inline-flex items-center gap-1">
                     Board Grade
@@ -1757,6 +1798,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                     <Tooltip placement="bottom" text={`${tip('boardGrade')} ${define('draftBand')}`} />
                   </span>
                 </th>
+                )}
                 <th>
                   <span className="inline-flex items-center gap-1">
                     Projection
@@ -1855,6 +1897,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                         not the same finish, and the group size is not
                         something a reader can infer from a badge — the class
                         carries whatever it carries at each position. */}
+                    {athleticRanked && (
                     <td className="stat-value text-stat-sm text-right whitespace-nowrap">
                       {ath ? (
                         <span
@@ -1867,12 +1910,14 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                         <span className="text-muted">—</span>
                       )}
                     </td>
+                    )}
                     {/* Ink off the RANGE, never off view.scoutedOvr — see
                         ratingColorForRange (lib/ratings.ts) for the measurement
                         that killed the old call. Revealed rows pass
                         low === high and colour exactly as before. */}
                     <td className={`stat-value text-stat-sm ${ratingColorForRange(view.ovrLow, view.ovrHigh)}`}>{view.revealed ? view.scoutedOvr : `${view.ovrLow}-${view.ovrHigh}`}</td>
                     <td className="text-muted font-mono">{view.potentialRevealed ? p.potential : `${view.potLow}-${view.potHigh}`}</td>
+                    {boardGraded && (
                     <td>
                       {read && (
                         <div className="flex items-baseline gap-1.5 whitespace-nowrap" title={note ?? read.headline}>
@@ -1886,6 +1931,7 @@ export default async function DraftPage({ params, searchParams }: { params: { id
                       )}
                       {read && <div className="text-[10px] text-muted leading-none mt-0.5">{read.bandLabel}</div>}
                     </td>
+                    )}
                     <td><span className={`text-xs font-medium ${label.className}`}>{label.label}</span></td>
                     {/* The column exists only while the window is open (see the
                         header). A man already worked out still renders here —
