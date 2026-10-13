@@ -132,10 +132,16 @@ export default async function SettingsPage({ params }: { params: { id: string } 
             label="Fog applies to your own roster too" name="fogOnOwnRoster" defaultChecked={settings.fogOnOwnRoster}
             tip="Normally your own players' true ratings are always visible. Turning this on fogs them too, for a harder, more realistic mode where even your own scouts can be wrong about your guys."
           />
-          <NumberField
-            label="Scouting focus / week (base)" name="scoutingBudgetPerWeek" defaultValue={settings.scoutingBudgetPerWeek} min={0} max={10000}
-            tip="Base focus your front office generates per period, before your scouts' speed scales it. Focus is a finite allowance, not a running total: it refills every week (and pays one large lump for the pre-draft window), and only half of a period's grant can be carried over. Raise this to make scouting cheap, lower it to force harder triage. See the Scouting Department page for the live budget and price list."
-          />
+          {/* A "Scouting focus / week (base)" number lived here, bound to
+              `scoutingBudgetPerWeek`. It set a budget nothing spends: the
+              focus-point economy it configured was replaced by the fixed
+              weekly pool in lib/shortlistAttention.ts, which is split across
+              however many prospects are starred and is not configurable. The
+              control validated, clamped and persisted, and changed nothing a
+              player could observe — the same failure as a displayed number
+              that is not the number the system used. The setting is still
+              parsed and still stored (see lib/settings.ts) so existing saves
+              round-trip unchanged; it is simply no longer offered. */}
         </Section>
 
         <Section title="Progression & Injuries">

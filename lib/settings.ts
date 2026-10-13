@@ -23,7 +23,16 @@ export interface LeagueSettings {
   scoutingEnabled: boolean;         // false => true ratings shown everywhere
   revealTrueRatings: boolean;       // debug/casual toggle, overrides scouting
   fogOnOwnRoster: boolean;          // do you fully know your own players?
-  scoutingBudgetPerWeek: number;    // scouting points/week before scout speed
+  // VESTIGIAL, still accepted. This configured the focus-point economy, which
+  // was replaced by the fixed weekly pool in lib/shortlistAttention.ts — a
+  // pool split across the shortlist, with nothing to spend and no budget to
+  // set. Nothing reads this field. It stays in the type, the defaults and
+  // updateSettingsAction's validation so that saves written while the control
+  // existed keep a sane, clamped value through parseSettings instead of
+  // round-tripping an arbitrary stored number; the Settings screen no longer
+  // offers a control for it. Do not wire it to anything — set the pool in
+  // lib/tuning.ts's SHORTLIST_ATTENTION instead.
+  scoutingBudgetPerWeek: number;
 
   // --- Progression ----------------------------------------------------------
   progressionSpeed: number;         // multiplier on in-season development rolls
@@ -97,7 +106,7 @@ export const DEFAULT_SETTINGS: LeagueSettings = {
   scoutingEnabled: true,
   revealTrueRatings: false,
   fogOnOwnRoster: false,
-  scoutingBudgetPerWeek: 100,
+  scoutingBudgetPerWeek: 100, // vestigial, see the field comment above
 
   progressionSpeed: 1.0,
   injuriesEnabled: true,

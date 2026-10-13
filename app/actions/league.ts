@@ -258,7 +258,15 @@ export async function updateSettingsAction(leagueId: string, formData: FormData)
     scoutingEnabled: formData.get('scoutingEnabled') === 'on',
     revealTrueRatings: formData.get('revealTrueRatings') === 'on',
     fogOnOwnRoster: formData.get('fogOnOwnRoster') === 'on',
-    // 0 is a legal answer — it means scouting runs on carry-over alone.
+    // VESTIGIAL, and deliberately still validated. Nothing reads this: the
+    // focus-point economy it sized was replaced by the fixed weekly pool in
+    // lib/shortlistAttention.ts, and the Settings screen no longer offers the
+    // control. The form therefore never posts the key, so `safe` supplies the
+    // value and an existing save's stored number is clamped on its way back
+    // out rather than preserved raw. Kept rather than dropped because the
+    // settings blob is persisted JSON that existing saves already carry, and
+    // because scripts/actionGuardAudit.ts asserts it stays finite. See the
+    // field comment in lib/settings.ts.
     scoutingBudgetPerWeek: num(formData.get('scoutingBudgetPerWeek'), safe.scoutingBudgetPerWeek, 0, 10_000, { integer: true }),
     // A multiplier, so 0 freezes development and 5 is already extreme. It may
     // not go negative: a negative speed inverts every growth roll into decline.

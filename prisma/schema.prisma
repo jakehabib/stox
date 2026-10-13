@@ -230,15 +230,21 @@ model Team {
   playoffSeed Int?
   eliminated  Boolean @default(false)
 
-  // Scouting economy (see lib/scoutingEconomy.ts) ------------------------------
-  // Focus is a finite per-period allowance, not a growing pile. `scoutPeriod`
-  // is the period key (year/phase/week) the current allowance was granted for;
-  // when the league moves past it the balance is topped up and any unspent
-  // carry-over above SCOUT_ECONOMY.CARRY_CAP_FRACTION of the new grant is lost.
-  scoutPoints      Int @default(0) // unspent focus right now
-  scoutPeriod      Int @default(0) // period key of the last replenishment (0 = never)
-  scoutPeriodGrant Int @default(0) // size of the grant that opened this period (UI shows "x of y")
-  scoutSpentSeason Int @default(0) // focus burned so far this league year, for the department UI
+  // VESTIGIAL — the focus-point economy these four columns bookkept is GONE ----
+  // Scouting is now lib/shortlistAttention.ts: a fixed weekly pool of
+  // attention, split across however many prospects the team has starred.
+  // There is no currency, no per-period allowance, no carry-over cap and
+  // nothing to spend, so there is nothing for these to count. The file and
+  // the constant the old comment here cited (lib/scoutingEconomy.ts,
+  // SCOUT_ECONOMY.CARRY_CAP_FRACTION) no longer exist anywhere in the repo.
+  // All four are read and written nowhere. They are kept only because this
+  // branch runs `prisma migrate deploy` on every deploy and dropping four
+  // unused ints is not worth a destructive migration against live saves; do
+  // not start reading them, and do not reinstate an economy on top of them.
+  scoutPoints      Int @default(0)
+  scoutPeriod      Int @default(0)
+  scoutPeriodGrant Int @default(0)
+  scoutSpentSeason Int @default(0)
 
   players         Player[]
   staff           Staff[]
@@ -468,15 +474,22 @@ model ScoutingReport {
   ovrLow     Int    @default(0)
   ovrHigh    Int    @default(99)
   notes      String @default("")
-  // Period key (see lib/scoutingEconomy.ts periodKey) of the most recent pass.
+  // Week of the most recent pass. Written as 0 at generation and never
+  // advanced: the periodKey() it used to hold belonged to the removed focus
+  // economy (see the Team columns above), and lib/shortlistAttention.ts does
+  // not need a last-pass marker. Vestigial, like those columns.
   lastWeek   Int    @default(0)
 
-  // Scouting economy bookkeeping ----------------------------------------------
-  // Total passes ever run on this player by this team. Drives BOTH the cost
-  // escalation and the reveal decay, so hammering one prospect gets steadily
-  // more expensive and steadily less informative.
+  // VESTIGIAL, same removal ---------------------------------------------------
+  // Total passes ever run on this player by this team. It drove the old
+  // economy's cost escalation and a separate reveal-decay term, and does
+  // neither now: shortlist attention closes a fraction of what is still
+  // unknown each week, so the diminishing return is in the arithmetic and
+  // needs no counter. Read and written nowhere.
   passes        Int     @default(0)
-  // Passes run inside the current period only — reset whenever lastWeek moves.
+  // Passes run inside the current period only. "Period" was the removed
+  // economy's replenishment window and lastWeek never moves, so this is
+  // vestigial too — read and written nowhere.
   periodPasses  Int     @default(0)
   // Potential has its own confidence track: only a Deep Dive pushes it above
   // the general confidence, which is what makes the deep tier worth its price.
