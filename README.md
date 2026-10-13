@@ -727,6 +727,23 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-27 — The rating system and the 1:1 build brief are written down, so
+  neither has to be re-derived from the code again.** `2b052eb`, `b46ea46`.
+  `RATING_SYSTEM_SPEC.md` is the football rating system in full: the attribute
+  catalogue with each attribute's `scoutDifficulty`, `POSITION_WEIGHTS`,
+  `computeOverall`, the `RATING_BANDS` thresholds and the tier distribution
+  actually measured in a generated league, the soft-ceiling curve, the age
+  curve with its position profiles, the three growth drivers, the three fog
+  tiers, the invariants that must hold, and the recipe for verifying any of it
+  against a live database. `docs/build-brief/` opens with `PART_0_BRIEF.md`,
+  the framing for a feature-parity rebuild: what 1:1 means and what it does
+  not, the game in one page, the ten house rules each tied to the specific
+  failure that produced it, the verification recipe including the probe
+  canaries, eight acceptance criteria, build order, and the nine open issues
+  carried honestly rather than hidden. Neither file changes a line of game
+  code. They exist because the numbers that matter were spread across 97 lib
+  files and the reasoning behind them lived only in this repo's history.
+
 - **2026-08-27 — Every help bubble in the game was a 22-pixel sliver on a
   phone, and the rule written to stop that is why.** `85a4ced`, `9596f5b`,
   `41d2c8f`. `globals.css` carries a *Handset safety* block that pins the
