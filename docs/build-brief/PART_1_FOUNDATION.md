@@ -327,14 +327,22 @@ Create thirty-two per league.
 | `divWins`, `divLosses`, `confWins`, `confLosses` | Int | `0` | Tiebreak inputs. |
 | `playoffSeed` | Int? | — | 1..6 per conference when seeded, else null. |
 | `eliminated` | Boolean | `false` | |
-| `scoutPoints` | Int | `0` | Unspent scouting focus right now. |
-| `scoutPeriod` | Int | `0` | Period key (year/phase/week) the current allowance was granted for. `0` = never replenished. |
-| `scoutPeriodGrant` | Int | `0` | Size of the grant that opened this period, so the UI can show "x of y". |
-| `scoutSpentSeason` | Int | `0` | Focus burned this league year, for the scouting department screen. |
+| `scoutPoints`, `scoutPeriod`, `scoutPeriodGrant`, `scoutSpentSeason` | Int | `0` | **Do not create these.** See below. |
 
-Build the scouting economy so focus is a **finite per-period allowance, not a
-growing pile**: when the league moves past `scoutPeriod`, top the balance up and
-discard any unspent carry-over above a fixed fraction of the new grant.
+**Do not build a scouting focus economy.** Those four columns are the fossil of
+one, and they are read and written nowhere in the reference. Focus was
+originally a finite per-period allowance that was topped up and partly
+discarded as the league moved on; it was replaced, deliberately, by the fixed
+weekly attention pool specified in Part 4 — a pool split across however many
+prospects the player has starred, with nothing to spend and no budget to
+configure.
+
+Build the attention pool instead, and skip these columns entirely. The reason
+the replacement won is worth carrying: under the old economy, advancing a week
+without opening the scouting screen silently cost the player an allowance they
+never spent, which punished them for not visiting a page. The pool costs
+nothing, runs out of nothing, and asks the player exactly one question — how
+many prospects to star, since each one dilutes the rest.
 
 Relations: `players`, `staff`, `scouts`, `homeGames`/`awayGames` (named relations
 `HomeTeam`/`AwayTeam`), `ownedPicks`/`originalPicks` (named
@@ -1461,7 +1469,7 @@ the UI say so rather than pretend it does something.
 | `scoutingEnabled` | boolean | `true` | — | **yes** | False ⇒ show true ratings everywhere. |
 | `revealTrueRatings` | boolean | `false` | — | **yes** | Debug/casual toggle; it overrides scouting. |
 | `fogOnOwnRoster` | boolean | `false` | — | **yes** | Whether the user fully knows his own players. |
-| `scoutingBudgetPerWeek` | number | `100` | **0..10 000**, integer | **yes** | Intended as base scouting focus per week before scout speed. **Unread in the reference** — see §6.2. Allow `0`: it is a legal answer meaning "scouting runs on carry-over alone". |
+| `scoutingBudgetPerWeek` | number | `100` | **0..10 000**, integer | **no** | Vestigial. It sized the removed focus economy; nothing reads it, and the reference stopped offering a control for it. Do not put it on a screen — see §6.2. |
 | `progressionSpeed` | number | `1.0` | **0..5** | **yes** | Multiplier on in-season development rolls. 0 freezes development; 5 is already extreme. **Never allow negative** — a negative speed inverts every growth roll into decline. |
 | `injuriesEnabled` | boolean | `true` | — | **yes** | |
 | `injurySeverity` | number | `1.0` | **0..5** | **yes** | Multiplier on injury duration. |
@@ -2097,10 +2105,12 @@ ambiguity.
    scenarios, the standings board, generated league history — reads the constant `6` instead, so
    changing the setting does nothing. **Either wire it through or remove it from the settings
    interface. Do not ship a control that lies.**
-2. **`scoutingBudgetPerWeek` has no consumer either.** It is validated, clamped (0..10 000),
-   persisted, and rendered on the Settings screen as "Scouting focus / week (base)", but nothing
-   reads it: the scouting allowance comes from the economy module's grant computation and
-   `Team.scoutPeriodGrant`. **Wire it or drop it**, same rule.
+2. **`scoutingBudgetPerWeek` has no consumer, and the reference resolved this by
+   dropping the control.** It was validated, clamped (0..10 000), persisted and rendered on the
+   Settings screen as "Scouting focus / week (base)", and nothing read it — the focus economy it
+   sized had been replaced by the attention pool. The control is gone; the field is still parsed
+   and stored so existing saves round-trip. **Do not offer a control for it.** If you are building
+   fresh, you need neither the control nor the field.
 3. **`seasonLength`, `rosterMax`, `draftRounds` and `simSeed` are live but unreachable.** Their
    consumers exist and respect them, but no screen lets a player set them — league creation fixes
    them at the defaults. If you expose them, note that `tradeDeadlineWeek` is clamped against

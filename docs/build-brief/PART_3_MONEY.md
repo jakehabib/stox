@@ -1,7 +1,7 @@
 # PART 3 — MONEY: BUILD THE CAP, CONTRACTS, FREE AGENCY, NEGOTIATION AND TRADES
 
 Build this system before you build the screens that read it, and build the
-invariant suite in §8 before you build this system. Every money defect in the
+invariant suite in §7 before you build this system. Every money defect in the
 reference implementation was silent, enforced and permanent: a wrong cap figure
 is a number nobody can check, printed beside a number derived a second way,
 backing a gate that refuses moves the screen said were legal — and it corrupts
@@ -1831,6 +1831,9 @@ satisfaction(ratio, tol) = ratio >= 1
   ? min(OVERSHOOT_MAX, 1 + (ratio − 1) * OVERSHOOT_CREDIT)
   : max(0, ratio) ^ (1 + 0.6 / tol)
 
+MONEY_TOLERANCE = 0.35, TERM_TOLERANCE = 0.55, GUARANTEE_TOLERANCE = 0.7
+OVERSHOOT_CREDIT = 0.25, OVERSHOOT_MAX = 1.2, TERM_SCORE_FLOOR = 0.62
+
 insulting       = moneyRatio < 0.7
 underGuaranteed = offer.guaranteePct < ctx.guaranteeFloor
 interest = min(insulting ? 44 : underGuaranteed ? 62 : 100,
@@ -2658,3 +2661,1646 @@ the men the curve has bottomed out on — a thin, arbitrary slice that empties t
 moment a couple of clubs fill. Measured, 1.5x admitted bodies up to about 70 OVR
 at RB and 68 at LB, and nothing any club would field as a starter.
 
+---
+
+## 6. Trades
+
+### 6.1 Quote everything in one currency, and make it a currency a football person can check
+
+Price players and picks on **one scale**, and make that scale the draft-pick
+chart's own points, so "this man is worth 420" means "this man is worth pick
+48". Transcribe the Jimmy Johnson chart as a **literal 224-row table** (32
+clubs × 7 rounds maps one-to-one with no rescaling), not as a fitted curve.
+The owner named it: *"this is a chart of draft picks value as used by the NFL."*
+
+A smooth curve cannot do this job: the real chart puts pick 1 at **5.1x** pick
+32 and **68x** pick 128, while `3000 * exp(−0.0255 * (pick − 1))` puts them at
+**2.2x** and **15x**, and its ratio to the table drifts (0.55 at pick 16, 0.69
+at pick 112, 2.0x too generous at pick 176). That is why the first overall pick
+used to trade for barely more than a mid-first.
+
+Delete any flat conversion factor between players and picks. The reference
+implementation had `pickValue = chart * 0.30`, marked `[FRAGILE PLACEHOLDER]` —
+a factor nobody could state in football terms, sitting between the two halves of
+every trade.
+
+Row one of the table, for reference: `3000, 2600, 2200, 1800, 1700, 1600, 1500,
+1400, 1350, 1300, 1250, 1200, 1150, 1100, 1050, 1000, 950, 900, 875, 850, 800,
+780, 760, 740, 720, 700, 680, 660, 640, 620, 600, 590`; the last pick of the
+chart is 2. Clamp the index rather than returning undefined — a league with more
+teams than the chart has rows would otherwise price its last round at NaN, and
+the honest answer for a pick past the end is what the last pick on it is worth.
+
+### 6.2 Bend the top of round one onto the player curve — the anchor
+
+**The climb of round one is an auction price, not a player price.** The table is
+what one pick costs in **other picks**. Using it for both is what lets a single
+high first outbid the best receiver in the league.
+
+Measure it rather than asserting it. A pick is a right to add one player, so the
+yardstick is: what is the man it turns into worth, priced by the same curve that
+prices everyone else? Generate 400 draft classes, rank each on the public board,
+take the prospect who actually sits at slot *n*, develop him all the way to his
+own potential, stand him at 26 in the last year of his rookie deal — his **best
+case**, bust risk spent and fog gone — and price him:
+
+| pick | 1 | 2 | 3 | 5 | 8 | 12 | 16 | 20 | 24 | 28 | 32 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| chart | 3000 | 2600 | 2200 | 1700 | 1400 | 1200 | 1000 | 850 | 740 | 660 | 590 |
+| best case | 1829 | 1638 | 1508 | 1332 | 1117 | 972 | 855 | 830 | 711 | 662 | 605 |
+| ratio | 1.64 | 1.59 | 1.46 | 1.28 | 1.25 | 1.23 | 1.17 | 1.02 | 1.04 | 1.00 | 0.98 |
+
+and in rounds 2–4: **0.98, 0.96, 0.89, 0.89, 0.88** at picks 36/40/48/56/64.
+
+From the bottom of round one down the chart sits at essentially **1.00** of the
+most a pick can ever deliver — which is why every player-for-pick anchor comes
+out right. Climb the round and it pulls away monotonically until the first
+overall pick is priced **64% above the best outcome it has**. Whatever bias the
+best-case yardstick carries, it carries **equally at every slot**, so the flat
+1.00 tail is the calibration and the climb away from it is the defect.
+
+**The anchor, in one sentence a football person can check: the first overall
+pick is worth the best proven non-quarterback in the league, and never more.** A
+top pick is a 22-year-old a board likes; a 96 receiver is that man already, with
+the fog gone. What the pick buys over him is five cheap years; what he buys over
+the pick is certainty; at the very top those roughly cancel.
+
+```
+PICK_SCALE.KNEE = 600                                   // the 31st pick
+PICK_VALUE_CHART(overallPick):
+  raw = table[clamp(round(overallPick), 1, 224) − 1]
+  if raw <= KNEE: return raw
+  span = TIER_CURVE.PREMIUM.ceiling − KNEE
+  return KNEE + span * (1 − exp(−(raw − KNEE) / span))
+```
+
+Read the asymptote **off the premium tier's own ceiling** rather than typing it
+again — one opinion about where the top of this economy is, not two. The first
+overall pick lands at **1797**, which is what a neutral 96 at a premium position
+is worth.
+
+Make it a **bend, not a cap, and not a rescaling**. Below the knee the table is
+returned bit for bit: picks 31 through 224 — the whole of the chart real trades
+have tested — are untouched to the point. Above it the excess is compressed onto
+the gap to the asymptote, continuously, with gradient exactly 1 at the join,
+strictly increasing everywhere and never reaching the bound. The #1 pick still
+out-prices the #2 and always will; it just stops out-pricing the league.
+
+Set the knee at the highest point where the measured ratio is still flat (picks
+28–32 read 0.98–1.04): bending a region that is already calibrated invents a
+defect to fix.
+
+Leave everything below round one alone, and say so rather than half-fixing it.
+The measurement has an opinion there too — the chart runs **under** the best case
+from pick 48 on (0.88x) and far under it in round seven — but that is a different
+claim needing different evidence, no real trade tests it, and it has no bearing
+on the bug this bend exists to fix.
+
+### 6.3 Price a player: tiers, arcs, contract, fit, window, cap, scarcity
+
+```
+base  = min-free: (exp(max(0, ovr − replacementLevel) * steepness) − 1) * scale
+total = (base + upside) * ageMult * contractMult * fitMult * scarcityMult * capMult
+total = total * noiseMult
+total = softCeiling(total, ceiling)
+total = total − contractBurden          // LAST, outside the ceiling and outside the noise
+```
+
+**Tiers** (`TIER_CURVE`):
+
+| tier | replacement | steepness | scale | ceiling | positions |
+|---|---|---|---|---|---|
+| QB | 58 | 0.150 | 12.70 | 5000 | QB |
+| PREMIUM | 60 | 0.147 | 9.90 | 2100 | WR, LT, LG, C, RG, RT, EDGE, DT, CB, S |
+| MID | 62 | 0.147 | 7.00 | 1500 | TE, LB |
+| LOW | 64 | 0.147 | 5.44 | 750 | RB |
+| MINIMAL | 68 | 0.135 | 0.494 | 40 | K, P |
+
+Calibrate against **real trades**, and write each anchor as a sentence you can
+read aloud:
+
+- **QB** 94 ≈ 2799 (half again the first overall pick), 96 ≈ 3796, 98+ clips the
+  ceiling at five mid-firsts and more. The owner's anchor: *"Josh Allen in the
+  real nfl would go for at least 4 or 5 first round pick equivalents."* 91 ≈ 1783
+  is the Stafford package (two firsts and a third); 85 ≈ 716 a late first.
+- **PREMIUM** 94 ≈ 1457 (pick 4), 96 ≈ 1957 — above any pick there is, which is
+  the point of the bend. Mack cost two firsts and a third against a second coming
+  back (~1765); Tunsil two firsts and a second; Hill a first, a second and three
+  later picks (~1205); Ramsey at 24 two firsts and a fourth (~1640). 88 ≈ 597 is
+  a late first — what a Pro-Bowl receiver, tackle or corner actually fetches;
+  82 ≈ 241 a third; 78 ≈ 130 a late third.
+- **MID** 94 ≈ 766 (pick 22), 88 ≈ 313 (a late second). Hockenson cost a second
+  and a third, Waller pick 100, Roquan Smith a second and a fifth.
+- **LOW** 94 ≈ 442 (a mid second), ceiling 750 = the McCaffrey package itself (a
+  second, third, fourth and fifth ≈ 713). 90 ≈ 243, a third.
+- **MINIMAL** 99 ≈ 32 (a fifth), 94 ≈ 16 (a sixth). Never zero, never a real
+  asset.
+
+**Share one steepness across PREMIUM/MID/LOW (0.147)**, and put the economics in
+`replacementLevel` and `scale`. Curves with their own steepness made the gap
+between tiers swing with rating — an older pass had PREMIUM at 5.5x MID at 78 and
+2.4x at 94 — so the same relabel was worth wildly different amounts depending on
+who you did it to. One steepness makes the positional gap a stable multiple. Keep
+QB steeper (0.150), because quarterback scarcity genuinely compounds at the top,
+and MINIMAL flatter (0.135), because the best kicker alive is still a kicker. The
+ordering QB > PREMIUM > MID > LOW > MINIMAL must hold at **every** rating from 60
+to 99: in the reference implementation that is about 1.9x PREMIUM and 3.6x MID at
+equal rating, widening to 2.4x / 3.3x at the very top — a clear margin for the
+most valuable job in the sport, and nothing like the **18.3x** the old table
+charged at rating 88.
+
+**Tier by CONVERSION COMPONENT, not by position, and check it mechanically.** If
+your game lets a player change position for free (or for a rating cost the model
+charges), then any two positions a man can move between must take the **same**
+tier, or relabelling him is free money. Resolve the offensive line **up** (centre
+is paid 0.79 and sits at PREMIUM because it travels with left tackle at 1.29) and
+resolve the secondary **up with it** (corner is paid 1.24, third-highest in the
+game behind only EDGE 1.47 and LT 1.29, above DT 1.11 and RT 1.09 which are both
+PREMIUM). The reference implementation filed the secondary at MID because corner
+travels with safety at 0.77, and the owner's screenshot caught the result: a
+rebuilding club with $63.2M of room and a severe hole at corner refused a
+92-rated 25-year-old with six years of control for one projected top-ten pick. At
+MID a 92 corner based at **569** against a 92 receiver's **1083** — 0.53x for a
+position the game's own pay scale rates at 0.98x of the receiver. Against real
+trades the gap is the same size: a 94 at MID priced 766 while Ramsey cost about
+1640. Safety rides up with corner exactly as centre rides up with left tackle,
+and S at 0.77 is a shade under C at 0.79, so it is the same claim applied
+consistently. The football agrees: Fitzpatrick went for pick 18 and Adams for two
+firsts and a third, and at MID neither trade was purchasable at any rating.
+
+**Age arcs are a separate table from trade tiers**, and must *also* be constant
+across a conversion component (an age multiplier is part of a man's price, so
+keying arcs per-position reopens the arbitrage in the age dimension — measured, an
+old left tackle relabelled a guard priced at 1.10x mean and **2.49x** at worst,
+purely by escaping the receivers' decline curve):
+
+| arc | declineStart | per year | youth under | youth per year | positions |
+|---|---|---|---|---|---|
+| QB | 34 | 0.035 | 26 | 0.025 | QB |
+| SPEED | 29 | 0.075 | 25 | 0.035 | WR, CB, S |
+| STURDY | 30 | 0.06 | 25 | 0.03 | LT, LG, C, RG, RT, EDGE, DT, LB, TE |
+| BACK | 26 | 0.12 | 24 | 0.05 | RB |
+| SPECIALIST | 33 | 0.02 | 26 | 0.012 | K, P |
+
+Bound the final age multiplier to `[0.2, 1.4]`. The three cases the tier-keyed
+lookup split down the middle, where the constraint and the football agree: the
+whole line is STURDY (left tackle ages **best** in football, not like a
+receiver); the whole EDGE/DT/LB front is STURDY; both defensive backs are SPEED
+(corner is the most speed-dependent job after running back, and the component
+takes the corner's arc).
+
+**Contract: a surplus MULTIPLIER and a burden SUBTRACTION. They are not the same
+number.**
+
+```
+expectedApy   = marketValue(p)
+yearsLeft     = max(1, yearsRemaining)
+actualAnnual  = remainingValue(contract, mode) / yearsLeft
+controlFactor = clamp(yearsLeft / CONTRACT_CONTROL_YEARS_FULL, 0.25, 1)        // FULL = 4
+surplusFrac   = clamp((expectedApy − actualAnnual) / max(expectedApy, 1), 0, 1.5)
+contractMult  = clamp(1 + surplusFrac * controlFactor * 0.55, 1, 1.30)         // WEIGHT 0.55, MAX 1.30
+overMarket    = max(0, actualAnnual − expectedApy − 2_000_000) * yearsLeft     // FAIR_BAND per year
+burden        = (overMarket / BASE_CAP) * 900                                  // BURDEN_PER_CAP_YEAR
+```
+
+A multiplier can never price a bad contract, and this is why: `base` is surplus
+over **replacement level**, so a replacement-level man is worth exactly zero
+before any multiplier runs, and zero times a negative is still zero. The measured
+case: a 62 corner owed **$135.4M over five years** priced at **1.0 point** (a
+`max(1, total)` floor) and **thirty of the league's thirty-one clubs took him for
+nothing, and thanked you for it**. No stack of multipliers could have said
+otherwise, because there was nothing to multiply.
+
+So subtract the deficit **in dollars**. What an overpay costs a club is the cap it
+can no longer spend, and that is the same money whoever is being overpaid — $60M
+above market on a franchise quarterback and $60M above market on a special-teamer
+are the same $60M hole. It does not scale with the man, so it is not a multiplier
+on him. Keep the surplus side multiplicative, because a cheap deal genuinely **is**
+worth more on a better player: a rookie contract on a star is the most valuable
+asset in the sport and the same discount on a backup is worth nothing.
+
+The exchange rate, anchored in one checkable sentence: **burning a full season's
+cap on a man who gives you nothing costs about what a cornerstone is worth.** A
+cornerstone is 800 points, so 900 per cap-year — a shade dearer, because a cap
+year is spent and a cornerstone is still on your roster afterwards. Read against
+real trades: $22M above market ≈ 0.09 cap-years ≈ **78 pts**, a fourth-rounder,
+which is roughly what clubs have really paid to have a bad contract absorbed;
+$60M ≈ **212 pts**, a third; $130M ≈ **459 pts**, a second — so the $135.4M
+albatross now costs a real pick to be rid of instead of being a gift. Keep it
+linear and no steeper: the bar is "a liability must cost something", and an AI
+that refuses every trade is worse than one that accepts too many, because the
+market is most of this game.
+
+Take a **flat-dollar fair band** off first, not a percentage. The market-value
+estimate is a fragile placeholder that rounds to $100K, and no front office looks
+at a man a million and a half over the estimate and calls him an albatross.
+Without a band the burden charged that noise: an 85-overall punter at $3.5M
+against a $2.3M market — an ordinary deal, one year left — came out a **negative
+asset**, because his entire trade value is about four points and $1.2M is worth
+four. A 20% band would forgive $1.2M on the punter and $8M a year on a
+quarterback, which is forgiveness that grows precisely where the money is; the
+mispricing this absorbs is the estimator's, and the estimator's error is roughly
+a fixed number of dollars. State the band against the base cap like the rate —
+about 0.8% of a cap.
+
+**Need and fit are one bounded multiplier, blended by taking the larger of
+"needs sees holes" and "rosterFit sees upgrades"** (a club with nobody at a spot
+registers on both):
+
+```
+fitVal   = max(needs[position] ?? 0, rosterFit(p, roster)?.score ?? 0)
+fitBase  = NEED_MULT_MIN + fitVal * (NEED_MULT_MAX − NEED_MULT_MIN)       // 0.85 .. 1.40
+fitMult  = clamp(fitBase * windowMult, FIT_WINDOW_MIN, FIT_WINDOW_MAX)    // 0.72 .. 1.36
+```
+
+Width is a tax on every player-for-player trade, because this multiplier applies
+to **both** sides and they pull opposite ways: a club prices its own starter at
+the top of the band (losing him drops its depth chart) and prices an incoming man
+at the bottom (it already has one). Compounded with the accept ratio:
+`0.72/1.28 → 1.78x, 1.88x` versus `0.85/1.20 → 1.41x, 1.47x`. At the old width a
+club would not swap two genuinely comparable starters unless one side sent nearly
+twice the value — the "sending far more than you get is still refused" report,
+and an artefact of charging the same preference twice rather than a judgement
+about football.
+
+Then widen the **top** back out to 1.40, because a desperate club has to be able
+to act desperate. The owner's case: a win-now club with $108M of room and a 68 at
+quarterback refused a legitimate starter, and at a +20% ceiling it could not have
+done otherwise — even a club with **nothing** at the position could only bid a
+fifth more than one that was set there. Real football is not that flat: Denver
+sent Seattle two firsts, two seconds, two thirds and three players for a
+quarterback; the Rams sent two firsts and a third for one. 0.85–1.40 is a 1.65x
+span, still inside the 1.78x measured as too punishing.
+
+**Fold the club's competitive WINDOW into the same bounded multiplier**, clamped
+once against `FIT_WINDOW_*`, so there is exactly one roster-preference number in
+the formula and no path applies the preference twice. Measured, the product
+reaches the bounds only at the extremes and sits inside 0.85–1.25 for 95% of
+club/player pairs.
+
+The window is **not a discount on the man being sold**; it is a change in what
+the club thinks every asset is worth, applied wherever that asset appears. The
+owner's case, in his words: a bad club *"might sell a 1000 point asset for [a]
+915 point draft pick"* — and the clarification is the whole mechanism. It is not
+that rebuilding clubs are cheap, it is that they want a **different kind** of
+asset back. Picks are what a rebuild is for. So to a rebuilder a future pick
+really is worth more than the chart says and a 30-year-old starter really is
+worth less, and the 915 falls out of it: 915 neutral points of picks clears his
+price and 915 neutral points of veteran does not. Pricing it this way also stops
+it double-counting with the roster-fit term, which answers a different question
+(does he improve our lineup, not do we want him now or later).
+
+```
+WINDOW_SWING = 0.13, WINDOW_PIVOT_AGE = 27, WINDOW_AGE_SPAN = 6
+FUTURE_DISCOUNT_BASE = 0.85, FUTURE_DISCOUNT_SWING = 0.22
+perYearPickDiscount = clamp(0.85 + (0.5 − winNow) * 0.22, 0.6, 0.98)
+```
+
+0.13 is set against the owner's own number: a fully rebuilding club prices a
+31-year-old starter at about **0.91** of neutral, so 915 points of draft capital
+clears a 1000-point veteran — 31 is four years past the pivot over a six-year
+span = 0.67 of the full reading, and `1 − 0.67 × 0.13 = 0.913`.
+
+**Cap fit: ask whether THIS club can live with the contract**, which is a
+different question from whether the contract is good value and has a different
+answer for every club — a $20M salary is a bargain to a club with $60M of room
+and an impossibility to one with $3M, at identical market value. For an incoming
+man charge **base salary only** (the bonus accelerates onto the club giving him
+up, so using the raw hit overstates the bill on every bonus-heavy contract in the
+league) and scale the strain by his share of the club's room; for a man already
+on the roster the cap he frees is a reason to trade him, **but only for a club
+actually under pressure** — a club with room has no reason to shed salary, so
+leave the term inert there rather than quietly marking down every expensive
+player in the league.
+
+**League scarcity** nudges value and may never be the reason a punter prices like
+a premium asset: `SCARCITY_MULT_MIN = 0.9`, `MAX = 1.15`, computed once per trade
+evaluation from one league-wide fetch and passed in as a plain number map.
+
+**Noise last of the multipliers**: `1 + rng.normal(0, 0.09 * (2 − sharpness))`.
+Lower sharpness (easier difficulty) means a noisier AI.
+
+**Soften the ceiling; never clamp it.**
+
+```
+CEILING_SOFTENING = { KNEE: 0.60, LIMIT: 1.20 }
+softCeiling(total, ceiling):
+  knee = ceiling * 0.60
+  if total <= knee: return total
+  span = ceiling * (1.20 − 0.60)
+  return knee + span * (1 − exp(−(total − knee) / span))
+```
+
+A hard `Math.min(total, ceiling)` is the one shape ruled out for outliers.
+Measured before softening: a 94, a 96, a 98 and a 99 receiver at a club that
+needed one all priced at **exactly 2100** — one number for four different
+players, so the game could not tell the best receiver alive from a merely
+excellent one, and the trade screen quoted a figure the football model had not
+produced.
+
+Put the knee at 0.60 of the ceiling, not at the ceiling. A knee at the bound
+leaves the whole run-up uncompressed, and the run-up is where the men who cost
+real draft capital live. Measured as the ask a buyer has to beat, against the
+largest real deal of its kind (Ramsey 1640, Mack 1765 net, Tunsil ~2350, three
+mid-firsts for a franchise quarterback):
+
+| knee | top of market (92+ and QB) | everyone else |
+|---|---|---|
+| 1.00 | 1.18x | 0.99x |
+| 0.80 | 1.13x | 0.98x |
+| 0.70 | 1.11x | 0.98x |
+| **0.60** | **1.07x** | **0.97x** |
+| 0.50 | 1.04x | 0.96x |
+| 0.40 | 1.00x | 0.96x |
+
+0.60 takes about 60% of the excess off the top and leaves the rest of the league
+where it was: on a blind sweep of **8,275** rostered players, **97.4%** of
+valuations come back bit-for-bit identical and nothing at or below a 92 moves by
+more than 0.3%. And it makes the top **less** flat, not more, which is the
+opposite of what a clamp does: compressing earlier spreads the same headroom over
+a wider range of raw inputs, so the gap between a 96 receiver and a 99 goes from
+**72** points to **114**.
+
+Pick `LIMIT` by measurement. The pre-softening product runs to **1.82x** the
+ceiling on a 99 at a club with a hole, so the whole top of the market must fit
+inside the headroom:
+
+| limit | a 94 receiver .. a 99 receiver |
+|---|---|
+| 1.10 | 2293 .. 2310 — 17 points apart; the clamp again wearing a curve |
+| **1.20** | **2401 .. 2513 — 112 points**, about a fourth-rounder between an excellent receiver and the best one alive |
+| 1.25 | 2434 .. 2605 — 171 points, and PREMIUM's bound passes Tunsil |
+
+1.20 puts PREMIUM's hard bound at **2520** (under Tunsil's ~2400 plus a buyer's
+premium), QB's at **6000** — the owner's "four or five first-round pick
+equivalents" with the fifth intact rather than clipped — and MINIMAL's at **48**,
+a late fourth. Export the limit so nothing keeps a second copy of the bound: a
+probe that hard-coded 1.25 beside the code went on printing the old number and
+the old football sentence after the headroom was retuned to 1.20 — **a lying
+metric produced by the very measurement meant to catch one.** And remember the
+bound is on `total`, not on what a buyer pays: the poach premium applies after
+this, so the ask for a man at the bound is up to 18% above it on HARD (measured,
+the dearest receiver in a generated league asked **2614** against a stated bound
+of 2520).
+
+**Subtract the burden LAST — after the ceiling, and outside the noise.** After
+the ceiling, because the ceiling says how much a position can be worth **on the
+field** and has nothing to say about money owed: subtracted before it, a club's
+best quarterback pinned at 5000 would have his contract forgiven entirely by the
+clamp, and the bill would vanish into the rounding on precisely the biggest deals
+in the game. Outside the noise, because every other term is a scouting judgement
+and the noise is what makes clubs disagree about one — a contract is a public
+document and there is nothing to disagree about. Thirty-two front offices read
+the same player differently and the same bill identically, which is also how it
+works.
+
+**No floor on the finished value.** `Math.max(1, total)` is one of the two floors
+that made a liability impossible. A man must be able to come out a **cost**,
+which is the only honest answer for a man whose paper is worth more than he is.
+
+### 6.4 Price a pick, and name the right selection
+
+```
+pickValue(round, slot, profile, year, currentYear, imminentYear):
+  overall = (round − 1) * TEAM_COUNT + slot
+  chart   = PICK_VALUE_CHART(overall)
+  bias    = 1 + (profile.valuePicks − 0.5) * 0.5 + (0.5 − profile.winNow) * 0.35
+  perYear = clamp(0.85 + (0.5 − profile.winNow) * 0.22, 0.6, 0.98)
+  return chart * bias * perYear ^ (years beyond the imminent draft)
+```
+
+**Centre the GM bias on 1.0.** The old form `0.75 + valuePicks * 0.5 + (1 −
+winNow) * 0.35` handed a perfectly neutral GM a **1.175x** multiplier — harmless
+while the chart was being rescaled by an arbitrary constant anyway, and a lie now
+that the chart's numbers are the game's units. Keep the coefficients and the
+league-wide spread (roughly 0.62x–1.38x); move only the middle, so a neutral club
+prices pick 48 at **420** and "this player is worth a mid-second" is checkable.
+
+**Do not discount the imminent draft at all**, and count the discount from it
+rather than from the season. Picks for the upcoming draft are typically
+pre-generated as `seasonYear + 1` and stay that way all season, so without this a
+pick in the draft five months away was marked down 12% for being "a year out".
+
+**Resolve which selection the pick actually is, in this order of precedence:**
+
+1. **The seeded order wins over every projection.** Once the draft order has been
+   reseeded for that year, the stored slot *is* the running order the room is
+   being conducted by, per round. Pricing a projection against it is not merely
+   stale but backwards: during a live draft the standings have already been
+   wiped, so the projection collapses to database row order and the club holding
+   the **32nd** selection was charged for the **1st** — a gap of **1797** points
+   against **590** on the exact same pick the board was calling #32.
+2. **Before the reseed, project from the club's record.** The stored slot is only
+   a generation-time placeholder unrelated to performance, so a 0–5 club's first
+   should price like a first.
+3. **Regress further-out picks toward the middle of the round**, at
+   `FUTURE_SLOT_REGRESSION = 0.65` per year beyond the next draft:
+   `slot = clamp(round(middle + (projected − middle) * 0.65^yearsBeyond), 1, TEAM_COUNT)`.
+
+That regression exists because **a further-out pick must never be worth more
+than a nearer one from the same club.** The "everything past the next draft is a
+mid-rounder" rule got that badly wrong: measured, one club's first in the next
+draft priced at **495** and its first the year after at **713** — the
+further-away pick worth **44% more**, because a club projected to pick 32nd had
+its future firsts revalued as if it picked 16th and a 15%-per-year time discount
+cannot cover a 1.6x jump in slot. Two more clubs: 693 against 950, and 570
+against 808. That inversion is the mechanism behind the owner's screenshot — a
+future first from a good club charged for as a mid-first. Full regression to the
+middle is not honest either: clubs regress, but not instantly and not
+completely, and a front office plainly does not treat a contender's future first
+the way it treats a bad club's. At 0.65 the worst residual inversion across the
+league is **under 1%**, inside the valuation noise, and the ordering everywhere
+else is strict.
+
+Identify "the next draft" by **the smallest year with any unused pick**, not by
+comparing the pick's year to the season, because the year-roll happens partway
+through the offseason **before** that draft actually runs — so which pick is
+"this season's" depends on where in the phase machine the league sits.
+
+A valuation cannot refuse to produce a number the way a screen can: where the
+screen goes quiet (the gap between a draft ending and the next kickoff, where the
+imminent draft has jumped a year ahead of the last season on file) lean on the
+most recent finish — a stale read of a club, but a far better one than a
+generation-time placeholder. The two must agree exactly wherever a number is
+shown at all.
+
+### 6.5 Build the club-and-season context once, and seed the verdict
+
+Hold everything that is a fact about the **club and the season** in one object —
+GM profile, needs, league scarcity, draft order context, the difficulty spread,
+the noise prefix, the roster and the club's books — and build **one** per
+evaluation, shared by every asset on both sides. If a field you want to add
+varies with the offer, it does not belong there.
+
+That is also what lets the gap-closer try a dozen candidate packages against the
+same club without re-reading its roster, its books and the draft order a dozen
+times, while every candidate still goes through the whole real evaluation.
+
+**The verdict is a judgement, not a draw.** Seed the valuation noise
+`trade-${aiTeamId}-${seasonYear}` plus the **asset id** — and nothing else. The
+reference implementation seeded `trade-${aiTeamId}-${Date.now()}`, so every
+submission of the same offer re-rolled the ~9%-per-asset noise: a user who kept
+hitting Propose was rolling dice until the variance fell his way, and a
+borderline "no" was a few clicks from a "yes". The whole value model defeated by
+a button.
+
+Seed **per asset**, not per deal. Both kill the re-roll, and the finer grain is
+strictly better by measurement: a deal-level fingerprint re-rolls every asset the
+moment any one changes, so adding a seventh-round pick to an offer moved a
+measured deal from **1.058 to 0.951** — the sweetener made the AI want it 10%
+**less**. Per asset, a club's read on a given player is a property of that player
+(as it should be: it is that club's scouting being imperfect, not its mood), so
+adding to an offer can only ever add.
+
+The three things in the seed are the three that may legitimately change the
+answer: the club (a different front office may read the same player
+differently), the year (a package refused this season can be revisited next
+season; a "no" that never expires is its own bug), and the asset. Deliberately
+**not** in it: the clock, the iteration order of the offer, and the rest of the
+package.
+
+Seed the GM profile per club per season too (`gm-${aiTeamId}-${seasonYear}`). The
+reference implementation drew it from the shared evaluation rng, so a club whose
+stored profile was missing or partial was handed a **brand new personality on
+every submission** — and even with a complete profile, the four draws it consumed
+shifted the noise stream underneath the valuations.
+
+### 6.6 The bid/ask spread — difficulty changes the DIRECTION of a trade
+
+A club does not have one price for a player. It has two:
+
+```
+ASK (prying one of ITS players loose) = talent * (1 + poach) + owed
+BID (taking one of YOURS in)          = talent * (1 − haircut) + owed − burden * badContractTax
+```
+
+| difficulty | poach premium | dump haircut | bad-contract tax |
+|---|---|---|---|
+| EASY | 0.03 | 0.03 | 0.1 |
+| NORMAL | 0.07 | 0.07 | 0.25 |
+| HARD | 0.18 | 0.18 | 0.6 |
+
+**Exempt picks from the spread.** A spread applied to everything is
+algebraically identical to raising the acceptance threshold. Applied to players
+only, it prices the thing it is actually about — prying a man off a roster and
+out of a building — and leaves pick-for-pick trades at chart value, where a chart
+belongs. This is the point: on HARD the skill is finding a club that **wants what
+you have** rather than finding more points. A difficulty setting that only makes
+every deal need more value is a known failure mode.
+
+**Apply the spread to the TALENT, and let money owed ride through at face value
+on both sides.** A finished valuation can be negative, and multiplying a negative
+by `(1 − haircut)` marks the burden **down** — a club handing itself a discount
+on a debt it is about to be handed. The other direction is just as wrong: a poach
+premium on a liability says prising an albatross loose costs **more** than he is
+worth. So split: `talent = max(0, total)`, `owed = min(0, total)`.
+
+Charge the bad-contract tax **only on the receive side** — a burden a club is
+handing away is a saving, not a bill it can be charged for — and multiply the
+**contract deficit the valuation already found**, so it is silent on a fair deal
+and bites hard on a toxic one with no separate judgement about what a bad
+contract is. The owner's specific ask: on the hardest setting, dumping a burden
+should cost real compensation, because the club taking it on is doing you a
+favour. Put **no floor** on the result.
+
+### 6.7 Package quality: four quarters are not a dollar
+
+Judge a trade on what the piles **contain**, not only on what they add up to.
+Without this the arithmetic says six backups equal one star, and every trade
+economy that has shipped without it has broken the same way: aggregate junk until
+the sum clears the threshold.
+
+**Concentration** — discount the tail of a pile, on both sides:
+
+```
+CONCENTRATION = [1, 0.95, 0.85, 0.7], CONCENTRATION_TAIL = 0.55
+total = Σ over positive-value assets, ranked desc, of value * weight[i]
+      + Σ over liabilities (value <= 0) of value          // UNWEIGHTED
+```
+
+A roster fields eleven men at a time and holds 53, so the fifth piece of a
+package is worth genuinely less to the club receiving it than its price tag says.
+**Weight only the assets.** A liability is not made smaller by standing in a
+crowd: none of that reasoning survives being pointed at a contract, and left on
+the same footing an albatross sorted to the back of a five-man pile had **45% of
+its bill weighted away** — a fresh way to launder the same exploit, one asset
+removed.
+
+**Weight both sides identically.** If a bundle were discounted only when
+received, the same assets would be worth different amounts depending on which way
+they were travelling, and a user could trade a pile for a star and the star back
+for the pile, manufacturing value on every lap. Judging both piles by one rule
+makes a round trip exactly neutral **by construction** — and test that.
+
+**The headline rule: a cornerstone may not be bought with depth.**
+
+```
+HEADLINE_THRESHOLD = 800        // about a mid-first: an 89-90 at a premium
+                                // position, a 92 corner, a genuine franchise QB
+HEADLINE_SHARE = 0.4
+HEADLINE_PREMIUM_COUNT = 2
+premiumLine = PICK_VALUE_CHART(TEAM_COUNT)      // the LAST pick of round one
+
+headlineShortfall(receive, send):
+  pillar = send.best;  if (!pillar || pillar.value < 800) return null
+  wanted = pillar.value * 0.4
+  if (receive.best?.value ?? 0) >= wanted: return null
+  if receive.premiumCount >= 2 && receive.premiumTotal >= wanted: return null
+  return { wanted, best, name, isPlayer }
+```
+
+Size it as 35–50% of the man being moved (40% here). What the seller is short of
+afterwards is not points, it is a player nobody else has.
+
+**The second clause is not a count.** "First-round quality" read off the chart is
+a fixed line (590) tested against a man of any size, so a bare count got easier
+the bigger the cornerstone: two late firsts are **47%** of a 2500-point pillar —
+roughly what the share asks for, and the real trade this clause exists to permit
+— and **24%** of a 5000-point one, which is not a trade anyone has made. Make the
+second clause clear the **same** bar, spread over more than one piece. Two firsts
+for a franchise quarterback has a headline asset worth only about a quarter of
+him, and the Rams, the Bears and the Texans all made that trade; real two-first
+packages clear the added bar comfortably. What stops passing is a pair of picks
+that are first-round quality only by the letter of a threshold.
+
+Read "first-round quality" off the chart itself rather than writing the number
+down, so it stays true if the league ever changes size.
+
+**Gate the headline rule to offers that have NOT cleared the bar, and let it
+explain a refusal rather than cause one.** As a hard veto it produced a meter
+reading **102%** — over the club's own line — above the words **TURNED DOWN**,
+which is the same defect as a green "he will sign this" over a dead button. A
+number the game shows as the answer cannot be overruled by a rule the number
+knows nothing about. And the veto was very nearly redundant: concentration
+already discounts a pile and the total is computed **after** that weighting, so
+the junk-pile case is already refused on value — the canonical "four quarters for
+a dollar" probe (five starters plus a 2nd, 3rd and 4th for a 99 receiver) scores
+**0.52**, less than half the bar, before this test runs at all. What was left was
+a second penalty on top of the first, and the only offers it could change were
+ones that had already cleared the line — which is exactly the frustrating case,
+and it lands hardest on a rebuilder trying to turn real players into picks.
+
+### 6.8 The verdict
+
+```
+requiredRatio = aiAcceptsLopsided ? 0.9 : TRADE_ACCEPT_RATIO       // 1.04
+netBar  = sendValue > 0 ? sendValue * requiredRatio : sendValue
+clears  = receiveValue >= netBar
+shortfallPoints = max(0, netBar − receiveValue)
+```
+
+**When their side is empty the question is not a ratio.** The reference
+implementation wrote `sendValue === 0 ? Infinity : receiveValue / sendValue`, and
+that Infinity was the worst exploit in the game: a club being asked to give up
+nothing cleared any threshold ever set, so the pile coming **at** it was never
+priced at all — the $135.4M corner went to thirty of thirty-one clubs for
+nothing. A ratio needs a denominator; with nothing going out there isn't one, and
+the honest question is "is what we are being handed worth more than nothing?"
+
+**A negative ask is not a typo.** `sendValue` can come out below zero, and it
+should: a club asked to hand over an albatross is being done a favour, and the
+deal it will accept is correspondingly cheaper. Note the bar is **not**
+`sendValue × requiredRatio` there — multiplying a negative by 1.04 moves the bar
+the wrong way and has the club demanding **less** the more toxic the contract it
+is shedding.
+
+Do **not** change the gift case. An offer of a 91 receiver for nothing is one the
+AI genuinely accepts and should; `receiveValue >= 0` is true of every real asset
+and false only of a liability, which is the whole distinction the Infinity could
+not draw.
+
+**Refuse nothing-for-nothing explicitly.** Both piles empty prices 0 against a
+bar of 0, which clears — the old Infinity accepted it too. The screen refuses to
+submit it, but a server action is a public endpoint and this one would have
+written a transaction row and a retrospective for a deal in which nothing moved.
+
+**Keep `ratio` one number with one meaning on every path**, because consumers
+divide it by the required ratio to get "how far to yes". Where a ratio exists,
+use it. Where it does not, map the gap to the bar onto the same scale against the
+size of what is actually on the table, floored at a cornerstone's worth so a
+trivial offer of nothing much for nothing much cannot read as a landslide either
+way:
+
+```
+netScale = max(abs(receiveValue), abs(netBar), 800)
+ratio    = sendValue > 0 ? receiveValue / sendValue
+         : requiredRatio * clamp(1 + (receiveValue − netBar) / netScale, 0, 1.5)
+```
+
+**Derive "how much more" ONCE, and derive it so that doing it actually closes the
+deal.** There were two of these and they disagreed: the cap-blocked message
+divided (`requiredRatio / ratio − 1`), which is the real answer, and the plain
+value refusal subtracted (`requiredRatio − ratio`), which is not a percentage of
+anything. At a ratio of 0.70 against a required 1.04 the subtraction says "34%
+short" when the offer has to grow by **49%** — so a user who added exactly what
+he was told was still refused, and the screen looked like it was moving the
+goalposts. Floor it at 1%, because every branch that prints it is a refusal and a
+gap under half a percent rounded to a flat "we're about 0% short on value" — a
+club turning down a deal while saying it needs nothing more.
+
+Only quote a percentage when the ask is positive. A percentage of what the club
+is giving up is not a number when it is giving up nothing; say the shortfall in
+points and dollars instead.
+
+**Set the accept ratio at 1.04 and know what it compounds with.** The need band
+already charges an incoming player the bottom and an outgoing one the top, and
+the spread charges the direction on top of that. Do not write the compounded
+figure down from the algebra — **measure it**: pricing the same man in both
+directions through the whole evaluation, the round trip costs **1.34x** on
+average (n=6, range 1.14–1.42x), well under the algebraic worst case because the
+fit/window clamp binds and real depth charts do not sit at either end of the
+band. (The reference implementation's comment claimed 1.47x while the arithmetic
+it quoted had become 1.71x and the note under the need band in the *same file*
+said 1.65x — two numbers for one product, in one file.) 4% keeps a visible thumb
+on the scale without a football-literate offer reading as lopsided, and it sits
+inside the ~9% per-asset noise, so a genuinely fair offer is answered differently
+by different clubs — which is what shopping a player around should feel like.
+
+`TRADE_COUNTER_WINDOW = 0.35` decides only how a refusal is **worded** ("close,
+but we need a bit more" rather than "not enough here"). With players and picks on
+one scale a near-miss is usually one mid-round pick from closing, and a deal that
+close should say so.
+
+**Order the refusals, and give each its own instruction.** Check the AI's **cap**
+first (§6.9), then the headline rule (gated to non-clearing offers), then the
+nothing-for-nothing case, then accept, then the salary-dump case, then the
+counter window, then a flat refusal.
+
+For the **salary dump** (`receiveValue < 0`) there is no percentage to quote and
+"we're about 12% short" sends the user off to add another backup, so name the
+actual obstacle — the contract, by name and by dollar — and what closing it would
+take: *"It isn't <Name> we have a problem with, it's his contract — it runs $X
+past a fair price for a player at his level, and you're asking us to carry that.
+We'd need real compensation to do you that favour: <value phrase> on top, or take
+some of that money back the other way."*
+
+For the **headline** refusal, say what each percentage is counting. The owner's
+screenshot had the meter reading **68%** and the sentence reading *"91% of what
+that would take"* — both true, measuring different things (the meter is the whole
+offer against the club's bar; the sentence is the best single piece against the
+cornerstone bar), with nothing saying so, and a "whatever the totals say" clause
+actively implying the totals were fine when they were 32% short. Say which it is,
+say the value is short too, and do not say "we're not moving **him**" about a
+2027 first-round pick.
+
+### 6.9 The cap gate on a trade, and the two-sided rules
+
+```
+tradeCapEffect(c, mode):
+  if (!c || mode === 'OFF') return { frees: 0, takesOn: 0, dead: 0 }
+  hit  = capHit(c, mode)
+  dead = unamortizedBonus(c, mode)              // 0 outside REALISTIC
+  return { frees: hit − dead, takesOn: hit − prorationThisYear(c, mode), dead }
+```
+
+**The two sides of a trade are not mirror images, and this is the single place
+that says so.** In REALISTIC the signing bonus does not travel: the club giving
+him up eats the whole remaining proration immediately, and the club acquiring him
+inherits **base salary only**. In SIMPLIFIED the flat-APY contract travels intact
+and nothing accelerates.
+
+Make `takesOn` subtract `prorationThisYear`, never a flat `proration`. That is
+bug #1 in §0, and it was **enforced** because the gate runs on this function.
+
+Derive the trade's cap deltas from this one function, summed over the assets:
+
+```
+tradeCapDeltas(assets, fromTeam, toTeam, mode):
+  for each PLAYER asset with a contract:
+    push { teamId: fromTeam, delta: −effect.frees }
+    push { teamId: toTeam,   delta:  effect.takesOn }
+  picks carry no cap weight
+```
+
+and have the **cap gate**, the **executor**, the trade builder's live "space
+after" readout, the AI's own cap refusal and the gap-closer all run that same
+call. Two derivations of one figure is exactly how this app has repeatedly
+shipped a panel quoting a number it was not using.
+
+**Check the AI's own books before the value**, and mirror the gate's escapes
+exactly — a move that frees room or is cap-neutral (picks only) is never blocked
+even for a club already over the ceiling, and the same one-dollar slack applies.
+Without this the screen said "Deal accepted! Click confirm to execute" and the
+Confirm died on the cap: a bait-and-switch instead of a sentence a GM can act on.
+Judge only the AI's side here; the user's cap is his own business and is reported
+at execution.
+
+**Make the cap instruction and the value instruction agree.** Three stages of
+this went wrong in the reference implementation:
+
+1. *"Take a contract back the other way and we'll talk"* plus, when value was
+   also short, *"we'd want about N% more coming back"* — **opposite**
+   instructions. Taking a contract back means *we* send another player, which
+   fixes our cap and simultaneously widens the value gap we just asked him to
+   close. The owner's words: it *"requires more value from the player."*
+2. The fix for that said picks *"do both at once"*, which is true only of the
+   value half. The cap figure is a pure salary number and picks contribute
+   nothing to it, so **adding** picks cannot move it by a cent. Measured: piling
+   on one, two, four, eight and sixteen first-round picks left the same "adds
+   $39.4M against $29.4M of room" sentence on screen every time, because the cap
+   gate returns before value is considered. A user following that advice could
+   add the entire draft and never get past it.
+3. "We like the deal otherwise" is a sentence about a deal the club would take if
+   it had the room, and a **lie about a salary dump** — those fail the cap *and*
+   the value.
+
+So give each of the three cases its own instruction: cap-only → *"Take a contract
+back the other way, or send someone cheaper, and we'll talk — we like the deal
+otherwise."*; cap **and** value with a positive ask → *"The value is short too,
+by about N%. Adding picks won't move the cap number — only less salary coming at
+us will. Swap an expensive man for picks and you fix both at once."*; cap and a
+zero-or-negative ask → *"And the room isn't the only problem — you're asking us
+to take a contract on and hand nothing back, which we wouldn't do at any cap
+number."*
+
+**The trade deadline:** closed for the rest of the regular season once past the
+deadline week (default `tradeDeadlineWeek = 9`, matching the real Tuesday-after-
+week-9), and closed through the playoffs, the offseason and the re-sign window —
+reopening the moment free agency starts, which is this game's equivalent of the
+new league year opening. Make it a league setting (`tradeDeadlineEnabled`).
+
+### 6.10 Execute a trade
+
+Order the work exactly like this, and treat the ordering as load-bearing:
+
+1. **Resolve the charge year through `capChargeYear`,** never hard-code the
+   season. In the reference implementation this was right only by accident — the
+   deadline rule happens to close trading through the pre-roll window — but the
+   deadline is a league **setting**, and a league with it switched off can
+   execute a trade in OFFSEASON week 1 today. An accident of one rule is not a
+   guard.
+2. **Refuse an impossible trade before anything is recorded.** For every asset:
+   the same asset may not appear twice (on one side or on both — it would be
+   moved twice and land wherever the last write put it, which for a both-sides
+   listing means a club "trades" a player and keeps him); a player must be in
+   this league, not retired, and **on the roster of the club offering him**; a
+   pick must be in this league, unused, and owned by the club offering it. Name
+   each refusal in words a GM can act on.
+
+   This is not hypothetical defensiveness. The reference implementation's
+   executor moved whatever ids it was handed and checked only the salary cap, so
+   an offer naming a player on a third club's roster, a spent pick, a free agent
+   or a retired player moved him anyway — and one of those was reachable in
+   ordinary play with no tampering: an AI offer sits on the table for a week, the
+   club cuts the player it had offered, and accepting the stale offer hands the
+   user a free agent with no contract — **a permanent, free roster spot**.
+   Trading a retired player manufactured an error-level invariant violation.
+3. **Gate both clubs**, one net position per club across both directions, using
+   the deltas above.
+4. **Enforce the roster limit, and only block the user.** Nothing on the trade
+   path had ever read the roster maximum, so a club could take on twelve players
+   for nothing and carry **58** into week one — measured. The limit did get
+   enforced, but not until the following offseason's final cuts, which means the
+   overflow survives a whole season and is then resolved by the game waiving five
+   men on the user's behalf: worse than being told no. Count on the same
+   `ACTIVE` status cut-down day counts, or the screen refuses trades cut-down day
+   would have allowed.
+
+   Block the **user** with an action he can take ("release N before making this
+   deal"). For an AI club, **make room** the way it makes cap room — shed its
+   least valuable man first, on the same ranking cut-down day uses (§4.10). The
+   reference implementation threw for whichever club was over, which killed a
+   five-for-one on *"Charlotte Pumas would carry 54 players against a 53-man
+   limit. Release 1 before making this deal."* — an instruction the user cannot
+   follow, since he cannot release another club's player. The owner proposed the
+   fix himself: *"maybe the AI logic drops their lowest ovr player?"* Trim the
+   AI club to `rosterLimit − incoming + outgoing`, since none of the deal has
+   happened yet.
+5. **Snapshot what is moving, and what it is worth, BEFORE ownership changes.**
+   This is the only record of asset identity a retrospective can grade later, and
+   the only thing the wire can read to name the deal. **Hand the same snapshot to
+   both readers** rather than re-deriving it — re-deriving is a second reading of
+   one trade, priced by a second call to the valuation a few milliseconds later.
+6. **Inside one transaction, per asset, in this order:**
+   - **Claim it atomically first.** Update by `{ id, leagueId, teamId: fromTeam }`
+     (and `used: false` for a pick) and throw when nothing matched. A read in
+     step 2 cannot enforce ownership: at READ COMMITTED two confirms of the same
+     trade both read a valid roster and both proceed, and the second update
+     simply sets `teamId` to a value it already had. Matching on the current
+     owner means exactly one writes a row; the loser matches zero and throws,
+     rolling the whole thing back. That is what stops a double-clicked Confirm
+     filing the accelerated bonus twice (measured: **two `CapCharge` rows for one
+     player**), and it is why the charge is written **after** the claim.
+   - **Book the accelerated bonus on the selling club**, `unamortizedBonus`, dated
+     `chargeYear`, labelled `Traded away — Name`. The **bonus**, not what a
+     release would cost: his guaranteed salary is not escaped by trading him, it
+     travels with the contract and becomes the acquiring club's bill.
+   - **Move the contract with the bonus zeroed, the void years zeroed, and
+     `guaranteed` restated in the same write:**
+     `guaranteed = max(0, old.guaranteed − old.signingBonus)`. `guaranteed` is
+     stored bonus-inclusive, and the bonus has just been zeroed out of this row —
+     left alone, every dollar of bonus guarantee re-reads as guaranteed **base**
+     salary and the acquiring club inherits a dead-money bill for money the
+     selling club has already been charged for.
+7. **Reconcile both depth charts, in the same transaction as the move.** Moving
+   the roster spot is only half of arriving: a ranking function ranks a player his
+   chart does not name behind every player it does, so the man you traded for
+   lined up behind the entire position group and **took no snaps at all for the
+   rest of the season**, while the man you traded away kept a rank on the chart he
+   had left. A trade must never half-land.
+8. **Write ONE transaction row per deal, carrying the headline player's id.** A
+   four-man swap is one event; four rows read as four trades on the wire. Measured
+   across the whole transaction table: **25 TRADE rows in 272 leagues and ZERO of
+   them carrying a player**, while every other kind of move was attributable
+   (DRAFT 42,917 of 43,528; RESIGN 39,724 of 51,778) — so a trade was the one
+   thing that could happen to a career and leave no trace on it. One row is safe
+   only because the snapshot record carries the complete per-player ledger of both
+   directions, each entry keyed by real player id with the club abbreviations and
+   the league year on the row: "2031 — Traded to New York" is answerable for the
+   second, third or fourth piece as readily as for the headline. This row is the
+   announcement; that row is the ledger.
+9. **Return the wire line to the caller** rather than making a background pass
+   re-read "the most recent TRADE row for this league and week" — a query that
+   returns a different deal the moment two land in one tick.
+
+**Write the wire sentence from the snapshot, and make "blockbuster" mean one
+checkable thing.** Lead with the most valuable **man** moving in either
+direction, never a pick ("Chicago acquires a 2029 1st" is not a sentence a wire
+leads with; word the pick-only case separately as a swap). Fire the
+"BLOCKBUSTER" prefix at the same cornerstone threshold the headline rule uses,
+so the word means what the trade screen's own idea of a pillar means. Put the
+whole ledger, both directions, in the detail. The reference implementation's row
+read `Trade: ATL <-> BUF` over `ATL sends 2 asset(s), receives 2 asset(s).`
+
+**The force override, if you build one.** Suspend only the two refusals that are
+**policy** — the salary cap and the roster limit — and nothing else. Keep every
+rule that protects the integrity of the save: a club still cannot trade a player
+it does not own, a retired man, a spent pick or the same asset twice, and the
+money is still booked exactly as for an ordinary trade (bonus accelerates onto
+the seller, base salary travels, the charge dated by `capChargeYear`). Skipping a
+rule leaves a legal save in an illegal **state the player asked for and can
+see**; skipping an ownership claim leaves a save with contracts pointing at
+nobody, which is not an override, it is corruption. Do not skip the AI's roster
+trim either — the alternative is silently handing another club an illegal roster
+the player never sees.
+
+Why an override at all, rather than a looser accept ratio: the save it was
+written for could not be fixed by a lower bar at any value, because the problem
+was never price — an AI club had drafted a sixth quarterback and nobody in the
+league wants a fifth, so the deal that unbreaks the roster is one no club accepts
+at any ratio.
+
+### 6.11 The explainable factor breakdown
+
+Return **why**, not just a number, from the valuation: a list of
+`{ text, weight }` reasons where the weight is the value swing that factor
+caused. Then:
+
+- **Sort across every asset on a side, not within one.** Otherwise a minor note
+  about asset #1 outranks the actual dominant factor on asset #2 just by having
+  been evaluated first.
+- Show the strongest three per side, and label them correctly: the reasons for
+  the pile flowing **to** the AI explain why it wants or discounts them; the
+  reasons for the pile it would **give up** explain what it is losing.
+- **State a factor only when it is actually moving the number.** Every reason
+  carries its own value swing and the screen shows the top three, so a 2% nudge
+  that announces itself pushes a real driver off the list. Use real thresholds:
+  mention the contract burden only above ~15 points (about a sixth-round pick),
+  the window only above a 4% swing, cap strain only below 0.94, surplus only
+  above 1.12.
+- **Write them in the club's own first person** — "He starts for us at LT",
+  "We're rebuilding" — and have the panel attribute them to the club rather than
+  narrating them.
+- **Make them read correctly from both sides of a deal.** The same number is the
+  price of acquiring him and the price of prising him loose, so a screen that
+  says "he'd start for us" about a man who already does is explaining someone
+  else's roster. Branch on whether he is on this club's roster, and state the
+  gap in **rating points over the man he displaces** — "10 points better than the
+  man he'd replace" is a sentence a GM can check against the depth chart in front
+  of him, and "15.2" is not.
+- Say the honest thing about an empty slot: "He'd walk into an empty LT slot for
+  us — we're playing nobody there."
+- A spread the user cannot see reads as the AI being arbitrary, which is worse
+  than no spread.
+
+### 6.12 The gap-closer: name what would close a declined deal, and NEVER print a value
+
+**Owner requirement, explicit: the club's value points stay behind the intel
+screen. No suggestion may carry a numeric asset value.** A panel that said "add
+280 more" hands the GM the price list the AI is running on.
+
+So the numbers in this component do two jobs and neither of them is display:
+they **narrow** the candidate set before anything expensive runs, and they
+**order** the survivors cheapest first. What reaches the screen is an action, a
+football reason, and a **qualitative band**.
+
+**Verify every suggestion against the real evaluation.** Nothing here may
+estimate, interpolate or reason about what the engine "would probably" say. If a
+suggestion is on screen, the engine has already said yes to it.
+
+```
+EVALUATION_BUDGET = 24        // real evaluations one press of Propose may spend
+SHOWN = 3                     // three actions is a decision; ten is a list
+CHEAP_SHARE = 0.6             // of the budget, the share spent on the cheapest qualifiers
+NARROW_SLACK = 1 + CAP_GATE_TOLERANCE
+```
+
+**Re-ask the refusal; do not take it from the screen.** A verdict travelling over
+the wire is a claim about a package rather than the package itself, and this
+component's entire promise is that every suggestion was checked against the live
+engine. Start by re-evaluating the offer you were handed.
+
+**For a VALUE refusal**, offer two moves: add one of yours, or drop one of your
+asks.
+
+Narrowing an addition is an **exact necessary condition**, not a guess. Adding an
+asset to your side can move the club's receive total by at most the asset's own
+priced value: every piece is weighted by concentration (the first at 1.0, falling
+from there), and a newcomer both takes a weighted slot and pushes everything below
+it onto a smaller weight, so the gain is at most `value × 1.0` and never more. The
+club's bar does not move when you add to your own side (it is priced off what *it*
+gives up, which is untouched), so the gain has to cover the shortfall exactly.
+Therefore `value >= shortfall` skips nothing that could have worked. Assets above
+the line may still fail — on the weighting, on the cornerstone rule, or on either
+club's cap — which is what the verification pass is for.
+
+Price each candidate with the **same** pricing function the evaluation runs, on
+the same context, with the same per-asset noise seed, so the number you filter on
+is the number that will be used.
+
+**Split the budget.** Cheapest-first is what a GM wants, but a refusal can also be
+the cornerstone rule — "no quantity of depth buys this man" — where the only thing
+that works is a big piece. Spend `CHEAP_SHARE` of the budget on the cheapest
+qualifying assets and spread the rest evenly across the range **up to and
+including the largest**, which keeps the big-piece answer reachable on a deep
+roster.
+
+Only offer "drop your ask" when there is more than one asset on their side:
+dropping the only thing you asked for does not make a cheaper trade, it makes a
+donation.
+
+**For a CAP refusal the closers are money moves, and there are exactly two.**
+What lands on the club's cap is the base salary travelling with the men it
+receives, less what it frees by sending its own out — and **picks weigh nothing**,
+so no amount of draft capital can move it. So: ask for one of their contracts to
+come back the other way (filter on `tradeCapEffect(...).frees >= shortfall`), or
+take one of yours off your side (filter on `takesOn >= shortfall`). Use the same
+`frees`/`takesOn` the gate itself uses; the threshold is exact, since a move that
+covers less than the shortfall cannot clear it alone. Order least-disruption
+first: the smallest money move that actually clears it.
+
+**Run the user-side gates the executor runs and the evaluation does not** — his
+cap and his roster limit — and only for the candidates about to be shown. A
+suggestion the Confirm button would refuse is worse than no suggestion. (The AI's
+own books are already settled, because a candidate only reaches here having come
+back accepted and the evaluation refuses on the club's cap before value.)
+
+**Band the verified package qualitatively**, off the evaluation that accepted it:
+
+```
+pct = (ev.ratio / ev.requiredRatio) * 100
+pct < 108  -> 'ONLY_JUST'
+pct <= 125 -> 'COMFORTABLY'
+else       -> 'ROOM_TO_SPARE'
+```
+
+Use the acceptance meter's own overpay mark (108) and say "room to spare" in the
+same words the meter uses, not in points — past 125 the club is being handed
+materially more than it asked for, and a GM should be told before he clicks.
+
+Report `examined` and a `truncated` flag. Let `truncated` change only the
+**wording of the empty state** — never a claim that something works.
+
+Return the complete selection each suggestion produces (`give` + `get`), so a
+one-click apply sets it exactly.
+
+### 6.13 Trade retrospectives
+
+Snapshot, at execution: `{ type, id, label, position?, ovr?, value }` per asset,
+both directions, with the club abbreviations and the league year. Carry `ovr`
+so the wire can say "91 OVR EDGE Marcus Lane" without re-reading a row that has
+since moved, and so a retrospective years later can show what the club thought
+it was buying rather than what he became — and make it **optional**, because
+records written before the field existed have no answer and a career page must
+not print a confident 0 for a man nobody measured.
+
+**Grade with a NEUTRAL profile on both ends** (a flat 0.5/0.5/0.5, no team
+needs). A real trade grade compares what an asset is worth in the abstract, not
+how badly one side wanted it that day. Team-specific need is exactly what makes
+two GMs agree to a trade in the first place; grading through that lens rewards
+whichever side's needs happened to shift favourably, not who got the better
+assets.
+
+Price the snapshot's picks in the same order of precedence the live valuation
+uses (seeded slot, else projection, else stored placeholder) — a snapshot of a
+deal made mid-draft has to say what the selection **was**.
+
+Re-price now, per asset:
+
+- player missing from the league → 0, "No longer in the league."
+- retired → 0, "Retired since the trade."
+- else re-value, and note the direction: ≥ +15% "Blossomed into a N OVR
+  player."; ≤ −15% "Has fallen off — now N OVR."; else "Still producing at N
+  OVR."; free agent → "Now a free agent, N OVR."
+- pick gone → 0; **pick unused → `null`**, "Still on the board — not used yet."
+- pick used → value the player it became, "Became <Name> (<POS>), now N OVR."
+
+**`null` means ungradable, and it must propagate.** A side holding any unused
+pick has no "now" value, the whole trade is `pending`, and the verdict is "Too
+early to call — at least one future pick from this trade hasn't been used yet."
+
+**Grade on GROWTH relative to what each side's return was worth at the time**,
+not on who has more value now — a side that took a straight star already "won"
+the day of the trade, and the interesting question is whether that lead grew,
+shrank or flipped:
+
+```
+aGrowth   = aValueThen > 0 ? (aValueNow − aValueThen) / aValueThen : 0
+growthGap = aGrowth − bGrowth          // positive favours A
+EVEN_BAND = 0.08, LOPSIDED_BAND = 0.35
+```
+
+**A's return is what A RECEIVED.** Use the same side for each club in "then" and
+"now", or the before/after comparison silently compares the wrong assets.
+
+Export `growthGap` and make anything that **ranks** trades (a GM career page's
+best and worst deal) read that field rather than recomputing a growth comparison
+of its own, or a panel headed "best deal" ends up sitting over a verdict that
+names the other club. Export the per-club edge (`+growthGap` for A, `−` for B)
+and the same three-way call as a value (`WON` / `LOST` / `EVEN` / `PENDING`) off
+the same gap and the same bands, so a surface that wants to **claim** a trade
+cannot boast about a deal the verdict beneath it calls fair.
+
+**Filter on the query, not on the result.** Grading is not cheap: each record
+re-prices every asset with its own read, on top of a league-wide scarcity scan.
+Have the trade screen ask only about the club the GM is sitting across from, and
+leave the full history to the one screen where reading it is the reason you came.
+
+### 6.14 The AI's unsolicited offers, and the league that trades without you
+
+**One unsolicited offer, on a dice roll, from a club with real depth.** Pick a
+club, read its needs, and shop a man from a position where need is near zero
+(< 0.15) who is **not** a core starter (rating 67–89; fall back to 65–83 on the
+whole roster). Price him **with the club's own roster in hand**, so the ask
+reflects that he is surplus — without it the AI priced its fourth receiver as
+though he were about to start somewhere. Then find the **cheapest** pick of the
+user's (by this club's own pick scale) that still covers ~0.8x the ask, rather
+than reaching for his best future first every time.
+
+**Refuse to shop a man the club would have to pay someone to take.** A finished
+value can be negative, and unguarded the ask goes looking for the cheapest pick
+worth at least 0.8x a **negative** number, matches the user's last seventh, and
+puts an albatross on his desk described only by rating and position — and if the
+response path executes an accepted offer without re-evaluating it, nothing
+downstream catches it. Shopping surplus and dumping salary are different moves;
+this function is the first one.
+
+**If you build a background trade market — and you should — put no second
+acceptance model in it.** Until the reference implementation had one, the league
+re-signed, signed, cut and drafted on its own and never traded: **25 TRADE rows
+across 272 leagues**, about one deal per nine leagues ever. Every other market
+ran whether the player was watching or not; the trade market only existed while
+he had the screen open. So there was no trade market — there was a trade screen.
+
+What it buys is what the standings, the cap sheets, the draft board and a man's
+career page all sit downstream of: a contender that got stronger in week 9
+without asking, a rebuild that turned a 31-year-old into two picks, a target that
+is gone by the time you go looking for him.
+
+The rule, in one line: **nothing in that module may decide a trade is good
+enough. It may only decide a trade is worth asking about.** A search heuristic is
+a different thing from an adjudicator — asking the real evaluation about every
+pair of clubs and every asset is 496 pairs times a roster, and one call measures
+**30.8ms** — so let the heuristic pick plausible pairs and assemble a plausible
+package, and let it be **wrong**: when it is wrong the adjudicator says no and
+the tick moves on. A candidate generator that gets it wrong is slow. A second
+acceptance model that gets it wrong is a lie.
+
+Screen hopeless pairings in memory with a bar you **derive** rather than guess.
+Both sides must accept and each is charged twice: the club giving a man up wants
+its own valuation plus the poach premium plus the accept ratio; the club taking
+him on writes him down by the dump haircut and wants the accept ratio on top.
+Write both bars out, cancel the package, and what is left is a condition on the
+two clubs alone:
+
+```
+(buyer's price for the man / seller's price for the man)
+  × (seller's price for a pick / buyer's price for a pick)   >=  1.04 × 1.07 / 0.93  =  1.20
+```
+
+Use **1.24** rather than the bare 1.20 — a small margin for the fit and scarcity
+terms the screen cannot see — and treat it as a floor on **asking**, never a
+verdict: clearing it buys a candidate the right to be put to both clubs, twice,
+and nothing else.
+
+Write the deals through the ordinary executor with the override **unset**, so the
+gate holds for both clubs, the roster limit holds, proration accelerates onto the
+seller, the charge is dated correctly, picks genuinely change owner, both depth
+charts reconcile, and the deadline closes this market on exactly the week it
+closes the player's.
+
+Guard rails, all measurable, and all of them about not stripping the user's
+board before he can act: `MAX_EVAL_CALLS_PER_TICK = 60` (about 1.8s worst case),
+`ATTEMPTS_PER_DEAL = 12`, `SWEETENER_TRIES = 1` (if the seller is short but
+inside its counter window, add the next pick and ask once more — that is a phone
+call; more rounds is a search, and a search belongs to the player),
+`CLUB_SEASON_CAP = 3` (a rebuilding club selling a 91 for picks is the point; a
+rebuilding club selling its whole roster is a bug), `PAIR_COOLDOWN_WEEKS = 4`
+(stops the market undoing last week's trade, which is the shape churn takes when
+both sides sit near the line), `PLAYER_COOLDOWN_SEASONS = 1` (nobody bounces
+between clubs inside a season), `ELITE_OVR = 88` with
+`ELITE_MOVES_PER_SEASON = 3`, `MIN_KEPT_AT_POSITION = 1` (trading the only man at
+a spot is not a rebuild, it is a hole nobody chose), and
+`MIN_ASSET_ROUND = 3` — read the minimum off the chart as the value of the **last
+pick of round three** (116 points, about a 78 overall at a premium position: a
+rotation player, not a body) rather than writing a point total down.
+
+Report diagnostics counts (candidates, refused by seller, by buyer, by both,
+cap-or-roster blocked) and spend them on tuning only. A market that quietly
+produces nothing is indistinguishable from a market that is switched off, and the
+difference matters: a shortlist that never finds a pairing is a different defect
+from one whose packages the buyer always refuses. Store no verdict and let nothing
+read these counts to decide anything.
+
+---
+
+## 7. The invariants — build this suite BEFORE the systems it checks
+
+Two commands, and make them gate a release the way a real test suite would
+(non-zero exit on any failure):
+
+```
+check:money   money conservation, 8,969 assertions across composed mutation sequences
+check:cap     the whole contract-rules family, in order:
+              restructure (pure) -> restructure (write) -> franchise tag
+              -> re-sign -> fifth-year option -> money conservation
+```
+
+In the reference implementation **every one of these found defects that code
+review did not.** Write them first. The single-mutation checks are cheap and
+each one paid for itself; the composed one is the only thing that catches the
+class of bug that actually destroys saves.
+
+### 7.1 Conservation is the spine
+
+> **Over a contract's whole life, plus any dead money it leaves behind, what is
+> charged equals what is owed. Nothing appears, nothing evaporates.**
+
+Concretely, for every bonus dollar ever paid on a man — original, converted, or
+newly signed — assert that it is charged to **some** club's cap in **some** year
+**exactly once** by the end of the chain.
+
+### 7.2 Check sequences, not single mutations
+
+This is the point of the suite. **Every defect in this area's history was found
+in a single mutation examined on its own; a save is destroyed by the SECOND one**,
+because that is where a figure written in one frame is read back in another.
+
+Drive, two and three deep, and hold the whole chain to one sum at the end:
+
+- restructure × 2
+- restructure → extend
+- tag → extend
+- extend → trade
+- trade a man **mid-restructure-year**
+- then release him
+
+Drive them through the **real write paths** against a real database, not through
+the arithmetic — the arithmetic was never the half that broke.
+
+### 7.3 The clauses to assert
+
+**Money conservation (`check:money`):**
+
+| id | claim |
+|---|---|
+| M-1 | **A trade conserves the bonus.** Bonus billed to the seasons already played + what the trade books onto the selling club + what still prorates on the row that travels = the bonus the club actually handed over. |
+| M-2 | **Both ledgers move by exactly `tradeCapEffect`**, read off the live cap-summary function the cap page and every refusal run on — not recomputed. This is the clause bug #1 failed, and it failed it on the **buyer's** side, which is the side a cap gate has to protect. |
+| M-3 | **The gate quotes the figure the executor writes.** Sum the gate's deltas per club and hold them against the movement the ledger actually recorded. |
+| M-4 | **A release costs `deadMoneyOnCut`, exactly, once**, driven through the real cut path and read back off the `CapCharge` ledger. |
+| M-5 | **A sequence conserves** — the compositions in §7.2. |
+| M-6 | **The ledger and the summary agree.** Multi-year sheet column zero against the cap summary: same year, same ceiling, same active salary, same booked dead money. The masthead tile and the outlook chart are exactly that pair. |
+| M-7 | **No impossible money**, over every contract in the league after the whole sweep: no NaN, no Infinity, no negative cap hit, no negative dead money, no negative years, no proration over a window of zero, no guarantee below the bonus already handed over. |
+| M-8 | **Every charge files in the book year**, exercising **both sides of the roll**, for the cut path and the trade path alike (§9). |
+| M-9 | **The meter and the write are one gate, and the room it promises is the room the ledger gives.** Ask it **behaviourally** rather than by re-deriving the server's figure: squeeze the club's room to exactly what the panel says the deal adds, then actually write the deal. |
+
+**Restructure, pure arithmetic (55k shapes):**
+
+| id | claim |
+|---|---|
+| R-1 | A **zero-dollar** restructure is a no-op: same cap hit this year, same figure in every remaining year, same dead money. |
+| R-2 | Total proration charged across a deal's whole life equals the bonus actually paid, **however many times it is restructured**. |
+| R-3 | A zero-dollar restructure moves no money between years either. |
+| R-4 | The guarantee stays in the same frame as the bonus. |
+| R-5 | `converted` reports what was actually converted, and no year pays under the league minimum. |
+| R-6 | An extension carries the unamortised bonus too, and the life-of-deal total is conserved. |
+
+**Restructure, the write:**
+
+| id | claim |
+|---|---|
+| W-1 | Every field the pure function computes is the field that is stored. |
+| W-2 | The **consequence**, not just the field: dead money after the write is what the restated guarantee implies. |
+| W-3 | The ledger the cap page reads agrees with the contract. |
+| W-4 | A restructure still moves money rather than making it. |
+| W-5 | After an extension, dead money rises by exactly what was converted and by nothing else. |
+
+**Franchise tag:** F-1 conservation; F-2 the tag costs the tag value and no more;
+F-3 the ledger moves by exactly `tagValue + accelerated − oldHit`, read off the
+summary; F-4 the figure the tag books is the same bonus a cut would accelerate;
+F-5 nothing is invented either (a deal with no unamortised bonus left books
+nothing); F-6 the charge files against the year the club is actually in.
+
+**Re-sign:** R-1 nothing paid goes uncharged; R-2 the same bonus every other exit
+charges; R-3 re-signing never frees more cap than his old hit; R-4 appending is
+not replacing and must not double-charge; R-5 nothing is invented either; R-6 the
+charge files against the year the club is actually in.
+
+**Fifth-year option:** O-1 conservation; O-2 **the season in front of him does
+not move** (his fourth-year hit is unchanged to the dollar); O-3 the option year
+costs the option salary and nothing else (no bonus proration on it); O-4 it is a
+real premium (strictly more than his own fourth year); O-5 once exercised it is
+guaranteed and a release pays for it, driven through the real cut; O-6 declining
+moves nothing at all; O-7 it is answered once (a second answer in either
+direction is refused); O-8 round one only, enforced by the **write path** and not
+only by the UI.
+
+**Negotiation agreement:** sweep the widened state space typed entry opens up and
+assert the clamp is closed under it; assert the browser decision and the server
+decision reach the same verdict, the same band, the same patience cost and the
+same cap delta for the same offer; assert the AI's written contract matches the
+package its floor was priced for.
+
+### 7.4 Make the harness prove it can fail, every run
+
+A check that reads a field which is not there compares `undefined` to
+`undefined`, reports a pass and tests nothing. The reference implementation made
+this mistake and paid for it: one probe read `stats.receptions` where the field
+was `rec` and cheerfully reported **28,534 samples of 0.0000**.
+
+So every run must fire:
+
+- **(A)** an assertion of a knowingly **false** claim — it must **fail**;
+- **(B)** the `undefined`-vs-`undefined` trap — it must **fail**;
+- **(C)** a field-presence check on a deliberately **misspelled** column — it
+  must come back undefined.
+
+If those do not produce **exactly** the expected failures, fail the whole run
+outright, because its assertions do not work.
+
+### 7.5 Harness hygiene
+
+- **Build your own league and destroy it.** Never read, write or delete a league
+  the harness did not create, and tear down **by collected id**. Sweep the cap
+  charges explicitly and count the leftovers even when they cascade — a check
+  that leaks rows into a shared database is a check nobody will run twice.
+- **Sample blind.** Take subjects in `id` order, never
+  `orderBy: { rating: 'desc' }, take: N` — a sweep that only ever looks at the
+  best players measures the best players.
+- Run the money check **last** before sharing a build. Every defect it is built
+  around silently corrupted a save somebody had already put seasons into.
+
+---
+
+## 8. Known simplifications — write these down in your README
+
+State each of these where a player can read it, rather than letting a GM infer a
+rule the game does not have:
+
+- No post-June-1 designation: a release lands entirely on one season.
+- No exclusive/non-exclusive franchise tag split, and no escalator for a second
+  consecutive tag on the same man (that needs contract history the schema does
+  not keep once a contract is replaced).
+- One tag per club per league year.
+- One `signingBonus` column, so an extension or a restructure re-prorates the old
+  bonus's unamortised remainder alongside the new one instead of keeping two
+  schedules. Conservation holds; the shape shifts a little money later on deals
+  past the proration window (§4.5). **If you give the row a list of bonus
+  tranches instead, this simplification disappears — and keep conservation as the
+  thing you test.**
+- The fifth-year option is guaranteed in full on exercise, not in the real
+  two-stage injury-then-full form.
+- No cap carryover between years other than the overage carry in §9.4, and no
+  cap penalties beyond it.
+
+---
+
+## 9. The year-skew trap — get this right or two bugs are latent for months
+
+### 9.1 The trap
+
+Age the contract ledger **at the final whistle**, inside the playoffs' last step,
+before the phase even flips to the offseason. But `League.seasonYear` does not
+move until the standings-reset step, which is the **second** step of the first
+offseason advance.
+
+So through **OFFSEASON weeks 1–2** there is a window where `capHit` returns
+**next** year's number for every man in the league while `League.seasonYear`
+still names the season just played. **The ledger and the clock disagree by a
+year.**
+
+### 9.2 The rule: write and read every money figure in the BOOK year
+
+```
+capChargeYear({ phase, week, seasonYear }):
+  beforeYearRoll = phase === 'OFFSEASON' && week <= OFFSEASON_YEAR_ROLL_WEEK    // 2
+  return beforeYearRoll ? seasonYear + 1 : seasonYear
+```
+
+Real football has the same boundary and answers it the same way: a player
+released after the season ends but before the new league year opens counts
+against the **new** year.
+
+Date every write by this: cuts, the tag's acceleration, the re-sign's stranded
+bonus, the trade's acceleration, the void-year bill. And **read against it too**:
+
+```
+bookYearFor(league, askedFor) =
+  askedFor !== league.seasonYear ? askedFor
+  : capChargeYear({ phase: league.phase, week: league.week, seasonYear: askedFor })
+```
+
+Shift **only** the current league year. A caller naming any other year means that
+year literally — and there is exactly one such caller, the closing-year
+settlement (§9.4), which asks for the **closing** year while the league row has
+already stepped onto the new one and must get it unshifted or the settlement
+restates itself off the wrong season.
+
+Keep the week constant as an index into the **step list**, not a count of
+advances. In the reference implementation collapsing the offseason into two
+presses meant one press carries three steps, so a league goes from week 1 to week
+4 and the pre-roll window is a single observable week rather than two — but the
+step at week 2 is still the standings reset, so the boundary is unmoved and a
+save stranded mid-roll by an older build still reads right. **Move this constant
+only if the roll step moves within the step list, not if the steps are regrouped
+into different presses.**
+
+### 9.3 The two bugs this closes, both measured
+
+**Reading the clock when the ledger had moved** produced a figure that described
+no league year at all. Measured on a scratch league driven four seasons, one club
+at OFFSEASON week 1 was shown:
+
+```
+ceiling      $262.7M   the 2029 ceiling — the season just PLAYED
+salaries     $274.1M   2030 terms — the ledger had already rolled
+dead money     $3.7M   2029 charges — a closed season's bill
+----------------------------------------------------------------
+on screen    −$15.1M   three years stitched into one number
+```
+
+One advance later, with **no transaction of any kind**, the same club read
+**−$8.8M**: the ceiling moved onto 2030 (+$2.6M) and the 2029 dead money stopped
+being counted (+$3.7M). That **$6.4M was never real** — the 2029 bill had already
+been paid out of the 2029 books, so charging it again on top of next year's
+salaries is a double count. The owner watched his room go **$918K → $9.07M →
+$27.0M** across a playoff exit and an offseason and asked where the money came
+from. Every figure was right; what was wrong was the **label** — next year's cap
+sheet under this year's date, with nothing on screen saying so.
+
+**And it ran the other way, which is the dangerous half.** The cut path dated its
+dead money by the **new** year (correctly — the new year is the one that will pay
+it), so a release booked a charge the reader was not reading. Measured: releasing
+an **$80.6M** dead-money contract at OFFSEASON week 1 moved the club from −$6.8M
+to **+$39.2M** on screen *and in the cap gate*, for a move that actually left it
+**$34.6M worse off**. One advance later the same club read **−$35.0M**. A GM
+cutting his way out of a bad number in that window was being shown a windfall for
+a catastrophe.
+
+**Make the reader follow the ledger**, because the write paths already do. Also
+filter booked rows to `year >= bookYear`: between the ledger rolling and the
+stale-charge sweep, a settled row is still sitting on the table and counting it
+bills the club twice for one season for the length of the whole pre-roll window.
+
+Rejected, and do not revisit: **moving `League.seasonYear` forward at the end of
+the playoffs** so the two never disagree. It is the honest shape and it is not
+surgery — the standings-reset step closes the season's stats, awards and
+standings against that same field, the progression summary calls it "the season
+just played", and every offseason transaction is stamped with it. One seam would
+close and five would open. Rejected: **leaving the arithmetic and explaining the
+jump in words** — the number is a closed season's bill added to a new season's
+salaries under an old season's ceiling, and there is no honest sentence for that.
+
+**Carry a `preRoll` flag and say it on screen.** Through those weeks the league
+clock in the header reads one year while the cap sheet reads the next, and the
+panel must say so.
+
+**Do not enforce compliance during the roll.** The books are legitimately mid-roll
+there: every deal has been stepped onto its next (escalating) base-salary year,
+but expiring contracts do not drop off the ledger until the re-sign window closes.
+A sim-health trace across four seasons shows this window is exactly where clubs go
+negative and where they come back on their own — over-cap clubs appear at
+OFFSEASON wk1 and clear the moment free agency opens, every year, league-wide.
+Blocking there fires on almost everyone every single offseason for a condition
+that resolves itself one step later: a rule that reads as a bug. Demand compliance
+from the new league year onward, which begins at free agency — the same boundary
+that reopens trading. Export that predicate so the standing banner promises
+exactly what the gate enforces instead of threatening a block that will not
+happen.
+
+### 9.4 Close the roll honestly: settle, then sweep
+
+**Order these three, and the order is the whole fix.**
+
+1. **Settle the closing year's overage, from inside the aging step**, before the
+   ledger steps. That is the last moment the closing year's cap position can be
+   read at all, because aging rewrites every cap hit into next year's terms.
+   For every club: delete this settlement's own previous row for the year (so a
+   re-run restates rather than compounds), read the closing year's position
+   **unshifted**, and write `max(0, −capSpace)` into the **new** year as a real
+   `CapCharge` labelled `Cap overage carried from <closingYear>`.
+2. **Age the ledger**: decrement `yearsRemaining` for every ACTIVE player's
+   contract above 0.
+3. **Sweep charges dated before the new year.**
+
+Why the settlement must exist at all: dead money here is a one-year charge, and
+the sweep is the right shape for a club that **had** the room — spending real cap
+space on a mistake is what paying for it means. It was catastrophically wrong for
+a club that did not. Measured, the same **$74.6M** albatross released on four
+clubs:
+
+```
+PRESEASON wk1  $34.9M of real space  ->  $39.7M vanished at the roll
+REGULAR   wk4  $31.5M of real space  ->  $43.1M vanished
+PLAYOFFS  wk19 $24.0M of real space  ->  $50.6M vanished
+OFFSEASON wk1  filed against the new year — paid in full, correctly
+```
+
+And the loop it opened: restructure twelve men to convert base into bonus,
+banking the relief this year, then release all twelve in the playoffs. Every
+dollar of proration those restructures owed to later years accelerated into a
+charge that midnight deleted.
+
+**Carry the OVERAGE, not the charge.** Re-dating the dead money itself would bill
+a club that had $80M of genuine space exactly as hard as one that had none, and
+would make releasing a man in the last week of a season you were comfortably
+under strictly **worse** than releasing him in the first. The overage is the part
+that was never funded, which is precisely the part that has to survive the
+calendar.
+
+**Do not cap the carry.** A ceiling on it is a hole the exact size of the
+ceiling, and the invariant it restores says "exactly". It cannot be reached by
+accident, because the advance gate already refuses to advance a club that could
+cut its way back under — the only way to end a year over is to be past the point
+where cuts help, which takes a deliberate teardown. And it liquidates itself: any
+year the club spends less than the ceiling, the debt shrinks by the difference.
+
+**Apply it to every club, not just the user.** It is a salary cap. Measured
+across a full generated league at a season's close, **0 of 31** AI clubs were
+over it (median space $98.8M) — they are gated at transaction time and simply do
+not get there, so applying the rule league-wide costs nothing and means the
+ledger says the same thing about everybody.
+
+Narrow it to REALISTIC: simplified has no dead money and off has no ceiling, so
+neither has an overage to carry.
+
+**Make the aging step idempotent and claim it with a compare-and-set**, keyed on
+a stored "contracts aged through year" column. A plain read-then-write is not
+enough: two advances landing together both pass the read, and this step is not
+idempotent in either half — aged twice, every contract loses two years for one
+season of football; settled twice, the loser reads a ledger the winner has
+already stepped forward and restates the closing year's overage off next year's
+hits. Roll the mark back on failure, because the alternative failure mode is the
+one the phase machine cannot survive: **marked but un-aged means no contract in
+the league ever expires again, and nothing on screen would say so.**
+
+### 9.5 Release the expiring class, and make the delete the claim
+
+When the re-sign window closes, release everyone still at `yearsRemaining === 0`.
+Void years settle here.
+
+**Order the three writes: delete, then charge, then free-agent him.** This is the
+one place to resist a `delete` by primary key that throws on a missing row. The
+reference implementation had exactly that, and it threw on ids the query had just
+returned — which reads as impossible until you notice a second advance in the same
+window releasing the same men. It could have been left as a shrug; it must not be,
+because the cap charge was written **first**, so two runners both booked the
+void-year bill before either deleted anything, the club paid the same stranded
+proration **twice**, and only the crash said so. Deleting first turns the row into
+the token: exactly one runner can take a given man off the books, and only that
+runner charges his club and puts him on the street. Anyone arriving second finds
+nothing to take and moves on.
+
+Charge `strandedVoidBonus` via the shared function, labelled `Void years —
+<Name>`, dated to the league year the deal ran out in — the same label and the
+same figure the runway promised a year earlier. Without this the void-years slider
+is free money, because a cap charge would only ever be raised by cutting a player
+early.
+
+### 9.6 Tell the user what just left the books
+
+When the expiring class walks, quote what it was costing with the **same**
+`capHit` the cap summary sums, so the figure in the advance summary is exactly the
+figure that leaves the committed tile one moment later. Deriving it any other way
+is how this app has repeatedly shipped a sentence quoting a number it was not
+using.
+
+---
+
+## 10. Where to deviate, and what to measure if you do
+
+These are the places the reference implementation is least confident. Decide them
+yourself, but keep the measurement discipline.
+
+- **`MARKET.SCALE` and the whole price level.** Tagged a fragile placeholder.
+  Moving it reprices every contract in the game, and the reference implementation
+  left a measured discrepancy in place rather than retune: a generated club
+  actually carries **47.4 men costing 99% of the base cap at market** (median
+  94%), where the calibration comment claimed 92% of a 53-man roster. Re-measure
+  against **your** roster generator's output before you trust either number.
+- **The position multipliers are one scalar per position, so they cannot say
+  "top-heavy".** The real receiver market is far more top-heavy than 1.27 says: a
+  genuine WR1 is worth more and a fifth receiver less. Fixing that needs a
+  per-position **curve shape**, not a bigger multiplier, which would just overpay
+  the depth.
+- **The MID trade tier's ceiling (1500) is headroom, not an anchor.** No tight end
+  or linebacker has ever fetched a first and a high second, and the curve does not
+  reach it below 99. If you want MID anchored, find a real trade for it.
+- **Nothing below round one of the pick chart is bent**, even though the
+  measurement says the chart runs under the best case from pick 48 on (0.88x) and
+  far under it in round seven. That is a different claim needing different
+  evidence; if you bend it, measure the same best-case yardstick at every slot
+  first.
+- **Parking tuning constants beside their function instead of in the tuning
+  module** is a smell the reference implementation carries deliberately in one
+  place (the term constants). Put yours in one place.
+- **The re-sign reserve (`CAP_RESERVE = 10_000_000`) and the tag reserve
+  (`TAG_CAP_RESERVE = 2_000_000`)** are a football statement, not an arithmetic
+  one: a club that tags its best player has decided that man **is** its
+  offseason, so it holds back far less than the re-sign wave does. Roster
+  **legality** is reserved separately, per open slot, and is not negotiable.
+  Re-derive both against your own AI budgeter rather than copying them.
+- **The AI's tolerance constants are the two you should measure against your own
+  league**, because both were set by sweeping real outcomes:
+  `FIFTH_YEAR_OPTION_TOLERANCE = 1.75` (what an AI club will pay for an option as
+  a multiple of the man's market APY — measured on 52 first-round options over
+  two scratch leagues: ratio p10 1.13, p25 1.30, p50 1.90, p75 2.58, p90 4.50,
+  and candidate ceilings exercising 4% at 1.00, 29% at 1.50, 44% at 1.75, 56% at
+  2.00, 75% at 2.50; the real sport picks up about half, and erring low makes the
+  AI a tougher grader rather than a rubber stamp — a club that declines an option
+  it should have taken loses a player, a club that takes one it should not is
+  stuck with the salary, which is the worse of the two to make thirty-two times a
+  year) and `TAG_PRICE_TOLERANCE = 1.20` with `TAG_MIN_OVR = 88`.
+
+  The tag pair is worth copying the reasoning for. Measured on the dev database
+  before it existed: **2 TAG rows across 270 leagues**, against 52,047 re-signs,
+  40,346 signings and 13,968 cuts — so an elite man whose club could not reach
+  terms reached free agency **every single time**, however much room that club was
+  sitting on (a 99 quarterback walking from a club holding $50.9M). Test the
+  **price**, not the rating, because the tag costs the top-five average at the
+  position and so has nothing to do with the man being tagged: measured over
+  66,203 rostered players in 46 leagues, the median tag is $32.9M at QB (12.9% of
+  a $255M cap), $22.5M at EDGE, $20.3M at CB, $12.2M at LB, $8.4M at RB and
+  $3.0M at K. A rating bar alone means something completely different at
+  quarterback than at safety. The honest comparison is tag price against market
+  value, which already knows position, age and ceiling — median ratio by overall:
+
+  | ovr | 99 | 96 | 93 | 91 | 90 | 88 | 86 | 84 | 82 | 80 | 76 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|
+  | × | 0.61 | 0.75 | 0.89 | 1.02 | 1.04 | 1.14 | 1.29 | 1.43 | 1.60 | 1.80 | 2.48 |
+
+  It crosses 1.00 at **91**: at that quality and above the tag is *cheaper* than
+  what the open market would pay, and a club that lets him walk has turned down a
+  discount. Keep the tolerance above 1 because the tag is not the same good as a
+  contract — one fully guaranteed season, no bonus, no dead-money tail, no bidding
+  war, and he cannot leave. Keep it far **tighter** than the option tolerance for
+  two reasons that are both scarcity, not taste: a club answers every
+  first-rounder's option but has exactly **one** tag a year, so paying it on the
+  wrong man costs the right man as well; and the option buys an ascending
+  24-year-old while the tag buys a veteran at the top of his market who is more
+  likely to be leaving his best football behind him. 1.20 lands the bar at roughly
+  overall 87 in a prime-age man and pulls it up sharply for an older one — an 88
+  at 27 is tagged, an 88 at 33 is not, and no constant had to know that. Keep the
+  rating floor as a **floor, not the test**: without it the price test alone tags
+  a kicker whose $3.0M tag happens to sit at his market — cheap, defensible on the
+  spreadsheet, and a waste of the one tag a club gets.
