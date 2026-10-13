@@ -259,6 +259,33 @@ function lastCheckpointBefore(week: number, interval: number): number {
  * final regular-season week itself (however many weeks that leftover window
  * covers) so no games go uncredited just because the season length isn't a
  * clean multiple of the interval.
+ *
+ * ---------------------------------------------------------------------------
+ * A SEASON IS ONE SEASON OF GROWTH, AT EVERY SEASON LENGTH
+ * ---------------------------------------------------------------------------
+ * The shares a season hands out have to SUM to the season total, and they did
+ * not. This used to price every window at `weeksInWindow / INTERVAL` of
+ * CHECKPOINT_GROWTH_SHARE — i.e. a flat 1/16th of a year per week, because
+ * 4 x 0.25 is one year over sixteen weeks. The league plays SEVENTEEN
+ * (LEAGUE.REGULAR_SEASON_WEEKS), so the leftover week 17 window was credited a
+ * seventeenth share on top of a complete year and the shares summed to
+ * 1.0625: measured, every player drew 6.25% more development per season than
+ * the design says, and the constant that means "one season of growth" quietly
+ * meant 1.0625 of one. It got worse the longer the season — 1.125 at 18 weeks,
+ * 1.25 at 20.
+ *
+ * RENORMALISED RATHER THAN RE-SHARED, because no individual share was wrong:
+ * week 17 genuinely is one week's worth of a window, and docking it alone
+ * would make a week-17 checkpoint worth nothing while leaving the per-week
+ * rate wrong at every other season length. Dividing the window by the SEASON
+ * instead of by the interval makes the per-week rate 1/seasonLength by
+ * construction, so the shares sum to the season total exactly, for any
+ * season length and any interval.
+ *
+ * `INTERVAL * CHECKPOINT_GROWTH_SHARE` is that season total, and it is what
+ * the two constants have always been trying to say: four quarter-shares is
+ * one year. Retune either one and the sum moves deliberately instead of by
+ * accident.
  */
 export function checkpointShare(week: number, seasonLength: number): number {
   const interval = PROGRESSION.CHECKPOINT_INTERVAL;
@@ -266,7 +293,8 @@ export function checkpointShare(week: number, seasonLength: number): number {
   if (!isCheckpoint) return 0;
   const weeksInWindow = week - lastCheckpointBefore(week, interval);
   if (weeksInWindow <= 0) return 0;
-  return (weeksInWindow / interval) * PROGRESSION.CHECKPOINT_GROWTH_SHARE;
+  const seasonTotal = interval * PROGRESSION.CHECKPOINT_GROWTH_SHARE;
+  return (weeksInWindow / seasonLength) * seasonTotal;
 }
 
 export async function applyInSeasonProgression(

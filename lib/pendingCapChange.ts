@@ -54,7 +54,8 @@ import { capForLeague, type LeagueCapFields } from './leagueYear';
  * WHAT IS DELIBERATELY NOT PREDICTED, and why each one is left alone:
  *
  *   OFFSEASON   the press runs PROGRESS, and PROGRESS is a RETIREMENT ROLL —
- *               `rng.bool(retirementChance(...))` per man over 32, with the
+ *               `rng.bool(retirementChance(...))` per man old enough for the
+ *               odds to be nonzero at his position, with the
  *               contract row deleted outright for everyone it takes. The seed
  *               is deterministic, so it is *reproducible*; it is not
  *               *derivable* without re-walking `progressAllPlayers`'s exact

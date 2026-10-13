@@ -970,7 +970,15 @@ export const DEFAULT_AGE_PROFILE = { peakShift: 0, declineMult: 1 };
 export const PROGRESSION = {
   /** Run a development checkpoint every N regular-season weeks. */
   CHECKPOINT_INTERVAL: 4,
-  /** Share of a full year's growth applied per checkpoint (4 checkpoints/season ≈ one full year, same total as the old single roll). */
+  /**
+   * Share of a full year's growth applied per checkpoint. CHECKPOINT_INTERVAL
+   * times this is the SEASON TOTAL — four quarter-shares is one full year,
+   * the same total as the old single offseason roll. `checkpointShare`
+   * (lib/development.ts) normalises the windows it hands out so they sum to
+   * exactly that total whatever the season length; before it did, a
+   * seventeen-week season summed to 1.0625 of a year and a twenty-week one to
+   * 1.25. Retune this and the season total moves with it, deliberately.
+   */
   CHECKPOINT_GROWTH_SHARE: 0.25,
   /** Growth multiplier for a player pacing the top of his position group in production since the last checkpoint. */
   BREAKOUT_GROWTH_MULT: 1.6,
@@ -1283,9 +1291,30 @@ export const PROGRESSION = {
 // Sim engine [FRAGILE]
 // ---------------------------------------------------------------------------
 export const SIM = {
-  /** Unit scores are normalized around this. A 50-rated unit scores 0 edge. */
+  /**
+   * VESTIGIAL — DECLARED, DOCUMENTED, AND READ BY NOTHING. Verified by grep
+   * over lib, app, components and scripts: `UNIT_BASELINE`,
+   * `BASE_POINTS_PER_DRIVE` and `RATING_TO_PPD` below have no reader outside
+   * this table. They describe a points-per-drive model — normalise each unit
+   * around a baseline, start from a league-average points figure, add
+   * RATING_TO_PPD per point of rating edge — that the drive loop in
+   * lib/sim/engine.ts does not have. What replaced it is PROBABILITY-based and
+   * is the live path: SCORING_DRIVE_BASE and EDGE_TO_SCORE_PROB decide whether
+   * a drive scores, TD_SHARE_BASE and EDGE_TO_TD_SHARE decide whether the
+   * score is a touchdown, and the points fall out of that.
+   *
+   * KEPT, NOT DELETED, because docs/build-brief/PART_2_SEASON_ENGINE.md cites
+   * all three by name (section 3.9, and the PUNTER_BASELINE note uses
+   * UNIT_BASELINE's 60 as the worked example of a constant that is nothing
+   * like the middle of anything). A docstring that implies the engine reads
+   * them is the defect; the figures themselves are referenced prose.
+   *
+   * Nothing may start reading one of these without re-measuring it first — a
+   * team's offensive unit score means 80.1 and its defensive 76.2, so 60 is
+   * not the centre of either.
+   */
   UNIT_BASELINE: 60,
-  /** Points per full drive at league-average offense vs league-average defense. */
+  /** VESTIGIAL — see the note on UNIT_BASELINE. Nothing reads this. */
   BASE_POINTS_PER_DRIVE: 1.85,
   /**
    * [TUNE] LIVE drives per team per game. Was 11 on the note "Real NFL ~11".
@@ -1316,7 +1345,7 @@ export const SIM = {
    * lib/gameShape.ts mirrors this as a literal and had to move with it.
    */
   DRIVES_PER_TEAM: 10,
-  /** How much a 1-point unit-rating edge moves expected points per drive. */
+  /** VESTIGIAL — see the note on UNIT_BASELINE. Nothing reads this. */
   RATING_TO_PPD: 0.028,
   /** Home field advantage, added to the home offense's unit score. */
   HOME_FIELD_EDGE: 2.0,

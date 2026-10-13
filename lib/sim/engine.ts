@@ -334,7 +334,21 @@ export function simulateGame(
   for (const team of [home, away]) {
     for (const p of team.players) {
       if (!isAvailable(p)) continue;
-      // Starters wear down more than the end of the bench. [TUNE]
+      // A FLAT PER-MAN ROLL, THE SAME FOR A STARTER AND FOR THE END OF THE
+      // BENCH. [TUNE] Every available player draws FATIGUE_PER_GAME scaled by
+      // an independent U(0.5, 1.3) — nothing here reads the depth chart, the
+      // unit weights or the box score, so playing time does not enter it.
+      // Measured on one seeded game: depth-chart starters took a mean 16.1 and
+      // everybody else 15.9, which is the same distribution twice.
+      //
+      // This comment used to claim "starters wear down more than the end of
+      // the bench", which is the policy the roll would need `depthOrder` to
+      // implement and does not. Saying so rather than implementing it, because
+      // fatigue feeds `effectiveRating` (lib/sim/units.ts) for every man in
+      // every game in the league and wiring role into it would move scoring
+      // everywhere — that is a tuning change with its own measurement, not a
+      // comment fix. Playing time DOES already drive development, by role
+      // index, in lib/development.ts.
       fatigue[p.id] = Math.round(SIM.FATIGUE_PER_GAME * (0.5 + rng.float(0, 0.8)));
     }
   }

@@ -5,6 +5,20 @@ export interface SeasonStats {
   // Passing
   passAtt?: number; passCmp?: number; passYds?: number; passTd?: number; int?: number;
   // Rushing
+  //
+  // `fum` IS NEVER WRITTEN. Verified by grep: allocateStats in
+  // lib/sim/engine.ts produces no fumble for anybody, in any game ever played
+  // — measured at max 0 across all 92,421 PlayerSeason rows in the dev
+  // database (see the absent-columns note in lib/statLabels.ts). It is
+  // therefore absent, not zero, and an absent optional reads as 0 at every
+  // call site that defaults it. Nothing may display or quote it until the
+  // engine produces one: lib/statRanks.ts leaves it unranked,
+  // lib/performanceScore.ts and lib/coachRoom.ts exclude it, and
+  // lib/coachRoom.ts's honesty limits state outright that nothing may say a
+  // player put the ball on the ground. Kept in the shape because a fumble is
+  // the obvious missing half of `intsThrown` — the engine splits giveaways
+  // into thrown and fumbled and only attributes the thrown ones — so this is
+  // the key that half lands on the day it is written.
   rushAtt?: number; rushYds?: number; rushTd?: number; fum?: number;
   // Receiving
   targets?: number; rec?: number; recYds?: number; recTd?: number;

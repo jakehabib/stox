@@ -2116,7 +2116,10 @@ async function rollSeasonStatsIntoCareer(leagueId: string, seasonYear: number) {
 
 /**
  * Yearly aging for ROSTERED players: age +1, a completed season of experience,
- * and (past 32) a retirement roll. Unsigned players are handled by
+ * and a retirement roll for anyone `retirementChance` gives nonzero odds —
+ * which is 32 on the POSITION-ADJUSTED age, so a back can roll from 30 and a
+ * quarterback no earlier than 35. See the note at the roll itself.
+ * Unsigned players are handled by
  * progressFreeAgents() in lib/development.ts — this deliberately narrow
  * `status: 'ACTIVE'` filter used to be the ONLY aging in the game, which is
  * why a free agent never aged, never developed and never retired. Attribute growth itself no longer happens here — it's
@@ -2140,7 +2143,31 @@ async function progressAllPlayers(leagueId: string, rng: Rng, retirementEnabled:
   const retiringIds: string[] = [];
   const survivorIds: string[] = [];
   for (const p of players) {
-    if (retirementEnabled && p.age >= 32 && rng.bool(retirementChance(p.age, p.trueOvr, p.position as any))) {
+    // ONE FUNCTION DECIDES WHO IS OLD, AND IT IS THE POSITION-ADJUSTED ONE.
+    // This used to gate the roll on `p.age >= 32` — a RAW age — before asking
+    // `retirementChance`, which gates on the POSITION-ADJUSTED age (age minus
+    // POSITION_AGE_PROFILE.peakShift). Two gates on two different ages, and
+    // the stricter one won at both ends:
+    //   - A running back (peakShift -2) ages two years early by design, so
+    //     retirementChance returns a real number for him at 30. The raw gate
+    //     threw that away and nobody at an early-peaking position could retire
+    //     before 32 — measured, 4 backs at 30 and 7 at 31 in the dev league
+    //     carrying 1.08 summed retirement probability that could never fire,
+    //     plus 5 corners, 3 receivers and 2 safeties at 31.
+    //   - A quarterback (peakShift +3) passed the raw gate at 32 and then drew
+    //     a chance of exactly 0 until 35, so the raw gate was spending a roll
+    //     on an outcome that could not happen.
+    // Position-adjustment is the entire point of POSITION_AGE_PROFILE, and
+    // lib/cap.ts's `willingnessHorizon` — the number the negotiation panel
+    // SHOWS a user as the last season a man intends to play — already walks
+    // `retirementChance` forward with no raw-age gate at all. The engine and
+    // the panel have to answer off one model, so the engine now asks the same
+    // function the panel asks and lets it decide who is old.
+    //
+    // Still gated, not unconditional: a roll is only consumed where the odds
+    // can actually fire, which is what the raw gate was really for.
+    const odds = retirementEnabled ? retirementChance(p.age, p.trueOvr, p.position as any) : 0;
+    if (odds > 0 && rng.bool(odds)) {
       retiringIds.push(p.id);
     } else {
       survivorIds.push(p.id);
