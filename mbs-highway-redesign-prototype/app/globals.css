@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  background: #f8fafc;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Range slider thumb */
+.range-brand {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  outline: none;
+}
+.range-brand::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #fff;
+  border: 2px solid #6a2ff2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+}
+.range-brand::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #fff;
+  border: 2px solid #6a2ff2;
+  cursor: pointer;
+}
+.range-brand:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgba(106, 47, 242, 0.25);
+}
+
+/* Recharts: no focus outline box on click */
+.recharts-wrapper *:focus {
+  outline: none;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  .shadow-card,
+  .shadow-lift {
+    box-shadow: none !important;
+  }
+  @page {
+    margin: 12mm;
+  }
+}
