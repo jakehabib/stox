@@ -81,6 +81,7 @@ export interface Valuation {
 }
 
 const round = (v: number, step: number) => Math.round(v / step) * step;
+const titleCase = (s: string) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
 
 /** Deterministic mock AVM. `asOf` fixes "today" so output is stable in tests. */
 export function estimateValue(a: ParsedAddress, asOf = '2026-10-14'): Valuation {
@@ -108,7 +109,7 @@ export function estimateValue(a: ParsedAddress, asOf = '2026-10-14'): Valuation 
     const d = new Date(today.getTime() - days * 86400000);
     const street = COMP_STREETS[Math.floor(rand() * COMP_STREETS.length)];
     return {
-      address: `${Math.round(between(3, 240))} ${i === 0 ? a.street : street}`,
+      address: `${Math.round(between(3, 240))} ${i === 0 ? titleCase(a.street) : street}`,
       soldDate: d.toISOString().slice(0, 10),
       price: round(cp * cs, 500),
       sqft: cs,
