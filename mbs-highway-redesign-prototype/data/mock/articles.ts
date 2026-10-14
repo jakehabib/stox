@@ -358,12 +358,16 @@ const UPDATE_TOPICS: UpdateTopic[] = [
 
 function generatedUpdates(): Omit<DailyUpdate, 'id'>[] {
   const recent = new Set(RECENT_UPDATES.map((u) => u.date));
+  const daily = getMbsDaily(getMarketSnapshot(DEMO_NOW));
+  const idx = new Map(daily.map((p, i) => [p.t, i]));
   return tradingDaysBack('2026-10-02', '2026-06-01')
     .filter((d) => !recent.has(d))
     .map((date) => {
       const rand = mulberry32(hashString('update:' + date));
       const topic = pick(rand, UPDATE_TOPICS);
-      const move = Math.round((rand() - 0.45) * 40);
+      const i = idx.get(date);
+      // Direction of the day's move, consistent with the Markets chart / Market Wrap for that date.
+      const move = i ? Math.round((daily[i].price - daily[i - 1].price) * 100) : 0;
       const dir = move > 2 ? 'improved' : move < -2 ? 'weakened' : 'were little changed';
       const opening = `Mortgage-backed securities ${dir}${Math.abs(move) > 2 ? ` by about ${Math.abs(move)} basis points` : ''} in early trading on ${longDate(date)}. ${
         move > 2 ? 'Rate sheets should be slightly better than yesterday.' : move < -2 ? 'Some lenders may reprice for the worse if losses extend.' : 'Expect pricing similar to yesterday’s.'
