@@ -87,20 +87,24 @@ export function MessageModal({ open, onClose, value, onSave }: { open: boolean; 
 /**
  * Co-branding section: the LO's card (Edit) plus an optional partner (agent) co-brand (Add).
  */
-export function CoBrandingSection({ partnerIdx, onPartnerChange, compact }: { partnerIdx: number | null; onPartnerChange: (i: number | null) => void; compact?: boolean }) {
+export function CoBrandingSection({ partnerIdx, onPartnerChange, compact, hideOwn }: { partnerIdx: number | null; onPartnerChange: (i: number | null) => void; compact?: boolean; hideOwn?: boolean }) {
   const [edit, setEdit] = useState(false);
   const [picking, setPicking] = useState(false);
   const partner = partnerIdx != null ? DEMO_AGENTS[partnerIdx] : null;
   return (
     <div className="space-y-3">
-      <CoBrandingBlock compact={compact} onEdit={() => setEdit(true)} />
-      {partner ? (
+      {!hideOwn && <CoBrandingBlock compact={compact} onEdit={() => setEdit(true)} />}
+      {partner && !hideOwn ? (
         <div className="relative">
           <CoBrandingBlock cobranding={partner} compact={compact} />
           <button type="button" aria-label="Remove partner co-branding" onClick={() => onPartnerChange(null)} className="absolute right-2 top-2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
             <X className="h-4 w-4" />
           </button>
         </div>
+      ) : partner ? (
+        <Button variant="ghost" size="sm" icon={<X className="h-4 w-4" />} onClick={() => onPartnerChange(null)}>
+          Remove partner co-branding
+        </Button>
       ) : (
         <Button variant="subtle" size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setPicking(true)}>
           Add partner co-branding

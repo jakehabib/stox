@@ -76,7 +76,9 @@ describe('ARM rate paths', () => {
     expect([p[84], p[96], p[108]]).toEqual([6.5, 7.5, 7.5]);
   });
   it('ARM rate ≥ fixed → ARM never ahead; garbage stays finite', () => {
-    expect(simulateArmVsFixed({ ...ARM_DEFAULTS, armRate: 7 }).armNeverAhead).toBe(true);
+    const n = simulateArmVsFixed({ ...ARM_DEFAULTS, armRate: 7 });
+    expect(n.armNeverAhead).toBe(true);
+    expect(n.breakEvenMonth).toBeNull();
     const g = simulateArmVsFixed({ ...ARM_DEFAULTS, loanAmount: NaN, armRate: NaN });
     expect(Number.isFinite(g.fixedPayment)).toBe(true);
   });

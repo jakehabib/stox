@@ -227,14 +227,14 @@ export function simulateArmVsFixed(raw: ArmInput): ArmResult {
     });
   }
 
+  const armNeverAhead = months.length > 0 && months[0].total <= 0;
   let breakEvenMonth: number | null = null;
-  for (const r of months) {
+  for (const r of armNeverAhead ? [] : months) {
     if (r.month > fixedMonths && r.total <= 0) {
       breakEvenMonth = r.month;
       break;
     }
   }
-  const armNeverAhead = months.length > 0 && months[0].total <= 0;
 
   const years: ArmYear[] = [];
   let fiCum = 0;

@@ -275,7 +275,7 @@ function fixedWeek(now: Date): EconEvent[] {
     ev('adp', '2026-10-13', { period: 'Wk of Sep 26', prior: 14.3, forecast: 15.0, actualIfPast: 18.5 }),
     ev('ehs', '2026-10-13', { period: 'Sep', prior: 4.0, forecast: 4.05, actualIfPast: 4.11, secondary: 'Median price $412,400 (+1.6% Y/Y) · Inventory 1.55M (4.5 months’ supply)' }),
     ev('cpi', '2026-10-14', { period: 'Sep', prior: 0.4, forecast: 0.3, actualIfPast: 0.3, secondary: 'Core CPI 0.2% M/M vs 0.3% forecast · Headline 2.9% Y/Y · Shelter +0.2%' }),
-    ev('beige', '2026-10-14', { prior: null, forecast: null }),
+    ev('beige', '2026-10-14', { prior: null, forecast: null, period: undefined }),
     ev('retail', '2026-10-15', { period: 'Sep', prior: 0.6, forecast: 0.4 }),
     ev('claims', '2026-10-15', { period: 'Wk of Oct 10', prior: 228, forecast: 230 }),
     ev('capu', '2026-10-16', { period: 'Sep', prior: 77.4, forecast: 77.3 }),

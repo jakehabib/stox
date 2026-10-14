@@ -1,7 +1,7 @@
 'use client';
 
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { CalculatorShell } from '@/components/calc/CalculatorShell';
 import { ChartCard, ChartTooltip } from '@/components/calc/ChartCard';
@@ -82,6 +82,11 @@ export function ArmVsFixed() {
   const pathData = r.years.map((y) => ({ year: y.year, fixed: y.fixedPayment, arm: y.armPayment, rate: y.armRate }));
   const savingsData = r.months.filter((m) => m.month % 3 === 0 || m.month === 1).map((m) => ({ t: m.month / 12, total: m.total, cashflow: m.cashflow, principal: m.principalGained }));
   const beYear = be ? be / 12 : null;
+  const [range, setRange] = useState<'focus' | 'full'>('focus');
+  const focusYears = Math.min(inp.termYears, Math.max(12, be ? Math.ceil(be / 12) + 4 : fy + 6));
+  const horizon = range === 'full' ? inp.termYears : focusYears;
+  const tickStep = horizon > 15 ? 5 : horizon > 8 ? 2 : 1;
+  const savingsShown = savingsData.filter((d) => d.t <= horizon);
   const maxPay = Math.max(...r.years.map((y) => y.armPayment), r.fixedPayment);
 
   const inputs = (
@@ -339,12 +344,26 @@ export function ArmVsFixed() {
             { label: 'Cash flow', color: SERIES[1] },
             { label: 'Principal gained', color: SERIES[2] },
           ]}
+          action={
+            focusYears < inp.termYears ? (
+              <Segmented
+                size="sm"
+                ariaLabel="Chart range"
+                value={range}
+                onChange={setRange}
+                options={[
+                  { value: 'focus', label: `${focusYears} yrs` },
+                  { value: 'full', label: `${inp.termYears} yrs` },
+                ]}
+              />
+            ) : undefined
+          }
           table={{ head: ['Year', 'Cash flow', 'Principal gained', 'Total'], rows: r.years.map((y) => [`Yr ${y.year}`, usd(y.cashflow), usd(y.principalGained), usd(y.total)]) }}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={savingsData} margin={{ top: 16, right: 12, left: 4, bottom: 0 }}>
+            <LineChart data={savingsShown} margin={{ top: 16, right: 12, left: 4, bottom: 0 }}>
               <CartesianGrid {...gridProps} />
-              <XAxis dataKey="t" type="number" domain={[0, inp.termYears]} {...axisProps} tickFormatter={(v) => `Yr ${Math.round(v)}`} ticks={Array.from({ length: Math.floor(inp.termYears / 5) + 1 }, (_, i) => i * 5)} />
+              <XAxis dataKey="t" type="number" domain={[0, horizon]} {...axisProps} tickFormatter={(v) => `Yr ${Math.round(v)}`} ticks={Array.from({ length: Math.floor(horizon / tickStep) + 1 }, (_, i) => i * tickStep)} />
               <YAxis {...axisProps} tickFormatter={axisUsdFine} width={60} />
               <Tooltip content={<ChartTooltip format={(v) => usd(v)} labelFormat={(l) => yearsMonths(Number(l) * 12)} />} />
               <ReferenceLine y={0} stroke={CHART.axis} />

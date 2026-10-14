@@ -30,6 +30,7 @@ export function axisUsd(v: number): string {
   const a = Math.abs(v);
   const s = v < 0 ? '-' : '';
   if (a >= 1_000_000) return `${s}$${(a / 1_000_000).toFixed(1)}M`;
-  if (a >= 1_000) return `${s}$${Math.round(a / 1_000)}K`;
+  if (a >= 10_000) return `${s}$${Math.round(a / 1_000)}K`;
+  if (a >= 1_000) return `${s}$${(a / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
   return `${s}$${Math.round(a)}`;
 }

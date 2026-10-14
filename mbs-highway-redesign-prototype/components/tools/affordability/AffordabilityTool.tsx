@@ -9,7 +9,7 @@ import { LocationPicker } from '@/components/calc/LocationPicker';
 import { CoBrandingEditor, ReportFooter } from '@/components/calc/ReportFooter';
 import { ResultsHeader } from '@/components/calc/ResultsHeader';
 import { TalkTrack } from '@/components/calc/TalkTrack';
-import { Accordion, Badge, Button, Card, CardHeader, Callout, Field, NumberInput, Segmented, Select, Switch, cx } from '@/components/ui';
+import { Accordion, Badge, Button, Card, CardHeader, Callout, Field, NumberInput, Segmented, Select, cx } from '@/components/ui';
 import { FICO_BANDS, type FicoBand } from '@/data/mock/clients';
 import { getLocation } from '@/data/mock/locations';
 import { conventionalMiRatePct } from '@/data/mock/mi';
@@ -28,7 +28,7 @@ import { SERIES, axisProps, axisUsd, gridProps } from '@/lib/chartTheme';
 import { pct, usd } from '@/lib/format';
 import { useUrlState } from '@/lib/useUrlState';
 import { DtiGauge, ZONE_COLORS } from './DtiGauge';
-import { focusField, HeroCard, Row, ShareBar } from './kit';
+import { focusField, HeroCard, Row, ShareBar, Toggle } from './kit';
 
 const TERMS = [30, 25, 20, 15, 10].map((y) => ({ value: String(y), label: `${y} years` }));
 const PROGRAMS: { value: AffordProgram; label: string }[] = [
@@ -133,7 +133,7 @@ export function AffordabilityTool() {
       </div>
       <Field
         label={s.program === 'FHA' ? 'MIP (monthly)' : 'MI (monthly)'}
-        right={<Switch checked={s.miMode === 'manual'} onChange={(m) => set({ miMode: m ? 'manual' : 'auto', miMonthlyManual: m ? Math.round(r.mi) : s.miMonthlyManual })} label={<span className="text-xs">Manual</span>} />}
+        right={<Toggle checked={s.miMode === 'manual'} onChange={(m) => set({ miMode: m ? 'manual' : 'auto', miMonthlyManual: m ? Math.round(r.mi) : s.miMonthlyManual })} label={<span className="text-xs">Manual</span>} />}
         hint={
           s.miMode === 'manual'
             ? 'Fixed monthly MI'

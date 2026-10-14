@@ -155,7 +155,7 @@ export function RefiRisk() {
             <Tooltip content={<ChartTooltip format={(v) => usd(v)} labelFormat={(l) => `Month ${l}`} />} />
             {r.waitMonths > 0 && <ReferenceArea x1={0} x2={r.waitMonths} fill={CHART.neutral} fillOpacity={0.12} label={{ value: 'Waiting', position: 'insideTopLeft', fill: CHART.text, fontSize: 11 }} />}
             {r.breakEvenFromToday !== null && r.breakEvenFromToday > 0 && (
-              <ReferenceLine x={r.breakEvenFromToday} stroke={CHART.loss} strokeDasharray="4 4" label={{ value: `Break-even · month ${r.breakEvenFromToday}`, position: 'insideTopRight', fill: CHART.text, fontSize: 11 }} />
+              <ReferenceLine x={r.breakEvenFromToday} stroke={CHART.loss} strokeDasharray="4 4" label={{ value: `Break-even · month ${r.breakEvenFromToday}`, position: 'insideBottomRight', fill: CHART.text, fontSize: 11 }} />
             )}
             <Line type="linear" dataKey="refiNow" name={`Refi now at ${pct(inp.currentRate, 3)}`} stroke={SERIES[0]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
             <Line type="linear" dataKey="waitThenRefi" name={`Wait, then refi at ${pct(inp.futureRate, 3)}`} stroke={SERIES[1]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />

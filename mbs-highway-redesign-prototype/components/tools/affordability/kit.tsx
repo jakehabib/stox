@@ -88,3 +88,25 @@ export function BuiltToSpecBadge() {
 export function ToneBadge({ tone, children }: { tone: 'green' | 'amber' | 'red'; children: ReactNode }) {
   return <Badge tone={tone}>{children}</Badge>;
 }
+
+/**
+ * Local switch. The shared `Switch` knob has no `left-*`, so inside a <button> its static
+ * position is the centre and the knob renders outside the track (reported to the lead).
+ */
+export function Toggle({ checked, onChange, label, disabled, title }: { checked: boolean; onChange: (v: boolean) => void; label?: ReactNode; disabled?: boolean; title?: string }) {
+  return (
+    <label title={title} className={clsx('inline-flex items-center gap-2 text-sm text-slate-700', disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer')}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={() => onChange(!checked)}
+        className={clsx('relative h-5 w-9 shrink-0 rounded-full transition-colors', checked ? 'bg-brand-600' : 'bg-slate-300')}
+      >
+        <span className={clsx('absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform', checked ? 'translate-x-4' : 'translate-x-0')} />
+      </button>
+      {label}
+    </label>
+  );
+}

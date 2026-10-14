@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, CalendarClock, Copy, Film, Lightbulb, Link2, Mic, MonitorUp, Video } from 'lucide-react';
+import { ArrowRight, CalendarClock, Copy, Film, Link2, Mic, MonitorUp, Video } from 'lucide-react';
 import Link from 'next/link';
 import { ToolIcon } from '@/components/icons';
 import { Badge, Button, Card, CardHeader, EmptyState, PageHeader, TextInput } from '@/components/ui';
@@ -132,7 +132,7 @@ export function Meet() {
           <ol className="space-y-4">
             {TIPS.map((t, i) => (
               <li key={t.title} className="flex gap-3">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600">{i === 0 ? <Lightbulb className="h-4 w-4" /> : <span className="text-sm font-semibold">{i + 1}</span>}</span>
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600"><span className="text-sm font-semibold">{i + 1}</span></span>
                 <div>
                   <div className="text-sm font-semibold text-slate-900">{t.title}</div>
                   <p className="mt-0.5 text-sm text-slate-600">{t.body}</p>

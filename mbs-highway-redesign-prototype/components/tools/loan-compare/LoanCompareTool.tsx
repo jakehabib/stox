@@ -52,7 +52,7 @@ export const LC_DEFAULTS: LoanCompareState = {
 const STEPS = ['Property', 'Loan options', 'Results'];
 
 export function loanCompareHref(state: Partial<LoanCompareState>) {
-  return `/members/loan-compare?s=${encodeScenario({ ...LC_DEFAULTS, ...state })}`;
+  return `/members/loan-compare?s=${encodeURIComponent(encodeScenario({ ...LC_DEFAULTS, ...state }))}`;
 }
 
 export function LoanCompareTool() {
@@ -222,6 +222,7 @@ export function LoanCompareTool() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    aria-label="Add reinvestment strategy"
                     icon={<Plus className="h-3.5 w-3.5" />}
                     onClick={() => {
                       const worst = Math.max(...c.options.map((o) => o.totalMonthly));
@@ -254,7 +255,7 @@ export function LoanCompareTool() {
             <Accordion
               title="Custom message"
               action={
-                <Button variant="ghost" size="sm" icon={s.message ? <Pencil className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />} onClick={() => setMsgOpen(true)}>
+                <Button variant="ghost" size="sm" aria-label={s.message ? 'Edit custom message' : 'Add custom message'} icon={s.message ? <Pencil className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />} onClick={() => setMsgOpen(true)}>
                   {s.message ? 'Edit' : 'Add'}
                 </Button>
               }

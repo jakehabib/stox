@@ -11,7 +11,7 @@ import { LocationPicker } from '@/components/calc/LocationPicker';
 import { CoBrandingEditor, ReportFooter } from '@/components/calc/ReportFooter';
 import { ResultsHeader } from '@/components/calc/ResultsHeader';
 import { TalkTrack } from '@/components/calc/TalkTrack';
-import { Badge, Button, Card, CardHeader, DemoBadge, Field, Modal, NumberInput, Segmented } from '@/components/ui';
+import { Badge, Button, Card, CardHeader, Field, Modal, NumberInput, Segmented } from '@/components/ui';
 import { RERC_DEFAULT_LOCATION_ID } from '@/data/mock/locations';
 import { geocode, getRercData, type ListingStats } from '@/data/mock/rerc';
 import { homeownershipSplit, incomeVsNational, rercProjection, type RercAppreciationMode } from '@/lib/calculations/rerc';
@@ -176,7 +176,6 @@ function Results({ s, set, reset }: { s: RercState; set: (p: Partial<RercState>)
               {client ? ` · Prepared for ${client.name}` : ''}
             </p>
           </div>
-          <DemoBadge />
         </div>
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Tile label="Median Price" value={usd(d.medianPrice)} sub={s.price !== null && s.price !== d.medianPrice ? `Report uses ${usd(price)}` : 'Median sale price'} />

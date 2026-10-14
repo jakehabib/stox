@@ -75,8 +75,8 @@ export function BlendedRate() {
                     </button>
                   )}
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <Field label="Debt name">
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  <Field label="Debt name" className="col-span-2 lg:col-span-1">
                     <TextInput aria-label={`Debt ${i + 1} name`} value={d.name} placeholder={`Debt ${i + 1}`} onChange={(e) => setDebt(i, { name: e.target.value })} />
                   </Field>
                   <Field label="Balance">
@@ -85,7 +85,7 @@ export function BlendedRate() {
                   <Field label="Rate">
                     <NumberInput ariaLabel={`Debt ${i + 1} rate`} suffix="%" decimals={3} min={0} max={100} value={d.ratePct} onChange={(ratePct) => setDebt(i, { ratePct })} />
                   </Field>
-                  <Field label="Monthly payment">
+                  <Field label="Monthly payment" className="col-span-2 lg:col-span-1">
                     <NumberInput ariaLabel={`Debt ${i + 1} monthly payment`} prefix="$" decimals={2} min={0} value={d.payment} onChange={(payment) => setDebt(i, { payment })} placeholder="Optional" />
                   </Field>
                 </div>
