@@ -369,7 +369,7 @@ function generatedUpdates(): Omit<DailyUpdate, 'id'>[] {
       // Direction of the day's move, consistent with the Markets chart / Market Wrap for that date.
       const move = i ? Math.round((daily[i].price - daily[i - 1].price) * 100) : 0;
       const dir = move > 2 ? 'improved' : move < -2 ? 'weakened' : 'were little changed';
-      const opening = `Mortgage-backed securities ${dir}${Math.abs(move) > 2 ? ` by about ${Math.abs(move)} basis points` : ''} in early trading on ${longDate(date)}. ${
+      const opening = `Mortgage-backed securities ${dir}${Math.abs(move) > 2 ? ` by about ${Math.abs(move)} basis points` : ''} on ${longDate(date)}. ${
         move > 2 ? 'Rate sheets should be slightly better than yesterday.' : move < -2 ? 'Some lenders may reprice for the worse if losses extend.' : 'Expect pricing similar to yesterday’s.'
       }`;
       return {

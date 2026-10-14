@@ -27,8 +27,8 @@ import {
 import { useRouter } from 'next/navigation';
 import { useMemo, useRef, useState } from 'react';
 import { ReportFooter } from '@/components/calc/ReportFooter';
-import { Badge, Button, Callout, Card, DemoBadge, EmptyState, Field, Modal, NumberInput, PageHeader, Select, Switch, TextArea, TextInput } from '@/components/ui';
-import { NOTHING_SENT, copyText, esc, initials, useLocalList } from '@/components/tools/social-studio/shared';
+import { Badge, Button, Callout, Card, DemoBadge, EmptyState, Field, Modal, NumberInput, PageHeader, Select, TextArea, TextInput } from '@/components/ui';
+import { NOTHING_SENT, Toggle, copyText, esc, initials, useLocalList } from '@/components/tools/social-studio/shared';
 import type { CoBranding } from '@/data/mock/cobranding';
 import { DEMO_LISTINGS, findListing } from '@/data/mock/openHouseListings';
 import { MI_FICO_BANDS, flyerScenario, pricePerSqft, type FlyerScenarioResult, type MiFicoBand, type Program } from '@/lib/calculations/flyer';
@@ -210,7 +210,7 @@ export function OpenHouseFlyers() {
         >
           <div className="relative">
             <MapPin className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input aria-label="Location: #MLS or Address" value={lookup} onChange={(e) => setLookup(e.target.value)} placeholder="#MLS or Address" list="ohf-listings" className="h-9 w-44 rounded-lg border border-slate-300 bg-white pl-8 pr-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 sm:w-52" />
+            <input aria-label="Location: #MLS or Address" value={lookup} onChange={(e) => setLookup(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); doLookup(); } }} placeholder="#MLS or Address" list="ohf-listings" className="h-9 w-44 rounded-lg border border-slate-300 bg-white pl-8 pr-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 sm:w-52" />
             <datalist id="ohf-listings">
               {DEMO_LISTINGS.map((l) => (
                 <option key={l.mls} value={`#${l.mls}`}>{`${l.address}, ${l.cityLine}`}</option>
@@ -270,7 +270,7 @@ export function OpenHouseFlyers() {
         </ToolbarButton>
       </Toolbar>
 
-      <div className="grid gap-6 lg:grid-cols-[380px_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[380px_minmax(0,1fr)]">
         <aside className="no-print space-y-4">
           <Card>
             <div className="mb-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Listing</div>
@@ -347,7 +347,7 @@ export function OpenHouseFlyers() {
               {f.scenarios.map((s, i) => (
                 <div key={i} className={clsx('rounded-lg border p-3', s.enabled ? 'border-slate-200' : 'border-dashed border-slate-200 bg-slate-50/60')}>
                   <div className="mb-2 flex items-center justify-between">
-                    <Switch checked={s.enabled} onChange={(v) => setScenario(i, { enabled: v })} label={<span className="text-sm font-semibold text-slate-800">Scenario {i + 1}</span>} />
+                    <Toggle checked={s.enabled} onChange={(v) => setScenario(i, { enabled: v })} label={<span className="text-sm font-semibold text-slate-800">Scenario {i + 1}</span>} />
                     <span className="text-xs text-slate-500">{scenarioLabel(s)}</span>
                   </div>
                   {s.enabled && (

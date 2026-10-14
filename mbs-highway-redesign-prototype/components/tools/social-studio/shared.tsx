@@ -230,3 +230,18 @@ export function wrapLines(text: string, maxChars: number, maxLines = 4): string[
 export function svgDataUrl(svg: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
+
+/**
+ * Local copy of the shared Switch with the knob anchored at left-0.
+ * (components/ui.tsx Switch's knob has no `left`, so inside a <button> it renders off the track.)
+ */
+export function Toggle({ checked, onChange, label, disabled, id }: { checked: boolean; onChange: (v: boolean) => void; label?: React.ReactNode; disabled?: boolean; id?: string }) {
+  return (
+    <label className={clsx('inline-flex items-center gap-2 text-sm text-slate-700', disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer')}>
+      <button id={id} type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)} className={clsx('relative h-5 w-9 shrink-0 rounded-full transition-colors', checked ? 'bg-brand-600' : 'bg-slate-300')}>
+        <span className={clsx('absolute left-0 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform', checked ? 'translate-x-[18px]' : 'translate-x-0.5')} />
+      </button>
+      {label}
+    </label>
+  );
+}

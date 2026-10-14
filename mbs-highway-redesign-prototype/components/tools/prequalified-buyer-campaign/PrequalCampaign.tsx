@@ -3,12 +3,12 @@
 import clsx from 'clsx';
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CalendarClock, Check, ExternalLink, GripVertical, Mail, Rocket, Sparkles, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ClientPicker, requireClient } from '@/components/calc/ClientPicker';
 import { LocationPicker } from '@/components/calc/LocationPicker';
 import { Stepper } from '@/components/calc/Stepper';
-import { Badge, Button, Callout, Card, CardHeader, EmptyState, Field, Modal, NumberInput, PageHeader, Select, Stat, Switch, TextInput } from '@/components/ui';
-import { useLocalList } from '@/components/tools/social-studio/shared';
+import { Badge, Button, Callout, Card, CardHeader, EmptyState, Field, Modal, NumberInput, PageHeader, Select, Stat, TextInput } from '@/components/ui';
+import { Toggle, useLocalList } from '@/components/tools/social-studio/shared';
 import { CADENCE_OPTIONS, CAMPAIGN_REPORTS, DEFAULT_REPORT_IDS } from '@/data/mock/prequalCampaign';
 import { getLocation } from '@/data/mock/locations';
 import { flyerScenario } from '@/lib/calculations/flyer';
@@ -53,6 +53,7 @@ export function PrequalCampaign() {
   const [viewing, setViewing] = useState<SavedCampaign | null>(null);
   const [campaigns, setCampaigns] = useLocalList<SavedCampaign>('mbsh-prequal-campaigns-v1');
   const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const dragRef = useRef<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
 
   useEffect(() => {
@@ -135,7 +136,7 @@ export function PrequalCampaign() {
       </Card>
 
       {step === 0 && (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader
               title="Your report kit"
@@ -156,6 +157,7 @@ export function PrequalCampaign() {
                     draggable
                     onDragStart={(e) => {
                       setDragFrom(i);
+                      dragRef.current = i;
                       e.dataTransfer.effectAllowed = 'move';
                       e.dataTransfer.setData('text/plain', String(i));
                     }}
@@ -166,12 +168,15 @@ export function PrequalCampaign() {
                     onDragLeave={() => setDragOver((o) => (o === i ? null : o))}
                     onDrop={(e) => {
                       e.preventDefault();
-                      const from = dragFrom ?? Number(e.dataTransfer.getData('text/plain'));
+                      const raw = e.dataTransfer.getData('text/plain');
+                      const from = dragRef.current ?? (raw === '' ? NaN : Number(raw));
                       if (Number.isFinite(from)) move(from, i);
+                      dragRef.current = null;
                       setDragFrom(null);
                       setDragOver(null);
                     }}
                     onDragEnd={() => {
+                      dragRef.current = null;
                       setDragFrom(null);
                       setDragOver(null);
                     }}
@@ -227,7 +232,7 @@ export function PrequalCampaign() {
       )}
 
       {step === 1 && (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
           <Card>
             <CardHeader title="Scenario specifics" subtitle="Every report in the kit is personalized with these numbers." />
             <div className="grid gap-4 sm:grid-cols-2">
@@ -273,8 +278,8 @@ export function PrequalCampaign() {
       )}
 
       {step === 2 && (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <div className="space-y-6">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="min-w-0 space-y-6">
             <Card>
               <CardHeader title="Campaign settings" />
               <div className="grid gap-4 sm:grid-cols-2">
@@ -291,7 +296,7 @@ export function PrequalCampaign() {
                   <Select value="email" onChange={() => {}} options={[{ value: 'email', label: 'Email' }]} ariaLabel="Channel" />
                 </Field>
                 <div className="sm:col-span-2">
-                  <Switch checked={skipWeekends} onChange={setSkipWeekends} label="Skip weekends (move to Monday)" />
+                  <Toggle checked={skipWeekends} onChange={setSkipWeekends} label="Skip weekends (move to Monday)" />
                 </div>
               </div>
             </Card>

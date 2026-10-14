@@ -3,7 +3,7 @@
 import clsx from 'clsx';
 import { CalendarDays, Copy, Eye, Lightbulb, Mail, Share2, Sparkles, TrendingUp, Zap } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Badge, Button, Card, EmptyState, Modal, PageHeader, Select } from '@/components/ui';
+import { Badge, Button, Card, DemoBadge, EmptyState, Modal, PageHeader, Select } from '@/components/ui';
 import { copyText, initials } from '@/components/tools/social-studio/shared';
 import type { CoBranding } from '@/data/mock/cobranding';
 import { CURRENT_ISSUE_ID, NEWSLETTER_ISSUES, type NewsletterIssue } from '@/data/mock/newsletter';
@@ -61,7 +61,11 @@ export function Newsletter() {
     <div>
       <PageHeader
         eyebrow="Marketing"
-        title="Newsletter"
+        title={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            Newsletter <DemoBadge />
+          </span>
+        }
         subtitle="Your weekly co-branded client newsletter — market news in plain English, ready to send."
         actions={
           <>
@@ -87,7 +91,7 @@ export function Newsletter() {
           </>
         }
       />
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card padded={false} className="overflow-hidden">
           <IssueView issue={issue} cobranding={cobranding} current={issue.id === CURRENT_ISSUE_ID} />
         </Card>

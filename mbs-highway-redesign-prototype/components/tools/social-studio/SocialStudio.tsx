@@ -510,7 +510,7 @@ function CustomTab({ onSave, onRecord }: { onSave: (s: VideoScript) => void; onR
   const words = wordCount(script);
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
       <Card>
         <div className="mb-4 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
           <Wand2 className="h-4 w-4 text-brand-600" /> Script builder

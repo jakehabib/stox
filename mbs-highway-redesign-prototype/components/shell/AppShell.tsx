@@ -337,8 +337,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <div className="flex">
-        <aside className="no-print sticky top-14 hidden h-[calc(100vh-3.5rem)] w-[248px] shrink-0 bg-ink-950 lg:block">
-          <Sidebar />
+        <aside className="no-print hidden w-[248px] shrink-0 bg-ink-950 lg:block">
+          <div className="sticky top-14 h-[calc(100vh-3.5rem)]">
+            <Sidebar />
+          </div>
         </aside>
         {drawer && (
           <div className="no-print fixed inset-0 z-50 lg:hidden">

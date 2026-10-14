@@ -80,7 +80,7 @@ export function BarrysInsights() {
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <TextInput aria-label="Search webinars" placeholder="Search webinars by title or topic…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
         </div>
-        <div className="overflow-x-auto">
+        <div className="-mx-1 overflow-x-auto px-1 [&_button]:whitespace-nowrap">
           <Segmented ariaLabel="Webinar type" value={kind} onChange={setKind} options={KINDS} />
         </div>
         <MonthFilter items={WEBINARS} value={month} onChange={setMonth} />
