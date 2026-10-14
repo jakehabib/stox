@@ -33,7 +33,47 @@ Alex Rivera · alex.rivera.test@example.com · (555) 555-0142 — $500,000 home,
 
 ## Route map
 
-ROUTE_MAP_PLACEHOLDER
+| Section | Tool | Route | Status |
+|---|---|---|---|
+| Home | Dashboard | `/members/homepage` | Built |
+| Market Analysis | Markets Overview | `/members/markets` | Built |
+| Market Analysis | Economic Calendar | `/members/econ-calendar` | Built |
+| Market Analysis | Morning Update | `/members/morning-update` | Built |
+| Market Analysis | Market Wrap | `/members/market-wrap` | Built |
+| Market Analysis | Mauldin: Thoughts from the Frontline | `/members/mauldin` | Built |
+| Market Analysis | Barry's Insights | `/members/barrys-insights` | Built |
+| Clients | Client Manager | `/members/client-manager` | Built |
+| Clients | Meet | `/members/meet` | Display only |
+| Clients | Recordings | `/members/recordings` | Built |
+| Strike Rate | Strike Rate | `/members/strike-rate` | Built |
+| Loan Comparison | Loan Comparison | `/members/loan-compare` | Built |
+| Loan Comparison | Purchase Analysis | `/members/purchase-analysis` | Built |
+| Loan Comparison | Cost of Waiting | `/members/cost-of-waiting` | Built |
+| Loan Comparison | Refi Risk of Waiting | `/members/refi-cow-express` | Built |
+| Real Estate | Real Estate Report Card | `/members/rerc` | Built |
+| Real Estate | Buy vs Rent | `/members/buy-vs-rent` | Built |
+| Real Estate | Appreciation | `/members/appreciation` | Built |
+| Real Estate | Equity Gained & Appreciation | `/members/equity-gained` | Built |
+| Real Estate | Bid Over Ask | `/members/bid-over-ask` | Built |
+| Real Estate | House Price Index | `/members/house-price-index` | Built |
+| Real Estate | Investment Property Analyzer | `/members/investment-property-analyzer` | Built — partly inferred |
+| Real Estate | MBEstimate | `/members/mbestimate` | Built |
+| Real Estate | Open House Flyers | `/members/open-house-flyers` | Reimagined (legacy iframe in original) |
+| Real Estate | Seller Contribution | `/members/seller-contribution` | Reimagined (legacy iframe in original) |
+| Calculators | Payment Calculator | `/members/payment` | Built |
+| Calculators | Affordability | `/members/affordability` | Built |
+| Calculators | Buying Power | `/members/buying-power` | Built |
+| Calculators | ARM vs Fixed | `/members/arm-vs-fixed` | Built |
+| Calculators | Blended Rate | `/members/blended-rate` | Built |
+| Calculators | Debt Consolidation | `/members/debt-consolidation` | Built |
+| Calculators | Reinvestment | `/members/reinvestment` | Built |
+| Marketing | Social Studio | `/members/social-studio` | Built |
+| Marketing | Newsletter | `/members/newsletter` | Built |
+| Marketing | Social Share | `/members/social-share` | Built |
+| Marketing | Prequalified Buyer Campaign | `/members/prequalified-buyer-campaign` | Built |
+| Marketing | Presentation Expressway | `/members/presentation-expressway` | Built |
+| Agent Feed | Agent Feed | `/members/agent-feed` | Built — partly inferred |
+| Get Help | Get Help | `https://support.mbshighway.com` | External link only |
 
 Section hubs: `/members/market-analysis`, `/members/clients`, `/members/loan-comparison-tools`, `/members/real-estate`, `/members/calculators`, `/members/marketing`.
 

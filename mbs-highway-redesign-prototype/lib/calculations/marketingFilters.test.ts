@@ -152,3 +152,44 @@ describe('newsletter months', () => {
     expect(inMonth('2026-09-28', 'all')).toBe(true);
   });
 });
+
+/* ---------------------------------------------------------------- demo content integrity */
+import { SCRIPT_CATEGORIES, VIDEO_SCRIPTS, scriptCategories } from '@/data/mock/socialStudio';
+import { NEWSLETTER_ISSUES, CURRENT_ISSUE_ID } from '@/data/mock/newsletter';
+import { CAMPAIGN_REPORTS, DEFAULT_REPORT_IDS } from '@/data/mock/prequalCampaign';
+import { PRESENTATIONS } from '@/data/mock/presentations';
+import { SHARE_CARDS } from '@/data/mock/socialShare';
+
+describe('marketing demo content', () => {
+  it('Social Studio has 43 scripts (43 View More buttons) across every category', () => {
+    expect(VIDEO_SCRIPTS).toHaveLength(43);
+    expect(new Set(VIDEO_SCRIPTS.map((s) => s.id)).size).toBe(43);
+    const counts = countByCategory(VIDEO_SCRIPTS, scriptCategories);
+    SCRIPT_CATEGORIES.forEach((c) => expect(counts[c] ?? 0).toBeGreaterThan(0));
+    VIDEO_SCRIPTS.forEach((s) => expect(s.body).toContain('{name}'));
+  });
+  it('Newsletter current issue is Oct 5 2026', () => {
+    const cur = NEWSLETTER_ISSUES.find((i) => i.id === CURRENT_ISSUE_ID)!;
+    expect(cur.date).toBe('2026-10-05');
+    expect(cur.title).toBe('Fed Minutes, Home Prices and Market Volatility');
+    expect(cur.lead.heading).toBe('Fed Minutes');
+  });
+  it('Prequalified campaign defaults to the 9 reports in spec order, with extras available', () => {
+    const names = DEFAULT_REPORT_IDS.map((id) => CAMPAIGN_REPORTS.find((r) => r.id === id)!.name);
+    expect(names).toEqual(['Cost of Waiting', 'Buy vs Rent', 'RERC', 'Appreciation', 'Housing Supply and Demand', 'Amortization', 'Equity Gained', 'National House Price Index', 'Home Values Remain Resilient']);
+    expect(CAMPAIGN_REPORTS.find((r) => r.id === 'appreciation')!.description).toBe('Estimate future home value.');
+    expect(CAMPAIGN_REPORTS.length).toBeGreaterThan(9);
+  });
+  it('Presentation Expressway has the 9 spec items with 4–6 slides each', () => {
+    expect(PRESENTATIONS.map((p) => p.title)).toEqual(['The Power of Leverage', '2026 Forecast', 'Seasonal Buying Strategies', 'Demographics Drive Demand', 'Is This a Housing Bubble?', 'Move-Up with Debt Consolidation', 'Bid Over Ask', 'The Cost of Waiting', 'How Higher Rates Can Benefit Buyers']);
+    PRESENTATIONS.forEach((p) => {
+      expect(p.slides.length).toBeGreaterThanOrEqual(4);
+      expect(p.slides.length).toBeLessThanOrEqual(6);
+    });
+    expect(PRESENTATIONS.find((p) => p.id === 'bid-over-ask')!.related!.href).toBe('/members/bid-over-ask');
+  });
+  it('Social Share cards have unique ids and captions', () => {
+    expect(new Set(SHARE_CARDS.map((c) => c.id)).size).toBe(SHARE_CARDS.length);
+    SHARE_CARDS.forEach((c) => expect(c.caption.length).toBeGreaterThan(20));
+  });
+});

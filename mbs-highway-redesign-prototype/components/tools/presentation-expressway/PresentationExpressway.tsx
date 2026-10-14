@@ -170,7 +170,7 @@ function SlideViewer({ pres, cobranding: c, onClose, onDownload }: { pres: Prese
   const s = pres.slides[i];
   if (typeof document === 'undefined') return null;
   return createPortal(
-    <div className="fixed inset-0 z-[70] flex flex-col bg-ink-950/95 text-white" role="dialog" aria-modal="true" aria-label={`${pres.title} slides`}>
+    <div className="fixed inset-0 z-[70] flex flex-col bg-ink-950 text-white" role="dialog" aria-modal="true" aria-label={`${pres.title} slides`}>
       <div className="flex items-center gap-3 px-4 py-3 text-sm">
         <span className="truncate font-semibold">{pres.title}</span>
         <span className="shrink-0 tabular-nums text-white/60">
