@@ -10,6 +10,8 @@
  */
 import { hashString, mulberry32 } from '@/lib/random';
 import { addDays, isoDate, parseIsoDate } from '@/lib/calculations/markets';
+import { getMarketSnapshot } from '@/data/mock/market';
+import { BOND_HOLIDAYS, DEMO_NOW, getMbsDaily } from '@/data/mock/markets';
 
 export interface Section {
   heading: string;
@@ -75,7 +77,7 @@ function tradingDaysBack(from: string, until: string): string[] {
   const out: string[] = [];
   let d = parseIsoDate(from);
   const stop = parseIsoDate(until);
-  const closed = new Set(['2026-07-03', '2026-09-07', '2026-10-12', '2026-06-19']);
+  const closed = BOND_HOLIDAYS;
   while (d >= stop) {
     const iso = isoDate(d);
     if (d.getDay() !== 0 && d.getDay() !== 6 && !closed.has(iso)) out.push(iso);
@@ -458,23 +460,27 @@ const WRAP_THEMES = [
 
 function generatedWraps(): Omit<MarketWrap, 'id'>[] {
   const recent = new Set(RECENT_WRAPS.map((w) => w.date));
+  // Closes come from the same deterministic daily series the Markets chart uses.
+  const daily = getMbsDaily(getMarketSnapshot(DEMO_NOW));
+  const idx = new Map(daily.map((p, i) => [p.t, i]));
   return tradingDaysBack('2026-10-06', '2026-06-01')
-    .filter((d) => !recent.has(d))
+    .filter((d) => !recent.has(d) && idx.has(d))
     .map((date) => {
       const rand = mulberry32(hashString('wrap:' + date));
+      const i = idx.get(date)!;
+      const close = daily[i].price;
+      const bp = Math.round((close - (daily[i - 1]?.price ?? close)) * 100);
       const theme = pick(rand, WRAP_THEMES);
-      const bp = Math.round((rand() - 0.47) * 36);
-      const close = Math.round((99.4 + rand() * 1.0) * 100) / 100;
-      const ten = Math.round((4.12 + (100.33 - close) * 0.35 + (rand() - 0.5) * 0.05) * 1000) / 1000;
+      const ten = Math.round((4.118 + (100.33 - close) * 0.35 + (rand() - 0.5) * 0.02) * 1000) / 1000;
       return {
         date,
         title: theme.t,
-        summary: `${theme.s} MBS closed ${bp >= 0 ? 'up' : 'down'} ${Math.abs(bp)} basis points.`,
+        summary: `${theme.s} MBS closed ${bp === 0 ? 'unchanged' : `${bp > 0 ? 'up' : 'down'} ${Math.abs(bp)} basis points`}.`,
         mbsClose: close,
         mbsChangeBp: bp,
         tenYear: ten,
         sections: [
-          { heading: 'Bonds', body: [`The UMBS 30-year 6.5% coupon closed at ${close.toFixed(2)}, ${bp >= 0 ? 'up' : 'down'} ${Math.abs(bp)} basis points. The 10-year Treasury yield ended near ${ten.toFixed(2)}%.`] },
+          { heading: 'Bonds', body: [`The UMBS 30-year 6.5% coupon closed at ${close.toFixed(2)}, ${bp === 0 ? 'unchanged' : `${bp > 0 ? 'up' : 'down'} ${Math.abs(bp)} basis points`}. The 10-year Treasury yield ended near ${ten.toFixed(2)}%.`] },
           { heading: 'What drove the market', body: [theme.s, 'Trading volume was near average, and lenders made only minor intraday pricing adjustments.'] },
           { heading: 'Looking ahead', body: ['Check the Economic Calendar for tomorrow’s releases and times. Lock decisions for near-term closings should account for any high-importance reports before 10:00 AM ET.'] },
         ],

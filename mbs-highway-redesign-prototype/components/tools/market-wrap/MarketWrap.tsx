@@ -64,7 +64,7 @@ export function MarketWrap() {
       />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Card className="min-w-0 sm:p-7">
+        <Card className="min-w-0 self-start sm:p-7">
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
             {w.id === all[0].id && (
               <Badge tone="brand">

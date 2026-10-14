@@ -23,8 +23,11 @@ export function prevCloseOf(snap: MarketSnapshot): number {
   return r2(snap.umbs.last - snap.umbs.change);
 }
 
+/** SIFMA bond-market closures in the history window (no MBS close on these days). */
+export const BOND_HOLIDAYS = new Set(['2025-10-13', '2025-11-11', '2025-11-27', '2025-12-25', '2026-01-01', '2026-01-19', '2026-02-16', '2026-04-03', '2026-05-25', '2026-06-19', '2026-07-03', '2026-09-07', '2026-10-12']);
+
 /** Closes published in the recent Market Wraps, so the chart and the wraps agree. */
-const CLOSE_ANCHORS: Record<string, number> = { '2026-10-07': 100.14, '2026-10-08': 100.2, '2026-10-09': 100.29 };
+const CLOSE_ANCHORS: Record<string, number> = { '2026-10-06': 100.16, '2026-10-07': 100.14, '2026-10-08': 100.2, '2026-10-09': 100.29 };
 
 /**
  * Daily closes for the UMBS 30YR 6.5 coupon: `days` trading sessions ending YESTERDAY at the
@@ -37,7 +40,7 @@ export function getMbsDaily(snap: MarketSnapshot, today: Date = DEMO_NOW, days =
   let d = addDays(today, -1);
   while (dates.length < days) {
     const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) dates.unshift(d);
+    if (dow !== 0 && dow !== 6 && !BOND_HOLIDAYS.has(isoDate(d))) dates.unshift(d);
     d = addDays(d, -1);
   }
   const prices: number[] = new Array(days);

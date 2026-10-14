@@ -301,7 +301,7 @@ export function Switch({ checked, onChange, label, disabled, id }: { checked: bo
         onClick={() => onChange(!checked)}
         className={clsx('relative h-5 w-9 shrink-0 rounded-full transition-colors', checked ? 'bg-brand-600' : 'bg-slate-300')}
       >
-        <span className={clsx('absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform', checked ? 'translate-x-[18px]' : 'translate-x-0.5')} />
+        <span className={clsx('absolute left-0 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform', checked ? 'translate-x-[18px]' : 'translate-x-0.5')} />
       </button>
       {label}
     </label>

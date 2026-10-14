@@ -279,3 +279,12 @@ describe('content archives', () => {
     expect(monthsOf(WEBINARS).length).toBeGreaterThanOrEqual(5);
   });
 });
+
+describe('market wrap closes chain day to day', () => {
+  it('each wrap change = close − previous wrap close (bp)', () => {
+    const w = getMarketWraps();
+    for (let i = 0; i < 40; i++) {
+      expect(w[i].mbsChangeBp).toBe(Math.round((w[i].mbsClose - w[i + 1].mbsClose) * 100));
+    }
+  });
+});
