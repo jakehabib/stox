@@ -270,9 +270,9 @@ function AskMiles() {
           <p className="text-slate-600">Ask Miles — coming soon in prototype.</p>
         </div>
       )}
-      <button type="button" onClick={() => setOpen(!open)} className="flex items-center gap-2 rounded-full bg-ink-900 px-4 py-2.5 text-sm font-semibold text-white shadow-lift hover:bg-ink-800">
+      <button type="button" aria-label="Ask Miles" onClick={() => setOpen(!open)} className="flex items-center gap-2 rounded-full bg-ink-900 p-3 text-sm font-semibold text-white shadow-lift hover:bg-ink-800 sm:px-4 sm:py-2.5">
         <Sparkles className="h-4 w-4 text-brand-300" />
-        Ask Miles
+        <span className="hidden sm:inline">Ask Miles</span>
       </button>
     </div>
   );
@@ -362,7 +362,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
         <div className="min-w-0 flex-1">
           <ToolSwitcher />
-          <main className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+          <main className="mx-auto w-full max-w-[1400px] px-4 pb-24 pt-6 sm:px-6 lg:px-8">{children}</main>
         </div>
       </div>
       <AskMiles />

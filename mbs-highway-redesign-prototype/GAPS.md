@@ -50,7 +50,8 @@ Every other example number in BUILD_PROMPT.md is asserted in a unit test and rep
 | Client Manager | — | Delete is disabled (destructive). Quick actions open each tool with the default Alex Rivera scenario; tools don't read a `?client=` parameter yet. |
 | Meet / Recordings | Host not used. | Host is display-only and creates no meeting. Recordings have no media; rename and move are saved only in this browser. |
 | Markets / content | — | All quotes, curves, indicators and articles are synthetic. Calendar and content use a fixed demo clock (Wed Oct 14 2026, 10:00 ET). The top-bar ticker uses the real clock via the market adapter. |
-| Marketing | Nothing was sent in the live session. | All content is original synthetic text. Every send, post or launch is a preview, copy or download, labelled "Prototype — nothing was sent". |
+| Marketing | Nothing was sent in the live session. | All content is original synthetic text. Every send, post or launch is a preview, copy or download, labelled "Prototype — nothing was sent". Campaigns, flyers, script edits and custom scripts are saved in this browser only. |
+| Open House Flyers / Seller Contribution math | Legacy tools not inspected in detail. | MI comes from a demo rate card whose 720–739 row matches Affordability. FHA annual MIP is 0.55% plus 1.75% upfront. Seller concession limits use standard conventional rules (3 / 6 / 9% by LTV). Seller Contribution "total cost" = cash to close + payments + balance still owed at the end of the holding period; taxes and insurance are excluded because they are the same for every option. |
 
 ## 4. Prototype-wide limitations
 

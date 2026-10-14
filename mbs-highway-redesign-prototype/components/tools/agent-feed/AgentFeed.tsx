@@ -1,7 +1,7 @@
 'use client';
 
 import { ArrowDownRight, ArrowUpRight, Bath, BedDouble, Check, Copy, Home, LineChart, Megaphone, Ruler, Share2, TrendingDown } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Callout, Card, cx, DemoBadge, EmptyState, Field, Modal, PageHeader, Select, TextArea, TextInput } from '@/components/ui';
 import { DEMO_AGENTS } from '@/data/mock/cobranding';
 import { AGENT_FEED, FEED_KIND_LABELS, type FeedItem, type FeedKind, type ListingItem, type MarketItem, type PostItem, type RateAlertItem } from '@/data/mock/agentFeed';
@@ -62,7 +62,9 @@ function itemText(item: FeedItem, snap: ReturnType<typeof getMarketSnapshot>): s
 
 export function AgentFeed() {
   const { cobranding } = useStore();
-  const snap = useMemo(() => getMarketSnapshot(), []);
+  // Seed with a fixed moment so the prerendered HTML matches the first client render, then go live.
+  const [snap, setSnap] = useState(() => getMarketSnapshot(new Date('2026-10-14T14:00:00Z')));
+  useEffect(() => setSnap(getMarketSnapshot()), []);
   const [filter, setFilter] = useState<Filter>('all');
   const [sharing, setSharing] = useState<FeedItem | null>(null);
   const [shared, setShared] = useState<Set<string>>(new Set());

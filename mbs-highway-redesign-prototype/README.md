@@ -19,7 +19,7 @@ Node 18.17+ (built on Node 22).
 
 ## Two-minute demo path
 
-Every tool is reachable from the dashboard in one or two clicks: the sidebar, the **Switch tool…** combobox above every page, or global search (⌘-free: just click *Search for tools & resources…*). Every calculator opens pre-filled with the shared **Alex Rivera** scenario, so results show immediately:
+Every tool is reachable from the dashboard in one or two clicks: the sidebar, the **Switch tool…** combobox above every page, or the global *Search for tools & resources…* box in the top bar. Every calculator opens pre-filled with the shared **Alex Rivera** scenario, so results show immediately:
 
 1. **Start the day:** Dashboard → Markets → Economic Calendar → Morning Update → Strike Rate
 2. **Client meeting:** Real Estate Report Card → Purchase Analysis / Buy vs Rent → Loan Comparison → Cost of Waiting → Appreciation → Equity Gained → Debt Consolidation
@@ -115,4 +115,4 @@ lib/tools.ts                     tool registry (sidebar, search, switcher, hubs)
 data/mock/                       every demo dataset
 ```
 
-See **GAPS.md** for everything that differs from the live site and why.
+See **CHECKLIST.md** for every tool with a verified example calculation, and **GAPS.md** for everything that differs from the live site and why.
