@@ -48,7 +48,7 @@ export function CoBrandingBlock({ cobranding, onEdit, compact }: { cobranding?: 
   );
 }
 
-export function CoBrandingEditor({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function CoBrandingEditor({ open, onClose, onSave }: { open: boolean; onClose: () => void; onSave?: (c: CoBranding) => void }) {
   const { cobranding, setCobranding, toast } = useStore();
   const [draft, setDraft] = useState<CoBranding>(cobranding);
   const f = (k: keyof CoBranding, label: string) => (
@@ -68,6 +68,7 @@ export function CoBrandingEditor({ open, onClose }: { open: boolean; onClose: ()
           <Button
             onClick={() => {
               setCobranding(draft);
+              onSave?.(draft);
               toast('Co-branding saved');
               onClose();
             }}

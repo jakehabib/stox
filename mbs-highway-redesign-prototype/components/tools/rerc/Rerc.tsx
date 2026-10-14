@@ -336,7 +336,7 @@ function Results({ s, set, reset }: { s: RercState; set: (p: Partial<RercState>)
       <MarketDataModal open={modal === 'market'} onClose={() => setModal(null)} median={d.medianPrice} price={price} mode={s.mode} onSave={(p, mode) => set({ price: p === d.medianPrice ? null : p, mode })} />
       <LocationModal open={modal === 'location'} onClose={() => setModal(null)} value={s.locationId!} onSave={(locationId) => set({ locationId, price: null })} />
       <ClientModal open={modal === 'client'} onClose={() => setModal(null)} value={s.clientId} onSave={(clientId) => set({ clientId })} />
-      <CoBrandingEditor open={modal === 'cobrand'} onClose={() => (setModal(null), set({ cobrand: true }))} />
+      <CoBrandingEditor open={modal === 'cobrand'} onClose={() => setModal(null)} onSave={() => set({ cobrand: true })} />
     </div>
   );
 }

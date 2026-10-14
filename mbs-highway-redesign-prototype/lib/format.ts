@@ -28,7 +28,7 @@ export function usdCompact(n: number): string {
 export function pct(n: number, digits = 2, opts: { sign?: boolean; trim?: boolean } = {}): string {
   const v = safe(n);
   let s = v.toFixed(digits);
-  if (opts.trim !== false) s = s.replace(/\.?0+$/, '');
+  if (opts.trim !== false && s.includes('.')) s = s.replace(/\.?0+$/, '');
   if (s === '-0') s = '0';
   return `${opts.sign && v > 0 ? '+' : ''}${s}%`;
 }
