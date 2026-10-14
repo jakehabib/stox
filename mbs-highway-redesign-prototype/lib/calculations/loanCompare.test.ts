@@ -179,3 +179,11 @@ describe('property variants & APR estimate', () => {
     expect(estimateApr(500000, newLoanOption({ pointsPct: 1, closingCosts: 4000 }))).toBeGreaterThan(6.6);
   });
 });
+
+describe('newLoanOption', () => {
+  it('always has an id, even when partial.id is undefined (duplicate)', () => {
+    const o = newLoanOption({ ...opt1, id: undefined });
+    expect(o.id).toMatch(/^lo-/);
+    expect(o.ratePct).toBe(6.5);
+  });
+});

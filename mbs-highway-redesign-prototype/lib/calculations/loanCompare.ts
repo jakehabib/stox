@@ -50,7 +50,6 @@ const pos = (n: number) => Math.max(0, fin(n));
 
 export function newLoanOption(partial: Partial<LoanOption> = {}): LoanOption {
   return {
-    id: partial.id ?? `lo-${Math.random().toString(36).slice(2, 9)}`,
     downPct: 20,
     termYears: 30,
     program: 'Conventional',
@@ -63,6 +62,7 @@ export function newLoanOption(partial: Partial<LoanOption> = {}): LoanOption {
     credits: 0,
     prepaid: 0,
     ...partial,
+    id: partial.id ?? `lo-${Math.random().toString(36).slice(2, 9)}`,
   };
 }
 

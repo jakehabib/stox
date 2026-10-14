@@ -469,7 +469,7 @@ function MonthlyTab({ c, holdingYears }: { c: ComparisonResult; holdingYears: nu
   const data = comps.map((k) => Object.fromEntries([['name', k.key], ...c.options.map((o, i) => [`o${i}`, Math.round(k.get(o))])]));
   const months = c.options[0]?.holdingMonths ?? holdingYears * 12;
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className={cx('grid gap-4', c.options.length <= 2 && 'lg:grid-cols-2')}>
       <Card>
         <h4 className="text-sm font-semibold text-slate-900">Monthly payment in year {holdingYears}</h4>
         <p className="mb-3 text-xs text-slate-500">Principal/interest split of payment #{months}; P&amp;I stays level for the life of a fixed loan.</p>
@@ -539,7 +539,7 @@ function SeriesChart({ title, subtitle, c, property, options, holdingYears, pick
 function TotalCostTab({ c, property, options, holdingYears }: { c: ComparisonResult; property: ComparisonProperty; options: LoanOption[]; holdingYears: number }) {
   const win = c.winners.cost.length === 1 ? c.options[c.winners.cost[0]] : null;
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className={cx('grid gap-4', c.options.length <= 2 && 'lg:grid-cols-2')}>
       <Card>
         <h4 className="text-sm font-semibold text-slate-900">Total cost over {holdingYears} years</h4>
         <p className="mb-3 text-xs text-slate-500">Interest + mortgage insurance + points + closing costs − credits.</p>
@@ -575,7 +575,7 @@ function EquityTab({ c, property, options, holdingYears }: { c: ComparisonResult
   const v = c.options[0];
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className={cx('grid gap-3', holdingYears !== 10 && 'sm:grid-cols-2')}>
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="text-xs font-medium text-slate-500">Projected value · Yr 10</div>
           <div className="mt-1 flex flex-wrap items-baseline gap-2">
@@ -583,15 +583,15 @@ function EquityTab({ c, property, options, holdingYears }: { c: ComparisonResult
             <span className="text-sm font-medium text-emerald-700">{usd(c.projectedValue10 - property.price, { sign: true })}</span>
           </div>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+        {holdingYears !== 10 && <div className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="text-xs font-medium text-slate-500">Projected value · Yr {holdingYears}</div>
           <div className="mt-1 flex flex-wrap items-baseline gap-2">
             <span className="text-2xl font-semibold tabular-nums text-slate-900">{usd(v?.projectedValue ?? property.price)}</span>
             <span className="text-sm font-medium text-emerald-700">{usd(v?.appreciation ?? 0, { sign: true })}</span>
           </div>
-        </div>
+        </div>}
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className={cx('grid gap-4', c.options.length <= 2 && 'lg:grid-cols-2')}>
         <Card>
           <h4 className="text-sm font-semibold text-slate-900">Equity after {holdingYears} years</h4>
           <p className="mb-3 text-xs text-slate-500">Principal paid + appreciation + down payment.</p>

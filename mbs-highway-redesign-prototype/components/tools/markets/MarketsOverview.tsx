@@ -258,8 +258,7 @@ export function MarketsOverview() {
                 <YAxis {...axisProps} domain={[(min: number) => Math.floor((Math.min(min, prevClose) - 0.05) * 20) / 20, (max: number) => Math.ceil((Math.max(max, prevClose) + 0.05) * 20) / 20]} tickFormatter={(v: number) => v.toFixed(2)} width={56} />
                 <Tooltip content={<ChartTooltip format={(v) => v.toFixed(2)} labelFormat={(l) => tickFmt(String(l))} />} />
                 <ReferenceLine y={prevClose} stroke={CHART.neutral} strokeDasharray="4 4" label={{ value: tf === '1D' ? 'Prev close' : 'Prior close', position: 'insideTopLeft', fill: CHART.text, fontSize: 11 }} />
-                <Area type="monotone" dataKey="price" name="UMBS 6.5" stroke="none" fill="url(#mbsFill)" isAnimationActive={false} />
-                <Line type="monotone" dataKey="price" name="UMBS 6.5" stroke={SERIES[0]} strokeWidth={2} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+                <Area type="monotone" dataKey="price" name="UMBS 6.5" stroke={SERIES[0]} strokeWidth={2} fill="url(#mbsFill)" dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
               </ComposedChart>
             </ResponsiveContainer>
           ) : (
