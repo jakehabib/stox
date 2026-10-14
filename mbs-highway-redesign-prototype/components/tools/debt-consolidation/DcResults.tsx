@@ -55,7 +55,7 @@ export function DcResults({ s, r, onStep, setReinvest }: { s: DebtConsolidationI
     { label: 'HOA', values: sides.map((x) => usd(x.side.hoa)), sub: true },
     { label: 'Housing payment', values: sides.map((x) => usd(x.side.housing)) },
     { label: 'Other debt payments', values: sides.map((x) => usd(x.side.debts)) },
-    { label: 'Total monthly', values: sides.map((x) => usd(x.side.total)), strong: true, best: best(sides.map((x) => x.side.total)) },
+    { label: 'Total monthly', values: sides.map((x) => usd(x.side.total)), strong: true, best: isRefi ? best(sides.map((x) => x.side.total)) : 1 + best(sides.slice(1).map((x) => x.side.total)) },
     { label: 'Debt-to-income', values: sides.map((x) => <DtiCell key={x.label} dti={x.side.dtiPct} />) },
   ];
 
@@ -172,7 +172,7 @@ export function DcResults({ s, r, onStep, setReinvest }: { s: DebtConsolidationI
         )}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+      <div className={isRefi ? 'grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]' : 'grid gap-4 2xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]'}>
         <Card>
           <CardHeader title="Monthly: before vs. after" subtitle="Mortgage plus all debt payments" />
           <ComparisonTable columns={sides.map((x) => x.label)} rows={rows} />
