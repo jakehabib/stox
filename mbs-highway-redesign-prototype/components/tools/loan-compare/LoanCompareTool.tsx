@@ -186,7 +186,7 @@ export function LoanCompareTool() {
       )}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[300px_minmax(0,1fr)]">
-        <aside className="no-print h-fit min-w-0 xl:sticky xl:top-[7.5rem]">
+        <aside className="no-print order-last h-fit min-w-0 xl:order-none xl:sticky xl:top-[7.5rem]">
           <Card padded={false} className="px-4 py-1">
             <Accordion title="Locations" count={variants.length} defaultOpen={variants.length > 1}>
               <div className="space-y-1.5">

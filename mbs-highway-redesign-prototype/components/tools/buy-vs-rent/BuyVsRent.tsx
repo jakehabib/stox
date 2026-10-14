@@ -124,7 +124,7 @@ function StepOne({ s, set, setS }: { s: BvrState; set: (p: Partial<BvrState>) =>
               <div className="text-xs font-medium text-slate-500">Supports a purchase price of</div>
               <div className="text-2xl font-semibold tabular-nums text-slate-900">{usd(solved)}</div>
               <div className="mt-0.5 text-xs text-slate-500">
-                {pct(backSolveArgs(s).ltvPct, 0)} LTV at {pct(s.ratePct, 3)} / {s.termYears}yr, tax {pct(backSolveArgs(s).taxRatePct, 2)}, insurance {usd(s.insuranceMonthly)}/mo
+                {pct(backSolveArgs(s).ltvPct, 0, { trim: false })} LTV at {pct(s.ratePct, 3)} / {s.termYears}yr, tax {pct(backSolveArgs(s).taxRatePct, 2)}, insurance {usd(s.insuranceMonthly)}/mo
               </div>
             </div>
           )}

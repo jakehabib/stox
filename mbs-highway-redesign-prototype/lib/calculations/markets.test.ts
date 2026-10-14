@@ -196,3 +196,86 @@ describe('readingMinutes / clock', () => {
     expect(clock(NaN)).toBe('0:00');
   });
 });
+
+/* ------------------------------------------------------------------ demo datasets (Markets tools) */
+import { getUpcomingEvents, getWeekEvents, formatEventValue } from '@/data/mock/econCalendar';
+import { DEMO_NOW, getMbsDaily, getTreasuryCurve, prevCloseOf } from '@/data/mock/markets';
+import { getMarketSnapshot } from '@/data/mock/market';
+import { getMarketWraps, getMorningUpdates, MAULDIN_ISSUES, WEBINARS, wrapToMarkdown } from '@/data/mock/articles';
+
+describe('economic calendar — observed week Oct 12–16 2026', () => {
+  const ev = getWeekEvents(new Date(2026, 9, 14), DEMO_NOW);
+  const on = (d: string) => ev.filter((e) => e.date === d).map((e) => e.name);
+  it('Mon: Bond Market Closed (Columbus Day)', () => {
+    expect(on('2026-10-12')).toEqual(['Bond Market Closed — Columbus Day']);
+  });
+  it('Tue: ADP + Existing Home Sales; Wed: CPI + Beige Book', () => {
+    expect(on('2026-10-13').join()).toMatch(/ADP/);
+    expect(on('2026-10-13').join()).toMatch(/Existing Home Sales/);
+    expect(on('2026-10-14').join()).toMatch(/CPI/);
+    expect(on('2026-10-14').join()).toMatch(/Beige Book/);
+  });
+  it('Thu: Retail Sales + Jobless Claims; Fri: Capacity Utilization + Industrial Production', () => {
+    expect(on('2026-10-15').sort()).toEqual(['Initial Jobless Claims', 'Retail Sales']);
+    expect(on('2026-10-16').sort()).toEqual(['Capacity Utilization', 'Industrial Production']);
+  });
+  it('actuals only for events released before Wed 10:00 AM ET', () => {
+    const withActual = ev.filter((e) => e.actual !== null).map((e) => e.name);
+    expect(withActual).toEqual(['ADP Employment (weekly)', 'Existing Home Sales', 'Consumer Price Index (CPI)']);
+    expect(ev.find((e) => e.name.includes('Retail'))!.actual).toBeNull();
+  });
+  it('other weeks are deterministic and never show future actuals', () => {
+    const a = getWeekEvents(new Date(2026, 10, 4), DEMO_NOW);
+    const b = getWeekEvents(new Date(2026, 10, 4), DEMO_NOW);
+    expect(a).toEqual(b);
+    expect(a.every((e) => e.actual === null)).toBe(true);
+    expect(a.some((e) => e.name.startsWith('Jobs Report'))).toBe(true); // first Friday Nov 6
+  });
+  it('upcoming events include the Oct 28 FOMC decision; value formatting', () => {
+    expect(getUpcomingEvents(DEMO_NOW, 6).some((e) => e.date === '2026-10-28' && e.name.includes('FOMC'))).toBe(true);
+    expect(formatEventValue(228, { unit: 'K', digits: 0 })).toBe('228K');
+    expect(formatEventValue(null, { unit: '%', digits: 1 })).toBe('—');
+  });
+});
+
+describe('MBS daily series + snapshot', () => {
+  const snap = getMarketSnapshot(new Date(2026, 9, 14, 10, 0));
+  const daily = getMbsDaily(snap);
+  it('ends with yesterday at the snapshot prev close, then today = live price', () => {
+    expect(daily[daily.length - 1].price).toBe(snap.umbs.last);
+    expect(daily[daily.length - 2]).toEqual({ t: '2026-10-13', price: prevCloseOf(snap) });
+    expect(prevCloseOf(snap)).toBe(100.33);
+  });
+  it('agrees with the Market Wrap closes for Oct 7–9 and is deterministic', () => {
+    const at = (d: string) => daily.find((p) => p.t === d)?.price;
+    expect([at('2026-10-07'), at('2026-10-08'), at('2026-10-09')]).toEqual([100.14, 100.2, 100.29]);
+    expect(getMbsDaily(snap)).toEqual(daily);
+  });
+  it('1D stats from the adapter: prev close 100.33 and change = current − 100.33', () => {
+    const s = rangeStats([{ t: 'x', price: snap.umbs.last }], prevCloseOf(snap));
+    expect(s.change).toBeCloseTo(snap.umbs.change, 2);
+  });
+  it('treasury curve 10Y equals the live 10Y', () => {
+    expect(getTreasuryCurve(snap).find((c) => c.tenor === '10Y')!.today).toBe(snap.tenYear.last);
+  });
+});
+
+describe('content archives', () => {
+  it('morning updates newest first, today = Oct 14 CPI update, months back to June', () => {
+    const u = getMorningUpdates();
+    expect(u[0].date).toBe('2026-10-14');
+    expect(monthsOf(u)).toEqual(['2026-10', '2026-09', '2026-08', '2026-07', '2026-06']);
+    expect(u.every((x, i) => i === 0 || u[i - 1].date >= x.date)).toBe(true);
+  });
+  it('latest market wrap is Oct 13 (today’s posts after the close) and downloads as markdown', () => {
+    const w = getMarketWraps()[0];
+    expect(w.date).toBe('2026-10-13');
+    const md = wrapToMarkdown(w);
+    expect(md).toMatch(/^# Market Wrap — Tuesday, October 13, 2026/);
+    expect(md).toContain('UMBS 30YR 6.5% close: 100.33 (+4bp)');
+  });
+  it('Mauldin issues and webinars span multiple months for the filter', () => {
+    expect(monthsOf(MAULDIN_ISSUES)).toEqual(['2026-10', '2026-09', '2026-08']);
+    expect(monthsOf(WEBINARS).length).toBeGreaterThanOrEqual(5);
+  });
+});

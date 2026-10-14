@@ -249,7 +249,7 @@ export function AffordabilityTool() {
         emailBody={talk}
       />
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <HeroCard
           eyebrow={incomeMode ? 'You can afford' : 'Your payment buys'}
           badge={r.hasIncome ? <Badge tone={zc.tone}>{r.zone}</Badge> : undefined}
@@ -293,7 +293,7 @@ export function AffordabilityTool() {
         </Callout>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader title="Monthly payment" subtitle={`At ${usd(r.price)}`} />
           <Row label="Principal & interest" value={usd(r.pi)} />

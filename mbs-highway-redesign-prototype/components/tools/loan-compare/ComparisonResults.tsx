@@ -248,7 +248,7 @@ export function ComparisonResults({
                   <span className="text-sm text-slate-500">/mo</span>
                 </div>
                 {multi && i > 0 && <DiffLine value={o.totalMonthly - first.totalMonthly} better="low" suffix="/mo vs Option 1" />}
-                <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                <dl className={cx('mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm', !multi && 'max-w-3xl sm:grid-cols-4')}>
                   <Kv k="P&I" v={usd(o.pi, { cents: true })} />
                   <Kv k="APR" v={pct(o.aprPct, 3)} />
                   <Kv k="Cash to close" v={usd(o.cashToClose)} />
@@ -272,7 +272,7 @@ export function ComparisonResults({
 
       {/* ---------------------------------------------------------- holding period */}
       <Card>
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,320px)] lg:items-center">
+        <div className={cx('grid gap-6 lg:items-center', multi && 'lg:grid-cols-[minmax(0,1fr)_minmax(0,320px)]')}>
           <div>
             <Slider
               label="How long does your client plan on owning their home?"

@@ -223,9 +223,10 @@ export function NumberInput({
         className={clsx(inputBase, 'tabular-nums', prefix && 'pl-7', suffix && 'pr-12', invalid && 'border-red-400')}
         value={focused ? text : fmtNumber(value, decimals)}
         onFocus={(e) => {
+          // Keep the displayed text identical on focus so the selection survives the re-render.
           setFocused(true);
-          setText(Number.isFinite(value) ? String(value) : '');
-          requestAnimationFrame(() => e.target.select());
+          setText(e.target.value);
+          e.target.select();
         }}
         onBlur={() => {
           setFocused(false);

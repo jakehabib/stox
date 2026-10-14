@@ -98,7 +98,7 @@ export function VideoPlayer({
             <span className="rounded-md bg-black/40 px-1.5 py-0.5 text-[11px] font-medium tabular-nums">{clock(dur)}</span>
           </div>
           <div className={clsx('max-w-[85%]', started && 'opacity-0 transition-opacity')}>
-            <div className={clsx('font-bold leading-tight tracking-tight', compact ? 'text-base sm:text-lg' : 'text-lg sm:text-2xl')}>{title}</div>
+            {!compact && <div className="text-lg font-bold leading-tight tracking-tight sm:text-2xl">{title}</div>}
             <div className="mt-1 text-xs text-slate-300">with {presenter}</div>
           </div>
         </div>

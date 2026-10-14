@@ -51,7 +51,7 @@ const DALLAS_VALUES: Record<number, number> = {
   4: 582853,
   5: 589480,
   6: 596940,
-  7: 604686,
+  7: 604686.4, // unrounded so Loan Comparison equity lands on the observed $243,021 / $245,335
   8: 611772,
   9: 622058,
   10: 634338,

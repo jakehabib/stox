@@ -36,15 +36,15 @@ export function DcResults({ s, r, onStep, setReinvest }: { s: DebtConsolidationI
   const mu = r.moveUp;
   const series = useMemo(() => balanceSeries(r), [r]);
 
-  const sides: { label: string; side: PaymentSide }[] = isRefi
+  const sides: { label: string; short: string; side: PaymentSide }[] = isRefi
     ? [
-        { label: 'Today', side: r.before },
-        { label: 'After refinance', side: r.after },
+        { label: 'Today', short: 'Today', side: r.before },
+        { label: 'After refinance', short: 'After refi', side: r.after },
       ]
     : [
-        { label: 'Today', side: r.before },
-        { label: 'Move up, keep debts', side: mu!.alt },
-        { label: 'Move up + consolidate', side: r.after },
+        { label: 'Today', short: 'Today', side: r.before },
+        { label: 'Move up, keep debts', short: 'Keep debts', side: mu!.alt },
+        { label: 'Move up + consolidate', short: 'Consolidate', side: r.after },
       ];
   const best = (vals: number[]) => vals.indexOf(Math.min(...vals));
 
@@ -59,7 +59,7 @@ export function DcResults({ s, r, onStep, setReinvest }: { s: DebtConsolidationI
     { label: 'Debt-to-income', values: sides.map((x) => <DtiCell key={x.label} dti={x.side.dtiPct} />) },
   ];
 
-  const chart = sides.map((x) => ({ name: x.label, Housing: Math.round(x.side.housing), Debts: Math.round(x.side.debts) }));
+  const chart = sides.map((x) => ({ name: x.short, Housing: Math.round(x.side.housing), Debts: Math.round(x.side.debts) }));
   const loc = getLocation(isRefi ? s.existing.locationId : s.moveUp.newLocationId);
   const savings = isRefi ? r.monthlySavings : mu!.savingsVsAlt;
   const savingsTone = savings >= 0 ? 'text-gain' : 'text-loss';
@@ -120,7 +120,7 @@ export function DcResults({ s, r, onStep, setReinvest }: { s: DebtConsolidationI
         </Callout>
       ))}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <HeroCard
           eyebrow={isRefi ? 'Monthly savings' : 'Consolidating saves'}
           value={<span className={savingsTone}>{`${savings < 0 ? '−' : ''}${usd(Math.abs(savings))}/mo`}</span>}
@@ -172,7 +172,7 @@ export function DcResults({ s, r, onStep, setReinvest }: { s: DebtConsolidationI
         )}
       </div>
 
-      <div className={isRefi ? 'grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]' : 'grid gap-4 2xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]'}>
+      <div className={isRefi ? 'grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]' : 'grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]'}>
         <Card>
           <CardHeader title="Monthly: before vs. after" subtitle="Mortgage plus all debt payments" />
           <ComparisonTable columns={sides.map((x) => x.label)} rows={rows} />
@@ -219,7 +219,7 @@ export function DcResults({ s, r, onStep, setReinvest }: { s: DebtConsolidationI
         </p>
       </Card>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
         <Card>
           <CardHeader title="Savings reinvested" subtitle={`Put the ${usd(r.reinvest.amount)} ${reinvestDesc} to work`} />
           {r.reinvest.amount > 0 ? (

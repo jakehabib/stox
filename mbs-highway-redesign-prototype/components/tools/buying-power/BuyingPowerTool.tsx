@@ -136,7 +136,7 @@ export function BuyingPowerTool() {
 
       <div className={cx('grid gap-3', agent && 'md:grid-cols-2')}>{coBrands.filter(Boolean)}</div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
         <HeroCard eyebrow="Your payment today" value={`${usd(r.basePayment)}/mo`} sub={`Principal & interest on ${usd(s.loanAmount)} at ${pct(s.ratePct, 3)} for ${s.termYears} years (APR ${pct(r.baseApr, 3)})`} />
         <Card className="flex flex-col justify-center">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Rate sensitivity</div>

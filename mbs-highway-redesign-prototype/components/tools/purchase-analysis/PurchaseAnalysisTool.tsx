@@ -169,7 +169,7 @@ export function PurchaseAnalysisTool() {
                 }}
               />
             </div>
-            <PropertyEditor value={s.property} onChange={(property) => set({ property })} />
+            <PropertyEditor value={s.property} onChange={(property) => set({ property })} showAlternates={false} />
           </div>
         </StepCard>
       )}

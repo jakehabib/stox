@@ -21,6 +21,8 @@ import { useStore } from '@/lib/store';
 import { useUrlState } from '@/lib/useUrlState';
 
 const TOOL = 'rerc';
+/** People counts are stored in thousands: 650.5 → "650.5K", 2613.5 → "2.61M". */
+const people = (k: number) => (k >= 1000 ? `${(k / 1000).toFixed(2)}M` : `${k.toFixed(1)}K`);
 
 interface RercState {
   step: 'input' | 'results';
@@ -266,32 +268,32 @@ function Results({ s, set, reset }: { s: RercState; set: (p: Partial<RercState>)
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <ChartCard
           title="Demographics by age"
-          subtitle={`${d.county} County · total ${ageTotal.toFixed(1)}K people`}
+          subtitle={`${d.county} County · total ${people(ageTotal)} people`}
           height={280}
-          table={{ head: ['Age', 'People'], rows: d.ageBuckets.map((a) => [a.label, `${a.value.toFixed(1)}K`]) }}
+          table={{ head: ['Age', 'People'], rows: d.ageBuckets.map((a) => [a.label, people(a.value)]) }}
         >
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={d.ageBuckets} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid {...gridProps} />
               <XAxis dataKey="label" {...axisProps} interval={0} tick={{ ...axisProps.tick, fontSize: 11 }} />
               <YAxis {...axisProps} width={44} tickFormatter={(v: number) => `${v}K`} />
-              <Tooltip cursor={{ fill: 'rgba(15,23,42,0.04)' }} content={<ChartTooltip format={(v) => `${v.toFixed(1)}K`} />} />
+              <Tooltip cursor={{ fill: 'rgba(15,23,42,0.04)' }} content={<ChartTooltip format={(v) => people(v)} />} />
               <Bar dataKey="value" name="People" fill={SERIES[0]} radius={[4, 4, 0, 0]} maxBarSize={40} isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
 
         <Card className="min-w-0">
-          <CardHeader title="Homeowners & renters" subtitle={`${d.county} County · ${h.total.toFixed(1)}K people`} />
+          <CardHeader title="Homeowners & renters" subtitle={`${d.county} County · ${people(h.total)} people`} />
           <div className="flex h-8 w-full gap-0.5 overflow-hidden rounded-md" role="img" aria-label="Homeowners and renters split">
             <div style={{ width: `${h.rentersCantAffordPct}%`, background: SERIES[1] }} />
             <div style={{ width: `${h.canAffordPct}%`, background: SERIES[2] }} />
             <div style={{ width: `${h.ownersPct}%`, background: SERIES[0] }} />
           </div>
           <ul className="mt-5 space-y-3">
-            <SplitRow color={SERIES[1]} icon={<Users className="h-4 w-4" />} label="Renters" value={`${d.renters.toFixed(1)}K`} share={`${Math.round(h.rentersCantAffordPct)}%`} note={`${h.rentersCantAfford.toFixed(1)}K can’t yet afford to buy`} />
-            <SplitRow color={SERIES[2]} icon={<TrendingUp className="h-4 w-4" />} label="Renters who can afford to purchase" value={`${d.rentersCanAfford.toFixed(1)}K`} share={`${Math.floor(h.canAffordPct)}%`} note="Your prospective buyers" />
-            <SplitRow color={SERIES[0]} icon={<Building2 className="h-4 w-4" />} label="Homeowners" value={`${d.homeowners.toFixed(1)}K`} share={`${Math.round(h.ownersPct)}%`} />
+            <SplitRow color={SERIES[1]} icon={<Users className="h-4 w-4" />} label="Renters" value={people(d.renters)} share={`${Math.round(h.rentersCantAffordPct)}%`} note={`${people(h.rentersCantAfford)} can’t yet afford to buy`} />
+            <SplitRow color={SERIES[2]} icon={<TrendingUp className="h-4 w-4" />} label="Renters who can afford to purchase" value={people(d.rentersCanAfford)} share={`${Math.floor(h.canAffordPct)}%`} note="Your prospective buyers" />
+            <SplitRow color={SERIES[0]} icon={<Building2 className="h-4 w-4" />} label="Homeowners" value={people(d.homeowners)} share={`${Math.round(h.ownersPct)}%`} />
           </ul>
         </Card>
       </div>
@@ -303,7 +305,7 @@ function Results({ s, set, reset }: { s: RercState; set: (p: Partial<RercState>)
             <div className="text-xs font-medium text-slate-500">Median household income</div>
             <div className="mt-1 text-3xl font-semibold tabular-nums text-slate-900">{usd(d.medianIncome)}</div>
             <div className="mt-0.5 text-sm text-slate-500">
-              {pct(Math.abs(incomeDiff), 0)} {incomeDiff >= 0 ? 'above' : 'below'} the national median of {usd(d.nationalMedianIncome)}
+              {pct(Math.abs(incomeDiff), 0, { trim: false })} {incomeDiff >= 0 ? 'above' : 'below'} the national median of {usd(d.nationalMedianIncome)}
             </div>
             <div className="mt-4 space-y-2">
               <IncomeBar label={`${d.county} County`} value={d.medianIncome} max={Math.max(d.medianIncome, d.nationalMedianIncome)} color={SERIES[0]} />
@@ -350,7 +352,7 @@ function Tile({ label, value, sub, highlight }: { label: string; value: ReactNod
 }
 
 function ListingBlock({ title, l }: { title: string; l: ListingStats }) {
-  const chg = (v: number) => <span className={v >= 0 ? 'text-gain' : 'text-loss'}>{pct(v, 0, { sign: true })}</span>;
+  const chg = (v: number) => <span className={v >= 0 ? 'text-gain' : 'text-loss'}>{pct(v, 0, { sign: true, trim: false })}</span>;
   return (
     <div>
       <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</div>

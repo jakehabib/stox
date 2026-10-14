@@ -162,13 +162,15 @@ export function EconCalendar() {
       />
 
       <Card className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex items-center gap-2">
           <Button variant="secondary" size="sm" aria-label="Previous week" onClick={() => setMonday(addWeeks(monday, -1))} icon={<ChevronLeft className="h-4 w-4" />} />
           <Button variant={isThisWeek ? 'subtle' : 'secondary'} size="sm" onClick={() => setMonday(thisWeek)} disabled={isThisWeek} icon={<CalendarDays className="h-4 w-4" />}>
             This week
           </Button>
           <Button variant="secondary" size="sm" aria-label="Next week" onClick={() => setMonday(addWeeks(monday, 1))} icon={<ChevronRight className="h-4 w-4" />} />
-          <div className="ml-2 min-w-0">
+          </div>
+          <div className="order-first min-w-0 sm:order-none sm:ml-2" aria-live="polite">
             <div className="text-base font-semibold text-slate-900">Week of {weekLabel(monday)}</div>
             <div className="text-xs text-slate-500">
               {events.length} events · {highCount} high importance

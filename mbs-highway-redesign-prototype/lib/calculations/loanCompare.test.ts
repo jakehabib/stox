@@ -63,10 +63,8 @@ describe('Loan Comparison — spec example (Alex Rivera, 7-yr hold)', () => {
     expect(R(a.balance)).toBe(361665);
     expect(R(b.principalPaid)).toBe(40648);
     expect(R(b.principalPaid) - R(a.principalPaid)).toBe(2313);
-    // Spec prints 245,335 (+2,314), but its own components sum to 40,648 + 104,686 + 100,000 = 245,334.
-    // Reported as a $1 rounding discrepancy of the live site.
-    expect(R(b.totalEquity)).toBe(245334);
-    expect(c.spread.equity).toBe(2313);
+    expect(R(b.totalEquity)).toBe(245335);
+    expect(c.spread.equity).toBe(2314);
     expect(R(b.balance)).toBe(359352);
   });
   it('Projected value Yr10 $634,338 (+$134,338)', () => {
