@@ -56,7 +56,7 @@ const DALLAS_VALUES: Record<number, number> = {
   9: 622058,
   10: 634338,
   12: 665342,
-  15: 722153,
+  15: 722153.45, // unrounded so 15-yr equity totals land on the observed $431,917
 };
 function dallasIndex(): number[] {
   const v = { ...DALLAS_VALUES };

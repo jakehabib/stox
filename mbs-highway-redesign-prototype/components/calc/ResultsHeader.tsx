@@ -102,7 +102,7 @@ export function ResultsHeader({
                 </button>
               )}
             </div>
-            <div className="mt-0.5 truncate text-sm font-semibold text-slate-900">{c.value}</div>
+            <div className="mt-0.5 break-words text-sm font-semibold text-slate-900 sm:truncate">{c.value}</div>
           </div>
         ))}
       </div>
