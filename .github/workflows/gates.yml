@@ -1,0 +1,106 @@
+# The four gates, run on every push to the branch that deploys.
+#
+# WHY THIS EXISTS. `npm run build` is `prisma migrate deploy && next build`, so
+# a push to this branch runs DDL against the production database and ships the
+# code. The branch is not protected. That makes a push the most privileged
+# action anyone can take against this system, and until this workflow existed
+# nothing checked it: the four gates below — including the action-guard audit,
+# whose entire purpose is that an unguarded Server Action fails the day it is
+# added — only ran when a human remembered to run them.
+#
+# These gates are not advisory. `audit:actions` exists because six actions once
+# let one player read another player's league and one of them wrote into it.
+# `check:money` exists because a wrong cap figure is a number nobody can check.
+# An audit that runs only when someone remembers is not a defence.
+#
+# NOTE ON scripts/_*: those are gitignored scratch probes with pre-existing type
+# errors. CI never sees them, which is why `tsc --noEmit` here needs no
+# tsconfig surgery — the trick required locally is an artefact of the working
+# tree, not of the repository.
+name: gates
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A later push makes an earlier run irrelevant. Cancel it rather than paying
+# for both and reporting the stale one.
+concurrency:
+  group: gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # The gates are not unit tests; they generate leagues and advance seasons
+    # against a real Postgres. A service container is the whole reason this
+    # workflow can run them at all.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: stox
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # No pooler in front of this one, so the direct URL is the same URL.
+      # Prisma needs both because `migrate deploy` holds a session open to run
+      # DDL and a transaction-mode pooler cannot, which is the P1002 the
+      # .env.example warns about.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/stox
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/stox
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate the client
+        run: npx prisma generate
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      # Typecheck before the gates: a type error makes every result below
+      # meaningless, and it is the cheapest thing here.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # NO LINT STEP, deliberately. `npm run lint` is `next lint`, and this
+      # repo has no ESLint configuration, so the script does not lint — it
+      # drops into Next's interactive "how would you like to configure ESLint?"
+      # setup prompt, which in CI hangs until the job times out. A gate that
+      # cannot pass is worse than no gate: it trains everyone to ignore red.
+      # Configure ESLint and this step comes back.
+
+      # Ordered cheapest-first so the common failure reports soonest.
+      - name: Action and route guards
+        run: npm run audit:actions
+
+      - name: Contract rules
+        run: npm run check:cap
+
+      - name: Money conservation
+        run: npm run check:money
+
+      # Last because it is the slowest by an order of magnitude: it generates
+      # leagues and plays seasons. It is also the only gate that asserts the
+      # league is still PLAYABLE, so it is not optional.
+      - name: League health
+        run: npm run sim:health
