@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { TeamLogo } from './TeamLogo';
 
 /** Mirrors FILE_LIMITS.MAX_BYTES — the server is still the authority. */
-const MAX_BYTES = 4 * 1024 * 1024;
+const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_LEAGUE_NAME = 60;
 
 interface PeekedTeam {
@@ -70,7 +70,7 @@ export function LeagueImportForm() {
     if (file.size > MAX_BYTES) {
       setError(
         `That file is ${(file.size / 1_048_576).toFixed(1)}MB. The limit is ${MAX_BYTES / 1_048_576}MB — ` +
-          'a full 32-team league with complete rosters is under 1.5MB.',
+          'a full 32-team league with complete rosters and a draft class is under 1.5MB.',
       );
       return;
     }

@@ -30,20 +30,37 @@
  *    field by field below and in docs/custom-leagues.md.
  *
  * VERSIONING. `formatVersion` is the first field of the document and the
- * first thing checked. This reader accepts version 1 and refuses anything
- * else by number, in both directions, with a message saying which version the
- * file is and which this build speaks. Adding a new OPTIONAL field never bumps
- * the version — an old reader ignores fields it does not know. Removing a
- * field, renaming one, or changing the meaning of an existing one bumps it,
- * and this file then grows an explicit upgrade step from the older shape
- * rather than a pile of `if (v === 1)` scattered through the validators.
+ * first thing checked. This reader accepts versions 1 and 2 and refuses
+ * anything else by number, in both directions, with a message saying which
+ * version the file is and which this build speaks. Adding a new OPTIONAL field
+ * never bumps the version — an old reader ignores fields it does not know.
+ * Removing a field, renaming one, or changing the MEANING of an existing one
+ * bumps it.
+ *
+ * VERSION 2 bumped it for the third reason, and the bump is for the benefit of
+ * OLD readers rather than this one. `conference` and `division` used to be
+ * closed enums — two conference names and four division names, both baked in —
+ * and they are now author-supplied strings, so a file whose teams play in the
+ * "Big Ten" and the "SEC" is a file a version-1 reader must refuse by version
+ * number rather than by eight confusing "must be one of AFC, NFC" errors. The
+ * same bump carries `draftClasses`, the college prospects the format had no
+ * way to describe at all.
+ *
+ * READING VERSION 1 NEEDS NO UPGRADE STEP, because every version-2 addition is
+ * optional and defaults to what version 1 meant: no `conferences` is
+ * LEAGUE.CONFERENCES, no `divisions` is LEAGUE.DIVISIONS, no `draftClasses` is
+ * the generated class a league has always got. The one thing the reader IS
+ * strict about is the other direction — a file that declares version 1 and
+ * then uses a version-2 field is refused by name, so the version number never
+ * becomes decoration.
  */
 
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
-import { GENERATION, LEAGUE, POSITIONS, Position, ROSTER_TARGETS } from './tuning';
+import { GENERATION, LEAGUE, POSITIONS, Position, ROSTER_TARGETS, conferencesOf, divisionsOf } from './tuning';
 import { ATTRIBUTE_BY_KEY, AttrMap, attrsForPosition, computeOverall } from './ratings';
-import { GeneratedPlayer, generatePlayer, generateRoster } from './gen/players';
+import { GeneratedPlayer, generateDraftClass, generatePlayer, generateRoster } from './gen/players';
+import { generateClassStrength, generateCollegeProfile } from './gen/prospectProfile';
 import { NameRegistry } from './gen/names';
 import { readJson } from './json';
 import { LeagueImportPlan, PlannedContract, plannedContractKey } from './gen/league';
@@ -53,10 +70,13 @@ import { LeagueImportPlan, PlannedContract, plannedContractKey } from './gen/lea
 // ---------------------------------------------------------------------------
 
 /** Bumped only by a BREAKING change. New optional fields do not bump it. */
-export const FORMAT_VERSION = 1;
+export const FORMAT_VERSION = 2;
 
 /** Every version this build can read. */
-export const SUPPORTED_VERSIONS = [1];
+export const SUPPORTED_VERSIONS = [1, 2];
+
+/** The version-2 fields. A file declaring version 1 may not use them. */
+const V2_FIELDS = ['conferences', 'divisions', 'draftClasses'] as const;
 
 /**
  * A discriminator, so a JSON file that is merely *some other JSON file* is
@@ -74,20 +94,33 @@ export const FILE_KIND = 'dynastygm.league';
  * the docs quote all of them, and a future change to any one of them is a
  * change to a single line rather than an archaeology exercise.
  *
- * MAX_BYTES is sized off a real full export. A 32-team league with complete
- * rosters, every attribute and every contract measures 0.6-1.1MB in this format;
- * 4MB leaves generous headroom for longer names and a future optional field
- * without being large enough that parsing one is itself a denial of service.
+ * MAX_BYTES is sized off a real full export, and the figure moved with
+ * version 2. A 32-team league with complete rosters, every attribute and every
+ * contract measures 0.6-1.1MB in this format, which is what 4MB was sized
+ * against. A version-2 file may also carry a draft class, and a measured full
+ * export of a league holding one came out at 0.64MB of rosters plus 0.18MB of
+ * prospects — 0.82MB all in, so call it 0.8-1.5MB across the range of name
+ * lengths the old measurement spanned.
+ *
+ * 8MB keeps roughly the five-fold headroom 4MB had over the largest thing the
+ * app itself writes, while still being small enough that parsing one is not
+ * itself a denial of service. The cost that actually matters on this path is
+ * not bytes anyway: it is the ~2,100 rows an accepted file causes to be
+ * WRITTEN, and that is bounded by the count limits below.
  */
 export const FILE_LIMITS = {
-  MAX_BYTES: 4 * 1024 * 1024,
+  MAX_BYTES: 8 * 1024 * 1024,
   /** A schedule needs exactly this shape — see the structure check below. */
   TEAM_COUNT: LEAGUE.TEAM_COUNT,
+  CONFERENCE_COUNT: LEAGUE.CONFERENCES.length,
+  DIVISION_COUNT: LEAGUE.DIVISIONS.length,
   TEAMS_PER_DIVISION: 4,
   MAX_PLAYERS_PER_TEAM: LEAGUE.ROSTER_MAX,
   MAX_FREE_AGENTS: 400,
   MAX_ATTRS_PER_PLAYER: 64,
   MAX_LEAGUE_NAME: 60,
+  MAX_CONFERENCE_NAME: 24,
+  MAX_DIVISION_NAME: 24,
   MAX_CITY: 24,
   MAX_NICKNAME: 24,
   MAX_PERSON_NAME: 24,
@@ -107,6 +140,49 @@ export const FILE_LIMITS = {
   /** Well above any sane deal, well below anything that breaks an Int column. */
   CONTRACT_APY_MAX: 100_000_000,
   CONTRACT_YEARS_MAX: 7,
+
+  /**
+   * DRAFT CLASSES. One class, because `Player.draftYear` is how the app
+   * decides which class is on the clock and it takes the NEWEST one still
+   * flagged `isDraftee` (liveDraftClassYear, lib/draft.ts) — so a second,
+   * pre-authored class a year ahead would take over the draft board a year
+   * early. The field is an ARRAY anyway, so the day the engine can hold more
+   * than one is a change to this number and not to the format.
+   */
+  MAX_DRAFT_CLASSES: 1,
+  /**
+   * Exactly the size of a generated class: GENERATION.DRAFT_CLASS_SIZE (224,
+   * which is 7 rounds x 32) plus DRAFT_CLASS_EXTRA_UDFA (176). Read from there
+   * rather than typed in, so a retuned class size cannot leave an authored one
+   * refused for being the size the generator now produces.
+   */
+  MAX_PROSPECTS_PER_CLASS: GENERATION.DRAFT_CLASS_SIZE + GENERATION.DRAFT_CLASS_EXTRA_UDFA,
+  /**
+   * How far a class's authored `strength` may push every position group. The
+   * generated bias is N(0, 6) per group (generateClassStrength), so +/-12 is
+   * two standard deviations of class personality applied across the board —
+   * past that an author is not describing a strong class, they are asking for
+   * a league of ninety-overall rookies.
+   */
+  CLASS_STRENGTH_MIN: -12,
+  CLASS_STRENGTH_MAX: 12,
+  /** A class year is a label, not a game year — see readDraftClass. */
+  DRAFT_YEAR_MIN: 1900,
+  DRAFT_YEAR_MAX: 2200,
+
+  /**
+   * COMBINE TESTING. Each bound is the position-anchor table's own range
+   * (COMBINE_ANCHOR, lib/gen/prospectProfile.ts) opened out well past the
+   * slowest and fastest man it can roll, so an authored number is refused only
+   * when it is not a measurement at all. They are REFUSED rather than clamped
+   * for the usual reason: a 40-yard dash of 0.4 is not a 4.0 the author meant.
+   */
+  FORTY_MIN: 3.8, FORTY_MAX: 7.5,
+  VERTICAL_MIN: 10, VERTICAL_MAX: 50,
+  BROAD_MIN: 60, BROAD_MAX: 160,
+  CONE_MIN: 5.5, CONE_MAX: 10.5,
+  SHUTTLE_MIN: 3.3, SHUTTLE_MAX: 7.0,
+  BENCH_MIN: 1, BENCH_MAX: 60,
 } as const;
 
 /** The free-agent pool is topped up to this so free agency is never dead. */
@@ -120,9 +196,16 @@ const FREE_AGENT_DEFAULT = 140;
  */
 const POSITION_MINIMUM_TOTAL = POSITIONS.reduce((n, pos) => n + ROSTER_TARGETS[pos].min, 0);
 
-const CONFERENCES = ['AFC', 'NFC'] as const;
-const DIVISIONS = ['East', 'North', 'South', 'West'] as const;
+/**
+ * The labels a file gets when it names none — which is every version-1 file
+ * and every version-2 file that is happy with the defaults. The LISTS live in
+ * lib/tuning.ts beside the structural counts they come with; there is no
+ * second copy here, and there used to be.
+ */
+const DEFAULT_CONFERENCES: readonly string[] = LEAGUE.CONFERENCES;
+const DEFAULT_DIVISIONS: readonly string[] = LEAGUE.DIVISIONS;
 const DEV_TRAITS = ['Slow', 'Normal', 'Star', 'Superstar'] as const;
+const COMBINE_VENUES = ['COMBINE', 'PRO_DAY'] as const;
 
 // ---------------------------------------------------------------------------
 // The document
@@ -159,16 +242,89 @@ export interface FilePlayer {
   /** Partial is fine: unspecified attributes are generated around `ovr`. */
   attrs?: AttrMap;
   contract?: FileContract;
+  /**
+   * Combine or pro-day numbers. ONLY legal inside a `draftClasses` entry —
+   * nothing in the app shows testing for a man who is not in a draft class
+   * (see the `isDraftee` guard on the player page), so accepting it on a
+   * veteran and then dropping it would be a field that silently does nothing.
+   * It is refused there by name instead.
+   */
+  combine?: FileCombine;
+}
+
+/**
+ * Authored combine testing. Every drill is optional and any subset is legal.
+ *
+ * WHAT HAPPENS TO THESE NUMBERS IS THE WHOLE POINT. They do NOT become an
+ * athletic rank, a grade or a percentile here. The import rolls the prospect
+ * his full six-drill battery through generateCombineTesting — the same
+ * derivation every generated prospect goes through, at his own percentile
+ * within his own position group in this class — and then overlays whichever of
+ * these the author wrote, exactly as `attrs` overlays a generated attribute
+ * map. The Athletic Rank the draft board and the player card print is then
+ * computed from the STORED six numbers at read time, by the one function both
+ * screens call (classAthleticRanks, lib/combineRank.ts).
+ *
+ * So the rank cannot disagree with the times printed beside it: there is no
+ * stored rank to disagree with. An authored 4.28 is ranked as a 4.28 among
+ * whatever the rest of the class ran, and a prospect whose class has no
+ * testing at all gets NO rank rather than a blank one — the column is absent,
+ * which is the distinction the draft board already draws.
+ */
+export interface FileCombine {
+  venue?: (typeof COMBINE_VENUES)[number];
+  /** Seconds. */
+  fortyYard?: number;
+  /** Inches. */
+  vertical?: number;
+  /** Inches. */
+  broadJump?: number;
+  /** Seconds. */
+  threeCone?: number;
+  /** Seconds. */
+  shuttle?: number;
+  /** Reps at 225lb. `null` is "he did not lift", which is not the same as 0. */
+  benchReps?: number | null;
 }
 
 export interface FileTeam {
   city: string;
   nickname: string;
   abbr: string;
-  conference: (typeof CONFERENCES)[number];
-  division: (typeof DIVISIONS)[number];
+  /** One of the file's own `conferences`. */
+  conference: string;
+  /** One of the file's own `divisions`. */
+  division: string;
   /** Omit (or leave empty) and a full roster is generated for this team. */
   players?: FilePlayer[];
+}
+
+/**
+ * One college draft class.
+ *
+ * `year` IS A LABEL, NOT A GAME YEAR. The class the import materialises is
+ * stamped with the importing LEAGUE's season year, because `Player.draftYear`
+ * is what the app uses to decide which class is on the clock and that has to
+ * be the calendar of the league the class ends up in — a file authored for
+ * 2026 and imported in 2028 still has to be the class the 2028 board picks
+ * from. So this is derived-not-authored in the same documented sense as
+ * `yearsRemaining`, and it is read for ordering and for naming the class in a
+ * refusal.
+ */
+export interface FileDraftClass {
+  year: number;
+  /**
+   * How good the class is across the board, in rating points, added to every
+   * position group's own rolled bias (generateClassStrength). It moves the men
+   * the import GENERATES to fill the class out, and nothing else — a prospect
+   * whose `ovr` the file states keeps the overall the file stated, for the same
+   * reason a rostered player does. A class that lists all
+   * MAX_PROSPECTS_PER_CLASS men therefore generates nobody and this does
+   * nothing, which is why a fully authored class publishes no class-strength
+   * outlook rather than one describing numbers that were never applied.
+   */
+  strength?: number;
+  players: FilePlayer[];
 }
 
 export interface LeagueFile {
@@ -178,8 +334,16 @@ export interface LeagueFile {
   /** Informational only — never read back. */
   generatedAt?: string;
   generator?: string;
+  /**
+   * The two conference names and the four division names this league files its
+   * teams under. ALWAYS PRESENT once parsed — a file that names none is given
+   * the defaults here rather than leaving every reader to default for itself.
+   */
+  conferences: string[];
+  divisions: string[];
   teams: FileTeam[];
   freeAgents?: FilePlayer[];
+  draftClasses?: FileDraftClass[];
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +430,25 @@ function readInt(raw: unknown, path: string, lo: number, hi: number): number {
   return raw;
 }
 
+/**
+ * A measured number, which is not an integer. Combine times carry hundredths
+ * and `readInt` would refuse 4.42 outright, so this is the same contract —
+ * finite, in range, refused rather than clamped — with a decimal budget. The
+ * rounding is to the precision the game itself stores and prints (two places
+ * for a stopwatch; see generateCombineTesting's `toFixed(2)`), so an author
+ * who writes 4.4237 gets the 4.42 the card will show rather than a stored
+ * number the display disagrees with.
+ */
+function readNumber(raw: unknown, path: string, lo: number, hi: number, dp: number): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    return fail(`${path} must be a number (found ${describe(raw)}).`);
+  }
+  if (raw < lo || raw > hi) {
+    return fail(`${path} is ${raw}; it must be between ${lo} and ${hi}.`);
+  }
+  return Number(raw.toFixed(dp));
+}
+
 function readEnum<T extends string>(raw: unknown, path: string, allowed: readonly T[]): T {
   if (typeof raw !== 'string') {
     return fail(`${path} must be one of ${allowed.join(', ')} (found ${describe(raw)}).`);
@@ -330,7 +513,7 @@ export function parseLeagueFile(text: string): LeagueFile {
   if (bytes > FILE_LIMITS.MAX_BYTES) {
     fail(
       `The file is ${(bytes / 1_048_576).toFixed(1)}MB; the maximum is ` +
-        `${FILE_LIMITS.MAX_BYTES / 1_048_576}MB. A full 32-team league with complete rosters is under 1.5MB.`,
+        `${FILE_LIMITS.MAX_BYTES / 1_048_576}MB. A full 32-team league with complete rosters and a draft class is under 1.5MB.`,
     );
   }
   if (text.trim().length === 0) fail('The file is empty.');
@@ -372,25 +555,61 @@ export function parseLeagueFile(text: string): LeagueFile {
   if (root.kind !== FILE_KIND) {
     fail(`"kind" must be "${FILE_KIND}" (found ${describe(root.kind)}). This does not look like a league file.`);
   }
+  // A version number that does not constrain the document is decoration. A
+  // file declaring 1 and then using a version-2 field would load here and be
+  // refused by every older build with eight "must be one of AFC, NFC" errors
+  // instead of one sentence about the version.
+  if (version === 1) {
+    const used = V2_FIELDS.filter((f) => root[f] !== undefined);
+    if (used.length > 0) {
+      fail(
+        `This file declares "formatVersion": 1 but uses ${used.map((f) => `"${f}"`).join(' and ')}, ` +
+          `which ${used.length === 1 ? 'is' : 'are'} only available from format version ${FORMAT_VERSION}. ` +
+          `Change "formatVersion" to ${FORMAT_VERSION}, or remove ${used.length === 1 ? 'that field' : 'those fields'}.`,
+      );
+    }
+  }
 
   // --- 3. Shape -------------------------------------------------------------
   const name = readString(root.name ?? 'Imported League', 'name', FILE_LIMITS.MAX_LEAGUE_NAME);
+  const conferences = readLabels(
+    root.conferences, 'conferences', DEFAULT_CONFERENCES,
+    FILE_LIMITS.CONFERENCE_COUNT, FILE_LIMITS.MAX_CONFERENCE_NAME,
+  );
+  const divisions = readLabels(
+    root.divisions, 'divisions', DEFAULT_DIVISIONS,
+    FILE_LIMITS.DIVISION_COUNT, FILE_LIMITS.MAX_DIVISION_NAME,
+  );
+
   const rawTeams = readArray(root.teams, 'teams', FILE_LIMITS.TEAM_COUNT + 1);
   if (rawTeams.length !== FILE_LIMITS.TEAM_COUNT) {
     fail(
       `teams holds ${rawTeams.length} teams; a league needs exactly ${FILE_LIMITS.TEAM_COUNT}. ` +
-        `The season schedule is built from ${CONFERENCES.length} conferences of ${DIVISIONS.length} divisions ` +
+        `The season schedule is built from ${conferences.length} conferences of ${divisions.length} divisions ` +
         `of ${FILE_LIMITS.TEAMS_PER_DIVISION} teams and cannot be produced from any other count.`,
     );
   }
 
-  const teams: FileTeam[] = rawTeams.map((t, i) => readTeam(t, `teams[${i}]`));
-  assertLeagueStructure(teams);
+  const teams: FileTeam[] = rawTeams.map((t, i) => readTeam(t, `teams[${i}]`, conferences, divisions));
+  assertLeagueStructure(teams, conferences, divisions);
 
   const freeAgents = root.freeAgents === undefined
     ? undefined
     : readArray(root.freeAgents, 'freeAgents', FILE_LIMITS.MAX_FREE_AGENTS)
         .map((p, i) => readPlayer(p, `freeAgents[${i}]`));
+
+  const draftClasses = root.draftClasses === undefined
+    ? undefined
+    : readArray(root.draftClasses, 'draftClasses', FILE_LIMITS.MAX_DRAFT_CLASSES + 1)
+        .map((c, i) => readDraftClass(c, `draftClasses[${i}]`));
+  if (draftClasses && draftClasses.length > FILE_LIMITS.MAX_DRAFT_CLASSES) {
+    fail(
+      `draftClasses holds ${draftClasses.length} classes; this build reads ${FILE_LIMITS.MAX_DRAFT_CLASSES}. ` +
+        'A league has exactly one class on the clock — the newest one nobody has picked from — and a second ' +
+        'class supplied up front would take over the draft board a year early. Next year\'s class is generated ' +
+        'at the start of next preseason.',
+    );
+  }
 
   return {
     formatVersion: FORMAT_VERSION,
@@ -398,19 +617,98 @@ export function parseLeagueFile(text: string): LeagueFile {
     name,
     generatedAt: typeof root.generatedAt === 'string' ? truncate(root.generatedAt, 40) : undefined,
     generator: typeof root.generator === 'string' ? truncate(root.generator, 60) : undefined,
+    conferences,
+    divisions,
     teams,
     freeAgents,
+    draftClasses,
   };
 }
 
-function readTeam(raw: unknown, path: string): FileTeam {
+/**
+ * The conference or division names, or the defaults.
+ *
+ * Held to the same rules as every other display name — the same alphabet, the
+ * same length cap, the same sanitisation — because they are rendered in the
+ * same standings panels and the same division headers as a nickname is.
+ *
+ * THE COUNT IS STRUCTURAL AND THE STRINGS ARE NOT. 2 x 4 x 4 = 32 is the only
+ * arrangement lib/schedule.ts can build a season from (see
+ * assertLeagueStructure), so a file offering three conferences is refused with
+ * the arithmetic; what those two conferences are CALLED is the author's.
+ *
+ * Duplicates are refused rather than deduplicated, because a league with one
+ * conference called "East" twice has four divisions of eight and cannot be
+ * scheduled, and because `readEnum` matches case-insensitively — "East" and
+ * "east" would otherwise be one bucket a team could land in by either name.
+ */
+function readLabels(
+  raw: unknown,
+  path: string,
+  fallback: readonly string[],
+  count: number,
+  maxLen: number,
+): string[] {
+  if (raw === undefined) return [...fallback];
+  const rows = readArray(raw, path, count + 1);
+  if (rows.length !== count) {
+    fail(
+      `${path} holds ${rows.length} names; a league needs exactly ${count}. ` +
+        `The season schedule is built from ${FILE_LIMITS.CONFERENCE_COUNT} conferences of ` +
+        `${FILE_LIMITS.DIVISION_COUNT} divisions of ${FILE_LIMITS.TEAMS_PER_DIVISION} teams, ` +
+        `which is the only arrangement that makes ${FILE_LIMITS.TEAM_COUNT}.`,
+    );
+  }
+  const out = rows.map((v, i) => readString(v, `${path}[${i}]`, maxLen));
+  const seen = new Map<string, number>();
+  out.forEach((v, i) => {
+    const key = v.toLowerCase();
+    const prior = seen.get(key);
+    if (prior !== undefined) {
+      fail(`${path}[${i}] is "${v}", which ${path}[${prior}] already uses. Every name must be distinct.`);
+    }
+    seen.set(key, i);
+  });
+  return out;
+}
+
+/**
+ * One draft class. The prospect count is checked before a single prospect is
+ * read, for the same reason every other array's length is.
+ */
+function readDraftClass(raw: unknown, path: string): FileDraftClass {
+  const c = readObject(raw, path);
+  const year = readInt(c.year, `${path}.year`, FILE_LIMITS.DRAFT_YEAR_MIN, FILE_LIMITS.DRAFT_YEAR_MAX);
+  const rows = readArray(c.players, `${path}.players`, FILE_LIMITS.MAX_PROSPECTS_PER_CLASS);
+  const out: FileDraftClass = {
+    year,
+    players: rows.map((p, i) => readPlayer(p, `${path}.players[${i}]`, { prospect: true })),
+  };
+  if (c.strength !== undefined) {
+    out.strength = readInt(
+      c.strength, `${path}.strength`,
+      FILE_LIMITS.CLASS_STRENGTH_MIN, FILE_LIMITS.CLASS_STRENGTH_MAX,
+    );
+  }
+  return out;
+}
+
+function readTeam(
+  raw: unknown,
+  path: string,
+  conferences: readonly string[],
+  divisions: readonly string[],
+): FileTeam {
   const t = readObject(raw, path);
   const team: FileTeam = {
     city: readString(t.city, `${path}.city`, FILE_LIMITS.MAX_CITY),
     nickname: readString(t.nickname, `${path}.nickname`, FILE_LIMITS.MAX_NICKNAME),
     abbr: readAbbr(t.abbr, `${path}.abbr`),
-    conference: readEnum(t.conference, `${path}.conference`, CONFERENCES),
-    division: readEnum(t.division, `${path}.division`, DIVISIONS),
+    // Still a whitelist, just a whitelist the FILE supplied: a team can only
+    // be filed under a conference this file declared, so a typo is a refusal
+    // naming the four legal answers rather than a ninth division of one.
+    conference: readEnum(t.conference, `${path}.conference`, conferences),
+    division: readEnum(t.division, `${path}.division`, divisions),
   };
 
   if (t.players !== undefined) {
@@ -471,7 +769,15 @@ function readAbbr(raw: unknown, path: string): string {
   return up;
 }
 
-function readPlayer(raw: unknown, path: string): FilePlayer {
+/**
+ * `prospect: true` is set for the men inside a `draftClasses` entry, and it
+ * changes which fields are legal rather than which are kept. A prospect has
+ * combine testing and has not played a professional season or signed a
+ * professional contract, so those last two are refused BY NAME rather than
+ * read and dropped — a field that silently does nothing is the quiet half of
+ * the same failure as a number that silently disagrees with itself.
+ */
+function readPlayer(raw: unknown, path: string, opts: { prospect?: boolean } = {}): FilePlayer {
   const p = readObject(raw, path);
 
   const position = readEnum(p.position, `${path}.position`, POSITIONS) as Position;
@@ -486,6 +792,12 @@ function readPlayer(raw: unknown, path: string): FilePlayer {
     // Derived ceiling, not an authored one: nobody has more pro seasons than
     // years since they turned 18, whatever the file says.
     const exp = readInt(p.experience, `${path}.experience`, 0, FILE_LIMITS.EXPERIENCE_MAX);
+    if (opts.prospect && exp > 0) {
+      fail(
+        `${path}.experience is ${exp}, and this player is a draft prospect — nobody in a draft class has ` +
+          'played a professional season. Write 0, or remove the field.',
+      );
+    }
     out.experience = Math.min(exp, Math.max(0, age - 18));
   }
   if (p.heightIn !== undefined) {
@@ -508,7 +820,59 @@ function readPlayer(raw: unknown, path: string): FilePlayer {
     out.attrs = readAttrs(p.attrs, `${path}.attrs`, position);
   }
   if (p.contract !== undefined) {
+    if (opts.prospect) {
+      fail(
+        `${path}.contract is a professional contract, and this player is a draft prospect — nobody in a ` +
+          'draft class is under contract yet. Remove the field; a drafted rookie is paid by the rookie scale.',
+      );
+    }
     out.contract = readContract(p.contract, `${path}.contract`);
+  }
+  if (p.combine !== undefined) {
+    if (!opts.prospect) {
+      fail(
+        `${path}.combine is combine testing, which only a draft prospect has. Move this player into a ` +
+          '"draftClasses" entry, or remove the field — nothing in the app shows testing for a player who ' +
+          'is not in a draft class.',
+      );
+    }
+    out.combine = readCombine(p.combine, `${path}.combine`);
+  }
+  return out;
+}
+
+/**
+ * Authored combine numbers. Every drill optional, every one bounded, and the
+ * venue a whitelist rather than a cast.
+ *
+ * `benchReps: null` IS A VALUE AND IS NOT THE SAME AS OMITTING IT. Null is
+ * "he did not lift", which is what six positions do (SKIPS_BENCH), and it
+ * survives into the stored row so the rank is taken over the drills he
+ * actually ran. Omitting the field instead lets the derivation roll him one.
+ */
+function readCombine(raw: unknown, path: string): FileCombine {
+  const c = readObject(raw, path);
+  const out: FileCombine = {};
+  if (c.venue !== undefined) out.venue = readEnum(c.venue, `${path}.venue`, COMBINE_VENUES);
+  if (c.fortyYard !== undefined) {
+    out.fortyYard = readNumber(c.fortyYard, `${path}.fortyYard`, FILE_LIMITS.FORTY_MIN, FILE_LIMITS.FORTY_MAX, 2);
+  }
+  if (c.threeCone !== undefined) {
+    out.threeCone = readNumber(c.threeCone, `${path}.threeCone`, FILE_LIMITS.CONE_MIN, FILE_LIMITS.CONE_MAX, 2);
+  }
+  if (c.shuttle !== undefined) {
+    out.shuttle = readNumber(c.shuttle, `${path}.shuttle`, FILE_LIMITS.SHUTTLE_MIN, FILE_LIMITS.SHUTTLE_MAX, 2);
+  }
+  if (c.vertical !== undefined) {
+    out.vertical = readInt(c.vertical, `${path}.vertical`, FILE_LIMITS.VERTICAL_MIN, FILE_LIMITS.VERTICAL_MAX);
+  }
+  if (c.broadJump !== undefined) {
+    out.broadJump = readInt(c.broadJump, `${path}.broadJump`, FILE_LIMITS.BROAD_MIN, FILE_LIMITS.BROAD_MAX);
+  }
+  if (c.benchReps !== undefined) {
+    out.benchReps = c.benchReps === null
+      ? null
+      : readInt(c.benchReps, `${path}.benchReps`, FILE_LIMITS.BENCH_MIN, FILE_LIMITS.BENCH_MAX);
   }
   return out;
 }
@@ -559,7 +923,11 @@ function readContract(raw: unknown, path: string): FileContract {
  * where the message can be useful, rather than silently producing a season
  * with missing weeks.
  */
-function assertLeagueStructure(teams: FileTeam[]): void {
+function assertLeagueStructure(
+  teams: FileTeam[],
+  conferences: readonly string[],
+  divisions: readonly string[],
+): void {
   const seen = new Map<string, number>();
   teams.forEach((t, i) => {
     const prior = seen.get(t.abbr);
@@ -569,14 +937,19 @@ function assertLeagueStructure(teams: FileTeam[]): void {
     seen.set(t.abbr, i);
   });
 
+  // The key joins on NUL rather than a space, because both halves are now
+  // author-supplied: conferences ["A", "A B"] with divisions ["B C", "C"] would
+  // make "A B C" two different ways on a space, and two divisions sharing one
+  // bucket is a league of 8 and 0 that this check would call 4 and 4.
+  const SEP = '\u0000';
   const buckets = new Map<string, string[]>();
-  for (const c of CONFERENCES) for (const d of DIVISIONS) buckets.set(`${c} ${d}`, []);
-  for (const t of teams) buckets.get(`${t.conference} ${t.division}`)!.push(t.abbr);
+  for (const c of conferences) for (const d of divisions) buckets.set(`${c}${SEP}${d}`, []);
+  for (const t of teams) buckets.get(`${t.conference}${SEP}${t.division}`)!.push(t.abbr);
 
   const wrong = [...buckets.entries()].filter(([, v]) => v.length !== FILE_LIMITS.TEAMS_PER_DIVISION);
   if (wrong.length > 0) {
     const detail = wrong
-      .map(([k, v]) => `${k} has ${v.length}${v.length ? ` (${v.join(', ')})` : ''}`)
+      .map(([k, v]) => `${k.replace(SEP, ' ')} has ${v.length}${v.length ? ` (${v.join(', ')})` : ''}`)
       .join('; ');
     fail(
       `Every division must hold exactly ${FILE_LIMITS.TEAMS_PER_DIVISION} teams, and ${wrong.length} do not: ${detail}. ` +
@@ -598,6 +971,17 @@ function assertLeagueStructure(teams: FileTeam[]): void {
  * a STARTING POINT, not a save game. Exporting a league in week 12 and
  * importing it gives you those franchises and those players in a fresh
  * preseason, which is the thing people actually want to share.
+ *
+ * THE COLLEGE CLASS IS AN EXCEPTION AND IT IS NOT A NEW ONE. Prospects were
+ * always in this export — `status: FREE_AGENT` catches them, because that is
+ * what an undrafted prospect's status is — they were just filed under
+ * `freeAgents`, where up to 400 of them crowded out the real market the file
+ * meant to describe and came back as veterans on the next import. Version 2
+ * has somewhere to put them, so they go there: the newest class still flagged
+ * `isDraftee`, which is the one the board is picking from, and the free agent
+ * pool is once again the free agent pool. A fantasy league's pool is flagged
+ * `isDraftee` with NO draftYear at all (lib/gen/league.ts) and those men are
+ * the league's own veterans, so they stay in `freeAgents` where they belong.
  */
 export async function exportLeagueFile(leagueId: string): Promise<LeagueFile> {
   const league = await prisma.league.findUniqueOrThrow({
@@ -617,18 +1001,32 @@ export async function exportLeagueFile(leagueId: string): Promise<LeagueFile> {
         teamId: true, firstName: true, lastName: true, position: true, age: true,
         experience: true, heightIn: true, weightLb: true, college: true,
         trueAttrs: true, trueOvr: true, potential: true, devTrait: true,
+        isDraftee: true, draftYear: true, combineTesting: true,
         contract: { select: { years: true, yearsRemaining: true, baseSalaries: true, signingBonus: true } },
       },
     }),
   ]);
 
+  // The class on the clock is the NEWEST one still flagged isDraftee — the
+  // same derivation liveDraftClassYear (lib/draft.ts) uses, because a file
+  // that disagreed with the draft board about which class is current would
+  // export a class nobody is picking from.
+  const classYear = players.reduce<number | null>(
+    (best, p) => (p.isDraftee && p.draftYear != null && (best === null || p.draftYear > best) ? p.draftYear : best),
+    null,
+  );
+
   const byTeam = new Map<string, FilePlayer[]>();
   const freeAgents: FilePlayer[] = [];
+  const prospects: FilePlayer[] = [];
   for (const p of players) {
-    const row = toFilePlayer(p);
+    const isProspect = p.isDraftee && p.draftYear != null && p.draftYear === classYear;
+    const row = toFilePlayer(p, isProspect);
     if (p.teamId) {
       if (!byTeam.has(p.teamId)) byTeam.set(p.teamId, []);
       byTeam.get(p.teamId)!.push(row);
+    } else if (isProspect) {
+      if (prospects.length < FILE_LIMITS.MAX_PROSPECTS_PER_CLASS) prospects.push(row);
     } else if (freeAgents.length < FILE_LIMITS.MAX_FREE_AGENTS) {
       freeAgents.push(row);
     }
@@ -640,12 +1038,16 @@ export async function exportLeagueFile(leagueId: string): Promise<LeagueFile> {
     name: league.name,
     generatedAt: new Date().toISOString(),
     generator: 'Dynasty GM Football',
+    // The league's own labels, read off its own teams — an imported league may
+    // be filed under any two names (see readLabels).
+    conferences: conferencesOf(teams),
+    divisions: divisionsOf(teams),
     teams: teams.map((t) => ({
       city: t.city,
       nickname: t.nickname,
       abbr: t.abbr,
-      conference: t.conference as FileTeam['conference'],
-      division: t.division as FileTeam['division'],
+      conference: t.conference,
+      division: t.division,
       // A roster is capped on the way OUT too. A save that somehow carries 60
       // players cannot export a file its own importer would refuse.
       players: (byTeam.get(t.id) ?? [])
@@ -653,17 +1055,24 @@ export async function exportLeagueFile(leagueId: string): Promise<LeagueFile> {
         .slice(0, FILE_LIMITS.MAX_PLAYERS_PER_TEAM),
     })),
     freeAgents,
+    // `year` is the label the class carried in the league it came out of; the
+    // import stamps its own (see FileDraftClass). No `strength`: the bias that
+    // shaped this class moved ratings that are now ON these men, and restating
+    // it would shift a fully authored class a second time.
+    draftClasses: classYear !== null && prospects.length > 0
+      ? [{ year: classYear, players: prospects }]
+      : undefined,
   };
 }
 
 type ExportedPlayer = {
   firstName: string; lastName: string; position: string; age: number; experience: number;
   heightIn: number; weightLb: number; college: string; trueAttrs: string; trueOvr: number;
-  potential: number; devTrait: string;
+  potential: number; devTrait: string; combineTesting: string;
   contract: { years: number; yearsRemaining: number; baseSalaries: string; signingBonus: number } | null;
 };
 
-function toFilePlayer(p: ExportedPlayer): FilePlayer {
+function toFilePlayer(p: ExportedPlayer, withCombine = false): FilePlayer {
   const out: FilePlayer = {
     firstName: p.firstName,
     lastName: p.lastName,
@@ -680,6 +1089,13 @@ function toFilePlayer(p: ExportedPlayer): FilePlayer {
       : 'Normal',
     attrs: readJson<AttrMap>(p.trueAttrs, {}),
   };
+  if (withCombine) {
+    // Only the six numbers, and only when the venue is there — an older save
+    // predates combine testing entirely and writes `{}`, and a venue-less blob
+    // is what the player card already treats as "no testing on file".
+    const t = readJson<Partial<FileCombine>>(p.combineTesting, {});
+    if (t.venue) out.combine = t as FileCombine;
+  }
   if (p.contract) {
     const bases = readJson<number[]>(p.contract.baseSalaries, []);
     const total = bases.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0) + p.contract.signingBonus;
@@ -709,6 +1125,8 @@ export function serializeLeagueFile(f: LeagueFile): string {
   lines.push(`  "name": ${JSON.stringify(f.name)},`);
   if (f.generatedAt) lines.push(`  "generatedAt": ${JSON.stringify(f.generatedAt)},`);
   if (f.generator) lines.push(`  "generator": ${JSON.stringify(f.generator)},`);
+  lines.push(`  "conferences": ${JSON.stringify(f.conferences)},`);
+  lines.push(`  "divisions": ${JSON.stringify(f.divisions)},`);
 
   lines.push('  "teams": [');
   f.teams.forEach((t, ti) => {
@@ -727,12 +1145,28 @@ export function serializeLeagueFile(f: LeagueFile): string {
     }
     lines.push(`    }${ti < f.teams.length - 1 ? ',' : ''}`);
   });
-  lines.push(f.freeAgents ? '  ],' : '  ]');
+  lines.push(f.freeAgents || f.draftClasses ? '  ],' : '  ]');
 
   if (f.freeAgents) {
     lines.push('  "freeAgents": [');
     f.freeAgents.forEach((p, i) => {
       lines.push(`    ${JSON.stringify(p)}${i < f.freeAgents!.length - 1 ? ',' : ''}`);
+    });
+    lines.push(f.draftClasses ? '  ],' : '  ]');
+  }
+
+  if (f.draftClasses) {
+    lines.push('  "draftClasses": [');
+    f.draftClasses.forEach((c, ci) => {
+      lines.push('    {');
+      lines.push(`      "year": ${c.year},`);
+      if (c.strength !== undefined) lines.push(`      "strength": ${c.strength},`);
+      lines.push('      "players": [');
+      c.players.forEach((p, pi) => {
+        lines.push(`        ${JSON.stringify(p)}${pi < c.players.length - 1 ? ',' : ''}`);
+      });
+      lines.push('      ]');
+      lines.push(`    }${ci < f.draftClasses!.length - 1 ? ',' : ''}`);
     });
     lines.push('  ]');
   }
@@ -791,6 +1225,7 @@ export function planFromLeagueFile(file: LeagueFile, rng: Rng): LeagueImportPlan
   const claim = (fp: FilePlayer) => resolved.set(fp, uniqueName(fp.firstName, fp.lastName, names));
   for (const team of file.teams) for (const fp of team.players ?? []) claim(fp);
   for (const fp of file.freeAgents ?? []) claim(fp);
+  for (const cls of file.draftClasses ?? []) for (const fp of cls.players) claim(fp);
 
   // PASS TWO: build them, and generate whatever the file left out. Every
   // generated name is now drawn against a registry that already holds the
@@ -829,7 +1264,56 @@ export function planFromLeagueFile(file: LeagueFile, rng: Rng): LeagueImportPlan
     freeAgents,
     contracts,
     names,
+    prospects: file.draftClasses?.[0] ? planDraftClass(file.draftClasses[0], resolved, rng, names) : undefined,
   };
+}
+
+/**
+ * One authored draft class -> the class the league opens with.
+ *
+ * THERE IS NO SECOND CLASS GENERATOR HERE, and that is the whole design. The
+ * authored prospects are materialised exactly as a rostered player is — the
+ * same materialisePlayer, so the same "attributes win, ovr is a target" rule
+ * and the same complete-person guarantee — and are then handed to
+ * `generateDraftClass` as the FRONT of the class, which:
+ *
+ *   - rolls the class-strength personality through generateClassStrength, with
+ *     the authored `strength` as its across-the-board bias, so there is one
+ *     such mechanism and not two;
+ *   - generates only the REMAINDER, up to the size a generated class is, so a
+ *     class of 60 named prospects is still a draftable 400 and a complete
+ *     authored class generates nobody;
+ *   - runs its combine pass over authored and generated men together, which is
+ *     the only way a prospect's testing percentile can be his rank in the class
+ *     he is actually in.
+ *
+ * A class is topped up for the same reason a roster is: seven rounds of
+ * thirty-two picks have to find somebody to call, and a file is allowed to
+ * name twelve prospects and mean it.
+ */
+function planDraftClass(
+  cls: FileDraftClass,
+  resolved: Map<FilePlayer, { firstName: string; lastName: string }>,
+  rng: Rng,
+  names: NameRegistry,
+): NonNullable<LeagueImportPlan['prospects']> {
+  const authored = cls.players.map((fp) => {
+    const p = materialisePlayer(fp, resolved.get(fp)!, rng, new Map());
+    // A prospect's card carries a college stat line as well as a workout, and
+    // nothing in the file describes one. Generated from the attributes he
+    // ended up with, by the same call generateDraftClass makes.
+    p.collegeProfile = generateCollegeProfile(rng, p.position, p.trueAttrs, p.trueOvr);
+    // Rookies: a prospect has no pro seasons, whatever his age.
+    p.experience = 0;
+    if (fp.combine) p.authoredCombine = fp.combine;
+    return p;
+  });
+  const generatedCount = Math.max(0, FILE_LIMITS.MAX_PROSPECTS_PER_CLASS - authored.length);
+  const { players, strengthByGroup } = generateDraftClass(rng, generatedCount, names, {
+    authored,
+    strengthByGroup: generateClassStrength(rng, cls.strength ?? 0),
+  });
+  return { players, strengthByGroup, generatedCount };
 }
 
 /**
@@ -952,6 +1436,11 @@ export function estimateWriteCost(file: LeagueFile): { players: number; teams: n
   const perTeam = file.teams.map((t) =>
     t.players?.length ? Math.max(t.players.length, POSITION_MINIMUM_TOTAL) : 45);
   const fa = Math.max(file.freeAgents?.length ?? 0, file.freeAgents === undefined ? FREE_AGENT_DEFAULT : FREE_AGENT_FLOOR);
-  return { teams: file.teams.length, players: perTeam.reduce((a, b) => a + b, 0) + fa };
+  // A supplied class is topped up to a full one, so it costs the same either
+  // way: the cheapest class a file can ask for is as expensive as the most
+  // expensive one. A file with no class costs nothing here — createLeague
+  // writes none, and the PRESEASON step mints it later.
+  const prospects = file.draftClasses?.length ? FILE_LIMITS.MAX_PROSPECTS_PER_CLASS : 0;
+  return { teams: file.teams.length, players: perTeam.reduce((a, b) => a + b, 0) + fa + prospects };
 }
 

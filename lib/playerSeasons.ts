@@ -261,6 +261,15 @@ export async function reconstructPlayerSeasons(
   seasonYear?: number,
 ): Promise<SeasonLine[]> {
   const [games, teams] = await Promise.all([
+    /**
+     * RAW SQL, SAFE FOR THE REASON THE BULK HELPERS IN lib/season.ts SPELL OUT:
+     * every identifier in the statement below is literal SQL text in the
+     * template, and every value — the league id, the year, the player id — is a
+     * bound parameter with its cast stated. Nothing from a request reaches the
+     * statement text. Widening this to take a column, a table or an ORDER BY
+     * from a caller, or wrapping one of these values in `Prisma.raw` (which is
+     * concatenation with no escaping), is what would make it an injection.
+     */
     prisma.$queryRaw<GameRow[]>`
       SELECT "seasonYear", "week", "kind", "homeTeamId", "awayTeamId", "boxScore"
       FROM "Game"
@@ -570,6 +579,15 @@ export async function loadPlayerSeasons(
  * in the slowest step of the game.
  */
 export async function stampLastSeasonOvr(leagueId: string): Promise<number> {
+  /**
+   * RAW SQL, SAFE FOR THE REASON THE BULK HELPERS IN lib/season.ts SPELL OUT:
+   * every identifier in the statement below is literal SQL text in the
+   * template, and every value — the league id, the year, the player id — is a
+   * bound parameter with its cast stated. Nothing from a request reaches the
+   * statement text. Widening this to take a column, a table or an ORDER BY
+   * from a caller, or wrapping one of these values in `Prisma.raw` (which is
+   * concatenation with no escaping), is what would make it an injection.
+   */
   return prisma.$executeRaw`
     UPDATE "Player"
     SET "lastSeasonOvr" = "trueOvr"

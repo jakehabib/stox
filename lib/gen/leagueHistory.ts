@@ -2121,6 +2121,11 @@ async function persistHistory(args: {
   // silently short career. See docs/player-seasons.md §6.
   const careerEntries = [...veteranCareers.entries()].map(([id, c]) => [id, writeJson(c.career)] as [string, string]);
   await chunked(careerEntries, 400, async (batch) => {
+    // RAW SQL, SAFE FOR THE REASON THE BULK HELPERS IN lib/season.ts SPELL OUT:
+    // every identifier here is literal SQL text in the template and every value
+    // is a bound parameter. Nothing from a request reaches the statement text.
+    // Widening it to take a column or a table name, or putting `Prisma.raw`
+    // around one of these values, is what would make it an injection.
     const values = Prisma.join(batch.map(([id, v]) => Prisma.sql`(${id}::text, ${v}::text)`));
     await prisma.$executeRaw`UPDATE "Player" AS p SET "careerStats" = v.val FROM (VALUES ${values}) AS v(id, val) WHERE p.id = v.id`;
   });

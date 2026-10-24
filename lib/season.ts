@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
-import { AI, CAP, CONTRACT, FREE_AGENCY, LEAGUE, Position, PROGRESSION, RESIGN, ROSTER_TARGETS, SCOUTING, GENERATION, rosterMinFor } from './tuning';
+import { AI, CAP, CONTRACT, FREE_AGENCY, LEAGUE, Position, PROGRESSION, RESIGN, ROSTER_TARGETS, SCOUTING, GENERATION, conferencesOf, rosterMinFor } from './tuning';
 import { parseSettings, LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { simulateGame, SimTeamInput } from './sim/engine';
@@ -162,7 +162,57 @@ export async function advanceWeek(leagueId: string): Promise<AdvanceResult> {
     const blocked = await capComplianceBlock(leagueId, parseSettings(before.settings), before.phase);
     if (blocked) return blocked; // time does not move while the user is over the cap
 
-    return await advanceWeekStep(leagueId);
+    // Typed as the declared return rather than left on the inferred union of
+    // every branch's literal, so `blocked` and `summary` are readable here.
+    const result: AdvanceResult = await advanceWeekStep(leagueId);
+
+    /**
+     * =====================================================================
+     * AND EVERY CLUB HAS TO BE ABLE TO FIELD A LINEUP WHEN TIME STOPS
+     * =====================================================================
+     * One call site rather than five, because the hole is not owned by any
+     * one step. Measured over 12 headless leagues x 2 seasons, 18 clubs lost
+     * their last man at a position the lineup must field (P x7, K x6, C x2,
+     * RG x2, RB x1) and never replaced him — and the moment it happened was
+     * three different steps: FREE_AGENCY week 1 x9, PRESEASON x8 (straight
+     * after cut-down day) and RESIGN x1. Every one of them leaves the same
+     * league standing with a club that cannot put a man at a position the
+     * lineup must field. See A CLUB THAT CANNOT FIELD A POSITION GOES AND
+     * SIGNS ONE in lib/freeagency.ts for why none of the existing paths back
+     * covered it.
+     *
+     * NOT WHILE THE ROSTERS ARE LEGITIMATELY IN PIECES. Skipped in exactly
+     * the phases INV-25 itself is exempt in (ROSTER_FLOOR_EXEMPT_PHASES,
+     * lib/invariants.ts): through OFFSEASON and RESIGN every expiring
+     * contract is being released and free agency has not opened, and a
+     * fantasy draft starts from thirty-two empty rosters by construction.
+     * Signing a replacement in that window would be buying a man the club is
+     * about to re-sign anyway.
+     *
+     * AFTER A BLOCKED ADVANCE, NOTHING. A refusal means time did not move,
+     * and a gate the user still has to answer is not a licence for the AI to
+     * reshape thirty-one other rosters behind it.
+     */
+    if (!result.blocked) {
+      const league = await prisma.league.findUniqueOrThrow({
+        where: { id: leagueId }, select: { phase: true, week: true, seasonYear: true, settings: true },
+      });
+      if (!ROSTER_SHAPE_EXEMPT_PHASES.has(league.phase)) {
+        const { fillUnfieldablePositions } = await import('./freeagency');
+        const { unfilled } = await fillUnfieldablePositions({
+          leagueId, seasonYear: league.seasonYear, week: league.week,
+          phase: league.phase, settings: parseSettings(league.settings),
+        });
+        // LOUD, not silent. A club the market cannot fix is the condition
+        // INV-25 reports, and it is said on the screen that advanced the
+        // clock rather than left for a harness to find.
+        if (unfilled.length > 0) {
+          result.summary += ` Nobody could be signed to fill ${unfilled.length} `
+            + `unfillable position${unfilled.length === 1 ? '' : 's'}: ${unfilled.join('; ')}.`;
+        }
+      }
+    }
+    return result;
   } finally {
     // ONLY IF IT IS STILL OURS. If this advance ran long enough for its lease
     // to expire and another press to take it, that press owns the column now
@@ -197,6 +247,19 @@ export async function advanceWeek(leagueId: string): Promise<AdvanceResult> {
  * uses to reopen trading).
  */
 const CAP_ROLLOVER_PHASES = new Set(['OFFSEASON', 'RESIGN']);
+
+/**
+ * Phases where a roster is legitimately in pieces, so its SHAPE is not yet
+ * anybody's problem. The same set, and for the same reasons, as
+ * ROSTER_FLOOR_EXEMPT_PHASES in lib/invariants.ts — which is the list INV-20
+ * and INV-25 are exempt in. Kept as its own constant rather than imported so
+ * the invariant file stays a reader of the game and never a dependency of it.
+ * THE DUPLICATION IS THE COST OF THAT and is stated rather than hidden: if
+ * either list gains a phase the other must gain it too, or this pass will
+ * either shop in a window where rosters are legitimately in pieces or leave a
+ * hole standing in a window INV-25 is reporting on.
+ */
+const ROSTER_SHAPE_EXEMPT_PHASES = new Set(['OFFSEASON', 'RESIGN', 'FANTASY_DRAFT']);
 
 /**
  * Is salary-cap compliance actually due right now? False through the
@@ -1061,6 +1124,44 @@ export async function simulateAndSaveGame(leagueId: string, gameId: string, sett
  * naive alternative (one `prisma.player.update` per player, awaited in a
  * loop) was the dominant cost of simulating a week, especially against a
  * hosted DB where every round trip pays real network latency.
+ *
+ * ===========================================================================
+ * WHY `Prisma.raw(column)` IS SAFE HERE, AND WHAT WOULD MAKE IT UNSAFE
+ * ===========================================================================
+ * These are the only three `Prisma.raw` call sites in the codebase, and
+ * `Prisma.raw` is string concatenation into SQL — it is the one Prisma API
+ * with no escaping behind it. Two things make that safe in these three
+ * functions, and both are load-bearing:
+ *
+ *   1. THE COLUMN NAME IS A LITERAL UNION TYPE, NOT A STRING. `column` is
+ *      declared `'injuryWeeks'`, `'fatigue'`, and the five-name union below.
+ *      The type system, not a runtime check, is the guard: there is no value
+ *      of that type that is not one of the names written out in this file, so
+ *      the compiler enumerates every string that can ever be interpolated.
+ *      Every caller passes a literal from inside lib/season.ts.
+ *   2. THE IDS AND VALUES ARE PARAMETERISED. `Prisma.sql` builds a real bind
+ *      parameter per id and per value (`$1`, `$2`, …), with the casts stated
+ *      so Postgres never has to infer a type from the text. Nothing that came
+ *      off a request is ever concatenated — only the column name is, and see
+ *      (1).
+ *
+ * WHAT WOULD BREAK IT, in order of how easy it would be to do by accident:
+ *
+ *   - WIDENING THE PARAMETER TYPE. Changing `column: 'injuryWeeks'` to
+ *     `column: string` — or to `keyof Player`, or adding a `| string` to the
+ *     union to "make it reusable" — removes the only guard and makes every
+ *     caller a potential injection point. If a fourth column genuinely needs
+ *     bulk-setting, ADD ITS NAME TO THE UNION. That is the whole mechanism.
+ *   - A COLUMN NAME ARRIVING FROM INPUT. A caller that passes a sort key, a
+ *     form field, a query-string parameter, a JSON body value or anything read
+ *     back out of the database into `column` is an injection whatever the
+ *     declared type says — `as never` and `as 'fatigue'` both silence the
+ *     compiler and neither makes the string safe. The column is chosen by code
+ *     in this file and nowhere else.
+ *   - PUTTING `Prisma.raw` ANYWHERE NEAR A VALUE. The ids and the numbers go
+ *     through `Prisma.sql`. A `Prisma.raw` around one of those is an injection
+ *     with a player id as the payload.
+ * ===========================================================================
  */
 async function bulkSetInt(tx: Prisma.TransactionClient, column: 'injuryWeeks', entries: [string, number][]) {
   if (entries.length === 0) return;
@@ -1160,6 +1261,11 @@ async function recoverFatigueAndInjuries(leagueId: string, client: Prisma.Transa
   // Was one findMany + one sequential awaited UPDATE per active player in the
   // whole league (~1,700 round trips for a 32-team league) every single
   // week. A single bulk statement does the same work in one round trip.
+  //
+  // No `Prisma.raw` on this one: every column is literal SQL text in the
+  // template and the recovery constant and the league id are bound parameters.
+  // Taking a column name from a caller, or raw-ing one of these values, is
+  // what would make it unsafe — see the note on the bulk helpers below.
   await client.$executeRaw`
     UPDATE "Player"
     SET "fatigue" = GREATEST("fatigue" - ${SIM.FATIGUE_RECOVERY}, 0),
@@ -1177,7 +1283,10 @@ async function seedPlayoffs(leagueId: string) {
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const teams = await prisma.team.findMany({ where: { leagueId } });
 
-  for (const conf of ['AFC', 'NFC'] as const) {
+  // THE LEAGUE'S OWN conference labels, read off its own teams. This was a
+  // bare ['AFC', 'NFC'], which seeds nobody in a league whose conferences are
+  // named something else — see conferencesOf in lib/tuning.ts.
+  for (const conf of conferencesOf(teams)) {
     const confTeams = teams.filter((t) => t.conference === conf);
     const divisions = Array.from(new Set(confTeams.map((t) => t.division)));
     const divWinners = divisions
@@ -1209,7 +1318,8 @@ function byStanding(a: { id?: string; wins: number; losses: number; ties: number
 }
 
 async function createWildcardRound(leagueId: string, seasonYear: number) {
-  for (const conf of ['AFC', 'NFC'] as const) {
+  const confs = conferencesOf(await prisma.team.findMany({ where: { leagueId }, select: { conference: true } }));
+  for (const conf of confs) {
     const seeded = await prisma.team.findMany({ where: { leagueId, conference: conf, playoffSeed: { not: null } }, orderBy: { playoffSeed: 'asc' } });
     // [TUNE] 6-seed bracket: 1 & 2 bye. 3v6, 4v5.
     const pairs: [number, number][] = [[3, 6], [4, 5]];
@@ -1561,7 +1671,7 @@ async function createNextPlayoffRound(leagueId: string, seasonYear: number, from
     winners.push(...byes.map((t) => ({ id: t.id, conference: t.conference, seed: t.playoffSeed! })));
   }
   await withRoundLock(leagueId, toKind, seasonYear, async (tx) => {
-    for (const conf of ['AFC', 'NFC'] as const) {
+    for (const conf of conferencesOf(winners)) {
       const confWinners = winners.filter((w) => w.conference === conf).sort((a, b) => a.seed - b.seed);
       for (let i = 0; i < confWinners.length; i += 2) {
         if (confWinners[i + 1]) {

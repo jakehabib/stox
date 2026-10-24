@@ -22,6 +22,17 @@ export interface GeneratedPlayer {
   /** Only ever set for the rookie draft class — see generateDraftClass. */
   collegeProfile?: CollegeProfile;
   combineTesting?: CombineTesting;
+  /**
+   * Combine numbers an IMPORTED FILE stated, which may be any subset of the
+   * six drills (lib/leagueFile.ts). Never written to the database directly:
+   * generateDraftClass's combine pass rolls the man his full battery through
+   * generateCombineTesting exactly as it does for everybody else and then
+   * overlays these, which is the same precedence `attrs` already has over a
+   * generated attribute map. The athletic rank the board prints is computed
+   * from the STORED numbers at read time (classAthleticRanks in
+   * lib/combineRank.ts), so a rank cannot disagree with the times under it.
+   */
+  authoredCombine?: Partial<CombineTesting>;
 }
 
 /**
@@ -377,10 +388,42 @@ export function generateRoster(rng: Rng, teamStrength: number, names?: NameRegis
  * strength bias (loaded at one spot, thin at another) that real draft
  * classes always have, rather than every year being an identical flat
  * random sample at every position.
+ *
+ * ALSO THE ONE PLACE AN IMPORTED CLASS IS BUILT. A league file may name its own
+ * prospects (lib/leagueFile.ts, `draftClasses`), and they come in through
+ * `opts.authored` rather than through a second class builder beside this one:
+ * `size` becomes the generated REMAINDER, the class-strength roll is handed in
+ * rather than made here, and the combine pass at the bottom runs over authored
+ * and generated men together. That last part is not tidiness — a prospect's
+ * testing percentile is his rank inside his position group in this class, so a
+ * pass that could not see the authored men would be ranking everybody against
+ * a class that does not exist.
  */
-export function generateDraftClass(rng: Rng, size: number, names?: NameRegistry): { players: GeneratedPlayer[]; strengthByGroup: Record<PositionGroup, number> } {
-  const strengthByGroup = generateClassStrength(rng);
-  const out: GeneratedPlayer[] = [];
+export function generateDraftClass(
+  rng: Rng,
+  size: number,
+  names?: NameRegistry,
+  opts: {
+    /**
+     * The class personality, already rolled. Passed only by an import, whose
+     * authored `strength` has to go through generateClassStrength rather than
+     * beside it — see lib/leagueFile.ts.
+     */
+    strengthByGroup?: Record<PositionGroup, number>;
+    /**
+     * Prospects an imported league file NAMED, already materialised. They are
+     * the front of the class and `size` is only the generated remainder, so a
+     * file that lists all 400 men generates none. They take part in the
+     * combine pass below on equal terms — the percentile a man tests against
+     * is his rank in the WHOLE class, authored and generated together, or the
+     * stopwatch would be ranking him against a class he is not in.
+     */
+    authored?: GeneratedPlayer[];
+  } = {},
+): { players: GeneratedPlayer[]; strengthByGroup: Record<PositionGroup, number> } {
+  const authored = opts.authored ?? [];
+  const strengthByGroup = opts.strengthByGroup ?? generateClassStrength(rng);
+  const out: GeneratedPlayer[] = [...authored];
   for (let i = 0; i < size; i++) {
     // Top of the class is meaningfully better than the back half. [TUNE]
     // The class is longer than the draft (DRAFT_CLASS_EXTRA_UDFA), so cap the
@@ -440,7 +483,12 @@ export function generateDraftClass(rng: Rng, size: number, names?: NameRegistry)
   // It is scoped to the men the DRAFT reaches rather than the whole pool: a
   // generational prospect nobody may pick is not a headline. A class shorter
   // than DRAFT_CLASS_SIZE is treated as being all draftees.
-  {
+  //
+  // IT DOES NOT RUN OVER AN AUTHORED CLASS. A file that states every
+  // prospect's ceiling has said there is no generational man in this class,
+  // and raising one to 99 anyway would store a number the author did not
+  // write — the same reason the file's `ovr` is honoured rather than nudged.
+  if (authored.length === 0) {
     const reach = Math.min(out.length, GENERATION.DRAFT_CLASS_SIZE);
     let best = -1;
     for (let i = 0; i < reach; i++) {
@@ -467,7 +515,13 @@ export function generateDraftClass(rng: Rng, size: number, names?: NameRegistry)
     const n = sorted.length;
     sorted.forEach((p, idx) => {
       const truePercentile = n > 1 ? idx / (n - 1) : 0.5; // 0 = worst in the group, 1 = best
-      p.combineTesting = generateCombineTesting(rng, p.position, p.trueAttrs, p.trueOvr, truePercentile);
+      const rolled = generateCombineTesting(rng, p.position, p.trueAttrs, p.trueOvr, truePercentile);
+      // Authored numbers sit ON TOP of the full rolled battery rather than
+      // replacing it, so a file that states a 40 time and nothing else still
+      // produces a man with six legible drills instead of five blanks — and
+      // the five he did not author are the ones the derivation above would
+      // have given him anyway.
+      p.combineTesting = p.authoredCombine ? { ...rolled, ...p.authoredCombine } : rolled;
     });
   }
 

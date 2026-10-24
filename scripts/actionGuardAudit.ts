@@ -8,7 +8,8 @@
  * page that greys it out and the type on its signature are all presentation;
  * the only thing standing between one player's save and another's is what the
  * function itself checks on the way in. This walks EVERY exported action in
- * app/actions/** and proves three things about it:
+ * app/actions/** AND EVERY EXPORTED HTTP METHOD of every route handler in
+ * app/api/** and proves three things about each:
  *
  *   1. OWNERSHIP.  Called by someone holding a different save's credential, it
  *      refuses — before it reads or writes anything.
@@ -21,16 +22,44 @@
  *      answers in the game's own words rather than throwing a database error
  *      at the browser.
  *
- * IT DISCOVERS THE ACTIONS RATHER THAN LISTING THEM. Every exported async
+ * IT DISCOVERS THE SURFACE RATHER THAN LISTING IT. Every exported async
  * function in app/actions/** is read off the source, and an action with no
  * entry in COVERAGE below is a FAILURE, not a skip. That is the property this
  * file exists for: the next action somebody adds without a guard fails this
  * audit on the day it is added, without anyone remembering to come here.
  *
- * IT CREATES ITS OWN LEAGUES AND DELETES THEM BY ID. The database is shared,
- * it holds real saves, and this file deliberately calls destructive actions —
- * so it never touches a league it did not make, and it cleans up by the ids it
- * collected rather than by matching on a name.
+ * ROUTE HANDLERS ARE DISCOVERED THE SAME WAY, and they were the blind spot
+ * this audit shipped with. `app/api/**` is walked on the filesystem, every
+ * `route.ts` is read, and every export whose name is an HTTP method becomes a
+ * surface keyed `METHOD /api/...` (directory segments verbatim, `[id]` and
+ * all). A method with no entry in ROUTE_COVERAGE is a FAILURE, and an entry
+ * naming a route that no longer exists is a FAILURE too — so neither adding a
+ * handler nor deleting one can leave this file quietly out of date. The
+ * handlers are called directly, inside the same request store the actions use
+ * (see scripts/requestContext.ts), with a real NextRequest: same `cookies()`,
+ * same `currentViewer()`, same ownership reads a POST would get.
+ *
+ * WHY IT MATTERS MORE HERE THAN FOR AN ACTION. A route handler is addressable
+ * by URL from anything that can make a GET — `/api/league/export/<id>` with
+ * somebody else's id is one line of curl and the response is their entire
+ * save: every roster, every contract, every internal valuation in the file.
+ * There is no framework-generated action id to guess and no POST body to
+ * forge.
+ *
+ * IT CREATES ITS OWN LEAGUES AND DELETES THEM BY ID. Three of them, about 20
+ * seconds each: two scratch saves (the caller's and the stranger's) and one
+ * the create ROUTE builds from a hostile body, because the only honest way to
+ * check what that route stores is to read back the row it wrote. The database
+ * is shared, it holds real saves, and this file deliberately calls destructive
+ * actions — so it never touches a league it did not make, and it cleans up by
+ * the ids it collected rather than by matching on a name. Counts are scoped to
+ * its own owner keys for the same reason: another workstream creating a save
+ * while this runs must not fail a check.
+ *
+ * AND IT CARRIES POSITIVE CONTROLS. Six refusals from one endpoint are also
+ * what a route that 404s everything looks like, including to its owner — so
+ * the export and template cases each end with the owner's own request, which
+ * must succeed. A guard that refuses everybody is a different bug, not a pass.
  *
  * THREE CANARIES, printed at the end. A test that cannot fail is not evidence:
  * (A) an assertion at a knowingly false claim, which must FAIL; (B) a read of
@@ -41,11 +70,16 @@
  */
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
+import { NextRequest } from 'next/server';
 import { asViewer } from './requestContext';
 import { prisma } from '../lib/db';
 import { createLeague } from '../lib/gen/league';
 
 const ACTIONS_DIR = join(__dirname, '..', 'app', 'actions');
+const API_DIR = join(__dirname, '..', 'app', 'api');
+
+/** The export names Next treats as HTTP handlers. Anything else in a route file is config. */
+const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
 
 const OWNER_A = 'audit-owner-a';
 const OWNER_B = 'audit-owner-b';
@@ -106,6 +140,77 @@ async function expectRefusal(c: Case) {
   }
 }
 
+/**
+ * Every exported HTTP method under app/api/**, keyed `METHOD /api/path`, with
+ * the route file it came from. Read off the filesystem and the source, never
+ * from a list anybody has to maintain — see the header.
+ */
+function discoverRouteHandlers(): Map<string, { file: string; method: string; dir: string }> {
+  const found = new Map<string, { file: string; method: string; dir: string }>();
+  const walk = (dir: string, url: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const child = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(child, `${url}/${entry.name}`);
+      } else if (/^route\.(ts|tsx|js|jsx|mjs)$/.test(entry.name)) {
+        const src = readFileSync(child, 'utf8');
+        // `export async function GET`, `export function GET`, and the
+        // `export const POST = ...` form Next also accepts.
+        for (const m of src.matchAll(/^export\s+(?:async\s+)?(?:function|const|let|var)\s+(\w+)/gm)) {
+          if (HTTP_METHODS.includes(m[1])) found.set(`${m[1]} ${url}`, { file: child, method: m[1], dir: url });
+        }
+      }
+    }
+  };
+  walk(API_DIR, '/api');
+  return found;
+}
+
+/**
+ * A route case. `expect` returns true for a pass or a sentence saying what was
+ * wrong — which is how a positive control ("my own export must actually come
+ * back") sits in the same list as the refusals without a second runner.
+ */
+interface RouteCase {
+  name: string;
+  /** Cookie header the request arrives with. Defaults to A's. */
+  cookie?: string;
+  run: () => Promise<Response>;
+  expect: (res: Response, body: string) => true | string;
+}
+
+/**
+ * A refusal must not describe the system. The same rule expectRefusal applies
+ * to a thrown action message, applied to a response body — a 500 carrying a
+ * rendered Prisma query and an absolute path is a failure even though the
+ * status code is "correct".
+ */
+const LEAKS_INTERNALS = /Invalid `prisma|invocation in|PrismaClient|node_modules|\/home\/|\/var\/task|at Object\.|constraint (failed|violated)/i;
+
+async function runRouteCase(c: RouteCase) {
+  let res: Response;
+  let body: string;
+  try {
+    res = await asViewer(c.cookie ?? AS_A, c.run);
+    body = await res.text();
+  } catch (err) {
+    // A route handler that throws is a 500 with a framework page behind it.
+    check(c.name, false, `threw: ${String(err).replace(/\s+/g, ' ').slice(0, 110)}`);
+    return;
+  }
+  if (LEAKS_INTERNALS.test(body)) {
+    check(c.name, false, `body leaks internals: ${body.replace(/\s+/g, ' ').slice(0, 110)}`);
+    return;
+  }
+  const verdict = c.expect(res, body);
+  check(c.name, verdict === true, verdict === true ? '' : `${res.status}: ${verdict}`);
+}
+
+/** A NextRequest the handlers can read exactly as they read a real one. */
+function request(url: string, init?: RequestInit & { headers?: Record<string, string> }): NextRequest {
+  return new NextRequest(new Request(url, init as RequestInit));
+}
+
 async function main() {
   // ---------------------------------------------------------------------
   // Discover the surface
@@ -115,7 +220,12 @@ async function main() {
     const src = readFileSync(join(ACTIONS_DIR, file), 'utf8');
     for (const m of src.matchAll(/^export async function (\w+)/gm)) exported.set(m[1], file);
   }
-  console.log(`\nDiscovered ${exported.size} exported actions across ${new Set(exported.values()).size} files.\n`);
+  console.log(`\nDiscovered ${exported.size} exported actions across ${new Set(exported.values()).size} files.`);
+
+  const routes = discoverRouteHandlers();
+  console.log(`Discovered ${routes.size} route handler method(s) across ${new Set([...routes.values()].map((r) => r.file)).size} route file(s):`);
+  for (const key of [...routes.keys()].sort()) console.log(`  ${key}`);
+  console.log('');
 
   // ---------------------------------------------------------------------
   // Two scratch saves. A is the caller's; B is the stranger's.
@@ -311,19 +421,330 @@ async function main() {
       toggles.map((r) => (r.status === 'rejected' ? String(r.reason).replace(/\s+/g, ' ').slice(0, 70) : 'ok')).join(' | '));
 
     // -------------------------------------------------------------------
+    // THE ROUTE HANDLERS
+    // -------------------------------------------------------------------
+    //
+    // One entry per discovered `METHOD /api/...`, so a handler nobody wrote a
+    // case for fails the coverage check below. Request objects are built by
+    // hand; the handler is the real exported function, called inside the real
+    // request store.
+    const exportRoute = require('../app/api/league/export/[id]/route');
+    const createRoute = require('../app/api/league/create/route');
+    const importRoute = require('../app/api/league/import/route');
+    const templatesRoute = require('../app/api/league/templates/[file]/route');
+    const csvRoute = require('../app/api/league/csv/route');
+    const { TEMPLATE_NAMES } = require('../lib/leagueCsv');
+
+    const EXPORT_URL = (id: string) => `http://localhost/api/league/export/${encodeURIComponent(id)}`;
+    const is404 = (res: Response, body: string) =>
+      res.status === 404 ? true : `expected 404, body ${body.slice(0, 90)}`;
+
+    const ROUTE_COVERAGE: Record<string, RouteCase[]> = {
+      // --- export ---------------------------------------------------------
+      // A GET that serialises a whole save. The id is in the URL, a cuid is
+      // not a secret (it is in every URL and every exported file), so this is
+      // the one surface where ownership is the ONLY thing between a stranger
+      // and another player's rosters, cap sheet and internal valuations.
+      'GET /api/league/export/[id]': [
+        {
+          name: "export / stranger's save by id",
+          run: () => exportRoute.GET(request(EXPORT_URL(b)), { params: { id: b } }),
+          // 404, not 403: the endpoint must not confirm which ids are real.
+          expect: (res, body) => (res.status === 404 && !body.includes('dynastygm.league') ? true : `leaked a foreign save or confirmed the id: ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'export / no session, no cookie at all',
+          cookie: '',
+          run: () => exportRoute.GET(request(EXPORT_URL(a)), { params: { id: a } }),
+          expect: (res, body) => (res.status === 404 && !body.includes('dynastygm.league') ? true : `an anonymous caller got a save: ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'export / malformed id is refused, not reported on',
+          run: () => exportRoute.GET(request(EXPORT_URL("' OR 1=1 --")), { params: { id: "' OR 1=1 --" } }),
+          expect: is404,
+        },
+        {
+          name: 'export / id of the wrong shape entirely',
+          run: () => exportRoute.GET(request(EXPORT_URL('../../../etc/passwd')), { params: { id: '../../../etc/passwd' } }),
+          expect: is404,
+        },
+        {
+          name: 'export / hostile query string changes nothing',
+          run: () => exportRoute.GET(request(`${EXPORT_URL(b)}?ownerKey=${OWNER_A}&id=${a}&admin=1`), { params: { id: b } }),
+          expect: is404,
+        },
+        {
+          // THE POSITIVE CONTROL. Without this the five refusals above are
+          // satisfied by a route that 404s everything, including the owner.
+          name: 'export / my own save DOES come back (positive control)',
+          run: () => exportRoute.GET(request(EXPORT_URL(a)), { params: { id: a } }),
+          expect: (res, body) => {
+            if (res.status !== 200) return `the owner was refused his own save`;
+            let file: { kind?: string; teams?: unknown[] };
+            try { file = JSON.parse(body); } catch { return 'the export was not JSON'; }
+            if (file.kind !== 'dynastygm.league') return `kind was ${JSON.stringify(file.kind)}`;
+            if (!Array.isArray(file.teams) || file.teams.length === 0) return 'the export carried no teams';
+            return true;
+          },
+        },
+      ],
+
+      // --- create ---------------------------------------------------------
+      // Unauthenticated BY DESIGN (try before you sign up), so the guard is
+      // not ownership — it is the creation ceiling, and the shape of what a
+      // caller may dictate about the league it builds.
+      'POST /api/league/create': [
+        {
+          name: 'create / hostile body cannot dictate the settings blob',
+          cookie: 'dgm_owner=audit-owner-c',
+          run: () => createRoute.POST(request('http://localhost/api/league/create', {
+            method: 'POST',
+            body: JSON.stringify({
+              name: 'x'.repeat(5_000),
+              userTeamAbbr: '../../etc/passwd',
+              settings: {
+                // The DoS: seasonLength is handed straight to buildSchedule.
+                // Kept small deliberately — a value large enough to be worth
+                // attacking with would hang this audit rather than fail it if
+                // the clamp ever regressed, and 40 proves the same point.
+                seasonLength: 40, rosterMax: 900, draftRounds: 90,
+                capMode: 'BANANA', difficulty: 'IMPOSSIBLE', leagueStart: 'NOT_A_START',
+                tradeDeadlineWeek: -40, aiTradeFrequency: 1e308, simVariance: NaN,
+              },
+            }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: () => true, // checked against the database below
+        },
+        {
+          name: 'create / the per-owner ceiling is enforced on this route',
+          run: () => createRoute.POST(request('http://localhost/api/league/create', {
+            method: 'POST', body: '{}', headers: { 'content-type': 'application/json' },
+          })),
+          // 429 is the documented answer, and nothing may be written.
+          expect: (res, body) => (res.status === 429 ? true : `the cap did not bite: ${body.slice(0, 90)}`),
+        },
+      ],
+
+      // --- templates ------------------------------------------------------
+      // A few kilobytes of generated constants with no league id in it, so
+      // there is no ownership claim to make. What there IS is a path segment
+      // that names a file, and that has to be a whitelist rather than a
+      // sanitiser: the refusals below are the ones a `..` would walk through.
+      'GET /api/league/templates/[file]': [
+        {
+          name: 'templates / a name outside the whitelist is refused',
+          cookie: '',
+          run: () => templatesRoute.GET(request('http://localhost/api/league/templates/secrets.csv'), { params: { file: 'secrets.csv' } }),
+          expect: (res) => (res.status === 404 ? true : 'served something that is not a template'),
+        },
+        {
+          name: 'templates / traversal is refused, not resolved',
+          cookie: '',
+          run: () => templatesRoute.GET(request('http://localhost/api/league/templates/x'), { params: { file: '../../../../.env' } }),
+          expect: (res, body) => (res.status === 404 && !/DATABASE_URL|postgres/i.test(body) ? true : 'a traversal reached something'),
+        },
+        {
+          name: 'templates / an absolute path is refused',
+          cookie: '',
+          run: () => templatesRoute.GET(request('http://localhost/api/league/templates/x'), { params: { file: '/etc/passwd' } }),
+          expect: (res, body) => (res.status === 404 && !body.includes('root:') ? true : 'an absolute path reached something'),
+        },
+        {
+          // The positive control, same role as the export one: without it the
+          // three refusals above are satisfied by a route that 404s the lot.
+          name: 'templates / a real template DOES come back (positive control)',
+          cookie: '',
+          run: () => templatesRoute.GET(request(`http://localhost/api/league/templates/${TEMPLATE_NAMES[0]}`), { params: { file: TEMPLATE_NAMES[0] } }),
+          expect: (res, body) => {
+            if (res.status !== 200) return 'a listed template was refused';
+            if (body.length === 0) return 'the template came back empty';
+            return true;
+          },
+        },
+      ],
+
+      // --- csv ------------------------------------------------------------
+      // A pure converter: it takes three spreadsheets and hands back the
+      // league file they describe. There is no league id in it and it writes
+      // nothing, so there is no ownership claim to make — what there is is an
+      // unauthenticated multipart endpoint that buffers its whole upload, so
+      // the cases are the size ceiling and the refusals.
+      'POST /api/league/csv': [
+        {
+          name: 'csv / a claimed size over the cap is refused before the form is buffered',
+          cookie: '',
+          run: () => csvRoute.POST(request('http://localhost/api/league/csv', {
+            method: 'POST', body: 'x',
+            headers: { 'content-type': 'text/plain', 'content-length': String(500 * 1_048_576) },
+          })),
+          expect: (res, body) => (res.status === 413 ? true : `expected 413, got ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'csv / an upload that is not a form is refused in words',
+          cookie: '',
+          run: () => csvRoute.POST(request('http://localhost/api/league/csv', {
+            method: 'POST', body: 'not a multipart body', headers: { 'content-type': 'text/plain' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'csv / garbage in teams.csv is the author’s error, not a 500',
+          cookie: '',
+          run: () => {
+            const form = new FormData();
+            form.set('teams', 'not,a,team\u0000\n' + 'x'.repeat(200));
+            return csvRoute.POST(request('http://localhost/api/league/csv?draftYear=NaN&classStrength=1e308', { method: 'POST', body: form }));
+          },
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${body.slice(0, 90)}`),
+        },
+      ],
+
+      // --- import ---------------------------------------------------------
+      // The one endpoint that turns a stranger's file into thousands of rows.
+      // Refusals only here: the cheap ones, in the order the route claims to
+      // apply them.
+      'POST /api/league/import': [
+        {
+          name: 'import / a claimed size over the cap is refused before the body is read',
+          run: () => importRoute.POST(request('http://localhost/api/league/import', {
+            method: 'POST', body: '{}',
+            headers: { 'content-type': 'application/json', 'content-length': String(500 * 1_048_576) },
+          })),
+          expect: (res, body) => (res.status === 413 ? true : `expected 413, got ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'import / a body that is not JSON is the author’s error, in words',
+          run: () => importRoute.POST(request('http://localhost/api/league/import', {
+            method: 'POST', body: 'this is not a league file', headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'import / JSON of the wrong shape is refused without writing',
+          run: () => importRoute.POST(request('http://localhost/api/league/import', {
+            method: 'POST',
+            body: JSON.stringify({ kind: 'dynastygm.league', formatVersion: 2, teams: [{ __proto__: { admin: true } }] }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'import / hostile query string is refused with the body, not acted on',
+          run: () => importRoute.POST(request(`http://localhost/api/league/import?name=${'n'.repeat(4_000)}&team=${encodeURIComponent('"><script>')}`, {
+            method: 'POST', body: '[]', headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${body.slice(0, 90)}`),
+        },
+      ],
+    };
+
+    console.log('\nROUTE COVERAGE');
+    for (const [key, meta] of routes) {
+      const cases = ROUTE_COVERAGE[key];
+      check(`${key} (${meta.file.split('/app/')[1]}) has a guard case`, Array.isArray(cases) && cases.length > 0,
+        'add one to ROUTE_COVERAGE in scripts/actionGuardAudit.ts');
+    }
+    for (const key of Object.keys(ROUTE_COVERAGE)) {
+      if (!routes.has(key)) check(`${key} still exists`, false, 'ROUTE_COVERAGE names a route handler that no longer exists');
+    }
+
+    console.log('\nEVERY ROUTE HANDLER REFUSES A STRANGER, A MALFORMED ID OR A HOSTILE BODY');
+    // Scoped to THIS audit's identities, never a global count: the database is
+    // shared and another workstream creating a save while this runs would fail
+    // a delta that was really measuring the whole table.
+    const auditOwners = [OWNER_A, OWNER_B, 'audit-owner-c'];
+    const leaguesBefore = await prisma.league.count({ where: { ownerKey: { in: auditOwners } } });
+    for (const key of Object.keys(ROUTE_COVERAGE)) {
+      if (!routes.has(key)) continue;
+      for (const c of ROUTE_COVERAGE[key]) {
+        // The ceiling case has to be measured against a caller who is AT the
+        // ceiling, and the limit is env-tunable by design (lib/owner.ts), so
+        // the audit turns it down for that one request and puts it back.
+        const capCase = c.name.includes('per-owner ceiling');
+        const before = process.env.MAX_LEAGUES_PER_OWNER;
+        if (capCase) process.env.MAX_LEAGUES_PER_OWNER = '1';
+        try { await runRouteCase(c); }
+        finally { if (capCase) { if (before === undefined) delete process.env.MAX_LEAGUES_PER_OWNER; else process.env.MAX_LEAGUES_PER_OWNER = before; } }
+      }
+    }
+
+    // What the create route actually wrote, read back off the row. A clamped
+    // settings blob is the claim; the stored JSON is the evidence.
+    const madeByRoute = await prisma.league.findMany({
+      where: { ownerKey: 'audit-owner-c' },
+      select: { id: true, name: true, settings: true, ownerKey: true },
+    });
+    for (const l of madeByRoute) created.push(l.id);
+    check('create / exactly one league came out of the hostile POST', madeByRoute.length === 1, `${madeByRoute.length} leagues`);
+    if (madeByRoute.length === 1) {
+      const s = JSON.parse(madeByRoute[0].settings);
+      check('create / the name is bounded', madeByRoute[0].name.length <= 60, `${madeByRoute[0].name.length} characters`);
+      check('create / seasonLength is the league default, not the caller’s', s.seasonLength === 17, `stored ${JSON.stringify(s.seasonLength)}`);
+      check('create / rosterMax is the league default', s.rosterMax === 53, `stored ${JSON.stringify(s.rosterMax)}`);
+      check('create / draftRounds is the league default', s.draftRounds === 7, `stored ${JSON.stringify(s.draftRounds)}`);
+      check('create / capMode stays a real mode', ['REALISTIC', 'SIMPLIFIED', 'OFF'].includes(s.capMode), `stored ${JSON.stringify(s.capMode)}`);
+      check('create / difficulty stays a real difficulty', ['EASY', 'NORMAL', 'HARD'].includes(s.difficulty), `stored ${JSON.stringify(s.difficulty)}`);
+      check('create / leagueStart stays a real start', ['RANDOM_ROSTERS', 'FANTASY_DRAFT', 'REBUILD'].includes(s.leagueStart), `stored ${JSON.stringify(s.leagueStart)}`);
+      for (const key of ['tradeDeadlineWeek', 'aiTradeFrequency', 'simVariance', 'injurySeverity', 'progressionSpeed']) {
+        check(`create / ${key} is a finite number`, Number.isFinite(s[key]), `stored ${JSON.stringify(s[key])}`);
+      }
+      // An unstamped save is invisible AND undeletable in production, so the
+      // stamp is part of the refusal surface, not cosmetics (see lib/owner.ts).
+      check('create / the save is stamped with the caller’s owner key', madeByRoute[0].ownerKey === 'audit-owner-c', `stamped ${JSON.stringify(madeByRoute[0].ownerKey)}`);
+    }
+    const leaguesAfter = await prisma.league.count({ where: { ownerKey: { in: auditOwners } } });
+    check('create / only the one intended league was written', leaguesAfter - leaguesBefore === 1, `${leaguesAfter - leaguesBefore} new leagues under this audit\u2019s owner keys`);
+
+    // -------------------------------------------------------------------
     // Canaries
     // -------------------------------------------------------------------
     const leagueRow = await prisma.league.findUniqueOrThrow({ where: { id: a }, select: { name: true, ownerKey: true } });
     console.log('\nCANARIES');
-    const canaryA = leagueRow.ownerKey === OWNER_B;
-    check('(A) knowingly false claim must FAIL: my save is owned by the stranger', !canaryA, 'the harness is reading the wrong row');
+    /**
+     * (A) THE FALSE CLAIM, ASSERTED DIRECTLY — not its negation.
+     *
+     * This used to read `check(..., !canaryA)`, which prints `ok` and proves
+     * only that an assertion CAN pass. The header above promises a line that
+     * FAILS, and a canary that has never printed FAIL is not one. So the false
+     * claim itself is asserted; the expected failure is then consumed, because
+     * it is the evidence, not a defect. If it ever prints `ok`, the harness is
+     * reading the wrong row and nothing above it means anything.
+     */
+    const beforeCanary = failures.length;
+    check('(A) my save is owned by the stranger \u2014 KNOWINGLY FALSE, this line must read FAIL',
+      leagueRow.ownerKey === OWNER_B, `ownerKey=${leagueRow.ownerKey}`);
+    const canaryAFailed = failures.length === beforeCanary + 1;
+    if (canaryAFailed) failures.pop();
+    console.log(`        -> canary (A) ${canaryAFailed ? 'FAILED, as required' : 'PASSED \u2014 THE HARNESS IS BROKEN'}`);
+    if (!canaryAFailed) failures.push('canary (A) passed a knowingly false claim');
     const canaryB = (leagueRow as unknown as Record<string, unknown>).ownerKeyy;
     check('(B) misspelled field reads undefined', canaryB === undefined, `read ${JSON.stringify(canaryB)}`);
     check('(C) real read passes: my save is named for this run', leagueRow.name === `${stamp}-a`, `read ${leagueRow.name}`);
   } finally {
     // By collected id, never by name prefix — this database holds real saves.
     for (const id of created) await prisma.league.delete({ where: { id } }).catch(() => {});
-    console.log(`\nCleaned up ${created.length} scratch leagues by id.`);
+
+    // AND the cost-ceiling counters this run spent. lib/costLimit.ts meters
+    // CREATE, EXPORT and the rest per hour, and this audit drives those routes
+    // with a FIXED owner key — so without this, a second run inside the same
+    // hour is refused 429 where it expects 413 or 400, and reports a hole that
+    // is really just its own last run. A gate that cries wolf gets ignored.
+    // Scoped to this audit's own buckets so a developer's real hourly budget
+    // is left alone.
+    const spent = await prisma.authAttempt.deleteMany({
+      where: {
+        kind: { in: ['CREATE', 'EXPORT', 'ADVANCE', 'DRAFT_RUN', 'CSV_CONVERT'] },
+        // By PREFIX, not by a list of the two owner keys that were obvious
+        // when this was written: the audit also drives routes as
+        // `audit-owner-c`, and a list silently stops covering the next one
+        // somebody adds. A real player's bucket is `own:k:<uuid>`, so this
+        // prefix cannot reach one.
+        scope: { startsWith: 'own:k:audit-owner-' },
+      },
+    }).catch(() => ({ count: 0 }));
+
+    console.log(`\nCleaned up ${created.length} scratch leagues by id, and ${spent.count} cost-counter row(s).`);
   }
 
   if (failures.length > 0) {

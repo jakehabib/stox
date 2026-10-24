@@ -19,6 +19,8 @@ import {
 } from '../rebuild';
 import { TEAM_SEEDS, COACH_FIRST, COACH_LAST, FIRST_NAMES, LAST_NAMES, NameRegistry } from './names';
 import { generateRoster, generatePlayer, toPlayerCreate, GeneratedPlayer } from './players';
+import { classStrengthSummary } from './prospectProfile';
+import type { PositionGroup } from '../positionGroups';
 import { teamOverallFrom } from '../teamRating';
 import { generateLeagueHistory } from './leagueHistory';
 import { buildSchedule } from '../schedule';
@@ -66,6 +68,26 @@ export interface LeagueImportPlan {
   contracts: Map<string, PlannedContract>;
   /** Pre-seeded with every imported name, so fill-ins never collide. */
   names: NameRegistry;
+  /**
+   * THE INCOMING COLLEGE CLASS, when the file supplied one (league file
+   * format version 2, `draftClasses`). Absent for every version-1 file and
+   * every file that lists no class, and then the PRESEASON step mints one the
+   * usual way — its `alreadySeeded` guard counts prospects at
+   * `draftYear === seasonYear`, which is exactly what this writes, so a
+   * supplied class is never doubled by a generated one.
+   *
+   * `generatedCount` is how many of these men the import rolled rather than
+   * read out of the file. It is what decides whether the class-strength
+   * outlook is published at all: the strength map only ever moved the
+   * GENERATED men's ratings, so over a fully authored class it describes
+   * nobody and printing it would be a league-outlook headline about numbers
+   * that were never applied.
+   */
+  prospects?: {
+    players: GeneratedPlayer[];
+    strengthByGroup: Record<PositionGroup, number>;
+    generatedCount: number;
+  };
 }
 
 /**
@@ -474,6 +496,15 @@ export async function createLeague(opts: {
     }
     for (const p of opts.plan.freeAgents) {
       registerPlayer(p, { status: 'FREE_AGENT', teamId: null }, false);
+    }
+    // The class is stamped with THIS league's season year, not the year the
+    // file's class was labelled with. `Player.draftYear` keys a class against
+    // the calendar of the league it is in (see liveDraftClassYear in
+    // lib/draft.ts), so a file authored for 2026 and imported in 2028 still
+    // has to produce the class the 2028 board is picking from. Derived, not
+    // authored — the same rule `yearsRemaining` already follows.
+    for (const p of opts.plan.prospects?.players ?? []) {
+      registerPlayer(p, { status: 'FREE_AGENT', isDraftee: true, teamId: null, draftYear: seasonYear }, false);
     }
     // A file names its own rosters and its own free agents; what it does not
     // get to do is hand the league a market too thin to be a market. Topped
@@ -1042,6 +1073,22 @@ export async function createLeague(opts: {
     },
   });
 
+  // --- The imported class's outlook ----------------------------------------
+  // Same headline addDraftClass publishes for a generated class, from the same
+  // summary function, so the two kinds of class read identically on the news
+  // feed. Only when some of the class was actually generated — see
+  // LeagueImportPlan.prospects for why a fully authored class gets no outlook.
+  const prospects = opts.plan?.prospects;
+  if (prospects && prospects.generatedCount > 0) {
+    await prisma.transaction.create({
+      data: {
+        leagueId: league.id, seasonYear, week: 0, type: 'NEWS', teamId: null,
+        headline: `${seasonYear} Draft Class Outlook`,
+        detail: classStrengthSummary(prospects.strengthByGroup),
+      },
+    });
+  }
+
   return league.id;
 }
 
@@ -1116,6 +1163,15 @@ export async function autoDepthChart(teamId: string) {
  * against one statement here.
  */
 export async function dropOrphanDepthChartSlots(leagueId: string): Promise<number> {
+  /**
+   * RAW SQL, SAFE FOR THE REASON THE BULK HELPERS IN lib/season.ts SPELL OUT:
+   * every identifier in the statement below is literal SQL text in the
+   * template, and every value — the league id, the year, the player id — is a
+   * bound parameter with its cast stated. Nothing from a request reaches the
+   * statement text. Widening this to take a column, a table or an ORDER BY
+   * from a caller, or wrapping one of these values in `Prisma.raw` (which is
+   * concatenation with no escaping), is what would make it an injection.
+   */
   return prisma.$executeRaw`
     DELETE FROM "DepthChartSlot" d
     USING "Team" t

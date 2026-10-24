@@ -526,6 +526,18 @@ export async function applyInSeasonProgression(
   // One bulk UPDATE...FROM(VALUES...) instead of one round trip per rostered
   // player — the same pattern lib/season.ts uses for weekly game writes,
   // needed here too since this can touch 1,500+ players in a full league.
+  //
+  // SAFE BECAUSE EVERY IDENTIFIER IS TYPED OUT HERE AND EVERY VALUE IS BOUND.
+  // The column names in this statement are literal SQL text in the template,
+  // not interpolated from anything, and the ids, the attribute JSON and the
+  // two integers go through `Prisma.sql` as bind parameters with their casts
+  // stated. There is no `Prisma.raw` on this path and nothing from a request
+  // reaches the SQL text. WHAT WOULD MAKE IT UNSAFE: taking the column (or the
+  // table) as a parameter, or wrapping any of these values in `Prisma.raw` to
+  // "simplify" the join — `Prisma.raw` is concatenation with no escaping, so
+  // either turns this into an injection with a player id as the payload. See
+  // the long note on the bulk helpers in lib/season.ts for the one place in
+  // this codebase where a raw identifier IS used, and what guards it.
   const values = Prisma.join(updates.map((u) => Prisma.sql`(${u.id}::text, ${u.attrs}::text, ${u.ovr}::int, ${u.potential}::int)`));
   await prisma.$executeRaw`
     UPDATE "Player" AS p SET "trueAttrs" = v.attrs, "trueOvr" = v.ovr, "potential" = v.potential
@@ -696,6 +708,11 @@ export async function progressFreeAgents(
     const CHUNK = 500;
     for (let i = 0; i < updates.length; i += CHUNK) {
       const slice = updates.slice(i, i + CHUNK);
+      // RAW SQL, SAFE FOR THE REASON THE BULK HELPERS IN lib/season.ts SPELL OUT:
+      // every identifier here is literal SQL text in the template and every value
+      // is a bound parameter. Nothing from a request reaches the statement text.
+      // Widening it to take a column or a table name, or putting `Prisma.raw`
+      // around one of these values, is what would make it an injection.
       const values = Prisma.join(slice.map((u) => Prisma.sql`(${u.id}::text, ${u.attrs}::text, ${u.ovr}::int)`));
       await prisma.$executeRaw`
         UPDATE "Player" AS p

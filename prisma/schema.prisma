@@ -1238,8 +1238,20 @@ model AuthAttempt {
   /// The bucket being counted. "u:<usernameKey>" throttles an attack on one
   /// account; "ip:<addr>" throttles one source spraying many. Both are checked
   /// on every sign-in, because they stop different attacks.
+  ///
+  /// lib/costLimit.ts counts in this same table, under its own `kind` values
+  /// and the scopes "own:u:<userId>" / "own:k:<ownerKey>" / "ip:<addr>", for
+  /// the hourly ceilings on the expensive endpoints. Same shape, same index,
+  /// same sweep, and no second stateful dependency in this deployment. The
+  /// `kind` sets are disjoint, so neither module's counts or deletes can see
+  /// the other's rows.
   scope   String
-  kind    String /// SIGNIN | SIGNUP
+  /// SIGNIN | SIGNUP (lib/auth.ts)
+  /// ADVANCE | CREATE | EXPORT | DRAFT_RUN (lib/costLimit.ts)
+  kind    String
+  /// Read ONLY by lib/auth.ts, which counts failures. lib/costLimit.ts writes
+  /// true and counts every row regardless, because a call that failed has
+  /// already spent what the ceiling is there to bound.
   success Boolean  @default(false)
   at      DateTime @default(now())
 

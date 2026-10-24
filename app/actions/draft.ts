@@ -3,9 +3,11 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { assertLeagueOwner, assertPlayerInLeague, userTeamId as ownUserTeamId } from '@/lib/owner';
+import { assertCostBudget, CostLimitError } from '@/lib/costLimit';
 import { draftPlayer, runAiPicksUntilUser, draftOneAiPick, currentPick, draftIsStarted } from '@/lib/draft';
 import { parseSettings } from '@/lib/settings';
 import { readJson } from '@/lib/json';
+import { actionFailureMessage } from '@/lib/actionError';
 import { LEAGUE } from '@/lib/tuning';
 import { Rng } from '@/lib/rng';
 
@@ -59,7 +61,12 @@ export async function draftPlayerAction(leagueId: string, playerId: string, _tea
   try {
     await draftPlayer({ leagueId, playerId, teamId, seasonYear: league.seasonYear });
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : 'That pick could not be made.' };
+    // `draftPlayer` throws its own sentences for the draft's rules ("the
+    // draft has not been opened yet") and those are shown as written. A
+    // Prisma failure under it is answered by the fallback rather than by a
+    // rendered query — see lib/actionError.ts.
+    console.error('Draft selection write failed', err);
+    return { ok: false, message: actionFailureMessage(err, 'That pick could not be made — the board moved underneath it. Reload the page.') };
   }
 
   /*
@@ -187,8 +194,21 @@ const CHUNK_MS = 3500;
  * second runner found the lease held and did nothing at all. It carries
  * `message`, and the client shows it and stops asking, the same way
  * AdvanceWeekButton toasts advanceWeek's refusal.
+ *
+ * HOURLY_CEILING is the other non-place, and it is the busy signal's opposite
+ * number: not "somebody else is running the board right now" but "this account
+ * has run boards down enough times this hour". The lease stops the first and
+ * has never stopped the second — see lib/costLimit.ts. It carries `message`
+ * and is `done`, for the same reason RUN_IN_PROGRESS is: there is nothing for
+ * the client to gain by asking again immediately.
  */
-export type DraftRunStop = 'USER_ON_CLOCK' | 'DRAFT_COMPLETE' | 'BOARD_EMPTY' | 'CHUNK_FULL' | 'RUN_IN_PROGRESS';
+export type DraftRunStop =
+  | 'USER_ON_CLOCK'
+  | 'DRAFT_COMPLETE'
+  | 'BOARD_EMPTY'
+  | 'CHUNK_FULL'
+  | 'RUN_IN_PROGRESS'
+  | 'HOURLY_CEILING';
 
 export interface DraftRunChunk {
   picksMade: number;
@@ -198,10 +218,10 @@ export interface DraftRunChunk {
   done: boolean;
   stoppedBy: DraftRunStop;
   /**
-   * Player-facing, and only on RUN_IN_PROGRESS. Every other stop reason is
-   * said by the board itself once the page refreshes (see the note in
-   * LiveDraftTicker's run loop), so there is nothing to word over the top of
-   * it.
+   * Player-facing, and only on RUN_IN_PROGRESS and HOURLY_CEILING. Every other
+   * stop reason is said by the board itself once the page refreshes (see the
+   * note in LiveDraftTicker's run loop), so there is nothing to word over the
+   * top of it.
    */
   message?: string;
 }
@@ -268,6 +288,21 @@ export async function runDraftChunkAction(leagueId: string, _userTeamId: string)
   // or an empty string — turns the AI runner loose on the user's OWN card and
   // picks for him. Derived here, like every other club id in this file.
   const userTeamId = await ownUserTeamId(leagueId);
+
+  // THE HOURLY CEILING, BEFORE THE LEASE. LiveDraftTicker asks for the next
+  // chunk the instant the last one lands, which is correct for a draft being
+  // run down and is also a ready-made loop: the lease the block above argues
+  // for refuses an OVERLAPPING runner and welcomes an endless sequence of
+  // non-overlapping ones. Taken before the lease so a refused call does not
+  // churn `runStartedAt` on a draft it is not going to touch.
+  try {
+    await assertCostBudget('DRAFT_RUN');
+  } catch (err) {
+    if (err instanceof CostLimitError) {
+      return { picksMade: 0, last: null, done: true, stoppedBy: 'HOURLY_CEILING', message: err.message };
+    }
+    throw err;
+  }
 
   // THE LEASE, TAKEN BEFORE A SINGLE CARD GOES IN — see the block above.
   const heldSince = new Date();

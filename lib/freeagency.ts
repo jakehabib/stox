@@ -1,14 +1,15 @@
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
-import { AI, CAP, LEAGUE, FREE_AGENCY, ROSTER_TARGETS, Position, rosterMinFor } from './tuning';
+import { AI, CAP, LEAGUE, FREE_AGENCY, ROSTER_TARGETS, Position, canonicalPosition, rosterMinFor } from './tuning';
 import { LeagueSettings } from './settings';
 import { readJson, writeJson } from './json';
 import { askingPrice, marketValue, buildContract, suggestedYears, capHit, capSavingsOnCut, deadMoneyOnCut, formatMoney, guaranteedMoney, maxYearsForAge, unamortizedBonus } from './cap';
+import { positionMove, relatedPositions, type AttrMap } from './ratings';
 import { buildScoutedView } from './scouting';
 import { loadDynastyProfile, parseSkills, scoutingModsFor, signBandMultFor } from './dynasty';
 import {
   buildNegotiationContext, contractShapeFor, decideOffer, sessionFingerprint,
-  DEFAULT_STRUCTURE, DEFAULT_CONVERT_PCT, RESIGN_LEVERAGE, extensionLeverage, clampOffer,
+  DEFAULT_CONVERT_PCT, RESIGN_LEVERAGE, extensionLeverage, clampOffer, clampStructure,
   evaluateOffer, rivalView, winsContest, leastAcceptableApy,
   type DealStructure, type NegotiationContext, type NegotiationGate, type NegotiationMode,
   type NegotiationOutcome, type NegotiationSession, type Offer, type ResignWindow, type Suitor,
@@ -16,7 +17,7 @@ import {
 import { maxOffer, parseGmProfile, teamNeeds, RosterPlayer } from './ai/gm';
 import type { FifthYearOptionDecision, FifthYearOptionTier } from './fifthYearOption';
 import { teamCapSummary } from './cap-summary';
-import { assertCapRoom } from './capEnforcement';
+import { assertCapRoom, autoClearCapRoom, releaseRanking } from './capEnforcement';
 import { reconcileDepthChart } from './gen/league';
 
 /**
@@ -2328,6 +2329,420 @@ export async function fillTeamsToRosterMinimum(
 
 /**
  * ===========================================================================
+ * A CLUB THAT CANNOT FIELD A POSITION GOES AND SIGNS ONE
+ * ===========================================================================
+ * This is the missing roster-management pass, and the hole it fills is a hole
+ * in the AI rather than in any single function: NOTHING in the game asked
+ * whether a club could field a lineup. Measured over 12 headless leagues x 2
+ * seasons, 18 clubs lost their last man at a position the lineup must field
+ * and NEVER replaced him, which is every one of the 193 INV-25 errors
+ * sim:health reported over that run.
+ *
+ * WHERE THEY WENT, counted rather than assumed: P x7, K x6, C x2, RG x2,
+ * RB x1. So the specialists are 13 of 18 and the diagnosis this was opened on
+ * ("kickers and punters, because there is exactly one of each on a roster, so
+ * there is no depth to fall back on") was right about WHICH POSITION and wrong
+ * about the MECHANISM — a club lost its last centre and its last right guard
+ * the same way, and no amount of protecting a specialist from a cut would have
+ * fixed either. What was missing was the move back.
+ *
+ * AND THE MOMENT, likewise counted: FREE_AGENCY week 1 x9 (an expiring
+ * contract released at the end of RESIGN and nothing signed back), PRESEASON
+ * x8 (the step after cut-down day), RESIGN x1. By what became of the man:
+ * released with his contract expiring x8, released through `cutPlayer` x7,
+ * SIGNED AWAY BY ANOTHER CLUB'S FREE-AGENCY WAVE x3, retired x3 (one hole had
+ * two causes). Four different events, one missing answer.
+ *
+ * THE CAUSE IS THAT EVERY EXISTING PATH BACK IS GATED ON A HEADCOUNT OR ON
+ * DEPTH, and a club with a 50-man roster and no centre fails both gates:
+ *
+ *   `fillTeamsToRosterMinimum` (above) runs only for a club UNDER the roster
+ *     minimum. Shape is not size: a legal 48-man roster with nobody at centre
+ *     is skipped entirely.
+ *   `runAiFreeAgencyWave` / `runInSeasonSignings` walk `planTeamBids`, which
+ *     needs an OPEN SLOT to sign anybody. With the roster full the only route
+ *     left is a displacement, and that route asks `worstAtPosition.get(pos)`
+ *     — which is UNDEFINED at a position the club holds nobody at, so the bid
+ *     is skipped. The rule that stops an upgrade opening a hole ("only depth
+ *     BEYOND what the position spec asks for is displaceable") also stops a
+ *     club ever CLOSING one. A full roster could not fill an empty position by
+ *     any route in the game.
+ *   `trimRostersToLimit` / `releaseRanking` DO protect the last man at a
+ *     one-man job already (THE LAST KICKER DOES NOT GET CUT,
+ *     lib/capEnforcement.ts) — and that protection is on the ORDER, not on the
+ *     decision, so a club with nothing else left to cut still cuts him. 7 of
+ *     the 18 holes measured were a release of some kind, and 8 of the 18 stood
+ *     open in PRESEASON, the step straight after cut-down day. Protecting him
+ *     better is not the fix; nothing was going to bring one BACK.
+ *
+ * AND THE IN-SEASON WIRE COULD NOT HAVE FOUND A KICKER ANYWAY. Both of those
+ * paths read a board that is the top N free agents BY `trueOvr` league-wide
+ * (`WAVE_BOARD_SIZE` 140, `IN_SEASON.BOARD_SIZE` 60), and a kicker's rating is
+ * computed from kicking attributes on a scale every other position outscores,
+ * so kickers sit low in any league-wide sort BY CONSTRUCTION. Measured
+ * exhaustively on a fresh league's 260-man pool: the best kicker ranks 84th
+ * and the best punter 63rd, which puts 2 kickers and 2 punters on the 140-man
+ * wave board and ZERO of either on the 60-man in-season board. So from
+ * PRESEASON to the following spring there is no route by which a club can sign
+ * a kicker at all.
+ *
+ * That is the same failure that once kept the best kicker in a 1,956-man pool
+ * off every draft board, and it is why THIS function groups the pool BY
+ * POSITION and sorts WITHIN each group. There is no league-wide sort by
+ * overall anywhere in it.
+ *
+ * WHAT IT IS NOT: a guard that conjures a player. Nothing here mints anybody.
+ * It signs a real free agent at the price he will really sign for
+ * (`aiDealFor`, the same floor the wave and the user's own negotiation meter
+ * clear), through `signFreeAgent` like every other signing in the game — so
+ * the cap applies, the wire carries a SIGN row, and the man's own page records
+ * it. Where the market has nobody at the position it signs a man the game's
+ * own adjacency table says can be MOVED there and moves him, through the same
+ * `positionMove` write the user gets on the player card; and where the market
+ * has nobody at all, somebody already in the building moves there. Each step
+ * is written out where it happens. If even the last one cannot be done it says
+ * so out loud (`unfilled`, plus a console warning and the advance summary),
+ * because a league that cannot field a kicker is a fact a human has to see.
+ *
+ * ROOM IS MADE THE WAY THE GAME ALREADY MAKES IT. A club at the ceiling
+ * releases one SURPLUS body first — a position carrying more than
+ * `ROSTER_TARGETS.min`, picked by `releaseRanking` (lib/capEnforcement.ts), the
+ * same ordering cut-down day uses — so closing one hole can never open
+ * another. A club short of cap room pays the shortfall down through
+ * `autoClearCapRoom`, which is this game's one answer to "an AI club has to
+ * find room" and stops honestly when no combination of releases covers it.
+ *
+ * The user's club is never touched: his roster is his, and "Fill Roster" is
+ * his own button for exactly this.
+ * ===========================================================================
+ */
+export async function fillUnfieldablePositions(opts: {
+  leagueId: string;
+  seasonYear: number;
+  week: number;
+  /**
+   * The phase the league is standing in, and it decides the TERM — the same
+   * rule `runInSeasonSignings` follows above: a club signing in the regular
+   * season or the playoffs is buying the rest of THIS year, so the deal is one
+   * year. Anywhere else (free agency, the draft, preseason) is really the
+   * offseason and the man gets an ordinary contract.
+   */
+  phase: string;
+  settings: LeagueSettings;
+}): Promise<{ signed: number; unfilled: string[] }> {
+  const { leagueId, seasonYear, week, phase, settings } = opts;
+  const term = phase === 'REGULAR' || phase === 'PLAYOFFS' ? 1 : undefined;
+  // lib/lineup.ts is reached dynamically for the same reason lib/season.ts
+  // reaches it that way: it is the lineup's definition of who is on the field
+  // and nothing else in this file needs it.
+  const { STARTERS_AT_POSITION } = await import('./lineup');
+  const fielded = (Object.keys(STARTERS_AT_POSITION) as Position[]).filter((p) => STARTERS_AT_POSITION[p] > 0);
+
+  // ONE league-wide scan first, so the common case — nobody has a hole — costs
+  // a single narrow query. This runs on every advance.
+  const rostered = await prisma.player.findMany({
+    where: { leagueId, status: 'ACTIVE', teamId: { not: null }, team: { isUser: false } },
+    select: { teamId: true, position: true },
+  });
+  const heldByTeam = new Map<string, Map<string, number>>();
+  for (const p of rostered) {
+    const m = heldByTeam.get(p.teamId!) ?? heldByTeam.set(p.teamId!, new Map()).get(p.teamId!)!;
+    const pos = canonicalPosition(p.position);
+    m.set(pos, (m.get(pos) ?? 0) + 1);
+  }
+  const shortClubs: { teamId: string; missing: Position[] }[] = [];
+  for (const [teamId, held] of heldByTeam) {
+    const missing = fielded.filter((pos) => (held.get(pos) ?? 0) === 0);
+    if (missing.length > 0) shortClubs.push({ teamId, missing });
+  }
+  if (shortClubs.length === 0) return { signed: 0, unfilled: [] };
+  // Stable order, because the clubs below compete for the same men and the
+  // read above has no ORDER BY — an unordered loop would hand the same hole to
+  // a different club each time the same step was replayed.
+  shortClubs.sort((a, b) => a.teamId.localeCompare(b.teamId));
+
+  /**
+   * THE MARKET, GROUPED BY POSITION AND SORTED WITHIN EACH GROUP.
+   *
+   * Never `orderBy trueOvr desc, take N` across positions — see the block
+   * above. The whole pool is a few hundred narrow rows, read once for the
+   * league, which is the honest read and the only one that can see a kicker.
+   */
+  const pool = await prisma.player.findMany({
+    where: { leagueId, status: 'FREE_AGENT', teamId: null, isDraftee: false },
+    select: {
+      id: true, firstName: true, lastName: true, position: true,
+      trueOvr: true, age: true, potential: true, weeksUnsigned: true,
+    },
+  });
+  const byPosition = new Map<string, typeof pool>();
+  for (const p of pool) {
+    const pos = canonicalPosition(p.position);
+    (byPosition.get(pos) ?? byPosition.set(pos, []).get(pos)!).push(p);
+  }
+  for (const group of byPosition.values()) {
+    group.sort((a, b) => b.trueOvr - a.trueOvr || a.id.localeCompare(b.id));
+  }
+
+  const rosterMax = settings.rosterMax || LEAGUE.ROSTER_MAX;
+  const taken = new Set<string>();
+  let signed = 0;
+  const unfilled: string[] = [];
+
+  for (const club of shortClubs) {
+    const team = await prisma.team.findUnique({ where: { id: club.teamId }, select: { id: true, abbr: true, isUser: true } });
+    if (!team || team.isUser) continue; // belt on top of the query filter
+
+    for (const position of club.missing) {
+      // Re-read per position: a signing, a release or a conversion all move it.
+      const roster = await prisma.player.findMany({
+        where: { teamId: team.id, status: 'ACTIVE' },
+        include: { contract: true },
+      });
+      // A hole the club closed a moment ago (a position it was short at twice
+      // over, or a man arriving from elsewhere) is no longer a hole.
+      if (roster.some((p) => canonicalPosition(p.position) === position)) continue;
+
+      /*
+       * ROOM, AND ONLY OUT OF GENUINE SURPLUS. A position already at its
+       * `ROSTER_TARGETS.min` is not surplus, so this can never trade one empty
+       * position for another — the same structural rule `planTeamBids` applies
+       * to a displacement, for the same reason.
+       *
+       * ONCE PER HOLE, not once per position shopped: `signBestAt` below is
+       * called for the position itself and then for each position a man could
+       * be moved from, and a club that released a body on every one of those
+       * passes would shed four men to sign one. `madeRoom` is that latch.
+       */
+      let madeRoom = roster.length < rosterMax;
+      let noSurplusToRelease = false;
+      const makeRoom = async () => {
+        if (madeRoom) return true;
+        const counts = new Map<string, number>();
+        for (const p of roster) {
+          const pos = canonicalPosition(p.position);
+          counts.set(pos, (counts.get(pos) ?? 0) + 1);
+        }
+        const surplus = roster.filter((p) => {
+          const pos = canonicalPosition(p.position);
+          return (counts.get(pos) ?? 0) > (ROSTER_TARGETS[pos as Position]?.min ?? 1);
+        });
+        const goes = releaseRanking(surplus, settings.capMode)[0];
+        if (!goes) { noSurplusToRelease = true; return false; }
+        await cutPlayer({ leagueId, playerId: goes.id, capMode: settings.capMode, seasonYear, week });
+        madeRoom = true;
+        return true;
+      };
+
+      /*
+       * WHO, AND AT WHAT. Best man at the position first — a club with a hole
+       * it must fill pays what the man will actually sign for and no more
+       * (`aiDealFor`'s floor, the bottom of the band the user's own meter
+       * draws), on the term the phase allows.
+       *
+       * `from` is the position being SHOPPED and is not always the position
+       * being filled: see A MAN THE GAME SAYS CAN DO THE JOB below.
+       */
+      const signBestAt = async (from: string): Promise<{ id: string } | null> => {
+        const avail = (byPosition.get(from) ?? []).filter((c) => !taken.has(c.id));
+        if (avail.length === 0) return null;
+        if (!(await makeRoom())) return null;
+        const priced = avail.map((fa) => {
+          const deal = aiDealFor(fa as unknown as BoardPlayer, seasonYear, term);
+          const apy = Math.round(deal.floor);
+          const preview = buildContract({ apy, years: deal.years, signedYear: seasonYear, guaranteedPct: deal.guaranteePct });
+          return { fa, deal, apy, hit: capHit({ ...preview, baseSalaries: writeJson(preview.baseSalaries) }, settings.capMode) };
+        });
+        const attempt = async (p: (typeof priced)[number]) => {
+          try {
+            await signFreeAgent({
+              leagueId, playerId: p.fa.id, teamId: team.id, apy: p.apy, years: p.deal.years,
+              seasonYear, capMode: settings.capMode, week, guaranteedPct: p.deal.guaranteePct,
+            });
+            taken.add(p.fa.id);
+            signed += 1;
+            return true;
+          } catch {
+            /* somebody signed him first, or a cap edge case — he is spent either way */
+            taken.add(p.fa.id);
+            return false;
+          }
+        };
+
+        let space = (await teamCapSummary(team.id, seasonYear, settings.capMode)).capSpace;
+        // FIRST PASS: the best man the club can already pay for, no cuts.
+        for (const p of priced) {
+          if (p.hit > space) continue;
+          if (await attempt(p)) return { id: p.fa.id };
+          space = (await teamCapSummary(team.id, seasonYear, settings.capMode)).capSpace;
+        }
+
+        /*
+         * AND ONLY THEN DOES IT SELL SOMETHING TO AFFORD ONE — ONCE, for the
+         * CHEAPEST man rather than for each in turn. Walking the list and
+         * clearing room per candidate would have a cap-poor club release a
+         * dozen men to afford a kicker; one clearing, sized to the smallest
+         * bill on the board, is the move a front office actually makes.
+         * `autoClearCapRoom` is the game's one answer to "an AI club has to
+         * find room" and stops honestly when no combination of releases
+         * covers it, so the books are re-read rather than assumed.
+         */
+        const cheapest = [...priced].filter((p) => !taken.has(p.fa.id)).sort((a, b) => a.hit - b.hit)[0];
+        if (!cheapest) return null;
+        await autoClearCapRoom({
+          leagueId, teamId: team.id, needed: cheapest.hit - space, seasonYear, capMode: settings.capMode, week,
+        });
+        const after = (await teamCapSummary(team.id, seasonYear, settings.capMode)).capSpace;
+        if (cheapest.hit > after) return null;
+        return (await attempt(cheapest)) ? { id: cheapest.fa.id } : null;
+      };
+
+      /*
+       * HE REALLY MOVES THERE — the same write `runAiPositionConversions`
+       * makes (lib/ai/positionChange.ts), so every downstream reader (needs,
+       * the depth chart, the sim, INV-25 itself) sees a club that genuinely
+       * has one rather than one that could have had one. `updateMany` matched
+       * on the team as well as the id, for that file's reason: a roster read a
+       * moment ago is a snapshot, and zero rows means the move did not happen,
+       * so the wire row must not claim it did.
+       */
+      const convert = async (man: { id: string; firstName: string; lastName: string; position: string; trueOvr: number; trueAttrs: string; potential: number }) => {
+        const mv = positionMove(
+          { position: man.position, trueOvr: man.trueOvr, trueAttrs: readJson<AttrMap>(man.trueAttrs, {}), potential: man.potential },
+          position,
+        );
+        const { count } = await prisma.player.updateMany({
+          where: { id: man.id, teamId: team.id },
+          data: { position, trueAttrs: writeJson(mv.attrs), trueOvr: mv.ovr, potential: mv.potential },
+        });
+        if (count === 0) return false;
+        await prisma.transaction.create({
+          data: {
+            leagueId, seasonYear, week, type: 'POSITION', teamId: team.id, playerId: man.id,
+            headline: `${man.firstName} ${man.lastName} moves from ${man.position} to ${position}`,
+            detail: `${team.abbr} had nobody at ${position} — ${man.trueOvr} OVR at ${man.position}, ${mv.ovr} at ${position}.`,
+          },
+        });
+        await reconcileDepthChart(team.id);
+        return true;
+      };
+
+      let done = (await signBestAt(position)) !== null;
+
+      /*
+       * =================================================================
+       * A MAN THE GAME SAYS CAN DO THE JOB
+       * =================================================================
+       * Sometimes there is nobody at the position to sign AT ALL. Measured on
+       * a 5x5 sim:health run, one club spent four steps with no punter and no
+       * punter anywhere on the wire — `addFringeFreeAgents` tops the pool up
+       * to FREE_AGENCY.POOL_FLOOR by drawing POSITION_FREQUENCY, and a
+       * punter's share of that table is small enough that a 260-man top-up can
+       * contain none. Exactly the shortage `createLeague` already guards a
+       * fantasy pool against (A POOL THAT CANNOT SHAPE THIRTY-TWO LEGAL
+       * ROSTERS IS NOT A POOL, lib/gen/league.ts), arriving a season later.
+       *
+       * The answer is the one the game already has written down, and it is in
+       * the adjacency table itself: `RELATED_POSITIONS` (lib/ratings.ts) says
+       * `K: ['P'], P: ['K']` and says why — *"Clubs really do this — a kicker
+       * handles punts and a punter handles kickoffs, and on a short roster one
+       * man does both."* So the club shops the positions a man can legally be
+       * moved from, within each of them, and MOVES him. No new rule about who
+       * can play where, no minted player, and the conversion is priced by
+       * `positionMove` exactly as it is for the user on the player card.
+       */
+      if (!done) {
+        for (const from of relatedPositions(position)) {
+          const got = await signBestAt(from);
+          if (!got) continue;
+          const man = await prisma.player.findUnique({
+            where: { id: got.id },
+            select: { id: true, firstName: true, lastName: true, position: true, trueOvr: true, trueAttrs: true, potential: true },
+          });
+          if (man && await convert(man)) { done = true; break; }
+        }
+      }
+
+      /*
+       * =================================================================
+       * AND IF THE MARKET HAS NOBODY AT ALL, SOMEBODY IN THE BUILDING PUNTS
+       * =================================================================
+       * A club cannot take the field without a man at a position the lineup
+       * fields, so this is not optional and it is not a guard that conjures
+       * one: it is a club with no alternative doing what a club with no
+       * alternative does. Only out of GENUINE SURPLUS (a position carrying
+       * more than `ROSTER_TARGETS.min`), so closing one hole can never open
+       * another — the same structural rule as the release above.
+       *
+       * WHO IS ELIGIBLE: a man who is BEYOND his own room's required bodies in
+       * that room's own depth order — the `ROSTER_TARGETS.min`-deep men at
+       * every position are untouchable, so this can never take a starter the
+       * lineup needs where he already is. That is a per-man test rather than
+       * the per-room headcount used for the release above, and deliberately
+       * stricter: a club carrying two centres has surplus at centre, but the
+       * BETTER of the two is not the man who goes and punts. Measured without
+       * it, a club with no punter moved a 91-rated starting centre.
+       *
+       * WHO OF THOSE, decided by what the club ends up with: `positionMove` is
+       * run for each of them and the best resulting rating wins, tie-broken
+       * onto the man the club loses least where he is now. That is a simpler
+       * rule than `planPositionConversions` (lib/ai/positionPlan.ts)
+       * deliberately — that one weighs whether an OPTIONAL move is worth
+       * making, and this move is compulsory, because the alternative is
+       * REPLACEMENT_LEVEL in the slot for the rest of the season.
+       */
+      if (!done) {
+        const roster2 = await prisma.player.findMany({
+          where: { teamId: team.id, status: 'ACTIVE' },
+          select: { id: true, firstName: true, lastName: true, position: true, trueOvr: true, trueAttrs: true, potential: true },
+        });
+        // Each room in its own depth order, best first, so "beyond the
+        // required bodies" means what a depth chart means by it.
+        const rooms = new Map<string, typeof roster2>();
+        for (const p of roster2) {
+          const pos = canonicalPosition(p.position);
+          (rooms.get(pos) ?? rooms.set(pos, []).get(pos)!).push(p);
+        }
+        const spare = new Set<string>();
+        for (const [pos, men] of rooms) {
+          men.sort((a, b) => b.trueOvr - a.trueOvr || a.id.localeCompare(b.id));
+          for (const p of men.slice(ROSTER_TARGETS[pos as Position]?.min ?? 1)) spare.add(p.id);
+        }
+        const movable = roster2
+          .filter((p) => spare.has(p.id))
+          .map((p) => ({
+            p,
+            ovr: positionMove(
+              { position: p.position, trueOvr: p.trueOvr, trueAttrs: readJson<AttrMap>(p.trueAttrs, {}), potential: p.potential },
+              position,
+            ).ovr,
+          }))
+          .sort((a, b) => b.ovr - a.ovr || a.p.trueOvr - b.p.trueOvr || a.p.id.localeCompare(b.p.id));
+        if (movable.length > 0) done = await convert(movable[0].p);
+      }
+
+      if (!done) {
+        unfilled.push(noSurplusToRelease
+          ? `${team.abbr} at ${position} — at the ${rosterMax}-man limit with no surplus to release`
+          : `${team.abbr} at ${position} — nobody could be signed or moved there`);
+      }
+    }
+  }
+
+  /*
+   * AND IT IS NOT ALLOWED TO FAIL QUIETLY. A club that still cannot field a
+   * position is the exact condition INV-25 exists to report, so it is said out
+   * loud here as well — the caller puts it in the advance summary, and this
+   * line puts it in the log a harness run captures.
+   */
+  if (unfilled.length > 0) {
+    console.warn(`[fillUnfieldablePositions] league ${leagueId}: still unfieldable — ${unfilled.join('; ')}`);
+  }
+  return { signed, unfilled };
+}
+
+/**
+ * ===========================================================================
  * "FILL ROSTER" — CAMP BODIES, NOT SHOPPING
  * ===========================================================================
  * WHAT THIS BUTTON DID, in the app owner's words: *"the fill roster button by
@@ -3004,7 +3419,12 @@ export async function negotiateOffer(opts: {
 }): Promise<NegotiationOutcome> {
   const { leagueId, playerId, teamId, seasonYear, week, settings, incumbent } = opts;
   const mode: NegotiationMode = opts.mode ?? (incumbent ? 'RESIGN' : 'FREE_AGENT');
-  const structure = opts.structure ?? DEFAULT_STRUCTURE;
+  // Clamped, not taken as given: `escalation` goes into `Math.pow` inside
+  // buildContract and a NaN there reaches the database as a validation dump.
+  // One clamp, before the meter and before the write, so `decideOffer` prices
+  // the same structure that gets signed (see clampStructure in
+  // lib/negotiation.ts, beside clampOffer and for the same reason).
+  const structure = clampStructure(opts.structure);
   const session = await resolveNegotiationSession({ leagueId, playerId, teamId, seasonYear, settings, incumbent, mode });
   // THE OFFER IS CLAMPED BEFORE IT IS JUDGED, and it is clamped by the same
   // pure function the panel's typed fields clamp with, against the same gate.

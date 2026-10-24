@@ -1,5 +1,5 @@
 import { prisma } from './db';
-import { LEAGUE } from './tuning';
+import { LEAGUE, conferencesOf, divisionsOf } from './tuning';
 
 /**
  * Everything the Standings screen needs, computed once.
@@ -54,13 +54,6 @@ export interface ConferenceBlock {
   inField: StandingsRow[];
   /** The next few teams below the cut line, best-first. */
   inHunt: StandingsRow[];
-}
-
-const DIVISION_ORDER = ['East', 'North', 'South', 'West'];
-
-function divisionRank(d: string): number {
-  const i = DIVISION_ORDER.indexOf(d);
-  return i === -1 ? DIVISION_ORDER.length : i;
 }
 
 /** Same ordering the sim seeds with: win pct, then point differential. */
@@ -155,7 +148,9 @@ export async function buildStandingsBoard(
     };
   });
 
-  const conferences = Array.from(new Set(rows.map((r) => r.conference))).sort();
+  // The league's OWN conference labels, not LEAGUE.CONFERENCES: a league
+  // imported from a format-version-2 file names its own (see lib/leagueFile.ts).
+  const conferences = conferencesOf(rows);
   const blocks: ConferenceBlock[] = [];
 
   for (const conference of conferences) {
@@ -178,8 +173,7 @@ export async function buildStandingsBoard(
         : 0;
     }
 
-    const divisions = Array.from(new Set(confTeams.map((r) => r.division)))
-      .sort((a, b) => divisionRank(a) - divisionRank(b) || a.localeCompare(b))
+    const divisions = divisionsOf(confTeams)
       .map((division) => {
         const list = confTeams.filter((r) => r.division === division).sort(byStanding);
         if (list[0]) list[0].divisionLeader = true;

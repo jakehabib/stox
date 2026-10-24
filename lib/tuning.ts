@@ -23,6 +23,20 @@ import type { CompetitionGrade } from './gen/prospectProfile';
 // ---------------------------------------------------------------------------
 export const LEAGUE = {
   TEAM_COUNT: 32,
+  /**
+   * THE DEFAULT LABELS, NOT THE ONLY ONES. A generated league and every
+   * format-version-1 league file uses these; from league file version 2 on an
+   * author names their own ("Big Ten"/"SEC", "Northern"/"Southern"), so these
+   * two lists are the FALLBACK and nothing else.
+   *
+   * Their LENGTHS are still structural — 2 x 4 x 4 = 32 is the only shape
+   * lib/schedule.ts can build a season from, and lib/leagueFile.ts refuses
+   * anything else by that arithmetic. Only the strings are data.
+   *
+   * Anything that GROUPS or DISPLAYS by conference or division must read the
+   * league's own labels instead of these: see conferencesOf / divisionsOf
+   * below, which every such site now goes through.
+   */
   CONFERENCES: ['AFC', 'NFC'] as const,
   DIVISIONS: ['East', 'North', 'South', 'West'] as const,
   REGULAR_SEASON_WEEKS: 17, // [TUNE] 17 games, no bye weeks (keeps scheduling simple)
@@ -54,6 +68,49 @@ export const LEAGUE = {
 export function rosterMinFor(rosterMax: number): number {
   const scaled = Math.round((rosterMax * LEAGUE.ROSTER_MIN) / LEAGUE.ROSTER_MAX);
   return Math.max(1, Math.min(LEAGUE.ROSTER_MIN, Math.min(rosterMax, scaled)));
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE CONFERENCES AND DIVISIONS A PARTICULAR LEAGUE ACTUALLY HAS
+ * ---------------------------------------------------------------------------
+ * `['AFC', 'NFC']` was written out in five places — LEAGUE.CONFERENCES here,
+ * lib/leagueFile.ts's own copy, and three bare literals in lib/season.ts that
+ * drive playoff seeding, the wild-card round and every round after it — plus a
+ * sixth copy of the division list in lib/standingsBoard.ts and a seventh in
+ * components/TeamPickerBoard.tsx. That was survivable only while the labels
+ * were a closed enum. They are league DATA now, and a literal `'AFC'` in a
+ * seeding loop over a league whose conferences are called "Big Ten" and "SEC"
+ * does not throw: it seeds NOBODY, and the league simply has no postseason.
+ *
+ * So the labels are read from the rows. These take whatever carries a
+ * `conference` / `division` — Team rows, standings rows, playoff winners — and
+ * return the distinct labels in a STABLE order, because the order decides the
+ * sequence of writes in the postseason builders and the order of panels on the
+ * standings page, and neither may shuffle between two runs of the same league.
+ *
+ * The order is: the default labels first, in their canonical order, then
+ * anything else alphabetically. A default league therefore reads exactly as it
+ * always did (AFC before NFC; East, North, South, West), which is what makes
+ * this extraction a no-op for every league that already exists.
+ */
+function labelsInOrder(values: readonly string[], canonical: readonly string[]): string[] {
+  const seen = Array.from(new Set(values));
+  const rank = (v: string) => {
+    const i = canonical.indexOf(v);
+    return i === -1 ? canonical.length : i;
+  };
+  return seen.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
+/** The two conferences THIS league has, in a stable order. */
+export function conferencesOf(rows: readonly { conference: string }[]): string[] {
+  return labelsInOrder(rows.map((r) => r.conference), LEAGUE.CONFERENCES);
+}
+
+/** The four divisions THIS league has, in a stable order. */
+export function divisionsOf(rows: readonly { division: string }[]): string[] {
+  return labelsInOrder(rows.map((r) => r.division), LEAGUE.DIVISIONS);
 }
 
 /**

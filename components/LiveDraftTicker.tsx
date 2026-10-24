@@ -233,7 +233,11 @@ export function LiveDraftTicker({ leagueId, userTeamId, isUserOnClock, draftComp
            advanceWeek's `blocked` result: show the server's own sentence and
            stop. The picks the other runner is making still land on the board;
            the refresh in the finally is what puts them on screen. */
-        if (chunk.stoppedBy === 'RUN_IN_PROGRESS') {
+        // The two stops that are not a place the board got to, and the only
+        // two that carry a sentence of their own: another runner holds the
+        // lease, or this account has run the board down enough times this
+        // hour (lib/costLimit.ts). Both are `done`, so the loop ends here.
+        if (chunk.stoppedBy === 'RUN_IN_PROGRESS' || chunk.stoppedBy === 'HOURLY_CEILING') {
           setNotice(chunk.message ?? 'The board is already being run down.');
           setPaused(true);
           break;

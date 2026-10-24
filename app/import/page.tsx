@@ -3,6 +3,7 @@ import { listOwnedLeagues } from '@/lib/owner';
 import { AccountBadge } from '@/components/auth/AccountBadge';
 import { LeagueImportForm } from '@/components/LeagueImportForm';
 import { FILE_LIMITS } from '@/lib/leagueFile';
+import { CSV_ATTRIBUTE_COUNT, CSV_POSITIONS, TEMPLATE_NAMES } from '@/lib/leagueCsv';
 import { TeamLogo } from '@/components/TeamLogo';
 
 export const dynamic = 'force-dynamic';
@@ -44,8 +45,8 @@ export default async function ImportPage() {
           </h1>
           <p className="text-muted mt-4 max-w-2xl">
             A league file is a single JSON document describing 32 franchises and, if you want, every player on
-            them. Build one by hand for your fantasy league, or export a league you already have and send it to
-            a friend. Everything in it is checked before anything is written.
+            them and the college class they will draft from. Build one from spreadsheets, or export a league you
+            already have and send it to a friend. Everything in it is checked before anything is written.
           </p>
           <Link href="/" className="btn-ghost text-sm mt-4 inline-block">← Back to your franchises</Link>
         </section>
@@ -55,6 +56,55 @@ export default async function ImportPage() {
             <h2 className="section-title">Import</h2>
           </div>
           <LeagueImportForm />
+        </section>
+
+        <section className="section">
+          <div className="section-head">
+            <h2 className="section-title">Build one in a spreadsheet</h2>
+          </div>
+          <div className="panel p-5 space-y-4 text-sm">
+            <p className="text-muted">
+              A real league is around 1,700 players, and hand-writing that as JSON is a 40,000-line document that
+              one missing comma destroys. Author it in a spreadsheet instead — three sheets, exported as CSV. The
+              work splits: thirty-two teams across eight people in one shared sheet, four teams each.
+            </p>
+            <p className="text-muted">
+              <span className="text-chalk">A complete league is six columns.</span> There are{' '}
+              {CSV_ATTRIBUTE_COUNT} attributes across {CSV_POSITIONS.length} positions and you do not need them.
+              Fill in <code className="text-accent2">ovr</code>, leave every attribute column empty, and the
+              attributes are generated around that overall — so a cap-realistic league is{' '}
+              <code className="text-accent2">team, name, position, age, ovr, contractApy, contractYears</code>{' '}
+              times 1,700 rows. Attributes are an optional refinement for the players you have an opinion about.
+              Supply them and the overall is recomputed from them: a stored overall that disagrees with the
+              attributes under it is a number this game will not show you.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {TEMPLATE_NAMES.map((t) => (
+                <a key={t} href={`/api/league/templates/${t}`} className="btn-secondary" download>
+                  {t} ↓
+                </a>
+              ))}
+            </div>
+            <p className="text-muted text-xs">
+              teams.csv arrives filled in with thirty-two franchises — rename the cities and nicknames, or rename
+              the conference and division columns too and the whole league moves with them. players.csv and
+              prospects.csv arrive as a header row. Positions are{' '}
+              {CSV_POSITIONS.join(', ')}.
+            </p>
+            <form action="/api/league/csv" method="post" encType="multipart/form-data" className="space-y-3 pt-2 border-t border-line/60">
+              <div className="label-sm">Convert to a league file</div>
+              <div className="grid sm:grid-cols-3 gap-3">
+                <CsvField name="teams" label="teams.csv" required />
+                <CsvField name="players" label="players.csv" />
+                <CsvField name="prospects" label="prospects.csv" />
+              </div>
+              <button type="submit" className="btn-primary">Convert ↓</button>
+              <p className="text-muted text-xs">
+                Returns the league file as a download. Nothing is created — upload that file above to play it. A
+                refusal names the file, the row and what would have been legal.
+              </p>
+            </form>
+          </div>
         </section>
 
         <section className="section">
@@ -97,7 +147,9 @@ export default async function ImportPage() {
             <h2 className="section-title">What a file may contain</h2>
           </div>
           <div className="panel p-5 grid sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
-            <Rule k="Teams" v={`exactly ${FILE_LIMITS.TEAM_COUNT}, as 2 conferences × 4 divisions × ${FILE_LIMITS.TEAMS_PER_DIVISION} teams`} />
+            <Rule k="Teams" v={`exactly ${FILE_LIMITS.TEAM_COUNT}, as ${FILE_LIMITS.CONFERENCE_COUNT} conferences × ${FILE_LIMITS.DIVISION_COUNT} divisions × ${FILE_LIMITS.TEAMS_PER_DIVISION} teams`} />
+            <Rule k="Conference and division names" v={`yours, up to ${FILE_LIMITS.MAX_CONFERENCE_NAME} characters; omit them for AFC/NFC and East/North/South/West`} />
+            <Rule k="Draft class" v={`one, up to ${FILE_LIMITS.MAX_PROSPECTS_PER_CLASS} prospects; omitted means a generated class`} />
             <Rule k="Players per team" v={`up to ${FILE_LIMITS.MAX_PLAYERS_PER_TEAM}; omit them and a roster is generated`} />
             <Rule k="Free agents" v={`up to ${FILE_LIMITS.MAX_FREE_AGENTS}; omitted means a generated pool`} />
             <Rule k="File size" v={`up to ${FILE_LIMITS.MAX_BYTES / 1_048_576}MB`} />
@@ -114,6 +166,27 @@ export default async function ImportPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+/**
+ * One file input. A plain multipart form rather than a client component: the
+ * converter writes nothing and returns a download, which is exactly what a
+ * browser form already does, and a Server Action would have to hand a 1MB
+ * string back through React to produce the same file.
+ */
+function CsvField({ name, label, required }: { name: string; label: string; required?: boolean }) {
+  return (
+    <label className="block space-y-1">
+      <span className="label-sm">{label}{required ? '' : ' — optional'}</span>
+      <input
+        type="file"
+        name={name}
+        accept=".csv,text/csv"
+        required={required}
+        className="block w-full text-xs text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded file:border file:border-line file:bg-raised file:text-chalk file:text-xs"
+      />
+    </label>
   );
 }
 

@@ -44,6 +44,7 @@ import { buildSchedule } from '../lib/schedule';
 import { Rng } from '../lib/rng';
 import { writeJson } from '../lib/json';
 import { parseSettings } from '../lib/settings';
+import { LEAGUE } from '../lib/tuning';
 
 const LEAGUES = Number(process.argv[2] ?? 2);
 const SEASONS = Number(process.argv[3] ?? 4);
@@ -126,7 +127,10 @@ function canary(): void {
  */
 function synthLeague(seed: string): SimTeamInput[] {
   const rng = new Rng(seed);
-  const CONF = ['AFC', 'NFC'], DIV = ['East', 'North', 'South', 'West'];
+  // The default labels, from the one place they live. A synthetic league is
+  // built with the defaults on purpose — a custom league's own names are data
+  // (lib/leagueFile.ts) and this harness has no file to read them from.
+  const CONF = LEAGUE.CONFERENCES, DIV = LEAGUE.DIVISIONS;
   const out: SimTeamInput[] = [];
   for (let c = 0; c < 2; c++) for (let d = 0; d < 4; d++) for (let k = 0; k < 4; k++) {
     const idx = out.length;

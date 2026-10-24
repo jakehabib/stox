@@ -2,9 +2,7 @@
 
 import { TeamLogo } from './TeamLogo';
 import { previewAccent, previewCrestSeed, type FranchiseSeed } from './ds/FranchiseWall';
-
-const CONFERENCES = ['AFC', 'NFC'] as const;
-const DIVISIONS = ['East', 'North', 'South', 'West'] as const;
+import { conferencesOf, divisionsOf } from '@/lib/tuning';
 
 /**
  * The franchise board: all 32 clubs, laid out as the league actually is.
@@ -33,16 +31,22 @@ export function TeamPickerBoard({
   value: string;
   onChange: (abbr: string) => void;
 }) {
+  // Read off the seeds, not off LEAGUE.CONFERENCES: the labels are league data
+  // from league file version 2 on (see lib/leagueFile.ts), and a board that
+  // grouped by the default pair would show an empty page for a custom league.
+  const conferences = conferencesOf(seeds);
+  const divisions = divisionsOf(seeds);
+
   return (
     <div className="grid md:grid-cols-2 gap-4">
-      {CONFERENCES.map((conf) => (
+      {conferences.map((conf) => (
         <div key={conf} className="space-y-3">
           <div className="flex items-center gap-2">
             <span className="font-display font-extrabold uppercase tracking-widest text-sm text-chalk">{conf}</span>
             <span className="h-px flex-1 bg-line" />
           </div>
 
-          {DIVISIONS.map((div) => {
+          {divisions.map((div) => {
             const clubs = seeds.filter((s) => s.conference === conf && s.division === div);
             if (clubs.length === 0) return null;
             return (

@@ -5,8 +5,18 @@ import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { assertCanCreateLeague, assertLeagueOwner, currentViewer, ensureOwnerKey } from '@/lib/owner';
 import { createLeague } from '@/lib/gen/league';
-import { CAP_GROWTH_MODES, DEFAULT_SETTINGS, LeagueSettings, parseSettings, serializeSettings } from '@/lib/settings';
-import { advanceWeek } from '@/lib/season';
+import {
+  CAP_GROWTH_VALUES,
+  CAP_MODE_VALUES,
+  DEFAULT_SETTINGS,
+  DIFFICULTY_VALUES,
+  LEAGUE_START_VALUES,
+  LeagueSettings,
+  parseSettings,
+  serializeSettings,
+} from '@/lib/settings';
+import { advanceWeek, AdvanceResult } from '@/lib/season';
+import { assertCostBudget, CostLimitError } from '@/lib/costLimit';
 import { loadRebuildStanding } from '@/lib/rebuildState';
 // A plain string, so it CANNOT live in this file: a 'use server' module may
 // only export async functions, and Next throws at request time — not at build
@@ -26,13 +36,16 @@ import { IRONMAN_REFUSAL } from '@/lib/rebuild';
  * `updateSettingsAction`, which cast capMode, difficulty and recapVerbosity
  * for as long as it existed. All of them go through `pick` now, and the
  * numbers beside them go through `num`.
+ *
+ * The lists themselves live in lib/settings.ts beside the type they validate,
+ * because the create ROUTE needs the identical answer for a JSON body (see
+ * sanitiseCreateSettings) and a second copy here is a fourth cap mode that one
+ * path accepts and the other rewrites.
  */
-const LEAGUE_STARTS = ['RANDOM_ROSTERS', 'FANTASY_DRAFT', 'REBUILD'] as const;
-const CAP_MODES = ['REALISTIC', 'SIMPLIFIED', 'OFF'] as const;
-const DIFFICULTIES = ['EASY', 'NORMAL', 'HARD'] as const;
-/** Read off the rung table itself, so a fourth rung cannot be added there and
- *  silently rejected here. */
-const CAP_GROWTHS = Object.keys(CAP_GROWTH_MODES) as (keyof typeof CAP_GROWTH_MODES)[];
+const LEAGUE_STARTS = LEAGUE_START_VALUES;
+const CAP_MODES = CAP_MODE_VALUES;
+const DIFFICULTIES = DIFFICULTY_VALUES;
+const CAP_GROWTHS = CAP_GROWTH_VALUES;
 
 const RECAP_VERBOSITIES = ['SHORT', 'NORMAL', 'DETAILED'] as const;
 
@@ -104,6 +117,11 @@ export async function createLeagueAction(formData: FormData) {
   const ownerKey = ensureOwnerKey();
   const viewer = { ...(await currentViewer()), ownerKey };
   await assertCanCreateLeague(viewer);
+  // AND HOW FAST, which the line above does not bound. `assertCanCreateLeague`
+  // caps how many saves may EXIST; a create/delete/create loop writes ~5,300
+  // rows per turn and leaves that count exactly where it started. See
+  // lib/costLimit.ts.
+  await assertCostBudget('CREATE', viewer);
 
   const rawName = String(formData.get('name') || '').trim();
   const name = (rawName || 'My League').slice(0, MAX_LEAGUE_NAME);
@@ -172,6 +190,36 @@ export async function deleteLeagueAction(leagueId: string) {
 
 export async function advanceWeekAction(leagueId: string) {
   await assertLeagueOwner(leagueId);
+
+  /**
+   * THE HOURLY CEILING, AND IT IS NOT THE LEASE.
+   *
+   * `League.advanceStartedAt` already stops two advances running at once. It
+   * does nothing at all about one caller running four thousand of them in a
+   * row, politely, one after the next — and each one is 231 database round
+   * trips and ~3.5 MB of season added to the save. That is a bill rather than
+   * an outage, which is why it is bounded here. lib/costLimit.ts has the
+   * measurements and the argument for the number.
+   *
+   * It comes back as DATA with `blocked: true`, not as a throw, for the same
+   * reason the cap gate and ADVANCE_IN_PROGRESS do: a throw out of a Server
+   * Action blanks the page, and in a production build Next replaces the
+   * message with a digest, so the player would be told nothing at all.
+   * `blocked` also ends a multi-week batch immediately — see the refusal
+   * branch in AdvanceWeekButton's run loop — so one refusal stops a run of
+   * sixty rather than being answered sixty times.
+   */
+  try {
+    await assertCostBudget('ADVANCE');
+  } catch (err) {
+    if (err instanceof CostLimitError) {
+      const held = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
+      const refusal: AdvanceResult = { summary: err.message, blocked: true };
+      return { ...refusal, phase: held.phase, week: held.week, seasonYear: held.seasonYear };
+    }
+    throw err;
+  }
+
   // `result.blocked` means the salary-cap compliance gate refused to move
   // time (see capComplianceBlock in lib/season.ts). It is a normal, fully
   // explained outcome — not an error — so it comes back as data the button

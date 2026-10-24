@@ -4,6 +4,7 @@ import { Rng } from '@/lib/rng';
 import { createLeague } from '@/lib/gen/league';
 import { DEFAULT_SETTINGS } from '@/lib/settings';
 import { assertCanCreateLeague, currentViewer, ensureOwnerKey, LeagueLimitError } from '@/lib/owner';
+import { assertCostBudget, CostLimitError, costCeiling } from '@/lib/costLimit';
 import {
   FILE_LIMITS,
   LeagueFileError,
@@ -38,14 +39,24 @@ export const maxDuration = 60;
  * legitimate 1.5MB league with an opaque framework error.
  *
  * ORDER OF OPERATIONS, cheapest refusal first:
- *   1. Creation caps (two COUNT queries) — a caller who may not create a
- *      league is refused before we read a single byte of their upload.
+ *   1. Creation caps (two COUNT queries) AND the hourly flow ceiling — a
+ *      caller who may not create a league, or who has founded enough of them
+ *      this hour, is refused before we read a single byte of their upload.
  *   2. Content-Length — a claimed size over the cap is refused before the
  *      body is read.
  *   3. The stream itself, byte-counted — because a header is a claim, not a
  *      fact.
  *   4. Parse and validate (lib/leagueFile.ts) — pure, no writes.
- *   5. Only then, generation.
+ *   5. The hourly flow ceiling, spent only once there is a real league to
+ *      write. It is the same CREATE ceiling /api/league/create is held to, and
+ *      it has to be: this route writes the same ~8,830 rows, so without it the
+ *      ceiling next door is decorative and a create/delete/import loop simply
+ *      comes through this door instead. The stock cap in lib/owner.ts does not
+ *      help — every turn of that loop leaves the count where it started. It is
+ *      checked last of the five because a refusal nobody can act on should not
+ *      cost them the hour: a malformed file is the author's mistake, not a
+ *      claim on the database.
+ *   6. Only then, generation.
  *
  * PARTIAL FAILURE. `createLeague` is not transactional and never has been; a
  * timeout part way through leaves a half-written league that lists on the home
@@ -107,6 +118,32 @@ export async function POST(req: NextRequest) {
     const seed = `import-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
     const plan = planFromLeagueFile(file, new Rng(seed));
 
+    // The hourly flow ceiling is spent HERE, not on arrival. An oversized or
+    // malformed upload is refused for free above, so only a request that is
+    // actually about to generate ~8,830 rows costs a caller any budget. The
+    // early version of this check sat at the top of the route and inverted
+    // that: a claimed size over the cap stopped being the cheapest refusal on
+    // the route and started returning 429 instead of 413, and the guard
+    // audit's own hostile-input cases exhausted the ceiling and then failed
+    // on the wrong status. /api/league/csv puts its ceiling behind the
+    // Content-Length check for the same reason.
+    try {
+      await assertCostBudget('CREATE', viewer);
+    } catch (err) {
+      if (err instanceof CostLimitError) {
+        return NextResponse.json(
+          { error: err.message },
+          {
+            // The window the refusal was actually decided by, not a second
+            // number written out here to go stale.
+            status: 429,
+            headers: { 'Retry-After': String(Math.ceil(costCeiling('CREATE').windowMs / 1000)) },
+          },
+        );
+      }
+      throw err;
+    }
+
     // 5. Generation, with a cleanup handle.
     let createdId: string | null = null;
     try {
@@ -158,7 +195,7 @@ export async function POST(req: NextRequest) {
 function tooBig(actual: number | null): string {
   const mb = (FILE_LIMITS.MAX_BYTES / 1_048_576).toFixed(0);
   const seen = actual == null ? '' : ` (this one is ${(actual / 1_048_576).toFixed(1)}MB)`;
-  return `That file is too large${seen}. The limit is ${mb}MB — a full 32-team league with complete rosters is under 1.5MB.`;
+  return `That file is too large${seen}. The limit is ${mb}MB — a full 32-team league with complete rosters and a draft class is under 1.5MB.`;
 }
 
 /**

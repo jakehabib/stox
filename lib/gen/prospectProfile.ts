@@ -833,10 +833,18 @@ export function prospectBuzzNote(trueOvr: number, potential: number, scoutedOvr:
  * (loaded at one spot, thin at another, the way real classes are talked
  * about). Applied as an offset to every prospect's target overall in
  * generateDraftClass, at that player's own position group.
+ *
+ * `overallBias` is how good the class is ACROSS THE BOARD, and it exists so
+ * an imported league file's authored class `strength` goes through THIS
+ * mechanism rather than a second one beside it (lib/leagueFile.ts). It is
+ * added to every group's own roll, so an authored +8 class still has a
+ * personality — loaded somewhere, thin somewhere else — rather than being a
+ * flat eight points better everywhere, which is not what a strong class is.
+ * Zero, the default, is every generated class and every version-1 file.
  */
-export function generateClassStrength(rng: Rng): Record<PositionGroup, number> {
+export function generateClassStrength(rng: Rng, overallBias = 0): Record<PositionGroup, number> {
   const out = {} as Record<PositionGroup, number>;
-  for (const g of POSITION_GROUPS) out[g] = Math.round(rng.normal(0, 6));
+  for (const g of POSITION_GROUPS) out[g] = Math.round(rng.normal(0, 6) + overallBias);
   return out;
 }
 

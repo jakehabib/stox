@@ -31,6 +31,7 @@ if (typeof React.cache !== 'function') React.cache = (fn: unknown) => fn;
 
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { requestAsyncStorage } = require('next/dist/client/components/request-async-storage.external.js');
+const { actionAsyncStorage } = require('next/dist/client/components/action-async-storage.external.js');
 const { staticGenerationAsyncStorage } = require('next/dist/client/components/static-generation-async-storage.external.js');
 const { RequestCookies } = require('next/dist/server/web/spec-extension/cookies.js');
 const { HeadersAdapter } = require('next/dist/server/web/spec-extension/adapters/headers.js');
@@ -63,5 +64,15 @@ export function asViewer<T>(cookie: string, fn: () => Promise<T>): Promise<T> {
     tags: [] as string[],
     pendingRevalidates: {},
   };
-  return staticGenerationAsyncStorage.run(staticStore, () => requestAsyncStorage.run(requestStore, fn));
+  /**
+   * `isAction` so `cookies()` hands back the MUTABLE jar, which is what Next
+   * does for a Server Action and a Route Handler (see the branch in
+   * next/dist/client/components/headers.js). Without it every path that mints
+   * or clears a cookie — `ensureOwnerKey` on a browser that has none,
+   * `createSession`, `destroySession` — throws ReadonlyRequestCookiesError
+   * instead of running, so the harness could only ever test the half of the
+   * surface that does not touch a cookie. Reads are unaffected.
+   */
+  return actionAsyncStorage.run({ isAction: true }, () =>
+    staticGenerationAsyncStorage.run(staticStore, () => requestAsyncStorage.run(requestStore, fn)));
 }
