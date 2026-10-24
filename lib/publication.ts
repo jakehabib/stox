@@ -62,6 +62,29 @@ import { generateShareCode, normalizeShareCode } from './shareCode';
 export const PUBLICATION_RETENTION_MONTHS = 6;
 
 /**
+ * ===========================================================================
+ * THIS MODULE IS THE LEAGUE-FILE HALF OF ONE TABLE
+ * ===========================================================================
+ * `PublishedLeague` now holds two kinds of thing: a league file published from
+ * here, and a CHALLENGE — a whole save — published from lib/savePublication.ts.
+ * The argument for one table rather than two is in the model comment in
+ * prisma/schema.prisma; the consequence for this file is that every query
+ * which asks "what has this account got" or "what is behind this code" must
+ * say WHICH KIND it means, or a save code would resolve here as a league file
+ * and be handed to a reader that cannot parse it.
+ *
+ * So `PUBLICATION_KIND_LEAGUE` appears in every such `where` below. The two
+ * places it deliberately does NOT appear are the expiry sweep and the operator
+ * takedown: retention and takedown are properties of a published thing, not of
+ * what kind of thing it is, and splitting them would be two sets of rules that
+ * could drift. `deletePublication` is also kind-agnostic, because it is keyed
+ * on (code, userId) and a publisher withdrawing their own code means it
+ * whichever kind it is.
+ * ===========================================================================
+ */
+export const PUBLICATION_KIND_LEAGUE = 'LEAGUE';
+
+/**
  * How many live codes one account may hold, and how many uncompressed bytes
  * they may describe between them.
  *
@@ -206,7 +229,11 @@ export async function sweepExpiredPublications(now = new Date()): Promise<number
  */
 export async function assertCanPublish(userId: string, incomingBytes: number): Promise<void> {
   const rows = await prisma.publishedLeague.aggregate({
-    where: { userId, takenDownAt: null },
+    // Counted against LEAGUE FILES only. Challenges are twenty times the size
+    // and hold their own count and byte caps (lib/savePublication.ts); one
+    // shared stock would let a single challenge consume an account's entire
+    // allowance for league files.
+    where: { userId, kind: PUBLICATION_KIND_LEAGUE, takenDownAt: null },
     _count: { _all: true },
     _sum: { fileBytes: true },
   });
@@ -272,6 +299,7 @@ export async function publishLeagueFile(args: {
       await prisma.publishedLeague.create({
         data: {
           code,
+          kind: PUBLICATION_KIND_LEAGUE,
           payload,
           fileBytes,
           formatVersion: args.file.formatVersion,
@@ -314,13 +342,23 @@ export async function resolvePublication(rawCode: unknown): Promise<PublicationP
   const row = await prisma.publishedLeague.findUnique({
     where: { code },
     select: {
+      kind: true,
       code: true, leagueName: true, teamCount: true, rosteredPlayers: true, freeAgents: true,
       hasDraftClass: true, fileBytes: true, formatVersion: true, createdAt: true,
       lastOpenedAt: true, takenDownAt: true,
       user: { select: { username: true } },
     },
   });
-  if (!row || row.takenDownAt != null) return null;
+  // A CHALLENGE CODE IS NOT A LEAGUE-FILE CODE, and it answers here exactly as
+  // a code nobody published does — same null, same one sentence. Not because
+  // it is a secret: because this resolver's caller is about to hand the
+  // payload to `parseLeagueFile`, and "that code is real but it is the other
+  // kind" is a sentence only a developer could act on. The challenge resolver
+  // (lib/savePublication.ts) is the mirror image. Each of the two pages they
+  // feed carries a STATIC line pointing at the other door — static, because a
+  // line that appeared only for a code of the other kind would be exactly the
+  // oracle this null exists to avoid.
+  if (!row || row.kind !== PUBLICATION_KIND_LEAGUE || row.takenDownAt != null) return null;
 
   // Expired but not yet swept. The sweep is opportunistic, so the retention
   // window has to be enforced on the way out as well or a code would keep
@@ -363,9 +401,9 @@ export async function resolvePublication(rawCode: unknown): Promise<PublicationP
 export async function readPublishedFile(code: string): Promise<LeagueFile | null> {
   const row = await prisma.publishedLeague.findUnique({
     where: { code },
-    select: { payload: true, takenDownAt: true, createdAt: true, lastOpenedAt: true },
+    select: { kind: true, payload: true, takenDownAt: true, createdAt: true, lastOpenedAt: true },
   });
-  if (!row || row.takenDownAt != null) return null;
+  if (!row || row.kind !== PUBLICATION_KIND_LEAGUE || row.takenDownAt != null) return null;
   if ((row.lastOpenedAt ?? row.createdAt) < publicationExpiryCutoff()) return null;
   return parseLeagueFile(gunzipSync(row.payload).toString('utf8'));
 }
@@ -416,7 +454,7 @@ export async function takeDownPublication(rawCode: string, reason: string): Prom
  */
 export async function listPublicationsForUser(userId: string) {
   const rows = await prisma.publishedLeague.findMany({
-    where: { userId, takenDownAt: null },
+    where: { userId, kind: PUBLICATION_KIND_LEAGUE, takenDownAt: null },
     orderBy: { createdAt: 'desc' },
     select: {
       code: true, leagueName: true, teamCount: true, rosteredPlayers: true, openCount: true,

@@ -7,7 +7,7 @@ specification. Work through them in the build order in §6.
 The reference implementation is live at **dynastygm.gg**: Next.js 14,
 TypeScript, Tailwind, Prisma + Postgres, on Vercel — roughly **58,000 lines of
 game logic** across 97 modules, **159 components**, **39 routes**, a
-**27-model** schema. It was built and tuned over a long run of measured
+**28-model** schema. It was built and tuned over a long run of measured
 iteration, and most of the numbers you are given are what they are because a
 measurement proved the obvious value wrong.
 
@@ -72,7 +72,7 @@ One save, one club, one career.
 | part | what to build from it |
 |---|---|
 | **0** (this file) | the standard to hold, how to verify, what counts as done, what order to build in |
-| **1** | stack, deployment, the 27-model data model, accounts and ownership, league creation and settings |
+| **1** | stack, deployment, the 28-model data model, accounts and ownership, league creation and settings |
 | **2** | the phase machine, advancing time, the game simulation, statistics, standings and playoffs, awards, progression and aging, the soak test |
 | **3** | the salary cap, contracts, dead money, every money mutation, free agency and negotiation, trades, the money invariant suite |
 | **4** | player generation, positions and depth chart, roster management, scouting, the draft, the combine as a signal, the GM's own career, fantasy draft |
@@ -269,6 +269,38 @@ These are dependencies, not preferences:
 The reference implementation built most of its harnesses late, and each one
 immediately found defects that had been live for months. Build them early and
 you will not pay that bill.
+
+---
+
+## 6a. What postdates this prompt
+
+These parts were written as a snapshot, and the reference implementation has
+moved since. Build them from the code and the module docblocks rather than
+expecting a part below to specify them, and do not read their absence as a
+decision that they are out of scope:
+
+- **League file format version 2** — author-supplied conference and division
+  names, and authored draft classes with optional combine numbers. Part 1
+  describes version 1, where the conference labels were a closed enum.
+- **The CSV authoring path** — three templates generated from the code, and a
+  converter that feeds the existing validator so there is one notion of valid.
+- **A generated reference page and a file validator**, which replaced a
+  hand-written limits table in the documentation. The table was the bug this
+  prompt's own rule 3.1 describes: it would have told an author a file was
+  legal that the parser then refused.
+- **Share codes** — Crockford base32, ten symbols, no browsable gallery by
+  decision, and `PublishedLeague`, which is the 28th model.
+- **Challenges** — a whole save shared as a situation, under its own file kind
+  with its own version and migration chain, with the publisher's GM career
+  scrubbed by a hire-year bound rather than by deleting rows.
+- **Hourly cost ceilings** on the endpoints a loop can make expensive, after
+  measuring that a week advance is 231 database round trips and a founding
+  writes 8,830 rows.
+- **CI running all four gates on every push**, which is the only reason the
+  discovering audit can do its job.
+
+The counts at the top of this file are a measurement with a date on it. Check
+them against the code before quoting them back.
 
 ---
 

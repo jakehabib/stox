@@ -108,6 +108,47 @@ export function clearStartYearCache() {
 
 /**
  * ===========================================================================
+ * THE GM'S HIRE YEAR — the single door to "since when is this his record"
+ * ===========================================================================
+ * Everything the game shows a GM about himself is DERIVED, never stored:
+ * tenure, career record, championships, badges, dynasty XP, skill points,
+ * rank-board standing, rebuild standing, the week report's trophy history.
+ * All of it is read off `TeamSeasonRecord` and `Transaction` rows, bounded
+ * below by one year — and getting that bound wrong is not cosmetic. A league
+ * is generated with up to two decades of invented franchise backstory, so an
+ * unbounded read hands a brand-new save a dozen levels and a Champion badge
+ * for a title won before the player was hired.
+ *
+ * Until challenges existed, that bound was the FOUNDING year and the six
+ * callers all asked `resolveStartYear` for it. Those two facts have now come
+ * apart, for one reason and one reason only: a redeemed challenge
+ * (lib/saveImport.ts) hands a new GM a club with standings, picks, a cap sheet
+ * and several seasons of records already on it. He must inherit the situation
+ * and none of the résumé.
+ *
+ * IT COULD NOT BE DONE BY MOVING THE FOUNDING YEAR. `capForYear` grows the
+ * salary-cap ceiling by (seasonYear - startYear), so re-stamping `startYear`
+ * on import would have reset every club's cap space — and a challenge whose
+ * cap room is not the publisher's cap room is not the same challenge. So the
+ * founding year stays exactly where it was and the TENURE bound moves.
+ *
+ * ONE FUNCTION, because the alternative is six screens with six opinions
+ * about when a man was hired. `League.gmHiredYear` is null for every save
+ * that was not taken over from somebody else, and null means "the founding
+ * year" — so this is `resolveStartYear` for every league that existed before
+ * challenges did, with no backfill and no behaviour change.
+ */
+export interface LeagueTenureFields extends LeagueYearFields {
+  gmHiredYear: number | null;
+}
+
+export async function resolveTenureStartYear(league: LeagueTenureFields): Promise<number> {
+  if (league.gmHiredYear != null) return league.gmHiredYear;
+  return resolveStartYear(league);
+}
+
+/**
+ * ===========================================================================
  * THE SINGLE DOOR TO A LEAGUE'S CEILING
  * ===========================================================================
  * A salary cap is two facts about one league — when it was founded, and how

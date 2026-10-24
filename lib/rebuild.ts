@@ -477,11 +477,12 @@ export function applyRebuildPins(settings: LeagueSettings, state: RebuildState):
  *
  *     firstChampionYear - tenureStartYear + 1
  *
- * `tenureStartYear` is `resolveStartYear(league)` — the same founding year the
- * Dynasty screen and the XP total already measure from, which is what keeps
- * the two decades of FICTIONAL backstory a new league is seeded with out of
- * this number. If a save's history somehow held a title from before the GM
- * arrived, it is not his and it is filtered out here.
+ * `tenureStartYear` is `resolveTenureStartYear(league)` — the same hire year
+ * the Dynasty screen and the XP total already measure from, which is what
+ * keeps the two decades of FICTIONAL backstory a new league is seeded with out
+ * of this number, and what keeps a redeemed challenge's inherited records out
+ * of it too (lib/leagueYear.ts). If a save's history somehow held a title
+ * from before the GM arrived, it is not his and it is filtered out here.
  *
  * NULL MEANS NOT YET, AND IT IS NOT A ZERO AND NOT A BIG NUMBER. A run still
  * in progress has no seasons-to-title, because the denominator has not

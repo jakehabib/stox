@@ -471,6 +471,8 @@ async function main() {
     const validateRoute = require('../app/api/league/validate/route');
     const publishRoute = require('../app/api/league/publish/route');
     const redeemRoute = require('../app/api/league/redeem/route');
+    const savePublishRoute = require('../app/api/save/publish/route');
+    const saveRedeemRoute = require('../app/api/save/redeem/route');
     const { TEMPLATE_NAMES } = require('../lib/leagueCsv');
 
     const EXPORT_URL = (id: string) => `http://localhost/api/league/export/${encodeURIComponent(id)}`;
@@ -521,6 +523,74 @@ async function main() {
     const strangerCode = await publishFixture(otherUser.id);
     /** Mine, and already taken down — must read as "no such code". */
     const takenDownCode = await publishFixture(auditUser.id, {
+      takenDownAt: new Date(),
+      takedownReason: 'audit fixture',
+    });
+
+    /**
+     * THE SAME FOUR FIXTURES AGAIN, AS CHALLENGES.
+     *
+     * `PublishedLeague` holds both kinds under one unique `code`, so the cases
+     * below need a real SAVE row to be refused about — and, more to the point,
+     * they need one kind's code to be handed to the other kind's door. That
+     * cross-kind miss is the one new oracle this feature could have opened:
+     * "that code is real but it is the other sort of thing" is a sentence that
+     * turns guessing into mapping, and the only way to know it is not being
+     * said is to try it.
+     *
+     * Inserted directly rather than through `publishChallenge`, for the reason
+     * the league fixtures give: that function applies the per-account cap, and
+     * a fixture that silently stopped being created the day the cap changed
+     * would turn these cases into vacuous passes.
+     */
+    const { exportSaveFile } = require('../lib/saveExport');
+    const { serializeSaveFile, summarizeSaveFile } = require('../lib/saveFile');
+    const challengeFile = await exportSaveFile(a, {
+      includeHistory: false,
+      title: 'Audit fixture',
+      brief: 'A fixture, published so the refusals below have something real to be refused about.',
+    });
+    const challengeText = serializeSaveFile(challengeFile);
+    const challengePayload = gzipSync(Buffer.from(challengeText, 'utf8'));
+    const challengeSummary = summarizeSaveFile(challengeFile);
+    const publishChallengeFixture = async (userId: string, extra: Record<string, unknown> = {}) => {
+      const code = generateShareCode();
+      await prisma.publishedLeague.create({
+        data: {
+          code,
+          kind: 'SAVE',
+          payload: challengePayload,
+          fileBytes: Buffer.byteLength(challengeText, 'utf8'),
+          formatVersion: challengeFile.formatVersion,
+          userId,
+          sourceLeagueId: a,
+          leagueName: challengeSummary.leagueName,
+          teamCount: challengeSummary.teamCount,
+          rosteredPlayers: challengeSummary.rosteredPlayers,
+          freeAgents: challengeSummary.freeAgents,
+          hasDraftClass: challengeSummary.hasDraftClass,
+          saveSeasonYear: challengeSummary.seasonYear,
+          savePhase: challengeSummary.phase,
+          saveWeek: challengeSummary.week,
+          saveTeamAbbr: challengeSummary.teamAbbr,
+          saveTeamName: challengeSummary.teamName,
+          saveRecord: challengeSummary.record,
+          saveHistory: challengeSummary.carriesHistory,
+          challengeTitle: challengeSummary.challengeTitle,
+          challengeBrief: challengeSummary.challengeBrief,
+          ...extra,
+        },
+      });
+      return code;
+    };
+    /** Live, mine, and redeemable. */
+    const liveChallenge = await publishChallengeFixture(auditUser.id);
+    /** Mine, and the DELETE positive control withdraws it. */
+    const myChallenge = await publishChallengeFixture(auditUser.id);
+    /** Another account's, which this caller may not withdraw. */
+    const strangerChallenge = await publishChallengeFixture(otherUser.id);
+    /** Mine, already taken down — must read as "no such code". */
+    const takenDownChallenge = await publishChallengeFixture(auditUser.id, {
       takenDownAt: new Date(),
       takedownReason: 'audit fixture',
     });
@@ -965,6 +1035,24 @@ async function main() {
           expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${res.status} ${body.slice(0, 90)}`),
         },
         {
+          // A CHALLENGE CODE AT THE LEAGUE-FILE DOOR. Both kinds share one
+          // unique `code` column, so this code is real and this is the wrong
+          // resolver for it. It must answer with the SAME sentence as a code
+          // nobody ever published — otherwise the pair of endpoints is an
+          // oracle that sorts guessed codes into "league", "challenge" and
+          // "nothing", and a stranger who can do that has a map.
+          name: 'redeem / a CHALLENGE code is refused identically (no cross-kind oracle)',
+          cookie: '',
+          run: () => redeemRoute.POST(request('http://localhost/api/league/redeem', {
+            method: 'POST', body: JSON.stringify({ code: liveChallenge }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => {
+            if (res.status !== 404) return `expected 404, got ${res.status} ${body.slice(0, 90)}`;
+            if (!body.includes('No league is filed under that code')) return `a challenge code answered differently: ${body.slice(0, 140)}`;
+            return true;
+          },
+        },
+        {
           // THE POSITIVE CONTROL, and the friction asymmetry stated as a test:
           // NO COOKIE, NO SESSION, and the league is built. If this ever
           // starts failing with a 401, the recipient's on-ramp has grown a
@@ -978,6 +1066,292 @@ async function main() {
           })),
           expect: (res, body) => {
             if (res.status !== 200) return `a recipient with no account was refused: ${res.status} ${body.slice(0, 140)}`;
+            let data: { leagueId?: string };
+            try { data = JSON.parse(body); } catch { return 'the answer was not JSON'; }
+            if (typeof data.leagueId !== 'string' || data.leagueId.length === 0) return `leagueId was ${JSON.stringify(data.leagueId)}`;
+            // Collected so the cleanup below removes it by id.
+            created.push(data.leagueId);
+            return true;
+          },
+        },
+      ],
+
+      // --- challenges (a whole save, not a starting point) ----------------
+      // Same code machinery, separate kind, separate reader, separate caps.
+      // Every refusal the league-file pair makes, this pair has to make too,
+      // plus the cross-kind one: a league-file code arriving here.
+      'POST /api/save/publish': [
+        {
+          name: 'challenge-publish / a signed-out caller cannot publish at all',
+          run: () => savePublishRoute.POST(request('http://localhost/api/save/publish', {
+            method: 'POST',
+            body: JSON.stringify({ leagueId: a, title: 'x', brief: 'y' }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 401 ? true : `expected 401, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: "challenge-publish / signed in, a stranger's save by id",
+          cookie: AS_A_SIGNED_IN,
+          run: () => savePublishRoute.POST(request('http://localhost/api/save/publish', {
+            method: 'POST',
+            body: JSON.stringify({ leagueId: b, title: 'x', brief: 'y' }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          // 404, not 403: the endpoint must not confirm which ids are real.
+          expect: (res, body) => (res.status === 404 ? true : `published or confirmed a foreign save: ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // The cookie holds save A and the account does not. A signed-in
+          // viewer is matched on the ACCOUNT and nothing else (ownsLeague,
+          // lib/owner.ts), so this must refuse even though the same request
+          // carries the cookie that owns the save.
+          name: 'challenge-publish / signed in, a save this cookie owns but this account does not',
+          cookie: AS_A_SIGNED_IN,
+          run: () => savePublishRoute.POST(request('http://localhost/api/save/publish', {
+            method: 'POST',
+            body: JSON.stringify({ leagueId: a, title: 'x', brief: 'y' }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'challenge-publish / a malformed league id is refused, not reported on',
+          cookie: AS_A_SIGNED_IN,
+          run: () => savePublishRoute.POST(request('http://localhost/api/save/publish', {
+            method: 'POST',
+            body: JSON.stringify({ leagueId: "' OR 1=1 --", title: 'x', brief: 'y' }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // The two text fields are the only free prose a publisher writes,
+          // so they are the only place a colossal string can arrive. Refused
+          // on length BEFORE the save is read, so the work is never done.
+          name: 'challenge-publish / a 10MB title is refused before anything is read',
+          cookie: AS_A_SIGNED_IN,
+          run: async () => {
+            await prisma.league.update({ where: { id: a }, data: { userId: auditUser.id } });
+            try {
+              return await savePublishRoute.POST(request('http://localhost/api/save/publish', {
+                method: 'POST',
+                body: JSON.stringify({ leagueId: a, title: 'T'.repeat(10_000_000), brief: 'y' }),
+                headers: { 'content-type': 'application/json' },
+              }));
+            } finally {
+              await prisma.league.update({ where: { id: a }, data: { userId: null } });
+            }
+          },
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'challenge-publish / a challenge with no title at all is refused in words',
+          cookie: AS_A_SIGNED_IN,
+          run: async () => {
+            await prisma.league.update({ where: { id: a }, data: { userId: auditUser.id } });
+            try {
+              return await savePublishRoute.POST(request('http://localhost/api/save/publish', {
+                method: 'POST',
+                body: JSON.stringify({ leagueId: a, title: '   ', brief: 'y' }),
+                headers: { 'content-type': 'application/json' },
+              }));
+            } finally {
+              await prisma.league.update({ where: { id: a }, data: { userId: null } });
+            }
+          },
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'challenge-publish / a title that is not a string is refused in words',
+          cookie: AS_A_SIGNED_IN,
+          run: () => savePublishRoute.POST(request('http://localhost/api/save/publish', {
+            method: 'POST',
+            body: JSON.stringify({ leagueId: a, title: { $ne: null }, brief: ['y'] }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'challenge-publish / a body that is not JSON is refused in words',
+          cookie: AS_A_SIGNED_IN,
+          run: () => savePublishRoute.POST(request('http://localhost/api/save/publish', {
+            method: 'POST', body: 'not json', headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // THE POSITIVE CONTROL. Seven refusals are also what a route that
+          // refuses everybody looks like. Save A is handed to the audit's
+          // account for the length of this one request and handed straight
+          // back, so no other case sees a league with a userId on it.
+          name: 'challenge-publish / my own save DOES publish (positive control)',
+          cookie: AS_A_SIGNED_IN,
+          run: async () => {
+            await prisma.league.update({ where: { id: a }, data: { userId: auditUser.id } });
+            try {
+              return await savePublishRoute.POST(request('http://localhost/api/save/publish', {
+                method: 'POST',
+                body: JSON.stringify({ leagueId: a, title: 'Audit positive control', brief: 'Fix it.', history: false }),
+                headers: { 'content-type': 'application/json' },
+              }));
+            } finally {
+              await prisma.league.update({ where: { id: a }, data: { userId: null } });
+            }
+          },
+          expect: (res, body) => {
+            if (res.status !== 200) return `the owner was refused his own save: ${body.slice(0, 160)}`;
+            let data: { code?: string; path?: string };
+            try { data = JSON.parse(body); } catch { return 'the answer was not JSON'; }
+            if (typeof data.code !== 'string' || data.code.length !== 10) return `code was ${JSON.stringify(data.code)}`;
+            // Crockford base32, which is the alphabet minus I, L, O and U.
+            if (!/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{10}$/.test(data.code)) return `code is outside the alphabet: ${data.code}`;
+            // Its OWN route, not /l/ — a challenge card and a league-file card
+            // are different pages with different copy.
+            if (data.path !== `/c/${data.code}`) return `path was ${JSON.stringify(data.path)}`;
+            return true;
+          },
+        },
+      ],
+
+      'DELETE /api/save/publish': [
+        {
+          name: 'challenge-delete / a signed-out caller cannot withdraw anything',
+          run: () => savePublishRoute.DELETE(request('http://localhost/api/save/publish', {
+            method: 'DELETE', body: JSON.stringify({ code: strangerChallenge }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 401 ? true : `expected 401, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: "challenge-delete / another account's challenge is not mine to withdraw",
+          cookie: AS_A_SIGNED_IN,
+          run: () => savePublishRoute.DELETE(request('http://localhost/api/save/publish', {
+            method: 'DELETE', body: JSON.stringify({ code: strangerChallenge }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // MY OWN CODE, WRONG KIND. `liveCode` is a league file this very
+          // account published. This endpoint deletes on (code, userId, kind),
+          // so it must not touch it — otherwise the challenge door could
+          // withdraw league files and the two tiers would not be separate at
+          // all.
+          name: 'challenge-delete / my own LEAGUE-FILE code is not withdrawable here',
+          cookie: AS_A_SIGNED_IN,
+          run: async () => {
+            const res = await savePublishRoute.DELETE(request('http://localhost/api/save/publish', {
+              method: 'DELETE', body: JSON.stringify({ code: liveCode }), headers: { 'content-type': 'application/json' },
+            }));
+            // Proven by the row still being there, not only by the status.
+            const still = await prisma.publishedLeague.count({ where: { code: liveCode } });
+            if (still !== 1) throw new Error(`the challenge door deleted a league-file code (${still} rows left)`);
+            return res;
+          },
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'challenge-delete / a malformed code is refused in words',
+          cookie: AS_A_SIGNED_IN,
+          run: () => savePublishRoute.DELETE(request('http://localhost/api/save/publish', {
+            method: 'DELETE', body: JSON.stringify({ code: '../../etc/passwd' }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // The positive control, and the proof the publisher's own lifecycle
+          // control works on this tier too.
+          name: 'challenge-delete / my own challenge DOES go (positive control)',
+          cookie: AS_A_SIGNED_IN,
+          run: () => savePublishRoute.DELETE(request('http://localhost/api/save/publish', {
+            method: 'DELETE', body: JSON.stringify({ code: myChallenge }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 200 ? true : `the publisher could not withdraw his own challenge: ${res.status} ${body.slice(0, 90)}`),
+        },
+      ],
+
+      'POST /api/save/redeem': [
+        {
+          name: 'challenge-redeem / a well-formed code nobody published is refused',
+          cookie: '',
+          run: () => saveRedeemRoute.POST(request('http://localhost/api/save/redeem', {
+            method: 'POST', body: JSON.stringify({ code: 'ZZZZZZZZZZ' }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'challenge-redeem / a malformed code is refused IDENTICALLY (no oracle)',
+          cookie: '',
+          run: () => saveRedeemRoute.POST(request('http://localhost/api/save/redeem', {
+            method: 'POST', body: JSON.stringify({ code: 'not a code at all' }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => {
+            if (res.status !== 404) return `expected 404, got ${res.status} ${body.slice(0, 90)}`;
+            if (!body.includes('No challenge is filed under that code')) return `a different refusal: ${body.slice(0, 140)}`;
+            return true;
+          },
+        },
+        {
+          name: 'challenge-redeem / a challenge that was taken down is refused identically',
+          cookie: '',
+          run: () => saveRedeemRoute.POST(request('http://localhost/api/save/redeem', {
+            method: 'POST', body: JSON.stringify({ code: takenDownChallenge }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => {
+            if (res.status !== 404) return `expected 404, got ${res.status} ${body.slice(0, 90)}`;
+            if (!body.includes('No challenge is filed under that code')) return `a taken-down challenge answered differently: ${body.slice(0, 140)}`;
+            return true;
+          },
+        },
+        {
+          // A LEAGUE-FILE CODE AT THE CHALLENGE DOOR — the other half of the
+          // cross-kind pair. Real code, wrong resolver, and the answer must be
+          // the one sentence every other miss gives.
+          name: 'challenge-redeem / a LEAGUE-FILE code is refused identically (no cross-kind oracle)',
+          cookie: '',
+          run: () => saveRedeemRoute.POST(request('http://localhost/api/save/redeem', {
+            method: 'POST', body: JSON.stringify({ code: liveCode }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => {
+            if (res.status !== 404) return `expected 404, got ${res.status} ${body.slice(0, 90)}`;
+            if (!body.includes('No challenge is filed under that code')) return `a league-file code answered differently: ${body.slice(0, 140)}`;
+            return true;
+          },
+        },
+        {
+          name: 'challenge-redeem / a body that is not JSON is refused in words',
+          cookie: '',
+          run: () => saveRedeemRoute.POST(request('http://localhost/api/save/redeem', {
+            method: 'POST', body: 'nope', headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // A CLUB INDEX FROM A BROWSER. Out of range, not an integer, and not
+          // a number at all — none of which may reach the importer, which
+          // trusts its `userTeam` to be an index into the file it was given.
+          name: 'challenge-redeem / a nonsense club index does not reach the importer',
+          cookie: '',
+          run: () => saveRedeemRoute.POST(request('http://localhost/api/save/redeem', {
+            method: 'POST',
+            body: JSON.stringify({ code: 'ZZZZZZZZZZ', team: Number.POSITIVE_INFINITY }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // THE POSITIVE CONTROL, and the friction asymmetry stated as a test:
+          // NO COOKIE, NO SESSION, and the save is built — invariant gate and
+          // all. If this ever starts failing with a 401, the recipient's
+          // on-ramp has grown a sign-up wall and the feature is gone.
+          name: 'challenge-redeem / no account and no cookie DOES take the job (positive control)',
+          cookie: '',
+          run: () => saveRedeemRoute.POST(request('http://localhost/api/save/redeem', {
+            method: 'POST',
+            body: JSON.stringify({ code: liveChallenge, name: `${stamp}-challenge` }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => {
+            if (res.status !== 200) return `a recipient with no account was refused: ${res.status} ${body.slice(0, 200)}`;
             let data: { leagueId?: string };
             try { data = JSON.parse(body); } catch { return 'the answer was not JSON'; }
             if (typeof data.leagueId !== 'string' || data.leagueId.length === 0) return `leagueId was ${JSON.stringify(data.leagueId)}`;

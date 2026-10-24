@@ -108,6 +108,10 @@ export default async function HomePage({
           <div className="flex items-center gap-4">
             <Link href="/new" className="hover:text-chalk">New dynasty</Link>
             <Link href="/import" className="hover:text-chalk">Import a league</Link>
+            {/* Its own section, deliberately not folded into "Import a league".
+                A league file is a starting point somebody authored; a challenge
+                is a situation somebody got themselves into. */}
+            <Link href="/challenges" className="hover:text-chalk">Challenges</Link>
             {!viewer.userId && <Link href="/sign-in" className="hover:text-chalk">Sign in</Link>}
           </div>
         </div>

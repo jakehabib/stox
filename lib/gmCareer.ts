@@ -1,5 +1,5 @@
 import { prisma } from './db';
-import { resolveStartYear } from './leagueYear';
+import { resolveTenureStartYear } from './leagueYear';
 import { allStarTallyForTeam, GmAllStarTally } from './allStars';
 // The trophy vocabulary lives in lib/awardTypes.ts, not here. This file both
 // QUERIES by `Object.keys(AWARD_LABEL)` and RENDERS from it, so a label map
@@ -152,19 +152,46 @@ export async function buildGmCareerSummary(
   // but a GM career is not the franchise's career.
   const league = await prisma.league.findUniqueOrThrow({
     where: { id: leagueId },
-    select: { id: true, seasonYear: true, startYear: true },
+    select: { id: true, seasonYear: true, startYear: true, gmHiredYear: true },
   });
-  const hiredIn = await resolveStartYear(league);
+  // The GM's hire year, which is the founding year for every save nobody
+  // inherited and the takeover season for a redeemed challenge. One door:
+  // resolveTenureStartYear in lib/leagueYear.ts.
+  const hiredIn = await resolveTenureStartYear(league);
 
   const [seasons, tradeTx, draftPicks, capCharges, tagCount, awardTx] = await Promise.all([
     prisma.teamSeasonRecord.findMany({ where: { teamId: team.id, year: { gte: hiredIn } }, orderBy: { year: 'asc' } }),
-    prisma.transaction.findMany({ where: { leagueId, type: 'TRADE' }, select: { headline: true } }),
+    /*
+     * THREE OF THESE READS WERE UNBOUNDED, and the bound is the whole point of
+     * this function.
+     *
+     * The trades, the draft picks and the franchise tags were read for the
+     * whole of the franchise's existence while the seasons, the cap charges
+     * and the awards beside them were bounded on `hiredIn`. Nobody noticed,
+     * because for an ordinary save the two are nearly the same set: a league's
+     * seeded backstory writes TeamSeasonRecord rows and award Transactions but
+     * no trades, no tags and no USED draft picks, so there was nothing before
+     * the hire year to pick up.
+     *
+     * A redeemed challenge is the case where they come apart completely. It
+     * arrives with the publisher's whole club on it — their trades, their tags
+     * and their drafted players — and an unbounded read handed the new GM
+     * credit for all of it. Measured on a three-season challenge: "19 picks
+     * made" on a man who had not yet made one.
+     *
+     * Bounded now, on the same year, from the same resolver, as everything
+     * else on the page. For a normal save this changes nothing.
+     */
+    prisma.transaction.findMany({
+      where: { leagueId, type: 'TRADE', seasonYear: { gte: hiredIn } },
+      select: { headline: true },
+    }),
     prisma.draftPick.findMany({
-      where: { leagueId, ownerTeamId: team.id, used: true, playerId: { not: null } },
+      where: { leagueId, ownerTeamId: team.id, used: true, playerId: { not: null }, year: { gte: hiredIn } },
       select: { round: true, year: true, player: { select: { id: true, firstName: true, lastName: true, position: true, trueOvr: true } } },
     }),
     prisma.capCharge.findMany({ where: { teamId: team.id, year: { gte: hiredIn } }, select: { year: true, amount: true } }),
-    prisma.transaction.count({ where: { leagueId, type: 'TAG', teamId: team.id } }),
+    prisma.transaction.count({ where: { leagueId, type: 'TAG', teamId: team.id, seasonYear: { gte: hiredIn } } }),
     prisma.transaction.findMany({
       where: { leagueId, type: { in: Object.keys(AWARD_LABEL) }, teamId: team.id, seasonYear: { gte: hiredIn } },
       orderBy: [{ seasonYear: 'desc' }],

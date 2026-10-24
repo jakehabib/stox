@@ -1,7 +1,7 @@
 import { prisma } from './db';
 import { Rng, clamp } from './rng';
 import { readJson, writeJson } from './json';
-import { resolveStartYear } from './leagueYear';
+import { resolveTenureStartYear } from './leagueYear';
 import { AGE_CURVE, DEV_TRAIT_MULT, POSITION_AGE_PROFILE, DEFAULT_AGE_PROFILE, WORKOUTS, Position } from './tuning';
 import { AWARD_TYPES } from './awardTypes';
 
@@ -876,9 +876,9 @@ function limitedUse(unlocked: boolean, max: number, storedYear: number, storedUs
 export async function buildDynastyState(leagueId: string): Promise<DynastyState> {
   const league = await prisma.league.findUniqueOrThrow({
     where: { id: leagueId },
-    select: { id: true, seasonYear: true, startYear: true, userTeamId: true },
+    select: { id: true, seasonYear: true, startYear: true, gmHiredYear: true, userTeamId: true },
   });
-  const tenureStartYear = await resolveStartYear(league);
+  const tenureStartYear = await resolveTenureStartYear(league);
   const profile = await loadDynastyProfile(leagueId);
   const skills = parseSkills(profile.skills);
 

@@ -1,6 +1,6 @@
 import { prisma } from './db';
 import { parseSettings } from './settings';
-import { resolveStartYear } from './leagueYear';
+import { resolveTenureStartYear } from './leagueYear';
 import { rebuildState, seasonsToFirstTitle, type RebuildState } from './rebuild';
 
 /**
@@ -39,12 +39,12 @@ export async function loadRebuildStanding(leagueId: string): Promise<RebuildStan
   const league = await prisma.league.findUniqueOrThrow({
     where: { id: leagueId },
     select: {
-      id: true, seasonYear: true, startYear: true, settings: true,
+      id: true, seasonYear: true, startYear: true, gmHiredYear: true, settings: true,
       userTeamId: true, rebuildAbandonedAt: true,
     },
   });
   const leagueStart = parseSettings(league.settings).leagueStart;
-  const tenureStartYear = await resolveStartYear(league);
+  const tenureStartYear = await resolveTenureStartYear(league);
 
   // A save that is not a REBUILD needs no history read at all, and this is
   // called on every settings write and every render of the settings screen.

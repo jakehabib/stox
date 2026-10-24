@@ -92,6 +92,29 @@ model League {
   // right value for every one of them — nobody is mid-advance.
   advanceStartedAt DateTime?
 
+  // THE SEASON THIS SAVE'S GM WAS HIRED, which is NOT the season the league
+  // was founded.
+  //
+  // For every league founded in the ordinary way the two are the same thing,
+  // and `startYear` above is the answer — which is why this is nullable and
+  // why nothing was backfilled. They come apart for exactly one reason: a
+  // CHALLENGE (lib/saveFile.ts, lib/saveImport.ts). A redeemed challenge
+  // carries the publisher's whole club — standings, picks, cap sheet, three
+  // seasons of records — and hands it to a GM who has done none of it. The
+  // recipient must inherit the situation and none of the résumé.
+  //
+  // It cannot be done by moving `startYear`, because the salary cap's ceiling
+  // is grown from that year (capForYear, lib/leagueYear.ts): re-stamping it
+  // would reset every club's cap space and the situation would stop being the
+  // situation. So the founding year stays put and the TENURE bound moves.
+  // `resolveTenureStartYear` (lib/leagueYear.ts) is the one place that is
+  // decided, and every career figure in the game reads it — the GM page, the
+  // dynasty tree, the rank board, the rebuild standing, the week report.
+  //
+  // Null means "same as the founding year", which is the honest answer for
+  // every save that was not taken over from somebody else.
+  gmHiredYear Int?
+
   userTeamId String?
 
   // The ACCOUNT that owns this save, once it has been claimed (see
@@ -1360,9 +1383,66 @@ model PublishedLeague {
   takenDownAt    DateTime?
   takedownReason String?
 
+  /// WHICH OF THE TWO THINGS THIS ROW HOLDS: "LEAGUE" (a starting-state league
+  /// file, lib/leagueFile.ts) or "SAVE" (a challenge, lib/saveFile.ts).
+  ///
+  /// ONE TABLE, NOT TWO, and this column is the whole of the difference. The
+  /// judgement, for the record:
+  ///
+  ///   THE CODE NAMESPACE HAS TO BE ONE NAMESPACE. `code` is unique here, and
+  ///   that is what makes "a code resolves to exactly one thing" structurally
+  ///   true rather than a thing two resolvers have to agree about. Across two
+  ///   tables the same ten symbols could exist in both, and every lookup would
+  ///   become two queries and a tie-break — for a feature whose entire
+  ///   security model is the unguessability of one string.
+  ///
+  ///   EVERY LIFECYCLE RULE IS PER-ROW, NOT PER-KIND. Publisher delete,
+  ///   operator takedown, the expiry sweep, the open stamp that holds the
+  ///   expiry clock back: all four are written against this table's columns
+  ///   and none of them cares what the payload is. A second table would be a
+  ///   second copy of all four, which is four more places for the rules to
+  ///   drift apart, and `npm run codes:takedown` would have to know which
+  ///   table a code it was handed lives in.
+  ///
+  ///   LIMITS ARE NOT SHARED, AND DO NOT NEED TO BE. Challenges are twenty
+  ///   times the size of league files, so they get their own count and byte
+  ///   caps — and those are a `where kind` on one aggregate rather than a
+  ///   schema decision. Sharing a table does not share a cap.
+  ///
+  /// `@default("LEAGUE")` is what makes this additive: every row already in
+  /// the table is a league file, and the default says so without a backfill.
+  kind String @default("LEAGUE")
+
+  /// THE CHALLENGE CARD'S OWN FACTS. All nullable, all null for a "LEAGUE"
+  /// row, all counted off the file at publish time by one function
+  /// (summarizeSaveFile, lib/saveFile.ts) for the same reason the five columns
+  /// above are: a preview must not cost a gunzip of fifteen megabytes.
+  ///
+  /// Nullable rather than defaulted because there is no honest default for
+  /// "what season is this save in" on a row that is not a save, and a 0 on a
+  /// card is worse than an absence.
+  saveSeasonYear  Int?
+  savePhase       String?
+  saveWeek        Int?
+  /// The club being handed over, and the state it is in. `saveRecord` is the
+  /// formatted "2-9" — stored as the string the summary produced so the card
+  /// cannot re-derive it a second way.
+  saveTeamAbbr    String?
+  saveTeamName    String?
+  saveRecord      String?
+  /// Whether the publisher carried the retrospective tables.
+  saveHistory     Boolean?
+  /// The framing, in the publisher's own words. This is the feature: not "my
+  /// half-played dynasty" but "you are 2-9 with no cap room, fix it".
+  challengeTitle  String?
+  challengeBrief  String?
+
   @@index([userId])
   @@index([createdAt])
   @@index([lastOpenedAt])
+  /// Listing an account's challenges reads (userId, kind); the sweep and the
+  /// resolver read neither.
+  @@index([userId, kind])
 }
 
 // ---------------------------------------------------------------------------

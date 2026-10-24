@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from './db';
 import { readJson } from './json';
 import { capHit, capForYear, capChargeYear, formatMoney } from './cap';
@@ -90,17 +91,49 @@ function violation(id: string, severity: 'error' | 'warning', message: string, i
  *   rewrites a played game.
  * ===========================================================================
  */
-async function recentBoxScores(leagueId: string): Promise<{ id: string; boxScore: string }[]> {
-  const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId }, select: { seasonYear: true } });
-  return prisma.game.findMany({
+async function recentBoxScores(leagueId: string, db: InvariantDb): Promise<{ id: string; boxScore: string }[]> {
+  const league = await db.league.findUniqueOrThrow({ where: { id: leagueId }, select: { seasonYear: true } });
+  return db.game.findMany({
     where: { leagueId, played: true, seasonYear: { gte: league.seasonYear - 1 } },
     select: { id: true, boxScore: true },
   });
 }
 
+/**
+ * ===========================================================================
+ * THE CLIENT IS A PARAMETER, AND THAT IS WHAT MAKES THE IMPORT GATE POSSIBLE
+ * ===========================================================================
+ * `checkInvariants` used to close over the module-level `prisma`. Importing a
+ * challenge (lib/saveImport.ts) has to write the whole save, run this suite
+ * against the result, and roll the lot back if anything fails — and a
+ * SEPARATE connection cannot see rows inside an uncommitted transaction, so a
+ * check that used the global client would have run against an empty league,
+ * found nothing wrong, and passed every corrupt save ever published.
+ *
+ * So the snapshot check takes the client to read through, defaulting to the
+ * global one. Every existing caller is unchanged; the importer passes its
+ * transaction handle. `Prisma.TransactionClient` is the narrower type (it
+ * lacks `$transaction` and the connection controls), and the real
+ * `PrismaClient` satisfies it structurally, so one parameter covers both.
+ *
+ * `snapshotStatTotals` and `checkOrphans` below are NOT converted: neither is
+ * part of the import gate, and both are called from harnesses that already
+ * have a committed league in front of them.
+ *
+ * ONE DEPENDENCY THE CALLER HAS TO HONOUR. `resolveStartYear` (used by INV-19,
+ * INV-27 and INV-28) reads and writes through the GLOBAL client when a
+ * league's `startYear` is null, and inside an uncommitted transaction that
+ * read sees nothing. It short-circuits on a non-null `startYear`, so a caller
+ * passing a transaction handle must have written the column — `importSaveFile`
+ * does, from the challenge's own founding year, and the challenge reader
+ * refuses a file that has not got one.
+ * ===========================================================================
+ */
+export type InvariantDb = Prisma.TransactionClient;
+
 /** Ids of played games anywhere in history with a negative score or an empty box score. */
-async function brokenGamesAnywhere(leagueId: string): Promise<string[]> {
-  const rows = await prisma.$queryRaw<{ id: string }[]>`
+async function brokenGamesAnywhere(leagueId: string, db: InvariantDb): Promise<string[]> {
+  const rows = await db.$queryRaw<{ id: string }[]>`
     SELECT id FROM "Game"
     WHERE "leagueId" = ${leagueId} AND played
       AND ("homeScore" < 0 OR "awayScore" < 0 OR length("boxScore") < 3)
@@ -109,15 +142,15 @@ async function brokenGamesAnywhere(leagueId: string): Promise<string[]> {
 }
 
 /** Full snapshot check — everything checkable from one point-in-time read of a league. */
-export async function checkInvariants(leagueId: string): Promise<Violation[]> {
+export async function checkInvariants(leagueId: string, db: InvariantDb = prisma): Promise<Violation[]> {
   const [league, players, contracts, picks, games, draftState, teams] = await Promise.all([
-    prisma.league.findUniqueOrThrow({ where: { id: leagueId } }),
-    prisma.player.findMany({ where: { leagueId } }),
-    prisma.contract.findMany({ where: { player: { leagueId } } }),
-    prisma.draftPick.findMany({ where: { leagueId } }),
-    recentBoxScores(leagueId),
-    prisma.draftState.findUnique({ where: { leagueId } }),
-    prisma.team.findMany({
+    db.league.findUniqueOrThrow({ where: { id: leagueId } }),
+    db.player.findMany({ where: { leagueId } }),
+    db.contract.findMany({ where: { player: { leagueId } } }),
+    db.draftPick.findMany({ where: { leagueId } }),
+    recentBoxScores(leagueId, db),
+    db.draftState.findUnique({ where: { leagueId } }),
+    db.team.findMany({
       where: { leagueId },
       // wins/losses/ties/points are read by INV-26, which is the only reason
       // this is not the two-column select it used to be.
@@ -271,7 +304,7 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
     // year — see bookYearFor in lib/cap-summary.ts — and the note below is
     // about these two never diverging.
     const capYear = capChargeYear(league);
-    const deadRows = await prisma.capCharge.findMany({
+    const deadRows = await db.capCharge.findMany({
       where: { teamId: { in: teams.map((t) => t.id) }, year: capYear },
     });
     const spendByTeam = new Map<string, number>(teams.map((t) => [t.id, 0]));
@@ -302,7 +335,7 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
   // recentBoxScores() above for why history is scanned in SQL and only the
   // recent window is parsed.
   push(violation('INV-15', 'error', 'Completed game has a negative score or an empty box score',
-    await brokenGamesAnywhere(leagueId)));
+    await brokenGamesAnywhere(leagueId, db)));
   push(violation('INV-15', 'error', 'Completed game has a box score that will not parse',
     games.filter((g) => {
       const box = readJson<Record<string, unknown> | null>(g.boxScore, null);
@@ -437,7 +470,7 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
    */
   {
     const startYear = await resolveStartYear(league);
-    const mismatched = await prisma.$queryRaw<{ abbr: string; year: number; rec: number; played: bigint }[]>`
+    const mismatched = await db.$queryRaw<{ abbr: string; year: number; rec: number; played: bigint }[]>`
       SELECT t.abbr, r.year, r.wins + r.losses + r.ties AS rec, count(g.id) AS played
       FROM "TeamSeasonRecord" r
       JOIN "Team" t ON t.id = r."teamId"
@@ -474,7 +507,7 @@ export async function checkInvariants(leagueId: string): Promise<Violation[]> {
    */
   {
     const startYear = await resolveStartYear(league);
-    const rows = await prisma.transaction.findMany({
+    const rows = await db.transaction.findMany({
       where: { leagueId, seasonYear: { gte: startYear }, type: { in: ['CHAMPION', ALL_STAR_TYPE, 'AWARD_ROTY', ...AWARDED_TYPES] } },
       select: { seasonYear: true, type: true },
     });

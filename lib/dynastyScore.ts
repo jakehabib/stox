@@ -25,7 +25,7 @@ import { AWARD_TYPES } from './awardTypes';
  * club's cabinet is the club's however long ago it was won.
  *
  * IT IS NOT A GRADE OF THE MAN IN THE CHAIR, and must never be printed as
- * one. His record is bounded to his hire year — resolveStartYear() in
+ * one. His record is bounded to his hire year — resolveTenureStartYear() in
  * lib/leagueYear.ts, the one definition of when he took the job, used by
  * lib/gmCareer.ts (buildGmCareerSummary) and by the Dynasty level in
  * lib/dynasty.ts (buildDynastyState). Those are the numbers that answer

@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from './db';
-import { resolveStartYear } from './leagueYear';
+import { resolveTenureStartYear } from './leagueYear';
 import {
   AWARD_TYPES,
   computeDynastyXp,
@@ -236,7 +236,7 @@ export async function computeFootballEntries(
   const leagues = await prisma.league.findMany({
     where,
     select: {
-      id: true, seasonYear: true, startYear: true, userTeamId: true, userId: true,
+      id: true, seasonYear: true, startYear: true, gmHiredYear: true, userTeamId: true, userId: true,
       // The Rebuild column needs two facts a franchise's RECORD cannot carry:
       // how the save was founded, and whether its GM took the handcuffs off.
       settings: true, rebuildAbandonedAt: true,
@@ -287,9 +287,11 @@ export async function computeFootballEntries(
 
     // The same resolver the Dynasty screen uses, so the two decades of
     // FICTIONAL backstory a new league is seeded with are excluded here
-    // exactly as they are there. Memoised per process, and a no-op for any
-    // save that already has startYear set.
-    const tenureStartYear = await resolveStartYear(league);
+    // exactly as they are there — and so is a redeemed challenge's inherited
+    // record, which is what `gmHiredYear` is for. Free for any save that
+    // already has `gmHiredYear` or `startYear` set, which is all of them
+    // after the first read.
+    const tenureStartYear = await resolveTenureStartYear(league);
 
     const seasons = (recordsByTeam.get(teamId) ?? [])
       .filter((r) => r.year >= tenureStartYear)
@@ -701,13 +703,13 @@ export async function ownStanding(userId: string): Promise<OwnStanding> {
 async function ownLiveRebuildRuns(userId: string): Promise<number[]> {
   const leagues = await prisma.league.findMany({
     where: { userId, userTeamId: { not: null }, rebuildAbandonedAt: null },
-    select: { id: true, seasonYear: true, startYear: true, settings: true, userTeamId: true },
+    select: { id: true, seasonYear: true, startYear: true, gmHiredYear: true, settings: true, userTeamId: true },
   });
 
   const out: number[] = [];
   for (const league of leagues) {
     if (parseSettings(league.settings).leagueStart !== 'REBUILD') continue;
-    const tenureStartYear = await resolveStartYear(league);
+    const tenureStartYear = await resolveTenureStartYear(league);
     const seasons = await prisma.teamSeasonRecord.findMany({
       where: { teamId: league.userTeamId!, year: { gte: tenureStartYear } },
       select: { year: true, playoffResult: true },

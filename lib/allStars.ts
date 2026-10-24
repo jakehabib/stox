@@ -476,7 +476,7 @@ export interface GmAllStarTally {
  * All-Star selections earned by players on a team, bounded to a window — the
  * GM career page passes his hire year, because a total that counted honours
  * won before he was hired would not be his career. Same bound, same reason, as
- * every other number on that page (lib/gmCareer.ts, resolveStartYear).
+ * every other number on that page (lib/gmCareer.ts, resolveTenureStartYear).
  *
  * `teamId` on the row is the club the player was on the day he was selected,
  * which is the honest attribution: a GM gets credit for the All-Star seasons

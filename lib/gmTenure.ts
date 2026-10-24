@@ -217,7 +217,7 @@ export interface GmHeadToHead {
  * Bounded on the hire year for the same reason every figure on that page is,
  * and safe to bound: a Game row only exists for a season that was actually
  * scheduled and played, which is the one artefact the seeded backstory never
- * produces (see resolveStartYear in lib/leagueYear.ts).
+ * produces (see resolveTenureStartYear in lib/leagueYear.ts).
  *
  * `kind` separates the postseason out rather than folding it in. A GM's 2-3 in
  * January is a different sentence from his 91-70 in the autumn, and a table

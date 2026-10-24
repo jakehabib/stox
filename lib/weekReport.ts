@@ -15,7 +15,7 @@ import { generateStorylines } from './storyline';
 import { careerColumns, formatColumn, isDerived } from './statLabels';
 import { buildSeasonLines, SeasonLine } from './playerSeasons';
 import { DEFENSIVE_POSITIONS, offensiveScore, defensiveScore } from './awards';
-import { resolveStartYear } from './leagueYear';
+import { resolveTenureStartYear } from './leagueYear';
 
 /**
  * ===========================================================================
@@ -1237,9 +1237,9 @@ async function buildRunLeaders(
 async function buildTrophyHistory(leagueId: string, teamId: string, seasonYear: number): Promise<TrophyHistory> {
   const league = await prisma.league.findUniqueOrThrow({
     where: { id: leagueId },
-    select: { id: true, seasonYear: true, startYear: true },
+    select: { id: true, seasonYear: true, startYear: true, gmHiredYear: true },
   });
-  const gmHiredIn = await resolveStartYear(league);
+  const gmHiredIn = await resolveTenureStartYear(league);
   const records = await prisma.teamSeasonRecord.findMany({
     where: { leagueId, teamId },
     select: { year: true, playoffResult: true },

@@ -208,8 +208,19 @@ function Refusal({ title, body, detail }: { title: string; body: string; detail?
             A league file works with no code at all — if whoever shared this can export the file, you can upload
             it yourself.
           </p>
+          {/* STATIC COPY, NOT A LOOKUP. Codes for league files and codes for
+              challenges share one namespace, and this page cannot say which
+              kind a failed code was without becoming an oracle that sorts
+              guesses into three buckets. So it says nothing about THIS code
+              and simply points at the other door, which costs an attacker
+              nothing they did not already have. */}
+          <p className="text-sm text-muted">
+            Were you handed a challenge rather than a league — a save mid-situation, with a record and a cap
+            sheet? Those open in their own section.
+          </p>
           <div className="flex flex-wrap gap-3 pt-1">
             <Link href="/import" className="btn-secondary">Upload a league file</Link>
+            <Link href="/challenges" className="btn-ghost">Challenges</Link>
             <Link href="/" className="btn-ghost">My franchises</Link>
           </div>
         </div>
