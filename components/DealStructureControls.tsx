@@ -1,17 +1,27 @@
 'use client';
 
-import type { DealStructure } from '@/lib/negotiation';
+import { DEFAULT_STRUCTURE, STRUCTURE_LIMITS, type DealStructure } from '@/lib/negotiation';
 import { usableVoidYears } from '@/lib/cap';
 import { CAP } from '@/lib/tuning';
 import { CapMode } from '@/lib/types';
 import { Tooltip } from './Tooltip';
 import { tip } from '@/lib/glossary';
 
-/** Where the escalation slider stops, and the step it moves in. */
-export const STRUCTURE_RANGE = { min: 0.85, max: 1.25, step: 0.01 };
+/**
+ * Where the escalation slider stops, and the step it moves in — READ OFF THE
+ * SERVER'S OWN LIMITS. These used to be typed here, which made the control the
+ * only statement of the legal range while `negotiateOffer` accepted anything;
+ * now `clampStructure` enforces exactly this range on the way in, and the
+ * slider and the clamp cannot drift apart.
+ */
+export const STRUCTURE_RANGE = {
+  min: STRUCTURE_LIMITS.escalationMin,
+  max: STRUCTURE_LIMITS.escalationMax,
+  step: STRUCTURE_LIMITS.escalationStep,
+};
 /** The shape a fresh deal opens in — cap-friendly year 1, same as buildContract's default. */
-export const DEFAULT_ESCALATION = 1.12;
-export const MAX_VOID_YEARS = 3;
+export const DEFAULT_ESCALATION = DEFAULT_STRUCTURE.escalation;
+export const MAX_VOID_YEARS = STRUCTURE_LIMITS.voidYearsMax;
 
 export function structureLabel(escalation: number): string {
   if (escalation < 0.95) return 'Front-loaded';

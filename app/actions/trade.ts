@@ -7,6 +7,8 @@ import { evaluateTrade, executeTrade, rankTradePartners, isTradeDeadlinePassed, 
 import { findTradeClosers } from '@/lib/tradeClosers';
 import { parseSettings } from '@/lib/settings';
 import { readJson } from '@/lib/json';
+import { actionFailureMessage } from '@/lib/actionError';
+import { POSITIONS, canonicalPosition } from '@/lib/tuning';
 
 /**
  * Price a proposal. Read-only, and it runs on every change to the package
@@ -60,7 +62,27 @@ export async function tradeClosersAction(leagueId: string, aiTeamId: string, giv
 // upgraded by him.
 export async function rankTradePartnersAction(leagueId: string, position: string, excludeTeamId: string, ovr?: number) {
   await assertLeagueOwner(leagueId);
-  return rankTradePartners(leagueId, position, excludeTeamId, ovr);
+  // THE THREE ARGUMENTS BESIDE THE LEAGUE ID. None of them could reach another
+  // save — `rankTradePartners` filters every read on `leagueId` — but each one
+  // reached the arithmetic unchecked:
+  //   the club      a foreign id simply failed to exclude anybody, so the list
+  //                 silently included the club being shopped FROM;
+  //   the position  `needs[position]` is a plain-object lookup, so `__proto__`
+  //                 returned something truthy off Object.prototype and
+  //                 `Math.max(object, fit)` put NaN into every row's need;
+  //   the rating    an unbounded or NaN `ovr` goes into rosterFit and out the
+  //                 other side as a NaN fit score on all 31 clubs.
+  // A need of NaN renders as a blank urgency on the trade screen, which is the
+  // lying-metric failure this codebase treats as a bug in its own right.
+  await assertTeamInLeague(leagueId, excludeTeamId);
+  const pos = canonicalPosition(String(position ?? ''));
+  if (!(POSITIONS as readonly string[]).includes(pos)) return [];
+  let rating: number | undefined;
+  if (ovr !== undefined) {
+    if (!Number.isFinite(ovr)) return [];
+    rating = Math.min(99, Math.max(0, Number(ovr)));
+  }
+  return rankTradePartners(leagueId, pos, excludeTeamId, rating);
 }
 
 export interface TradeActionResult { ok: boolean; message: string }
@@ -138,7 +160,15 @@ async function commitTrade(opts: {
       force: opts.force,
     });
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : 'Trade failed.' };
+    // THROUGH actionFailureMessage, not straight off the error. `executeTrade`
+    // throws its own sentences for the rules it enforces ("that pick has
+    // already been spent") and those are the whole reason this returns a
+    // message instead of throwing — but a Prisma failure underneath it has a
+    // message that is a rendered query, an absolute path into the repo and a
+    // line number, and that went onto the trade panel verbatim. Two sites in
+    // this file, and the standard was already set in roster.ts.
+    console.error('Trade write failed', err);
+    return { ok: false, message: actionFailureMessage(err, 'That trade could not be written — something in it changed underneath the deal. Reload the page.') };
   }
   revalidatePath(`/league/${opts.leagueId}`, 'layout');
   return { ok: true, message: opts.message };
@@ -238,15 +268,19 @@ export async function forceTradeAction(
 
 export async function respondToTradeOfferAction(leagueId: string, offerId: string, accept: boolean): Promise<TradeActionResult> {
   await assertLeagueOwner(leagueId);
-  const offer = await prisma.tradeOffer.findUniqueOrThrow({ where: { id: offerId } });
   /*
    * assertLeagueOwner() above proves the caller owns THIS league. It says
    * nothing about the offer id, which arrives from the client and was looked
    * up by primary key alone — so an offer belonging to somebody else's league
    * was reachable by anyone who owned any league at all. Authorize on the
    * league, then check the thing you are about to act on is in it.
+   *
+   * `findUnique`, not `findUniqueOrThrow`: an id naming nothing is the same
+   * answer as an id naming somebody else's offer, in the same words, and
+   * neither is a raw `No TradeOffer found` thrown at the browser.
    */
-  if (offer.leagueId !== leagueId) return { ok: false, message: 'That offer is not part of this league.' };
+  const offer = await prisma.tradeOffer.findUnique({ where: { id: offerId } });
+  if (!offer || offer.leagueId !== leagueId) return { ok: false, message: 'That offer is not part of this league.' };
   if (offer.status !== 'PENDING') return { ok: false, message: 'That offer is no longer on the table.' };
 
   if (accept) {
@@ -265,7 +299,9 @@ export async function respondToTradeOfferAction(leagueId: string, offerId: strin
     } catch (err) {
       // The offer stays PENDING so the user can clear cap room and accept it
       // before it expires, rather than losing it to a failed acceptance.
-      return { ok: false, message: err instanceof Error ? err.message : 'Trade failed.' };
+      // Same reason for actionFailureMessage here as in commitTrade above.
+      console.error('Trade offer acceptance failed', err);
+      return { ok: false, message: actionFailureMessage(err, 'That offer could not be completed — it stays on the table. Reload the page.') };
     }
   }
 

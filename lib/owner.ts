@@ -74,7 +74,20 @@ export function ensureOwnerKey(): string {
   const existing = jar.get(COOKIE)?.value;
   if (existing) return existing;
   const key = randomUUID();
-  jar.set(COOKIE, key, { httpOnly: true, sameSite: 'lax', path: '/', maxAge: MAX_AGE });
+  // `secure` in production only, exactly as the session cookie does it
+  // (sessionCookieOptions in lib/auth.ts) and for the same reason: a secure
+  // cookie is never sent over plain HTTP, which would make a local
+  // http://localhost run unable to own anything. THIS COOKIE IS A CREDENTIAL —
+  // before a save is claimed it is the only thing that proves the save is
+  // yours — so on the deployment it must not travel in clear on the one
+  // request that arrives at http:// before the redirect.
+  jar.set(COOKIE, key, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: MAX_AGE,
+  });
   return key;
 }
 

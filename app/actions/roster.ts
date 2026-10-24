@@ -182,6 +182,15 @@ export async function openNegotiationAction(
   leagueId: string, playerId: string, _teamId: string,
 ): Promise<NegotiationSession> {
   await assertLeagueOwner(leagueId);
+  // AND THE MAN HAS TO BE IN THIS SAVE. `resolveNegotiationSession` resolves
+  // `playerId` with `findUniqueOrThrow` by primary key, so a foreign id opened
+  // a real negotiation over another save's player: his name, his position, his
+  // scouted ratings, his market number and the reservation price the meter is
+  // drawn against all came back. Exactly the read the six contract actions
+  // were fixed for (see assertPlayerInLeague in lib/owner.ts), on the one
+  // screen that had been missed — and it also turns a bogus id from a raw
+  // `No Player found` into a sentence.
+  await assertPlayerInLeague(leagueId, playerId);
   // WHICH CLUB IS SIGNING HIM IS NOT THE CLIENT'S TO SAY. This took a teamId
   // off the wire and opened talks on behalf of whatever club it named. The
   // parameter is kept so the call sites don't change, and ignored.
@@ -213,6 +222,12 @@ export async function submitOfferAction(
   offer: Offer, structure: DealStructure, fingerprint: string,
 ): Promise<NegotiationOutcome> {
   await assertLeagueOwner(leagueId);
+  // The same two guards, for the same reasons, as openNegotiationAction above:
+  // this runs the identical session resolution, so it is the identical read
+  // into another save if the id is not tied back to the league. The write
+  // itself was already safe — `signFreeAgent`'s claim carries `leagueId` in
+  // its WHERE — but the session it hands back is the leak.
+  await assertPlayerInLeague(leagueId, playerId);
   // Derived, never accepted — see openNegotiationAction above.
   const teamId = await userTeamId(leagueId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
@@ -434,7 +449,12 @@ export async function applyFranchiseTagAction(leagueId: string, playerId: string
           : ''),
     };
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : 'Franchise tag failed.' };
+    // Through actionFailureMessage like the release and restructure paths in
+    // this same file: the tag's own refusals keep their words, a Prisma
+    // failure gets the sentence written for this move instead of a rendered
+    // query and a file path.
+    console.error('Franchise tag write failed', err);
+    return { ok: false, message: actionFailureMessage(err, 'That tag could not be written — his deal changed underneath it. Reload the page.') };
   }
 }
 
@@ -513,7 +533,9 @@ export async function fifthYearOptionAction(
       message: `Option turned down — you save ${formatMoney(r.optionSalary)} and he is a free agent when this deal runs out.`,
     };
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : 'That option could not be answered.' };
+    // Same standard as the three write paths above it.
+    console.error('Fifth-year option write failed', err);
+    return { ok: false, message: actionFailureMessage(err, 'That option could not be answered — his deal changed underneath it. Reload the page.') };
   }
 }
 

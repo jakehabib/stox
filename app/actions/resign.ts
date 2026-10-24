@@ -155,6 +155,15 @@ export async function submitResignOfferAction(
  */
 export async function setAsideResignAction(leagueId: string, playerId: string, aside: boolean) {
   await assertLeagueOwner(leagueId);
+  // OWNING THE SAVE IS NOT OWNING THE MAN — the same rule the two actions
+  // above already kept, and the only one in this file that did not. The write
+  // below is an upsert keyed (my club, playerId, year), and `playerId` went
+  // into it unchecked: a foreign id wrote a NegotiationTalks row in MY league
+  // pointing at another save's player, and an id of the wrong shape escaped as
+  // a raw `Foreign key constraint violated: NegotiationTalks_playerId_fkey`.
+  // Set-aside is a decision about a man on your own roster, so this is the
+  // strict claim, not assertPlayerInLeague.
+  await assertPlayerOnUserTeam(leagueId, playerId);
   const league = await prisma.league.findUniqueOrThrow({ where: { id: leagueId } });
   const team = await prisma.team.findFirstOrThrow({ where: { leagueId, isUser: true } });
   // The write itself lives beside the patience bookkeeping it shares a row

@@ -235,9 +235,26 @@ function clientIp(): string {
   return h.get('x-real-ip')?.slice(0, 64) || 'unknown';
 }
 
-async function countAttempts(scope: string, kind: string, windowMs: number): Promise<number> {
+/**
+ * Attempts in this scope inside the window.
+ *
+ * `countFailuresOnly` is the default because the sign-in limits are limits on
+ * GUESSING: a correct password is not an attack and must not spend anybody's
+ * budget. Sign-up is the opposite and was counted wrong — see registerUser.
+ */
+async function countAttempts(
+  scope: string,
+  kind: string,
+  windowMs: number,
+  countFailuresOnly = true,
+): Promise<number> {
   return prisma.authAttempt.count({
-    where: { scope, kind, success: false, at: { gte: new Date(Date.now() - windowMs) } },
+    where: {
+      scope,
+      kind,
+      ...(countFailuresOnly ? { success: false } : {}),
+      at: { gte: new Date(Date.now() - windowMs) },
+    },
   });
 }
 
@@ -282,7 +299,18 @@ export async function registerUser(rawUsername: string, password: string): Promi
 
   const ip = clientIp();
   const ipScope = `ip:${ip}`;
-  if ((await countAttempts(ipScope, 'SIGNUP', SIGNUP_WINDOW_MS)) >= SIGNUP_MAX_PER_IP) {
+  /**
+   * COUNTING THE SUCCESSES, WHICH IS THE WHOLE POINT OF THIS ONE.
+   *
+   * The limit is on CREATING accounts, and the code said so in a comment while
+   * doing the opposite: `countAttempts` filtered on `success: false`, so every
+   * account that was actually created was invisible to the count and the only
+   * thing rate-limited here was failing to create one. Eight per hour was
+   * therefore unlimited per hour, and an account is the identity the per-owner
+   * league cap is counted against (lib/owner.ts) — so an unmetered sign-up is
+   * also an unmetered way around that cap, with only the global ceiling left.
+   */
+  if ((await countAttempts(ipScope, 'SIGNUP', SIGNUP_WINDOW_MS, false)) >= SIGNUP_MAX_PER_IP) {
     return { ok: false, error: 'Too many accounts created from here recently. Try again in an hour.' };
   }
 
@@ -295,8 +323,9 @@ export async function registerUser(rawUsername: string, password: string): Promi
       data: { username, usernameKey, passwordHash },
       select: { id: true, username: true },
     });
-    // Counted whether or not it succeeded: the limit is on *creating accounts*,
-    // not on failing to.
+    // Recorded as a SUCCESS and counted as one — the limit is on *creating
+    // accounts*, not on failing to, so this row is the one that matters. See
+    // the count above for how long that was written down and not done.
     await recordAttempt(ipScope, 'SIGNUP', true);
     return { ok: true, user };
   } catch (err: unknown) {

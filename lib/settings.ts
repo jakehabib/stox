@@ -271,7 +271,61 @@ const LEGACY_DIFFICULTY: Record<string, Difficulty> = {
   LEGEND: 'HARD',
 };
 
-const CAP_MODE_VALUES: CapMode[] = ['REALISTIC', 'SIMPLIFIED', 'OFF'];
+/**
+ * THE FOUNDING ENUMS, as one list each, because three callers need the same
+ * answer: `createLeagueAction` and `updateSettingsAction` validating a form
+ * post (app/actions/league.ts), `parseSettings` healing a stored blob below,
+ * and `sanitiseCreateSettings` validating a JSON body on the create route.
+ * They were three separate literals; a fourth cap mode added to one of them
+ * and not the others is a value one path accepts and another silently
+ * rewrites.
+ */
+export const CAP_MODE_VALUES: CapMode[] = ['REALISTIC', 'SIMPLIFIED', 'OFF'];
+export const DIFFICULTY_VALUES: Difficulty[] = ['EASY', 'NORMAL', 'HARD'];
+export const LEAGUE_START_VALUES: LeagueStart[] = ['RANDOM_ROSTERS', 'FANTASY_DRAFT', 'REBUILD'];
+/** Read off the rung table, so a fourth rung cannot be added there and rejected here. */
+export const CAP_GROWTH_VALUES = Object.keys(CAP_GROWTH_MODES) as CapGrowth[];
+
+/**
+ * ===========================================================================
+ * WHAT A CALLER MAY DICTATE ABOUT A LEAGUE IT IS ASKING US TO BUILD
+ * ===========================================================================
+ * `POST /api/league/create` took a `settings` object out of a JSON body and
+ * spread it over the defaults, unvalidated, on an endpoint that needs no
+ * account. Every field of LeagueSettings was therefore caller-controlled, and
+ * two of them are not opinions:
+ *
+ *   - `seasonLength` goes straight into `buildSchedule` (lib/gen/league.ts).
+ *     A request naming 100,000 asks one unauthenticated POST to generate a
+ *     schedule of a hundred thousand weeks across 32 clubs. That is not a
+ *     strange league, it is a denial of service with a JSON body.
+ *   - `rosterMax` and `draftRounds` size the generation the same way.
+ *
+ * The rest were merely wrong rather than expensive — a stored `capMode` of
+ * "BANANA" is healed by parseSettings on read, a NaN rate is not.
+ *
+ * So the route gets the SAME four founding choices the create screen offers
+ * and nothing else: the start, the cap mode, the difficulty and the cap growth
+ * rung. Anything else in the body is dropped, not clamped — there is no screen
+ * anywhere that sets it at creation, so there is no legitimate caller to be
+ * lenient towards, and the defaults are the only values a new league has ever
+ * been founded on. The numeric settings are editable afterwards through
+ * `updateSettingsAction`, which clamps every one of them to its own range.
+ * ===========================================================================
+ */
+export function sanitiseCreateSettings(
+  raw: unknown,
+): Pick<LeagueSettings, 'leagueStart' | 'capMode' | 'difficulty' | 'capGrowth'> {
+  const o = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
+  const one = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T =>
+    typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
+  return {
+    leagueStart: one(o.leagueStart, LEAGUE_START_VALUES, DEFAULT_SETTINGS.leagueStart),
+    capMode: one(o.capMode, CAP_MODE_VALUES, DEFAULT_SETTINGS.capMode),
+    difficulty: one(o.difficulty, DIFFICULTY_VALUES, DEFAULT_SETTINGS.difficulty),
+    capGrowth: one(o.capGrowth, CAP_GROWTH_VALUES, DEFAULT_SETTINGS.capGrowth),
+  };
+}
 
 export function parseSettings(raw: string | null | undefined): LeagueSettings {
   const stored = readJson<Partial<LeagueSettings>>(raw, {});

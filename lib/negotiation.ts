@@ -2060,6 +2060,55 @@ export const DEFAULT_CONVERT_PCT = 1;
 export const DEFAULT_STRUCTURE: DealStructure = { escalation: 1.12, voidYears: 0, convertPct: DEFAULT_CONVERT_PCT };
 
 /**
+ * ===========================================================================
+ * THE STRUCTURE IS CLAMPED TOO, FOR THE REASON THE OFFER IS
+ * ===========================================================================
+ * `clampOffer` below exists because the panel's typed fields can carry what a
+ * slider cannot. The structure beside those fields arrives over the same wire,
+ * in the same request, and was NOT clamped — and it is the half that reaches
+ * the contract arithmetic directly:
+ *
+ *   `buildContract` builds its salary weights as `Math.pow(escalation, i)`.
+ *   An escalation of NaN makes every weight NaN, so every base salary is NaN
+ *   and the write lands on Prisma as `signingBonus: Int is missing` — a
+ *   database validation dump, absolute paths and all, as the sentence on the
+ *   GM's screen. A negative escalation can sum the weights to zero and divide
+ *   by it. Neither is reachable from another save (the signing claim carries
+ *   `leagueId`), so this is a player corrupting his OWN contract row and
+ *   getting a stack trace for it — which is still two of this codebase's own
+ *   rules broken at once.
+ *
+ * THE RANGE IS THE SLIDER'S RANGE, declared here on the server and imported by
+ * the control (components/DealStructureControls.tsx), so the shape the screen
+ * can ask for and the shape the server will write are one definition. Clamped
+ * rather than refused, exactly as the settings form is: the structure is a
+ * preference about an offer, and throwing away a legitimate offer because a
+ * slider arrived out of range is friction on the common path to defend the
+ * rare one. Void years are clamped again, later and lower, by
+ * `usableVoidYears` against the term actually signed.
+ * ===========================================================================
+ */
+export const STRUCTURE_LIMITS = {
+  escalationMin: 0.85,
+  escalationMax: 1.25,
+  escalationStep: 0.01,
+  voidYearsMax: 3,
+} as const;
+
+export function clampStructure(raw: DealStructure | null | undefined): DealStructure {
+  const s = (raw && typeof raw === 'object' ? raw : {}) as Partial<DealStructure>;
+  const span = (v: unknown, lo: number, hi: number, fallback: number): number =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback;
+  return {
+    escalation: span(s.escalation, STRUCTURE_LIMITS.escalationMin, STRUCTURE_LIMITS.escalationMax, DEFAULT_STRUCTURE.escalation),
+    voidYears: Math.round(span(s.voidYears, 0, STRUCTURE_LIMITS.voidYearsMax, 0)),
+    // Absent is meaningful here — see DealStructure.convertPct — so an absent
+    // value stays absent rather than becoming the default at this layer.
+    convertPct: s.convertPct === undefined ? undefined : span(s.convertPct, 0, 1, DEFAULT_CONVERT_PCT),
+  };
+}
+
+/**
  * Force an offer into the legal range, whatever it arrived as.
  *
  * Exists because the panel grew typed number fields beside its sliders — the
