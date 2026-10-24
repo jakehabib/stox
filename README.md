@@ -727,6 +727,44 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-27 — The gates now run on push, and a hardening pass found a sign-up
+  limit that had never counted anything.** `3e91c52`, `5ce0232`.
+  `.github/workflows/gates.yml` runs `audit:actions`, `check:cap`, `check:money`
+  and `sim:health` against a Postgres service container on every push. Until it
+  existed nothing checked the most privileged action anyone can take against
+  this system: `npm run build` is `prisma migrate deploy && next build`, so a
+  push runs DDL on the production database and ships the code, the branch is
+  not protected, and the four gates ran only when a human remembered. The
+  action-guard audit in particular is built so the NEXT unguarded action fails
+  the day it is added, and it cannot do that from a laptop. No lint step, and
+  the reason is written in the file: `npm run lint` is `next lint`, this repo
+  has no ESLint config, so the script does not lint — it opens Next's
+  interactive setup prompt, which in CI hangs until the job times out.
+  **`countAttempts` filtered on `success: false`, so the row written on a
+  successful sign-up was invisible to the counter it was written for.** Only
+  failed sign-ups were ever limited, which is to say account creation was
+  unmetered per IP, while the comment two lines below claimed it was counted
+  either way. Measured before the fix: 12 accounts from one address in one hour.
+  It locks on the 9th now. **Two screens kept the cross-save read that
+  `e34103e` was supposed to have ended**: `openNegotiationAction` and
+  `submitOfferAction` took a `playerId` beside a `leagueId` and never tied them
+  together, so the session came back carrying another save's man with his
+  scouted ratings, his market APY, his true market APY and the reservation price
+  the interest meter is drawn against. The write was already safe. Also closed:
+  a junk cross-save write through resign set-aside, three unchecked arguments on
+  trade-partner ranking where a `__proto__` lookup put NaN into every row's
+  need, a leaked "No TradeOffer found", a missing `secure` flag on the owner
+  cookie — which IS the credential before a save is claimed — and an unclamped
+  deal structure whose `escalation` reached `Math.pow` and surfaced a database
+  validation dump as the sentence on a GM's screen.
+  **Correction to `5ce0232`'s own message:** that commit also carried five
+  error-hygiene fixes it did not mention, routing real engine failures through
+  `actionFailureMessage` in `app/actions/trade.ts` and `app/actions/roster.ts`
+  instead of returning `err.message`, which was leaking the model name, an
+  absolute file path and the server's own source lines to the player. Two agents
+  had edited those files and the commit swept up both; the work was verified,
+  but the message described only half of it.
+
 - **2026-08-27 — The whole game is written down as a prompt another agent can
   build from, and specifying it found four live bugs.** `b46ea46`, `ea1596c`,
   `efebfe0`, `2425e2d`, `7898acf`, `3b3f9d5`, `917260c`, `80899d1`, `8925f88`.
