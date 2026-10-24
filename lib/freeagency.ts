@@ -2438,28 +2438,34 @@ export async function fillUnfieldablePositions(opts: {
   const { STARTERS_AT_POSITION } = await import('./lineup');
   const fielded = (Object.keys(STARTERS_AT_POSITION) as Position[]).filter((p) => STARTERS_AT_POSITION[p] > 0);
 
-  // ONE league-wide scan first, so the common case — nobody has a hole — costs
-  // a single narrow query. This runs on every advance.
-  const rostered = await prisma.player.findMany({
-    where: { leagueId, status: 'ACTIVE', teamId: { not: null }, team: { isUser: false } },
-    select: { teamId: true, position: true },
-  });
-  const heldByTeam = new Map<string, Map<string, number>>();
-  for (const p of rostered) {
-    const m = heldByTeam.get(p.teamId!) ?? heldByTeam.set(p.teamId!, new Map()).get(p.teamId!)!;
-    const pos = canonicalPosition(p.position);
-    m.set(pos, (m.get(pos) ?? 0) + 1);
-  }
-  const shortClubs: { teamId: string; missing: Position[] }[] = [];
-  for (const [teamId, held] of heldByTeam) {
-    const missing = fielded.filter((pos) => (held.get(pos) ?? 0) === 0);
-    if (missing.length > 0) shortClubs.push({ teamId, missing });
-  }
+  /**
+   * WHO IS SHORT — one league-wide scan, so the common case (nobody has a
+   * hole) costs a single narrow query. This runs on every advance.
+   */
+  const scanShortClubs = async (): Promise<{ teamId: string; missing: Position[] }[]> => {
+    const rostered = await prisma.player.findMany({
+      where: { leagueId, status: 'ACTIVE', teamId: { not: null }, team: { isUser: false } },
+      select: { teamId: true, position: true },
+    });
+    const heldByTeam = new Map<string, Map<string, number>>();
+    for (const p of rostered) {
+      const m = heldByTeam.get(p.teamId!) ?? heldByTeam.set(p.teamId!, new Map()).get(p.teamId!)!;
+      const pos = canonicalPosition(p.position);
+      m.set(pos, (m.get(pos) ?? 0) + 1);
+    }
+    const out: { teamId: string; missing: Position[] }[] = [];
+    for (const [teamId, held] of heldByTeam) {
+      const missing = fielded.filter((pos) => (held.get(pos) ?? 0) === 0);
+      if (missing.length > 0) out.push({ teamId, missing });
+    }
+    // Stable order, because the clubs below compete for the same men and the
+    // read above has no ORDER BY — an unordered loop would hand the same hole
+    // to a different club each time the same step was replayed.
+    return out.sort((a, b) => a.teamId.localeCompare(b.teamId));
+  };
+
+  let shortClubs = await scanShortClubs();
   if (shortClubs.length === 0) return { signed: 0, unfilled: [] };
-  // Stable order, because the clubs below compete for the same men and the
-  // read above has no ORDER BY — an unordered loop would hand the same hole to
-  // a different club each time the same step was replayed.
-  shortClubs.sort((a, b) => a.teamId.localeCompare(b.teamId));
 
   /**
    * THE MARKET, GROUPED BY POSITION AND SORTED WITHIN EACH GROUP.
@@ -2487,7 +2493,38 @@ export async function fillUnfieldablePositions(opts: {
   const rosterMax = settings.rosterMax || LEAGUE.ROSTER_MAX;
   const taken = new Set<string>();
   let signed = 0;
-  const unfilled: string[] = [];
+  let unfilled: string[] = [];
+
+  /**
+   * ===================================================================
+   * AND THE LEAGUE IS RE-SCANNED, BECAUSE THIS PASS CAN OPEN A HOLE
+   * ===================================================================
+   * `autoClearCapRoom` (lib/capEnforcement.ts) is how a cap-poor club pays
+   * for the man it has to sign, and it releases whoever it must —
+   * `releaseRanking` puts a one-man job's last body at the BACK of its
+   * queue but still takes him when there is nothing else left to take. So
+   * filling a club's punter can cost it its kicker, and that new hole opens
+   * AFTER this pass has already read which positions that club was short
+   * at. One sweep would leave it standing until the next advance, which is
+   * exactly one reading of INV-25.
+   *
+   * Measured: on a 5-league x 5-season sim:health run with a single sweep,
+   * one step reported two clubs (one with no K, one with no P) in the
+   * PRESEASON of a cap-squeezed HARD league — and this pass had logged no
+   * failure, because at the moment it looked, neither hole existed yet.
+   *
+   * TWO SWEEPS, not a while-loop: a sweep that changes nothing cannot make
+   * the next one find anything, and a bounded count cannot spin on a league
+   * the market genuinely cannot fix. The second sweep re-reads rather than
+   * assuming, and whatever it still cannot fill is what gets reported.
+   */
+  for (let sweep = 0; sweep < 2; sweep++) {
+    if (sweep > 0) {
+      shortClubs = await scanShortClubs();
+      if (shortClubs.length === 0) break;
+    }
+    unfilled = [];
+    const signedBefore = signed;
 
   for (const club of shortClubs) {
     const team = await prisma.team.findUnique({ where: { id: club.teamId }, select: { id: true, abbr: true, isUser: true } });
@@ -2727,6 +2764,11 @@ export async function fillUnfieldablePositions(opts: {
           : `${team.abbr} at ${position} — nobody could be signed or moved there`);
       }
     }
+  }
+
+    // A sweep that signed and moved nobody cannot leave the next one anything
+    // new to find, so the re-scan is skipped rather than paid for.
+    if (signed === signedBefore && unfilled.length === 0) break;
   }
 
   /*
