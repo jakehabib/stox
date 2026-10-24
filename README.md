@@ -727,6 +727,79 @@ always a plain-English trail back to "what did this look like before." To undo
 anything, ask to revert to a commit below, or see **Rolling back** above for the
 three routes and when each is right.
 
+- **2026-08-27 — A league can be authored in a spreadsheet and handed to a
+  friend as a ten-character code, and the documentation can no longer lie about
+  what a file may contain.** `a434d66`, `2dbecff`, `9bd3403`.
+  **Format version 2.** Conference and division names are author-supplied now,
+  defaulting to AFC/NFC and East/North/South/West, so a college or fictional
+  league is no longer filed under "AFC East" — the 2×4×4×32 structure check
+  stays, because that is the only arrangement the schedule builder can produce.
+  Draft classes can be authored with combine numbers; authored drills overlay a
+  fully derived battery rather than bypassing it, and because nothing stores a
+  rank, an authored 4.21 is ranked *as* a 4.21 against whatever the rest of the
+  class ran. Export had been emitting prospects as free agents, so up to 400 of
+  them crowded out the market the file meant to describe and came back as
+  veterans on the next import.
+  **A spreadsheet is the authoring tool**, because 1,700 players of
+  hand-written JSON is not a thing anyone finishes — one missing comma loses a
+  40,000-line file. Three CSV templates, generated from the code so a header
+  cannot drift from what the parser accepts, convert server-side through the
+  *existing* validator with refusals rewritten to name the row that wrote them.
+  A full 32-team, 1,816-row league converts in 36ms to 0.23MB and imports in
+  1.7s, authored in seven columns with every attribute column empty. A
+  misspelled *column* is refused rather than ignored: an ignored `ovrl` makes
+  1,700 randomly-rated players and an author who believes they wrote a league.
+  **Share codes.** Crockford base32, ten symbols, 50 bits from `randomBytes`
+  with one byte per symbol and no modulo bias, never derived from an id —
+  100,000 generated with zero collisions, and at the per-address ceiling one
+  address needs 1.07e9 years to cover the space once. No gallery, by decision:
+  a public index of user-authored leagues is a moderation obligation and a
+  takedown target. A wrong code, an unpublished one and a withdrawn one answer
+  with one identical sentence, so there is no oracle, and the budget is spent
+  before the code is parsed so a malformed guess costs what a good one does.
+  The payload is stored gzipped because 0.70MB becomes 0.106MB — the JSON
+  repeats forty attribute keys per player — and `sourceLeagueId` carries no
+  foreign key on purpose, so deleting the save a code was cut from cannot blank
+  a code other people hold.
+  **And `docs/custom-leagues.md` stopped hand-writing its limits.** Nine rows
+  of literals — 8MB, 32 teams, 24 characters, 53 per team, 400 free agents, 64
+  attributes — would have told an author a file was legal that the parser then
+  refused. The reference is now a page rendering every figure from
+  `FILE_LIMITS`, the position list and the attribute catalogue, and the probe
+  that guards it perturbs each of the 47 keys to three times its value and
+  requires the page to change: a figure typed by hand leaves it byte-identical
+  and fails. All 47 move it. The page's example refusals are produced by
+  running the real parser over six broken documents at render time, so it
+  cannot quote a sentence the parser no longer emits.
+  **Also: a validator** that runs the real `parseLeagueFile` — proven to agree
+  with the importer on the same eight files by comparing the refusal *strings*,
+  not the statuses — so an author iterating on a sheet no longer has to attempt
+  a real import to learn what is wrong.
+  **And what a loop costs is bounded now.** A week advance is 231 database
+  round trips; a founding writes 8,830 rows; an export serialises 0.75MB. The
+  leases already here stop an *overlapping* advance and welcome an endless
+  sequence of non-overlapping ones. Hourly ceilings per owner and per address
+  bound each, counted in the existing `AuthAttempt` table. The first version of
+  that limiter read-then-wrote without a lock and 32 simultaneous calls at a
+  60-call ceiling all got through; it holds a per-bucket advisory lock inside
+  one transaction now, and 32-at-once yields one allowed and 31 refused.
+  **`fillUnfieldablePositions`.** INV-25 — a club reaching a snap with nobody at
+  a position its lineup must field — was 193 errors across 12 leagues and is 0.
+  Every route back onto a roster was gated on headcount or depth and never on
+  *shape*, so a club with a legal, full roster and zero centres could not fill
+  it by any path in the game: the roster-minimum top-up only runs for clubs
+  under the minimum, and the free-agency waves' displacement path reads
+  `worstAtPosition`, which is `undefined` at a position you hold nobody at. The
+  rule that stops an upgrade *opening* a hole also stopped a club ever
+  *closing* one. Compounding it, both signing boards are top-N by rating
+  league-wide, so on a 260-man pool the best kicker ranks 84th and the best
+  punter 63rd — zero of either on the 60-man in-season board. The new pass
+  signs the best man at the position from a pool sorted *within* position, or
+  moves a man the game's own adjacency table says can play there, or moves a
+  spare body already in the building; and it sweeps twice, because
+  `autoClearCapRoom` paying for a punter can cost a club its kicker after that
+  club's positions were already read.
+
 - **2026-08-27 — The gates now run on push, and a hardening pass found a sign-up
   limit that had never counted anything.** `3e91c52`, `5ce0232`.
   `.github/workflows/gates.yml` runs `audit:actions`, `check:cap`, `check:money`
