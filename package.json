@@ -17,6 +17,7 @@
     "check:money": "tsx scripts/checkMoneyConservation.ts",
     "check:cap": "tsx scripts/checkRestructure.ts && tsx scripts/checkRestructureWrite.ts && tsx scripts/checkFranchiseTag.ts && tsx scripts/checkReSign.ts && tsx scripts/checkFifthYearOption.ts && tsx scripts/checkMoneyConservation.ts",
     "audit:actions": "tsx scripts/actionGuardAudit.ts",
+    "codes:takedown": "tsx scripts/takedownCode.ts",
     "postinstall": "prisma generate"
   },
   "allowScripts": {

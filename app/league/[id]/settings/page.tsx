@@ -6,6 +6,10 @@ import { RebuildLock } from '@/components/RebuildLock';
 import { REBUILD_LABEL } from '@/lib/rebuild';
 import { Tooltip } from '@/components/Tooltip';
 import { leagueFileName } from '@/lib/leagueFile';
+import { getSessionUser } from '@/lib/auth';
+import { PUBLICATION_RETENTION_MONTHS, MAX_PUBLICATIONS_PER_USER, listPublicationsForUser } from '@/lib/publication';
+import { formatShareCode } from '@/lib/shareCode';
+import { PublishLeaguePanel, type PublishedCode } from '@/components/PublishLeaguePanel';
 import { CAP_GROWTH_MODES, formatCapGrowthRate } from '@/lib/settings';
 import { SettingsForm } from '@/components/SettingsForm';
 
@@ -226,8 +230,38 @@ export default async function SettingsPage({ params }: { params: { id: string } 
  * ordinary one show the same block rather than two copies free to drift. It is
  * not a setting — it is a download and an outbound link — which is why it was
  * outside the settings <form> to begin with. See docs/custom-leagues.md.
+ *
+ * TWO TIERS, IN THIS ORDER. The FILE is first and stays first: it needs no
+ * account, stores nothing on this deployment and works for anyone who can
+ * send a file. The CODE below it is the convenience — this office holds a
+ * copy so the other person types ten characters instead — and everything that
+ * costs (an account, a cap, an expiry, a withdrawal) is the price of that.
+ * Neither is a fallback for the other.
+ *
+ * Async because the publish half has to know who is signed in and which codes
+ * this league already has. Only one of the two call sites renders per
+ * request, so this is one extra read on the screen that asked for it.
  */
-function ShareLeague({ leagueId, leagueName }: { leagueId: string; leagueName: string }) {
+async function ShareLeague({ leagueId, leagueName }: { leagueId: string; leagueName: string }) {
+  const user = await getSessionUser();
+  // Scoped to the signed-in account AND to this league: the panel is about
+  // the save being looked at, and there is no listing of anybody else's.
+  const mine = user ? await listPublicationsForUser(user.id) : [];
+  const codes: PublishedCode[] = mine
+    .filter((p) => p.sourceLeagueId === leagueId)
+    .map((p) => ({
+      code: p.code,
+      // Grouped by the one formatter, so the code on this screen and the code
+      // on /l/[code] are written the same way.
+      display: formatShareCode(p.code),
+      openCount: p.openCount,
+      // Formatted here rather than in the browser: a date rendered client-side
+      // is rendered in the viewer's zone and would disagree with the server's
+      // own cutoff by up to a day.
+      publishedOn: p.createdAt.toISOString().slice(0, 10),
+      expiresOn: p.expiresAt.toISOString().slice(0, 10),
+    }));
+
   return (
     <div className="panel p-4 space-y-3">
       <h2 className="label-sm">Share This League</h2>
@@ -244,6 +278,15 @@ function ShareLeague({ leagueId, leagueName }: { leagueId: string; leagueName: s
         <span className="text-xs text-muted">{leagueFileName(leagueName)}</span>
         <Link href="/import" className="btn-ghost text-sm">Import a league file →</Link>
       </div>
+
+      <PublishLeaguePanel
+        leagueId={leagueId}
+        signedIn={user != null}
+        codes={codes}
+        accountCodeCount={mine.length}
+        retentionMonths={PUBLICATION_RETENTION_MONTHS}
+        maxCodes={MAX_PUBLICATIONS_PER_USER}
+      />
     </div>
   );
 }

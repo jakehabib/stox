@@ -8,13 +8,34 @@ no hosted link, no gallery, nothing published anywhere.
 
 - **Import:** `/import`
 - **Export:** the same page, or **League Settings → Share This League**
+- **Every bound and every legal value:** `/import/reference`
+- **Check a file without importing it:** `/import/check`
 - **Code:** `lib/leagueFile.ts` (format, validation, export), `lib/leagueCsv.ts`
   (the CSV authoring path), `lib/gen/league.ts` (generation),
   `app/api/league/import/route.ts`, `app/api/league/export/[id]/route.ts`,
-  `app/api/league/csv/route.ts`, `app/api/league/templates/[file]/route.ts`
+  `app/api/league/csv/route.ts`, `app/api/league/templates/[file]/route.ts`,
+  `app/api/league/validate/route.ts`, `app/import/reference/page.tsx`
+
+**THIS DOCUMENT STATES NO BOUNDS OF ITS OWN.** Every limit, range, count and
+legal value lives on `/import/reference`, which renders each one from the
+constant the parser enforces it with — `FILE_LIMITS`, `POSITIONS`, the
+attribute catalogue, the dev-trait list — and prints real refusals produced by
+running the parser as
+the page rendered. §7 used to hand-write a table of those numbers, and not one
+of them was read from the code: the first change to any bound would have left
+this file telling authors a file was legal that the parser refuses. What is
+here is the reasoning — why each rule exists, what is derived rather than
+authored, what export leaves out, how to author a league in a spreadsheet. The
+numbers are one click away and they are never wrong.
+
+The one arithmetic this file does keep is the league's shape — two conferences
+of four divisions of four teams, which is thirty-two — because that identity
+*is* the argument for why a season can be scheduled at all and it reads as
+nonsense with the numbers taken out. It is on the reference page too, generated
+from the same constants, and that page is the authority if the two ever differ.
 
 **If you are building a real 1,700-player league, do not hand-write the JSON.**
-Author it in a spreadsheet and convert it — see §10. JSON is the transport
+Author it in a spreadsheet and convert it — see §8a. JSON is the transport
 format; CSV is the authoring format.
 
 ---
@@ -111,18 +132,23 @@ contract.
 
 ## 3. Every field
 
+**The bounds are on `/import/reference`.** These tables say what each field
+*is*, whether it is required, and what happens when you leave it out; the
+lengths, ranges and counts are generated from the parser's own constants
+rather than restated here.
+
 ### Document
 
 | Field | Required | Notes |
 |---|---|---|
 | `formatVersion` | yes | Whole number. `1` or `2`. See §6. |
 | `kind` | yes | Must be the literal string `"dynastygm.league"`. |
-| `name` | no | League name, ≤ 60 characters. The import form can override it. |
-| `conferences` | no (v2) | Exactly 2 names, ≤ 24 characters each, distinct. Defaults to `["AFC","NFC"]`. |
-| `divisions` | no (v2) | Exactly 4 names, ≤ 24 characters each, distinct. Defaults to `["East","North","South","West"]`. |
-| `teams` | yes | Exactly 32. |
-| `freeAgents` | no | Up to 400. Omit and a 140-man pool is generated. |
-| `draftClasses` | no (v2) | Exactly 1 class, up to 400 prospects. Omit and the opening class is generated. See §4a. |
+| `name` | no | League name. The import form can override it. |
+| `conferences` | no (v2) | The conference names, distinct, held to the same rules as a nickname. Defaults to the league's own. |
+| `divisions` | no (v2) | The division names, same rules. Defaults to the league's own. |
+| `teams` | yes | Every franchise in the league, and the count is exact — see §1. |
+| `freeAgents` | no | The unsigned market. Omit and a pool is generated. |
+| `draftClasses` | no (v2) | One class. Omit and the opening class is generated. See §4a. |
 | `generatedAt`, `generator` | no | Written by the exporter. Never read back. |
 
 A file that declares `"formatVersion": 1` and then uses `conferences`,
@@ -133,28 +159,28 @@ and failing confusingly on an older build.
 
 | Field | Required | Rule |
 |---|---|---|
-| `city` | yes | ≤ 24 characters |
-| `nickname` | yes | ≤ 24 characters |
-| `abbr` | yes | 2–4 characters, `A-Z` and `0-9` only, unique across the file. Lower case is upper-cased for you. |
+| `city` | yes | Length-capped and sanitised |
+| `nickname` | yes | Ditto |
+| `abbr` | yes | `A-Z` and `0-9` only, unique across the file. Lower case is upper-cased for you. |
 | `conference` | yes | One of the file's own `conferences` (case-insensitive) |
 | `division` | yes | One of the file's own `divisions` (case-insensitive) |
-| `players` | no | Up to 53 |
+| `players` | no | The roster, up to the roster limit |
 
 ### Player
 
 | Field | Required | Rule | If you omit it |
 |---|---|---|---|
-| `firstName` | yes | ≤ 24 characters | — |
-| `lastName` | yes | ≤ 24 characters | — |
-| `position` | yes | One of `QB RB WR TE LT LG C RG RT EDGE DT LB CB S K P` | — |
-| `age` | yes | 18–45 | — |
-| `ovr` | yes | 1–99 | — |
-| `experience` | no | 0–25, and never more than `age - 18` | `age - 22`, floored at 0 |
-| `potential` | no | 1–99, raised to `ovr` if it sits below it | rolled from `ovr` and age |
-| `devTrait` | no | `Slow`, `Normal`, `Star`, `Superstar` | rolled |
-| `heightIn` | no | 60–90 | rolled from the position's body template |
-| `weightLb` | no | 140–400 | ditto |
-| `college` | no | ≤ 32 characters | picked from the fictional college list |
+| `firstName` | yes | Length-capped and sanitised | — |
+| `lastName` | yes | Ditto | — |
+| `position` | yes | One of the legal positions | — |
+| `age` | yes | A playing age | — |
+| `ovr` | yes | A rating | — |
+| `experience` | no | Completed pro seasons, and never more than the years since the player reached the minimum age | `age - 22`, floored at 0 |
+| `potential` | no | A rating, raised to `ovr` if it sits below it | rolled from `ovr` and age |
+| `devTrait` | no | One of the dev traits | rolled |
+| `heightIn` | no | In inches | rolled from the position's body template |
+| `weightLb` | no | In pounds | ditto |
+| `college` | no | Length-capped | picked from the fictional college list |
 | `attrs` | no | See below | generated around `ovr` |
 | `contract` | no | See below | priced at market value |
 
@@ -172,14 +198,15 @@ If you write `"ovr": 99` and then give a quarterback an `accuracy` of 40, he
 will not be a 99 — the game shows the rating its own formula produces from the
 attributes it actually has, because a stored overall that disagrees with the
 attributes under it is a lie the rest of the app would repeat everywhere. If
-you want a specific overall, give `ovr` and omit `attrs`.
+you want a specific overall, give `ovr` and omit `attrs`. Every key in the
+catalogue is listed on `/import/reference`, read out of `lib/ratings.ts`.
 
 ### `contract`
 
 | Field | Rule |
 |---|---|
-| `apy` | Average per year in whole dollars, $500,000–$100,000,000 |
-| `years` | 1–7 |
+| `apy` | Average per year, in whole dollars |
+| `years` | Length of the deal |
 | `yearsRemaining` | 1–`years`. Defaults to `years` (a deal just signed). |
 
 Contracts are still **scaled to fit the salary cap**. If a team's total payroll
@@ -188,7 +215,9 @@ down proportionally — the same thing that happens to a randomly generated
 league that rolls too many stars. A file is free to say a quarterback is worth
 $80M; it is not free to hand a team a payroll the league cannot advance out of
 preseason with. If keeping your exact numbers matters more than realism, spread
-the money out so the team totals under ~$224M.
+the money out so no team's total approaches the cap. `/import/check` tells you
+what a file does before you import it, and the league's own cap sheet is the
+authority on the figure.
 
 ## 4. What import fills in, and what it leaves alone
 
@@ -197,8 +226,8 @@ the money out so the team totals under ~$224M.
 | A team with no `players` (or an empty array) | A full generated roster — the same `generateRoster` call a new league makes |
 | A team with some players | **Every one of them**, plus generated players only where a position is below its roster minimum (a team with no punter cannot produce a depth chart) |
 | A team with a complete roster | Exactly those players. Nothing is added. |
-| No `freeAgents` | A generated pool of 140 |
-| Some `freeAgents` | Those, topped up to 60 so free agency is not dead on day one |
+| No `freeAgents` | A generated pool |
+| Some `freeAgents` | Those, topped up to a floor so free agency is not dead on day one |
 
 Import **never pads a roster to a round number.** A file with 41 players per
 team produces teams of 41. The app's own generated leagues sit in the low
@@ -234,10 +263,11 @@ it ends up in — a file authored for 2026 and imported in 2028 still has to be
 the class the 2028 board picks from. Derived, not authored, in the same sense as
 `yearsRemaining`.
 
-**The class is topped up to 400.** Seven rounds of thirty-two picks have to find
-somebody to call, so a file naming twelve prospects gets those twelve plus 388
-generated ones — the same top-up rule a partial roster gets. A file naming all
-400 generates nobody.
+**The class is topped up to a full board.** Seven rounds of picks have to find
+somebody to call, so a file naming twelve prospects gets those twelve plus
+enough generated ones to fill the class — the same top-up rule a partial roster
+gets. A file naming a full class generates nobody. How big a full class is sits
+on `/import/reference`, read from the generator's own class size.
 
 **`strength` moves the generated men and nothing else.** It is added to every
 position group's own rolled bias through the one class-strength mechanism the
@@ -284,9 +314,9 @@ league". It is also why an export is small enough to email.
 
 Two things are lossy and worth knowing about:
 
-- **The free agent pool is capped at 400 on the way out.** A league that has
-  been played for a while can accumulate more than that; the surplus is not in
-  the file.
+- **The free agent pool is capped on the way out,** at the format's own
+  maximum. A league that has been played for a while can accumulate more than
+  that; the surplus is not in the file.
 - **Contract money can drift by up to $100,000 per year** across a round trip.
   Contracts are stored as a schedule of base salaries rounded to $100K, the file
   carries the average-per-year that schedule implies, and rebuilding the
@@ -308,8 +338,9 @@ see "Follow-ups" below.
 
 `formatVersion` is the first field in the document and the first thing checked.
 
-- **This build reads versions 1 and 2 and refuses every other number, in both
-  directions**, with a message naming the file's version and the build's.
+- **This build reads the versions `/import/reference` lists and refuses every
+  other number, in both directions**, with a message naming the file's version
+  and the build's.
 - **Adding a new optional field does not bump the version.** An old reader
   ignores fields it does not know, which is exactly what you want when someone
   is on last month's deploy.
@@ -331,37 +362,42 @@ see "Follow-ups" below.
 
 ## 7. Limits, and what happens when you exceed them
 
-Everything below is enforced server-side in `lib/leagueFile.ts`. The browser
-does a couple of the same checks first purely so you are not kept waiting; none
-of them are the real gate.
+Every limit is enforced server-side in `lib/leagueFile.ts`, and **every one of
+them is listed on `/import/reference`** — the file size, the counts, the name
+lengths, the rating and age and contract ranges, the combine ranges, the legal
+positions, the dev traits, the attribute keys, and how many saves one person
+may hold. That page renders each figure from the constant the parser checks it
+with, so it cannot disagree with the parser. **This section used to restate
+those numbers as a table, and that table was the bug:** none of its nine
+figures was read from the code, so the first change to any bound would have
+left it promising authors a file the parser refuses. The browser does a couple
+of the same checks first purely so you are not kept waiting; none of them are
+the real gate.
 
-| Limit | Value |
-|---|---|
-| File size | 8 MB |
-| Teams | exactly 32, four per division |
-| Conference / division names | 2 and 4, ≤ 24 characters each |
-| Players per team | 53 |
-| Free agents | 400 |
-| Draft classes | 1, up to 400 prospects |
-| Class `strength` | −12 to +12 |
-| Attributes per player | 64 |
-| Leagues per person | 8 (shared with normal league creation) |
+**To see a refusal without importing anything, use `/import/check`.** It takes
+the league file or the three CSVs, runs `parseLeagueFile` — the same and only
+validator the import runs, not a friendlier copy of it — and answers with
+either the refusal the import would have given you or a description of the
+league it would have built: the franchises, the players the file names, the
+players the import would actually write, and the file's size against the cap.
+It creates nothing and spends no league slot, which is the whole point: an
+author iterating on a 1,700-row spreadsheet should not have to found a league
+to find out what is wrong with row 418.
 
 **Out of range is refused, not quietly clamped.** A rating of 9999 is not a 99
 you meant; it is a file that is wrong, and repairing it silently would hand you
 back a league that does not match what you wrote while telling you nothing.
-Every refusal names the field and its position in the document:
-
-```
-teams[7].players[3].age is 900; it must be between 18 and 45.
-teams[0].players[0].contract.apy is 9000000000000; it must be between 500000 and 100000000.
-teams[5].abbr "AKR" is already used by teams[0]. Every abbreviation must be unique.
-Every division must hold exactly 4 teams, and 2 do not: AFC East has 3 (BOI, COD, DOV); AFC West has 5 (...).
-```
+Every refusal names the field, its position in the document
+(`teams[7].players[3].age`), the value it found and what would have been legal.
+`/import/reference` prints a handful of real ones — produced by running the
+parser over deliberately broken documents as the page rendered, rather than
+quoted here where a reworded message would leave this file putting words in the
+parser's mouth.
 
 The exceptions — values that are **derived** rather than authored — are clamped
 instead, and there are only three: `yearsRemaining` cannot exceed `years`,
-`potential` cannot sit below `ovr`, and `experience` cannot exceed `age - 18`.
+`potential` cannot sit below `ovr`, and `experience` cannot exceed the years
+since the player reached the minimum playing age.
 
 **Names are cleaned, not refused.** Team and player names may contain letters
 and digits in any script plus `' . - & /` and spaces. Anything else — markup,
@@ -388,7 +424,7 @@ one on your list.
   schema column (see §5). Rather than accept a `colors` field and silently
   ignore it, the format does not have one.
 - **More than one draft class.** The format's `draftClasses` is an array and the
-  limit is 1, which is not an oversight. The app decides which class is on the
+  limit is one class, which is not an oversight. The app decides which class is on the
   clock by taking the newest `draftYear` still flagged `isDraftee`
   (`liveDraftClassYear`, `lib/draft.ts`), so a second class supplied up front
   would take over the draft board a year early. Next year's class is generated
@@ -398,8 +434,8 @@ one on your list.
 - **Custom staff, scouts, GM personalities, draft picks, league history or
   settings.** All generated. Every one of them is more surface to validate for
   something nobody has asked for yet.
-- **Roster sizes above 53 or leagues of a size other than 32.** The scheduler
-  cannot produce a valid season from either.
+- **Rosters above the roster limit, or a league of any other size.** The
+  scheduler cannot produce a valid season from either.
 - **Importing a save in progress** — schedule, standings, statistics, scouting.
   That is a different feature (a save file) with a much larger validation
   surface, and it is not what "share my custom league" means.
@@ -420,8 +456,10 @@ So **CSV is the authoring format and JSON is still the transport format.**
    arrives filled in with thirty-two franchises; rename the cities, or rename
    the conference and division columns too and the whole league moves with them.
 2. Fill them in.
-3. Upload them to the converter on the same page. It hands back the league file.
-4. Import that file the normal way.
+3. Run them through `/import/check` as you go. It gives you the real refusal,
+   row by row, and creates nothing.
+4. Upload them to the converter on `/import`. It hands back the league file.
+5. Import that file the normal way.
 
 The converter writes nothing. It shapes the rows into a league file document and
 hands that document to `parseLeagueFile` — the same and only validator an
@@ -429,8 +467,9 @@ uploaded JSON file goes through. There is no second set of bounds to drift.
 
 ### A complete league is six columns
 
-There are 36 attributes across 16 positions in this game and **an author does
-not need them.** Set `ovr`, leave every attribute column empty, and the
+There is an attribute catalogue of a few dozen keys across every position in
+this game — `/import/reference` lists them — and **an author does not need
+them.** Set `ovr`, leave every attribute column empty, and the
 attributes are generated around that overall by the same call a from-scratch
 league uses. A cap-realistic 32-team league is:
 
@@ -474,11 +513,15 @@ A document path is no use to a spreadsheet author, so the converter keeps a map
 from every path it writes back to the row that wrote it and rewrites the refusal:
 
 ```
-players.csv row 418, Marcus Doyle: position is "FB"; it must be one of: QB, RB, WR, TE, LT, LG, C, RG, RT, EDGE, DT, LB, CB, S, K, P.
-players.csv row 2, Old Man: age is 900; it must be between 18 and 45.
-players.csv row 2: team is "ZZZ", which is not one of the 32 abbreviations in teams.csv.
+players.csv row 418, Marcus Doyle: position is "FB"; it must be one of: …
+players.csv row 2, Old Man: age is 900; it must be between …
+players.csv row 2: team is "ZZZ", which is not one of the abbreviations in teams.csv.
 players.csv has a column called "ovrl", which is not one of its columns.
 ```
+
+(The lists and bounds those messages name are elided here on purpose — the
+parser fills them in, and `/import/check` will show you the whole sentence for
+your own file.)
 
 **A misspelled column is a refusal, not a shrug.** A column called `ovrl` that
 was quietly ignored would produce 1,700 players whose overall was generated at
@@ -508,6 +551,9 @@ reachable the moment such a page exists.
 3. **Wire the same `onLeagueCreated` cleanup into the normal create paths.**
    `createLeague` now supports it and import uses it; `createLeagueAction` and
    `/api/league/create` still leave debris on a timeout. It is six lines each.
-4. **A "verify this file" endpoint** that runs the validator and returns the
-   errors without creating anything, so someone hand-writing a 32-team file can
-   iterate without spending a league slot per attempt.
+4. ~~**A "verify this file" endpoint**~~ — built. `/import/check` and
+   `POST /api/league/validate` run `parseLeagueFile` (and, for a CSV bundle,
+   `leagueFileFromCsv`) and return the refusal or a description of the league,
+   creating nothing. It is metered under its own hourly ceiling for the reason
+   the CSV converter is: "writes nothing" is not "costs nothing" on an
+   unauthenticated endpoint that buffers a multi-megabyte upload.

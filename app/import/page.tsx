@@ -21,6 +21,14 @@ export const metadata = {
  * explained. Squeezed into a panel on the home page, a refusal like
  * "teams[7].players[3].age is 900; it must be between 18 and 45" has nowhere
  * to go but a truncated toast.
+ *
+ * TWO THINGS IT DELIBERATELY DOES NOT HOLD. The full table of bounds is at
+ * /import/reference, which renders every figure from FILE_LIMITS and the real
+ * position, dev-trait and attribute lists; this page used to carry a second
+ * grid of the same values. And the validator is at /import/check. Both are
+ * linked from here and from each other. The house rule is that length is not
+ * clutter but duplication is: the same figure printed on two pages is two
+ * places for it to be wrong.
  */
 export default async function ImportPage() {
   const leagues = await listOwnedLeagues();
@@ -44,18 +52,45 @@ export default async function ImportPage() {
             Import a League
           </h1>
           <p className="text-muted mt-4 max-w-2xl">
-            A league file is a single JSON document describing 32 franchises and, if you want, every player on
-            them and the college class they will draft from. Build one from spreadsheets, or export a league you
-            already have and send it to a friend. Everything in it is checked before anything is written.
+            A league file is a single JSON document describing {FILE_LIMITS.TEAM_COUNT} franchises and, if you
+            want, every player on them and the college class they will draft from. Build one from spreadsheets,
+            or export a league you already have and send it to a friend. Everything in it is checked before
+            anything is written.
           </p>
-          <Link href="/" className="btn-ghost text-sm mt-4 inline-block">← Back to your franchises</Link>
+          <div className="flex flex-wrap gap-2 mt-4">
+            <Link href="/import/check" className="btn-secondary">Check a file without importing it</Link>
+            <Link href="/import/reference" className="btn-secondary">Every bound and legal value</Link>
+          </div>
+          <Link href="/" className="btn-ghost text-sm mt-3 inline-block">← Back to your franchises</Link>
         </section>
 
         <section className="section">
           <div className="section-head">
             <h2 className="section-title">Import</h2>
           </div>
-          <LeagueImportForm />
+          <LeagueImportForm maxBytes={FILE_LIMITS.MAX_BYTES} maxLeagueName={FILE_LIMITS.MAX_LEAGUE_NAME} />
+        </section>
+
+        <section className="section">
+          <div className="section-head">
+            <h2 className="section-title">The shortest way in</h2>
+          </div>
+          <div className="panel p-5 text-sm space-y-3">
+            <p className="text-muted">
+              <span className="text-chalk">Export a league you already have, open the file, change the
+              names.</span> An export is a complete {FILE_LIMITS.TEAM_COUNT}-team skeleton that already
+              satisfies every structural rule — {FILE_LIMITS.CONFERENCE_COUNT} conferences of{' '}
+              {FILE_LIMITS.DIVISION_COUNT} divisions of {FILE_LIMITS.TEAMS_PER_DIVISION}, every abbreviation
+              distinct, every roster able to field a punter. Editing a known-good file beats starting from an
+              empty one, and nothing in it has to be deleted first: change a city and a nickname and you have
+              your own league.
+            </p>
+            <p className="text-muted">
+              The export panel is further down this page, and{' '}
+              <Link href="/import/check" className="text-accent2 hover:underline">the checker</Link> will tell
+              you what your edits did before you spend a league slot on them.
+            </p>
+          </div>
         </section>
 
         <section className="section">
@@ -64,9 +99,11 @@ export default async function ImportPage() {
           </div>
           <div className="panel p-5 space-y-4 text-sm">
             <p className="text-muted">
-              A real league is around 1,700 players, and hand-writing that as JSON is a 40,000-line document that
-              one missing comma destroys. Author it in a spreadsheet instead — three sheets, exported as CSV. The
-              work splits: thirty-two teams across eight people in one shared sheet, four teams each.
+              A real league is {(FILE_LIMITS.TEAM_COUNT * FILE_LIMITS.MAX_PLAYERS_PER_TEAM).toLocaleString('en-US')}{' '}
+              players at a full {FILE_LIMITS.MAX_PLAYERS_PER_TEAM} a side, and hand-writing that as JSON is a
+              document one missing comma destroys. Author it in a spreadsheet instead — three sheets, exported
+              as CSV. The work splits: {FILE_LIMITS.TEAM_COUNT} teams across eight people in one shared sheet,
+              four teams each.
             </p>
             <p className="text-muted">
               <span className="text-chalk">A complete league is six columns.</span> There are{' '}
@@ -74,7 +111,7 @@ export default async function ImportPage() {
               Fill in <code className="text-accent2">ovr</code>, leave every attribute column empty, and the
               attributes are generated around that overall — so a cap-realistic league is{' '}
               <code className="text-accent2">team, name, position, age, ovr, contractApy, contractYears</code>{' '}
-              times 1,700 rows. Attributes are an optional refinement for the players you have an opinion about.
+              times every row. Attributes are an optional refinement for the players you have an opinion about.
               Supply them and the overall is recomputed from them: a stored overall that disagrees with the
               attributes under it is a number this game will not show you.
             </p>
@@ -86,14 +123,15 @@ export default async function ImportPage() {
               ))}
             </div>
             <p className="text-muted text-xs">
-              teams.csv arrives filled in with thirty-two franchises — rename the cities and nicknames, or rename
-              the conference and division columns too and the whole league moves with them. players.csv and
-              prospects.csv arrive as a header row. Positions are{' '}
-              {CSV_POSITIONS.join(', ')}.
+              teams.csv arrives filled in with {FILE_LIMITS.TEAM_COUNT} franchises — rename the cities and
+              nicknames, or rename the conference and division columns too and the whole league moves with
+              them. players.csv and prospects.csv arrive as a header row, and that header row is every column
+              each file accepts. The legal positions, dev traits and attribute keys are on the{' '}
+              <Link href="/import/reference" className="text-accent2 hover:underline">reference page</Link>.
             </p>
             <form action="/api/league/csv" method="post" encType="multipart/form-data" className="space-y-3 pt-2 border-t border-line/60">
               <div className="label-sm">Convert to a league file</div>
-              <div className="grid sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <CsvField name="teams" label="teams.csv" required />
                 <CsvField name="players" label="players.csv" />
                 <CsvField name="prospects" label="prospects.csv" />
@@ -101,7 +139,9 @@ export default async function ImportPage() {
               <button type="submit" className="btn-primary">Convert ↓</button>
               <p className="text-muted text-xs">
                 Returns the league file as a download. Nothing is created — upload that file above to play it. A
-                refusal names the file, the row and what would have been legal.
+                refusal names the file, the row and what would have been legal. To get that refusal without a
+                download, run the same sheets through{' '}
+                <Link href="/import/check" className="text-accent2 hover:underline">the checker</Link>.
               </p>
             </form>
           </div>
@@ -146,24 +186,26 @@ export default async function ImportPage() {
           <div className="section-head">
             <h2 className="section-title">What a file may contain</h2>
           </div>
-          <div className="panel p-5 grid sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
-            <Rule k="Teams" v={`exactly ${FILE_LIMITS.TEAM_COUNT}, as ${FILE_LIMITS.CONFERENCE_COUNT} conferences × ${FILE_LIMITS.DIVISION_COUNT} divisions × ${FILE_LIMITS.TEAMS_PER_DIVISION} teams`} />
-            <Rule k="Conference and division names" v={`yours, up to ${FILE_LIMITS.MAX_CONFERENCE_NAME} characters; omit them for AFC/NFC and East/North/South/West`} />
-            <Rule k="Draft class" v={`one, up to ${FILE_LIMITS.MAX_PROSPECTS_PER_CLASS} prospects; omitted means a generated class`} />
-            <Rule k="Players per team" v={`up to ${FILE_LIMITS.MAX_PLAYERS_PER_TEAM}; omit them and a roster is generated`} />
-            <Rule k="Free agents" v={`up to ${FILE_LIMITS.MAX_FREE_AGENTS}; omitted means a generated pool`} />
-            <Rule k="File size" v={`up to ${FILE_LIMITS.MAX_BYTES / 1_048_576}MB`} />
-            <Rule k="Ratings" v={`${FILE_LIMITS.RATING_MIN}–${FILE_LIMITS.RATING_MAX}`} />
-            <Rule k="Ages" v={`${FILE_LIMITS.AGE_MIN}–${FILE_LIMITS.AGE_MAX}`} />
-            <Rule k="Contracts" v={`$${(FILE_LIMITS.CONTRACT_APY_MIN / 1e6).toFixed(1)}M–$${(FILE_LIMITS.CONTRACT_APY_MAX / 1e6).toFixed(0)}M per year, 1–${FILE_LIMITS.CONTRACT_YEARS_MAX} years`} />
-            <Rule k="Names" v={`up to ${FILE_LIMITS.MAX_PERSON_NAME} characters, letters and ordinary punctuation`} />
+          <div className="panel p-5 space-y-3 text-sm">
+            <p className="text-muted">
+              Every bound the parser enforces — the size cap, the counts, the name lengths, the{' '}
+              {CSV_POSITIONS.length} legal positions, the {CSV_ATTRIBUTE_COUNT} attribute keys, the dev traits,
+              the combine ranges and what import generates when a file is silent — is listed on one page, and
+              every figure on it is rendered from the constant the parser checks against rather than written
+              out beside it.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Link href="/import/reference" className="btn-primary">League file reference ▸</Link>
+              <Link href="/import/check" className="btn-secondary">Check a file</Link>
+            </div>
+            <p className="text-muted text-xs">
+              Names you write are shown to anyone you send the file to and to you inside the game. This is a
+              friends-and-family beta with no public gallery — nothing you import is published anywhere — but
+              please keep team and player names to things you would put on a jersey.
+            </p>
           </div>
-          <p className="text-muted text-xs">
-            Names you write are shown to anyone you send the file to and to you inside the game. This is a
-            friends-and-family beta with no public gallery — nothing you import is published anywhere — but
-            please keep team and player names to things you would put on a jersey.
-          </p>
         </section>
+
       </main>
     </div>
   );
@@ -187,14 +229,5 @@ function CsvField({ name, label, required }: { name: string; label: string; requ
         className="block w-full text-xs text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded file:border file:border-line file:bg-raised file:text-chalk file:text-xs"
       />
     </label>
-  );
-}
-
-function Rule({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-line/40 pb-2">
-      <span className="label-sm shrink-0">{k}</span>
-      <span className="text-chalk/90 text-right">{v}</span>
-    </div>
   );
 }

@@ -68,6 +68,7 @@
  * lying and nothing above it means anything.
  * ===========================================================================
  */
+import { createHash, randomBytes } from 'crypto';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { NextRequest } from 'next/server';
@@ -239,6 +240,40 @@ async function main() {
   const b = await createLeague({ name: `${stamp}-b`, userTeamAbbr: 'DAL' });
   created.push(b);
   await prisma.league.update({ where: { id: b }, data: { ownerKey: OWNER_B, userId: null } });
+
+  /**
+   * A REAL ACCOUNT AND A REAL SESSION, because two of the surfaces below are
+   * gated on one. /api/league/publish requires an account by design (see
+   * lib/publication.ts for the asymmetry argument), so an audit that only ever
+   * calls it signed out can prove the 401 and nothing else — not that the
+   * ownership predicate is applied to the league id behind it, which is the
+   * check that actually matters.
+   *
+   * The session is minted by writing the row this app's own sign-in writes:
+   * a 32-byte token in the cookie, its SHA-256 in the table (lib/auth.ts). It
+   * is NOT `createSession`, because that sets a cookie on the response and the
+   * harness needs it on the REQUEST of a later, separate call.
+   *
+   * Deleting the user at the end cascades the session AND every code it
+   * published, so this leaves nothing behind.
+   */
+  const sessionToken = randomBytes(32).toString('base64url');
+  const auditUser = await prisma.user.create({
+    data: { username: `${stamp}-user`, usernameKey: `${stamp}-user`.toLowerCase() },
+    select: { id: true, username: true },
+  });
+  const otherUser = await prisma.user.create({
+    data: { username: `${stamp}-other`, usernameKey: `${stamp}-other`.toLowerCase() },
+    select: { id: true },
+  });
+  await prisma.session.create({
+    data: {
+      tokenHash: createHash('sha256').update(sessionToken).digest('hex'),
+      userId: auditUser.id,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    },
+  });
+  const AS_A_SIGNED_IN = `dgm_owner=${OWNER_A}; dgm_session=${sessionToken}`;
 
   try {
     const aTeam = await prisma.team.findFirstOrThrow({ where: { leagueId: a, isUser: true } });
@@ -433,11 +468,62 @@ async function main() {
     const importRoute = require('../app/api/league/import/route');
     const templatesRoute = require('../app/api/league/templates/[file]/route');
     const csvRoute = require('../app/api/league/csv/route');
+    const validateRoute = require('../app/api/league/validate/route');
+    const publishRoute = require('../app/api/league/publish/route');
+    const redeemRoute = require('../app/api/league/redeem/route');
     const { TEMPLATE_NAMES } = require('../lib/leagueCsv');
 
     const EXPORT_URL = (id: string) => `http://localhost/api/league/export/${encodeURIComponent(id)}`;
     const is404 = (res: Response, body: string) =>
       res.status === 404 ? true : `expected 404, body ${body.slice(0, 90)}`;
+
+    /**
+     * FOUR FIXTURE PUBLICATIONS, so the share-code cases below have something
+     * real to be refused about. Inserted directly rather than through
+     * `publishLeagueFile` on purpose: that function applies the per-account
+     * cap, and a fixture that silently stopped being created the day the cap
+     * changed would turn these cases into vacuous passes.
+     *
+     * The payload is a REAL export of save A, gzipped exactly as the publish
+     * route gzips it, so the redemption below is a genuine round trip rather
+     * than a test of a stub.
+     */
+    const { gzipSync } = require('zlib');
+    const { exportLeagueFile, serializeLeagueFile } = require('../lib/leagueFile');
+    const { summarizeLeagueFile } = require('../lib/publication');
+    const { generateShareCode } = require('../lib/shareCode');
+
+    const fixtureFile = await exportLeagueFile(a);
+    const fixtureText = serializeLeagueFile(fixtureFile);
+    const fixturePayload = gzipSync(Buffer.from(fixtureText, 'utf8'));
+    const fixtureSummary = summarizeLeagueFile(fixtureFile);
+    const publishFixture = async (userId: string, extra: Record<string, unknown> = {}) => {
+      const code = generateShareCode();
+      await prisma.publishedLeague.create({
+        data: {
+          code,
+          payload: fixturePayload,
+          fileBytes: Buffer.byteLength(fixtureText, 'utf8'),
+          formatVersion: fixtureFile.formatVersion,
+          userId,
+          sourceLeagueId: a,
+          ...fixtureSummary,
+          ...extra,
+        },
+      });
+      return code;
+    };
+    /** Live, mine, and redeemable. */
+    const liveCode = await publishFixture(auditUser.id);
+    /** Mine, and the DELETE positive control withdraws it. */
+    const myCode = await publishFixture(auditUser.id);
+    /** Another account's, which this caller may not withdraw. */
+    const strangerCode = await publishFixture(otherUser.id);
+    /** Mine, and already taken down — must read as "no such code". */
+    const takenDownCode = await publishFixture(auditUser.id, {
+      takenDownAt: new Date(),
+      takedownReason: 'audit fixture',
+    });
 
     const ROUTE_COVERAGE: Record<string, RouteCase[]> = {
       // --- export ---------------------------------------------------------
@@ -600,6 +686,80 @@ async function main() {
         },
       ],
 
+      // --- validate -------------------------------------------------------
+      // Reads a league file or a CSV bundle, runs the REAL parseLeagueFile
+      // over it and answers with the refusal the import would have given.
+      // There is no league id in it and it writes nothing, so there is no
+      // ownership claim to make — what there is is an unauthenticated endpoint
+      // that buffers up to FILE_LIMITS.MAX_BYTES, so the cases are the size
+      // ceiling, the refusals, and a positive control proving a file that IS
+      // legal comes back as legal. Without that last one, three refusals are
+      // also what an endpoint that rejects everything looks like — which would
+      // be the worse bug here, because an author would be sent to fix a file
+      // that was never broken.
+      'POST /api/league/validate': [
+        {
+          name: 'validate / a claimed size over the cap is refused before the body is read',
+          cookie: '',
+          run: () => validateRoute.POST(request('http://localhost/api/league/validate', {
+            method: 'POST', body: '{}',
+            headers: { 'content-type': 'application/json', 'content-length': String(500 * 1_048_576) },
+          })),
+          expect: (res, body) => (res.status === 413 ? true : `expected 413, got ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'validate / a body that is not JSON is the author’s error, in words',
+          cookie: '',
+          run: () => validateRoute.POST(request('http://localhost/api/league/validate', {
+            method: 'POST', body: 'this is not a league file', headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'validate / JSON of the wrong shape is refused without writing',
+          cookie: '',
+          run: () => validateRoute.POST(request('http://localhost/api/league/validate', {
+            method: 'POST',
+            body: JSON.stringify({ kind: 'dynastygm.league', formatVersion: 2, teams: [{ __proto__: { admin: true } }] }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'validate / garbage in teams.csv is the author’s error, not a 500',
+          cookie: '',
+          run: () => {
+            const form = new FormData();
+            form.set('teams', 'not,a,team\u0000\n' + 'x'.repeat(200));
+            return validateRoute.POST(request('http://localhost/api/league/validate', { method: 'POST', body: form }));
+          },
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${body.slice(0, 90)}`),
+        },
+        {
+          // THE POSITIVE CONTROL, and it is a round trip: the caller's own
+          // league is exported through the export route and the resulting file
+          // is handed straight to the validator, which must call it legal.
+          // Both halves are the real handlers.
+          name: 'validate / a real exported league IS accepted (positive control)',
+          run: async () => {
+            const exported = await exportRoute.GET(request(EXPORT_URL(a)), { params: { id: a } });
+            const file = await exported.text();
+            return validateRoute.POST(request('http://localhost/api/league/validate', {
+              method: 'POST', body: file, headers: { 'content-type': 'application/json' },
+            }));
+          },
+          expect: (res, body) => {
+            if (res.status !== 200) return `a legal league file was refused: ${body.slice(0, 120)}`;
+            let data: { ok?: boolean; report?: { teams?: number; playersWritten?: number } };
+            try { data = JSON.parse(body); } catch { return 'the answer was not JSON'; }
+            if (data.ok !== true) return `ok was ${JSON.stringify(data.ok)}`;
+            if (data.report?.teams !== 32) return `the report named ${data.report?.teams} teams`;
+            if (!((data.report?.playersWritten ?? 0) > 0)) return 'the report priced the file at no players';
+            return true;
+          },
+        },
+      ],
+
       // --- import ---------------------------------------------------------
       // The one endpoint that turns a stranger's file into thousands of rows.
       // Refusals only here: the cheap ones, in the order the route claims to
@@ -635,6 +795,196 @@ async function main() {
             method: 'POST', body: '[]', headers: { 'content-type': 'application/json' },
           })),
           expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${body.slice(0, 90)}`),
+        },
+      ],
+
+      // --- publish --------------------------------------------------------
+      // Turns a save into a share code, which means this deployment starts
+      // holding somebody's file. Two ids arrive on the two methods — a league
+      // id on POST, a code on DELETE — and the cases below are about proving
+      // BOTH of them belong to the caller, which is the check that
+      // `assertLeagueOwner` on its own would not make.
+      'POST /api/league/publish': [
+        {
+          name: 'publish / a signed-out caller cannot publish at all',
+          run: () => publishRoute.POST(request('http://localhost/api/league/publish', {
+            method: 'POST', body: JSON.stringify({ leagueId: a }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 401 ? true : `expected 401, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: "publish / signed in, a stranger's save by id",
+          cookie: AS_A_SIGNED_IN,
+          run: () => publishRoute.POST(request('http://localhost/api/league/publish', {
+            method: 'POST', body: JSON.stringify({ leagueId: b }), headers: { 'content-type': 'application/json' },
+          })),
+          // 404, not 403: the endpoint must not confirm which ids are real.
+          expect: (res, body) => (res.status === 404 ? true : `published or confirmed a foreign save: ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // The cookie holds save A and the account does not. A signed-in
+          // viewer is matched on the ACCOUNT and nothing else (ownsLeague,
+          // lib/owner.ts), so this must refuse even though the same request
+          // carries the cookie that owns the save.
+          name: 'publish / signed in, a save this cookie owns but this account does not',
+          cookie: AS_A_SIGNED_IN,
+          run: () => publishRoute.POST(request('http://localhost/api/league/publish', {
+            method: 'POST', body: JSON.stringify({ leagueId: a }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'publish / a malformed league id is refused, not reported on',
+          cookie: AS_A_SIGNED_IN,
+          run: () => publishRoute.POST(request('http://localhost/api/league/publish', {
+            method: 'POST',
+            body: JSON.stringify({ leagueId: "' OR 1=1 --" }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'publish / a body that is not JSON is refused in words',
+          cookie: AS_A_SIGNED_IN,
+          run: () => publishRoute.POST(request('http://localhost/api/league/publish', {
+            method: 'POST', body: 'not json', headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // THE POSITIVE CONTROL. Five refusals are also what a route that
+          // refuses everybody looks like. Save A is handed to the audit's
+          // account for the length of this one request and handed straight
+          // back, so no other case sees a league with a userId on it.
+          name: 'publish / my own save DOES publish (positive control)',
+          cookie: AS_A_SIGNED_IN,
+          run: async () => {
+            await prisma.league.update({ where: { id: a }, data: { userId: auditUser.id } });
+            try {
+              return await publishRoute.POST(request('http://localhost/api/league/publish', {
+                method: 'POST', body: JSON.stringify({ leagueId: a }), headers: { 'content-type': 'application/json' },
+              }));
+            } finally {
+              await prisma.league.update({ where: { id: a }, data: { userId: null } });
+            }
+          },
+          expect: (res, body) => {
+            if (res.status !== 200) return `the owner was refused his own league: ${body.slice(0, 120)}`;
+            let data: { code?: string; path?: string };
+            try { data = JSON.parse(body); } catch { return 'the answer was not JSON'; }
+            if (typeof data.code !== 'string' || data.code.length !== 10) return `code was ${JSON.stringify(data.code)}`;
+            // Crockford base32, which is the alphabet minus I, L, O and U.
+            if (!/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{10}$/.test(data.code)) return `code is outside the alphabet: ${data.code}`;
+            if (data.path !== `/l/${data.code}`) return `path was ${JSON.stringify(data.path)}`;
+            return true;
+          },
+        },
+      ],
+
+      'DELETE /api/league/publish': [
+        {
+          name: 'publish-delete / a signed-out caller cannot withdraw anything',
+          run: () => publishRoute.DELETE(request('http://localhost/api/league/publish', {
+            method: 'DELETE', body: JSON.stringify({ code: strangerCode }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 401 ? true : `expected 401, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: "publish-delete / another account's code is not mine to withdraw",
+          cookie: AS_A_SIGNED_IN,
+          run: () => publishRoute.DELETE(request('http://localhost/api/league/publish', {
+            method: 'DELETE', body: JSON.stringify({ code: strangerCode }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'publish-delete / a malformed code is refused in words',
+          cookie: AS_A_SIGNED_IN,
+          run: () => publishRoute.DELETE(request('http://localhost/api/league/publish', {
+            method: 'DELETE', body: JSON.stringify({ code: '../../etc/passwd' }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // The positive control, and the proof that rule 1 of the lifecycle
+          // works: a publisher can withdraw their own code.
+          name: 'publish-delete / my own code DOES go (positive control)',
+          cookie: AS_A_SIGNED_IN,
+          run: () => publishRoute.DELETE(request('http://localhost/api/league/publish', {
+            method: 'DELETE', body: JSON.stringify({ code: myCode }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 200 ? true : `the publisher could not withdraw his own code: ${res.status} ${body.slice(0, 90)}`),
+        },
+      ],
+
+      // --- redeem ---------------------------------------------------------
+      // The one route in this app that is MEANT to be called by somebody with
+      // no account and no cookie, and the one where a refusal that said too
+      // much would hand an attacker a map. Every miss below must answer with
+      // the SAME body as every other miss.
+      'POST /api/league/redeem': [
+        {
+          name: 'redeem / a well-formed code nobody published is refused',
+          cookie: '',
+          run: () => redeemRoute.POST(request('http://localhost/api/league/redeem', {
+            method: 'POST', body: JSON.stringify({ code: 'ZZZZZZZZZZ' }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 404 ? true : `expected 404, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          name: 'redeem / a malformed code is refused IDENTICALLY (no oracle)',
+          cookie: '',
+          run: () => redeemRoute.POST(request('http://localhost/api/league/redeem', {
+            method: 'POST', body: JSON.stringify({ code: 'not a code at all' }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => {
+            if (res.status !== 404) return `expected 404, got ${res.status} ${body.slice(0, 90)}`;
+            // The sentence is one exported constant for exactly this reason.
+            if (!body.includes('No league is filed under that code')) return `a different refusal: ${body.slice(0, 120)}`;
+            return true;
+          },
+        },
+        {
+          name: 'redeem / a code that was taken down is refused identically',
+          cookie: '',
+          run: () => redeemRoute.POST(request('http://localhost/api/league/redeem', {
+            method: 'POST', body: JSON.stringify({ code: takenDownCode }), headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => {
+            if (res.status !== 404) return `expected 404, got ${res.status} ${body.slice(0, 90)}`;
+            if (!body.includes('No league is filed under that code')) return `a taken-down code answered differently: ${body.slice(0, 120)}`;
+            return true;
+          },
+        },
+        {
+          name: 'redeem / a body that is not JSON is refused in words',
+          cookie: '',
+          run: () => redeemRoute.POST(request('http://localhost/api/league/redeem', {
+            method: 'POST', body: 'nope', headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => (res.status === 400 ? true : `expected 400, got ${res.status} ${body.slice(0, 90)}`),
+        },
+        {
+          // THE POSITIVE CONTROL, and the friction asymmetry stated as a test:
+          // NO COOKIE, NO SESSION, and the league is built. If this ever
+          // starts failing with a 401, the recipient's on-ramp has grown a
+          // sign-up wall and the feature is gone.
+          name: 'redeem / no account and no cookie DOES start the league (positive control)',
+          cookie: '',
+          run: () => redeemRoute.POST(request('http://localhost/api/league/redeem', {
+            method: 'POST',
+            body: JSON.stringify({ code: liveCode, team: 'DAL', name: `${stamp}-redeemed` }),
+            headers: { 'content-type': 'application/json' },
+          })),
+          expect: (res, body) => {
+            if (res.status !== 200) return `a recipient with no account was refused: ${res.status} ${body.slice(0, 140)}`;
+            let data: { leagueId?: string };
+            try { data = JSON.parse(body); } catch { return 'the answer was not JSON'; }
+            if (typeof data.leagueId !== 'string' || data.leagueId.length === 0) return `leagueId was ${JSON.stringify(data.leagueId)}`;
+            // Collected so the cleanup below removes it by id.
+            created.push(data.leagueId);
+            return true;
+          },
         },
       ],
     };
@@ -732,19 +1082,38 @@ async function main() {
     // is really just its own last run. A gate that cries wolf gets ignored.
     // Scoped to this audit's own buckets so a developer's real hourly budget
     // is left alone.
+    // The audit's own account goes too, and with it — by cascade — every
+    // share code it published and the session it signed in with. Deleted
+    // before the counters so a failure here cannot skip them.
+    const accounts = await prisma.user.deleteMany({ where: { id: { in: [auditUser.id, otherUser.id] } } })
+      .catch(() => ({ count: 0 }));
+
     const spent = await prisma.authAttempt.deleteMany({
       where: {
-        kind: { in: ['CREATE', 'EXPORT', 'ADVANCE', 'DRAFT_RUN', 'CSV_CONVERT'] },
+        kind: { in: ['CREATE', 'EXPORT', 'ADVANCE', 'DRAFT_RUN', 'CSV_CONVERT', 'VALIDATE', 'PUBLISH', 'CODE_LOOKUP'] },
         // By PREFIX, not by a list of the two owner keys that were obvious
         // when this was written: the audit also drives routes as
         // `audit-owner-c`, and a list silently stops covering the next one
         // somebody adds. A real player's bucket is `own:k:<uuid>`, so this
         // prefix cannot reach one.
-        scope: { startsWith: 'own:k:audit-owner-' },
+        // Three shapes now, not one. The cookie-owned buckets this audit has
+        // always driven; the ACCOUNT bucket, because the publish cases sign
+        // in and `ownerScope` files a signed-in caller under `own:u:<id>`;
+        // and the anonymous bucket the cookieless redeem cases land in.
+        OR: [
+          { scope: { startsWith: 'own:k:audit-owner-' } },
+          { scope: { in: [`own:u:${auditUser.id}`, `own:u:${otherUser.id}`] } },
+          // And the shared anonymous bucket, which is where a cookieless
+          // caller's CODE_LOOKUP rows land (see countsAnonymousOwner in
+          // lib/costLimit.ts) — the redeem cases below are deliberately
+          // cookieless, so without this a second run inside the hour is
+          // refused 429 where it expects a 404.
+          { scope: 'own:anonymous', kind: 'CODE_LOOKUP' },
+        ],
       },
     }).catch(() => ({ count: 0 }));
 
-    console.log(`\nCleaned up ${created.length} scratch leagues by id, and ${spent.count} cost-counter row(s).`);
+    console.log(`\nCleaned up ${created.length} scratch leagues by id, ${accounts.count} audit account(s) and their codes, and ${spent.count} cost-counter row(s).`);
   }
 
   if (failures.length > 0) {

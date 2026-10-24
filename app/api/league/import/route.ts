@@ -5,6 +5,7 @@ import { createLeague } from '@/lib/gen/league';
 import { DEFAULT_SETTINGS } from '@/lib/settings';
 import { assertCanCreateLeague, currentViewer, ensureOwnerKey, LeagueLimitError } from '@/lib/owner';
 import { assertCostBudget, CostLimitError, costCeiling } from '@/lib/costLimit';
+import { readCappedBody } from '@/lib/requestBody';
 import {
   FILE_LIMITS,
   LeagueFileError,
@@ -91,8 +92,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: tooBig(declared) }, { status: 413 });
   }
 
-  // 3. The actual bytes.
-  const text = await readCapped(req, FILE_LIMITS.MAX_BYTES);
+  // 3. The actual bytes. The same counted read /api/league/validate uses, so
+  //    the file a validation accepted is the file an import accepts — see
+  //    lib/requestBody.ts.
+  const text = await readCappedBody(req, FILE_LIMITS.MAX_BYTES);
   if (text === null) {
     return NextResponse.json({ error: tooBig(null) }, { status: 413 });
   }
@@ -196,37 +199,4 @@ function tooBig(actual: number | null): string {
   const mb = (FILE_LIMITS.MAX_BYTES / 1_048_576).toFixed(0);
   const seen = actual == null ? '' : ` (this one is ${(actual / 1_048_576).toFixed(1)}MB)`;
   return `That file is too large${seen}. The limit is ${mb}MB — a full 32-team league with complete rosters and a draft class is under 1.5MB.`;
-}
-
-/**
- * Reads the request body, giving up the moment it exceeds `max`. Returns null
- * rather than throwing, because "too big" is an answer, not a fault.
- *
- * The counting is on the raw bytes as they arrive, so nothing larger than the
- * cap is ever held in memory — a 50MB upload is abandoned after the first 4MB
- * and the connection is cancelled.
- */
-async function readCapped(req: NextRequest, max: number): Promise<string | null> {
-  const reader = req.body?.getReader();
-  if (!reader) return '';
-
-  const chunks: Buffer[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > max) {
-        await reader.cancel().catch(() => {});
-        return null;
-      }
-      chunks.push(Buffer.from(value));
-    }
-  } catch {
-    // A dropped or malformed upload reads as an empty file, which the parser
-    // already has a clear message for.
-    return '';
-  }
-  return Buffer.concat(chunks).toString('utf8');
 }

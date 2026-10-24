@@ -64,7 +64,9 @@ import { currentViewer, Viewer } from './owner';
  * ===========================================================================
  */
 
-export type CostKind = 'ADVANCE' | 'CREATE' | 'EXPORT' | 'DRAFT_RUN' | 'CSV_CONVERT';
+export type CostKind =
+  | 'ADVANCE' | 'CREATE' | 'EXPORT' | 'DRAFT_RUN' | 'CSV_CONVERT' | 'VALIDATE'
+  | 'PUBLISH' | 'CODE_LOOKUP';
 
 interface Ceiling {
   /** Rolling window the calls are counted over. */
@@ -73,6 +75,22 @@ interface Ceiling {
   perIp: number;
   /** Shown to the player. Front office, not system diagnostics. */
   refusal: string;
+  /**
+   * Whether a caller with NEITHER an account NOR an owner cookie is counted in
+   * the shared `own:anonymous` bucket. True everywhere it is not stated,
+   * which is the stricter answer and the right one for every endpoint a
+   * player reaches after they already have a save.
+   *
+   * CODE_LOOKUP sets it false, and that is not a loosening for its own sake.
+   * Redeeming a share code is the one path in this app designed to be walked
+   * by somebody who has never been here — no account, no cookie, nothing —
+   * and `ownerScope` files every one of those callers under one key. At a
+   * ceiling of 40 an hour, the forty-first stranger to open a code would be
+   * refused because of the first forty, which turns the limit into a lockout
+   * on exactly the audience the feature exists for. Their requests are still
+   * counted per address, which is the bucket that actually bounds a guesser.
+   */
+  countsAnonymousOwner?: boolean;
 }
 
 const HOUR = 60 * 60 * 1000;
@@ -124,6 +142,77 @@ const CEILINGS: Record<CostKind, Ceiling> = {
     refusal:
       'The records office has converted enough spreadsheets for you this hour. Your files are untouched — '
       + 'come back to them shortly.',
+  },
+  VALIDATE: {
+    // POST /api/league/validate is the cheapest of the three file endpoints
+    // and the most often called: it reads a league file or a CSV bundle,
+    // runs the REAL parseLeagueFile over it, and answers with the refusal or
+    // with what the file would produce. It writes nothing — no league, no
+    // rows, not even a download to cut — so the only cost is up to
+    // FILE_LIMITS.MAX_BYTES of buffering plus a parse measured at ~36ms of
+    // CPU and zero round trips. Metered anyway, because an unauthenticated
+    // endpoint that buffers 8MB is worth a loop to somebody whatever it
+    // answers, and because the two counter rows are the only thing here that
+    // touches the database at all.
+    //
+    // TWICE CSV_CONVERT's ceiling, deliberately. Checking a file is the loop
+    // the whole authoring path exists to serve — an author fixing a 1,700-row
+    // spreadsheet one refusal at a time checks far more often than they
+    // convert, and the thing that exists to stop a runaway must not be the
+    // thing that stops them iterating. It is still a ceiling: 120 an hour is
+    // one check every thirty seconds, sustained, for an hour.
+    windowMs: HOUR,
+    perOwner: 120,
+    perIp: 300,
+    refusal:
+      'The records office has checked enough files for you this hour. Nothing you have uploaded was saved or '
+      + 'changed — come back to it shortly.',
+  },
+  PUBLISH: {
+    // Publishing cuts a full export (the EXPORT read, ~0.75MB serialised),
+    // gzips it and writes it to a row this deployment then stores. An account
+    // is required, so a publisher is attributable, and the number of files one
+    // account may be HOLDING is capped separately in lib/publication.ts —
+    // that is the stock limit. This is the flow limit beside it, and it is the
+    // one that bounds a publish/delete/publish loop, which leaves the stock
+    // count where it started while writing a megabyte every turn.
+    //
+    // Twelve an hour, the same as founding a league, because it costs about
+    // the same and is wanted about as often: somebody sharing a league they
+    // have been building publishes it once, re-publishes it when they change
+    // their mind about a roster, and is nowhere near twelve.
+    windowMs: HOUR,
+    perOwner: 12,
+    perIp: 24,
+    refusal:
+      'The records office has filed enough leagues for you this hour. The codes you already have still work.',
+  },
+  CODE_LOOKUP: {
+    // THE BRUTE-FORCE CEILING. A code is 50 bits (lib/shareCode.ts) and it is
+    // the only thing standing between a stranger and a published league, so
+    // the rate at which codes may be TRIED is part of that security argument
+    // rather than a cost control. Everything else here meters work; this
+    // meters guesses.
+    //
+    // 40 per owner and 120 per address an hour. A legitimate redemption spends
+    // two — the page that shows what the code contains, and the request that
+    // starts the league — so 40 is twenty redemptions an hour by one person,
+    // which nobody does by hand. For a guesser, 120 an hour is about a million
+    // tries a year from one address; against a million published codes that is
+    // a one-in-a-billion chance of landing on any of them, and the per-address
+    // bucket is the one that holds because the owner bucket can be reset by
+    // clearing a cookie.
+    //
+    // A REFUSAL HERE MUST NOT BE AN ORACLE. It is returned for a well-formed
+    // code and a malformed one alike, before either is looked up, so an
+    // attacker cannot learn from the shape of the answer which guesses were
+    // even eligible for a lookup.
+    windowMs: HOUR,
+    perOwner: 40,
+    perIp: 120,
+    countsAnonymousOwner: false,
+    refusal:
+      'The records office has pulled enough files for you this hour. Codes keep — come back to this one shortly.',
   },
   DRAFT_RUN: {
     // One chunk is a few AI selections. A whole seven-round board run down in
@@ -316,8 +405,19 @@ export async function assertCostBudget(kind: CostKind, viewer?: Viewer): Promise
   const ceiling = CEILINGS[kind];
   const who = viewer ?? (await currentViewer());
   const ip = clientIp();
-  const buckets = [{ scope: ownerScope(who), limit: ceiling.perOwner }];
+  const buckets: { scope: string; limit: number }[] = [];
+  const scope = ownerScope(who);
+  // See `countsAnonymousOwner`: the shared anonymous bucket is a lockout
+  // rather than a limit on the one path strangers are meant to walk.
+  if (scope !== 'own:anonymous' || ceiling.countsAnonymousOwner !== false) {
+    buckets.push({ scope, limit: ceiling.perOwner });
+  }
   if (ip != null) buckets.push({ scope: `ip:${ip}`, limit: ceiling.perIp });
+  // Never unmetered. A caller with no account, no cookie AND no forwarding
+  // header clears both branches above, which off-platform is a script or a
+  // local `next dev` — so the shared anonymous bucket comes back as the last
+  // one standing rather than the call going uncounted.
+  if (buckets.length === 0) buckets.push({ scope, limit: ceiling.perOwner });
   await takeBudget(buckets, kind, ceiling.windowMs, ceiling.refusal);
 }
 

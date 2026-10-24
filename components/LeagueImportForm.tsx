@@ -4,9 +4,21 @@ import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { TeamLogo } from './TeamLogo';
 
-/** Mirrors FILE_LIMITS.MAX_BYTES — the server is still the authority. */
-const MAX_BYTES = 8 * 1024 * 1024;
-const MAX_LEAGUE_NAME = 60;
+/**
+ * The bounds arrive as PROPS, from the server page that can read FILE_LIMITS.
+ *
+ * They used to be two literals here, under a comment calling them a mirror of
+ * FILE_LIMITS. A mirror is a second derivation, and this repo's most expensive
+ * recurring bug is a figure displayed that is not the figure the system used:
+ * raise MAX_BYTES server-side and this form would have gone on refusing files
+ * at the old cap, in its own words, before the server ever saw them. A client
+ * component cannot import FILE_LIMITS itself — that module reaches prisma — so
+ * the server page passes them down, which is what /import/check already does.
+ */
+interface Limits {
+  maxBytes: number;
+  maxLeagueName: number;
+}
 
 interface PeekedTeam {
   abbr: string;
@@ -40,7 +52,7 @@ interface Peek {
  *   Nothing here is a validation step — this is a browser, and a browser is
  *   just another thing that can lie.
  */
-export function LeagueImportForm() {
+export function LeagueImportForm({ maxBytes: MAX_BYTES, maxLeagueName: MAX_LEAGUE_NAME }: Limits) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
 

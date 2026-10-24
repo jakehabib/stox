@@ -1198,6 +1198,9 @@ model User {
   sessions Session[]
   leagues  League[]
   ranks    DynastyRank[]
+  /// Share codes this account has published (lib/publication.ts). A relation
+  /// field only — it adds no column to User.
+  published PublishedLeague[]
 }
 
 /// Server-side sessions. The cookie carries a random 32-byte token; this table
@@ -1247,7 +1250,8 @@ model AuthAttempt {
   /// the other's rows.
   scope   String
   /// SIGNIN | SIGNUP (lib/auth.ts)
-  /// ADVANCE | CREATE | EXPORT | DRAFT_RUN (lib/costLimit.ts)
+  /// ADVANCE | CREATE | EXPORT | DRAFT_RUN | CSV_CONVERT | VALIDATE |
+  /// PUBLISH | CODE_LOOKUP (lib/costLimit.ts)
   kind    String
   /// Read ONLY by lib/auth.ts, which counts failures. lib/costLimit.ts writes
   /// true and counts every row regardless, because a call that failed has
@@ -1257,6 +1261,108 @@ model AuthAttempt {
 
   @@index([scope, kind, at])
   @@index([at])
+}
+
+// ---------------------------------------------------------------------------
+// Share codes (see lib/shareCode.ts, lib/publication.ts)
+// ---------------------------------------------------------------------------
+
+/// ONE PUBLISHED LEAGUE FILE, addressed by a code instead of by a filename.
+///
+/// WHY A ROW AT ALL, when a file upload needs no server storage. Because the
+/// two tiers answer different questions and both ship. Handing somebody a
+/// file hosts nothing and leaves nothing to take down; handing somebody a code
+/// means this deployment is holding their bytes, which is the cost of the code
+/// being readable down a voice channel. The file tier is not a fallback and
+/// this table is not a replacement for it.
+///
+/// THERE IS NO INDEX OVER THIS TABLE ANYWHERE IN THE APP, by decision. No
+/// gallery, no search, no "recently published". The only query that reads a
+/// row by anything other than its own code is the publisher looking at their
+/// own codes, scoped to `userId`. A browsable list of leagues strangers wrote
+/// would be a moderation surface with the owner's name on it.
+///
+/// THE PAYLOAD IS GZIPPED, and that is a storage decision rather than a
+/// bandwidth one. A full export is 0.6-1.1MB of JSON whose every player line
+/// repeats the same forty attribute keys, which gzips to roughly a tenth of
+/// that — measured at 0.08MB on a first-season save. Postgres would TOAST and
+/// pglz-compress a `text` column of that size anyway, so the choice is not
+/// "compress or not", it is "compress well and explicitly, or badly and
+/// invisibly". Explicit also means `fileBytes` below can state the real,
+/// uncompressed size the file limit was applied to without this table lying
+/// about what is stored. Nothing reads the bytes except gunzip.
+model PublishedLeague {
+  id String @id @default(cuid())
+
+  /// Ten Crockford base32 symbols, canonical upper case, no separators — 50
+  /// bits from a CSPRNG, never derived from this row's id and never
+  /// sequential (lib/shareCode.ts). Unique, because the code IS the address:
+  /// the lookup is an equality test on this column and nothing else.
+  code String @unique
+
+  /// gzip of serializeLeagueFile's output. Read only by `gunzipSync`.
+  payload Bytes
+  /// The UNCOMPRESSED length of that file, in bytes. Not derivable from
+  /// `payload` without decompressing it, and it is the figure FILE_LIMITS
+  /// .MAX_BYTES was actually applied to, so it is stored rather than guessed.
+  fileBytes Int
+  /// The league file's own formatVersion, so a future breaking bump can refuse
+  /// a stored file by version instead of by a cascade of field errors.
+  formatVersion Int
+
+  /// WHAT A RECIPIENT IS SHOWN BEFORE THEY COMMIT. Four facts, counted off
+  /// the file at publish time by one function (summarizeLeagueFile), because
+  /// the alternative is decompressing a megabyte to render a preview card.
+  /// They describe a file that cannot change after it is written, so this is a
+  /// snapshot of an immutable document rather than a cache that can go stale.
+  leagueName      String
+  teamCount       Int
+  /// Players ON ROSTERS in the file. Not a total: a recipient wants to know
+  /// whether the rosters are authored or will be generated.
+  rosteredPlayers Int
+  /// Free agents the file carries, which import tops up rather than replaces.
+  freeAgents      Int
+  /// Whether the file carries an authored college class.
+  hasDraftClass   Boolean
+
+  /// WHO PUBLISHED IT. An account is required to publish and not to redeem —
+  /// that asymmetry is the whole friction design: the recipient's on-ramp
+  /// stays one click, and anything the owner has to answer for is attributable
+  /// to an account. Cascades: deleting an account withdraws its codes.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The save this file was cut from, for the publisher's own screen. A PLAIN
+  /// COLUMN WITH NO FOREIGN KEY, on purpose: a published file is a snapshot
+  /// that has nothing left to do with the league it came out of, and deleting
+  /// that league must not delete or blank a code other people are holding. So
+  /// this can dangle, and the one place that reads it treats a miss as "that
+  /// save is gone" rather than as an error.
+  sourceLeagueId String?
+
+  createdAt DateTime @default(now())
+
+  /// LIFECYCLE. `lastOpenedAt` is stamped every time the code resolves, and
+  /// expiry is `lastOpenedAt ?? createdAt` falling past the retention window
+  /// (publicationExpiryCutoff, lib/publication.ts) — so a code people are
+  /// still opening never expires and a code nobody ever opened goes away.
+  lastOpenedAt DateTime?
+  /// How many times it resolved. Shown to the publisher only.
+  openCount    Int       @default(0)
+
+  /// TAKEDOWN, which is not deletion. A publisher deleting their own code
+  /// removes the row; an operator taking one down sets these and leaves it,
+  /// so the code can never be re-issued to a different file by chance and so
+  /// there is a record of what was done. A taken-down code resolves EXACTLY
+  /// as a code nobody ever published does — same words, same status — because
+  /// a distinct "withdrawn" answer would confirm to a stranger that the code
+  /// was real.
+  takenDownAt    DateTime?
+  takedownReason String?
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([lastOpenedAt])
 }
 
 // ---------------------------------------------------------------------------

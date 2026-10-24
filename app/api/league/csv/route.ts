@@ -51,9 +51,9 @@ export const maxDuration = 60;
  * MULTIPART, AND THE SIZE CHECK COMES FIRST. `req.formData()` buffers the
  * whole upload before it returns, so the Content-Length check above it is
  * load-bearing in a way it is not on the import route (which streams and
- * counts bytes itself — see readCapped there). Three CSVs of a full league
- * measure well under half what the JSON they become does, so the same ceiling
- * is generous here.
+ * counts bytes itself — see readCappedBody, lib/requestBody.ts). Three CSVs
+ * of a full league measure well under half what the JSON they become does, so
+ * the same ceiling is generous here.
  */
 export async function POST(req: NextRequest) {
   const declared = Number(req.headers.get('content-length'));

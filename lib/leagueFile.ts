@@ -185,27 +185,38 @@ export const FILE_LIMITS = {
   BENCH_MIN: 1, BENCH_MAX: 60,
 } as const;
 
+/**
+ * WHAT IMPORT GENERATES WHEN A FILE IS SILENT. Exported for the same reason
+ * FILE_LIMITS is: the reference page at /import/reference prints these figures
+ * and must print the ones the importer actually used. They are not an
+ * independent copy anywhere.
+ */
 /** The free-agent pool is topped up to this so free agency is never dead. */
-const FREE_AGENT_FLOOR = 60;
+export const FREE_AGENT_FLOOR = 60;
 /** Generated when a file supplies no free agents at all — parity with createLeague. */
-const FREE_AGENT_DEFAULT = 140;
+export const FREE_AGENT_DEFAULT = 140;
 /**
  * The smallest roster that can field every position group — the sum of
  * ROSTER_TARGETS' minimums. Import fills UP TO each position's minimum and
  * NOT ONE PLAYER FURTHER; see fillRoster.
  */
-const POSITION_MINIMUM_TOTAL = POSITIONS.reduce((n, pos) => n + ROSTER_TARGETS[pos].min, 0);
+export const POSITION_MINIMUM_TOTAL = POSITIONS.reduce((n, pos) => n + ROSTER_TARGETS[pos].min, 0);
 
 /**
  * The labels a file gets when it names none — which is every version-1 file
  * and every version-2 file that is happy with the defaults. The LISTS live in
  * lib/tuning.ts beside the structural counts they come with; there is no
  * second copy here, and there used to be.
+ *
+ * DEV_TRAITS and COMBINE_VENUES are exported because they are closed enums an
+ * author has to spell exactly, and the only honest place to read the spelling
+ * off is the array `readEnum` is handed. The reference page renders these
+ * arrays; it does not restate them.
  */
-const DEFAULT_CONFERENCES: readonly string[] = LEAGUE.CONFERENCES;
-const DEFAULT_DIVISIONS: readonly string[] = LEAGUE.DIVISIONS;
-const DEV_TRAITS = ['Slow', 'Normal', 'Star', 'Superstar'] as const;
-const COMBINE_VENUES = ['COMBINE', 'PRO_DAY'] as const;
+export const DEFAULT_CONFERENCES: readonly string[] = LEAGUE.CONFERENCES;
+export const DEFAULT_DIVISIONS: readonly string[] = LEAGUE.DIVISIONS;
+export const DEV_TRAITS = ['Slow', 'Normal', 'Star', 'Superstar'] as const;
+export const COMBINE_VENUES = ['COMBINE', 'PRO_DAY'] as const;
 
 // ---------------------------------------------------------------------------
 // The document
@@ -790,7 +801,10 @@ function readPlayer(raw: unknown, path: string, opts: { prospect?: boolean } = {
 
   if (p.experience !== undefined) {
     // Derived ceiling, not an authored one: nobody has more pro seasons than
-    // years since they turned 18, whatever the file says.
+    // years since they turned AGE_MIN, whatever the file says. The floor is
+    // read from AGE_MIN rather than typed as 18 because it IS that bound — the
+    // youngest a player in this league may be — and the reference page at
+    // /import/reference states the rule in those terms.
     const exp = readInt(p.experience, `${path}.experience`, 0, FILE_LIMITS.EXPERIENCE_MAX);
     if (opts.prospect && exp > 0) {
       fail(
@@ -798,7 +812,7 @@ function readPlayer(raw: unknown, path: string, opts: { prospect?: boolean } = {
           'played a professional season. Write 0, or remove the field.',
       );
     }
-    out.experience = Math.min(exp, Math.max(0, age - 18));
+    out.experience = Math.min(exp, Math.max(0, age - FILE_LIMITS.AGE_MIN));
   }
   if (p.heightIn !== undefined) {
     out.heightIn = readInt(p.heightIn, `${path}.heightIn`, FILE_LIMITS.HEIGHT_MIN, FILE_LIMITS.HEIGHT_MAX);
@@ -1426,6 +1440,50 @@ function fillRoster(roster: GeneratedPlayer[], rng: Rng, names: NameRegistry): v
     }
   }
 }
+
+/**
+ * WHAT A LEGAL FILE WOULD PRODUCE — the answer /api/league/validate gives when
+ * it has nothing to refuse.
+ *
+ * Every figure here is read back off the parsed document or off the importer's
+ * own `estimateWriteCost`, so a validation reports the league the import would
+ * build rather than a second guess at it. `bytes` is the document RE-SERIALISED
+ * by `serializeLeagueFile` — the file this document would be written as, which
+ * is the number that has to clear MAX_BYTES on the way back in. `receivedBytes`
+ * is what actually arrived, and the two differ by whitespace on a pasted file
+ * and by the whole conversion on a CSV bundle, which is why both are reported.
+ *
+ * Pure: no database, no clock. The route adds nothing to it.
+ */
+export function summariseLeagueFile(file: LeagueFile, receivedBytes: number) {
+  const cost = estimateWriteCost(file);
+  const body = serializeLeagueFile(file);
+  const bytes = Buffer.byteLength(body, 'utf8');
+  const rostered = file.teams.reduce((n, t) => n + (t.players?.length ?? 0), 0);
+  const emptyRosters = file.teams.filter((t) => !t.players?.length).length;
+  const classProspects = file.draftClasses?.[0]?.players.length;
+  return {
+    name: file.name,
+    formatVersion: file.formatVersion,
+    conferences: file.conferences ?? [...DEFAULT_CONFERENCES],
+    divisions: file.divisions ?? [...DEFAULT_DIVISIONS],
+    teams: file.teams.length,
+    /** Players the FILE names, by where they are in it. */
+    rostered,
+    emptyRosters,
+    freeAgents: file.freeAgents?.length,
+    classProspects,
+    classStrength: file.draftClasses?.[0]?.strength,
+    /** Players the IMPORT would write, the file's own plus everything generated. */
+    playersWritten: cost.players,
+    teamsWritten: cost.teams,
+    bytes,
+    receivedBytes,
+    maxBytes: FILE_LIMITS.MAX_BYTES,
+  };
+}
+
+export type LeagueFileSummary = ReturnType<typeof summariseLeagueFile>;
 
 /**
  * How many players an imported file will actually cause to be written. Used by
